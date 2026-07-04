@@ -1,0 +1,10 @@
+[package]
+name = "fcs-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI tool for compiling and inspecting FCS chart files"
+
+[dependencies]
+fcs-core = { path = "../fcs-core" }
+clap = { version = "4", features = ["derive"] }

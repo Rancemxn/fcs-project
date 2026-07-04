@@ -1,0 +1,152 @@
+meta {
+    name: "Chaos Theory (Extreme)";
+    artists: ["Linear Algebra Project", "Chaos Composer"];
+    charters: ["Spec Tester"];
+    offset: 50ms;
+    version: "4.0.0";
+    difficulty: "SP";
+    level: "16";
+}
+
+masterTimeline {
+    0.0b   -> 200.0;
+    16.0b  -> 200.0;
+    16.0b  -> 100.0;   // 瞬时BPM阶跃跳变 (Step jump)
+    32.0b  -> 100.0;
+    32.0b  -> 200.0;   // 再次跳变回原速
+    64.0b  -> 200.0;
+}
+
+shaders {
+    shader glitchEffect {
+        vertex: "shaders/glitch.vert";
+        fragment: "shaders/glitch.frag";
+        binds {
+            uTime: s;  // 绑定至绝对物理时间变量 s
+            uIntensity: easeOutSine(b, 16.0b, 32.0b, 1.0, 0.0, 0.0, 1.0);
+        }
+    }
+}
+
+judgelines {
+    // 1. 父控制线 (不直接挂载Note，只负责整体镜头的平移和剧烈旋转)
+    line rootLine {
+        zOrder: 10;
+        color: #FF5555FF;
+        
+        bpmTimeline {
+            0.0b -> 200.0;
+        }
+
+        motion {
+            layer {
+                // 在 0b 到 32b 期间，先顺时针快速转动，再逆时针以二次方缓动回转
+                rotation {
+                    [0.0b => 16.0b]: easeOutSine(b, 0.0b, 16.0b, 0deg, 180deg, 0.0, 1.0);
+                    [16.0b => 32.0b]: easeInOutQuad(b, 16.0b, 32.0b, 180deg, -180deg, 0.0, 1.0);
+                    [32.0b => 999.0b]: -180deg;
+                }
+                positionY {
+                    [0.0b => 32.0b]: easeInCubic(b, 0.0b, 32.0b, 0px, 300px, 0.0, 1.0);
+                }
+            }
+        }
+    }
+
+    // 2. 子判定线 (继承自 rootLine，跟随旋转平移，同时具备局部的三次弹性运动)
+    line subLine {
+        parent: rootLine;
+        inherit: [position, rotation];
+        texture: "textures/sub_line.png";
+        textureAnchor: (0.5, 0.5);
+        zOrder: 20;
+
+        bpmTimeline {
+            0.0b  -> 200.0;
+            16.0b -> 100.0;   // 必须与 masterTimeline 保持局部自洽
+            32.0b -> 200.0;
+        }
+
+        motion {
+            // 图层 1：基础运动
+            layer {
+                positionX {
+                    // 使用高度非线性的 Elastic（弹性）缓动，产生剧烈的震颤回弹效果
+                    [0.0b => 16.0b]: easeOutElastic(b, 0.0b, 16.0b, -300px, 300px, 0.0, 1.0);
+                    // 16b 之后，使用自定义 Bezier（贝塞尔）曲线，平滑过渡回中心点
+                    [16.0b => 32.0b]: easeBezier(b, 16.0b, 32.0b, 300px, 0px, 0.25, 0.1, 0.25, 1.0, 0.0, 1.0);
+                }
+                alpha {
+                    [0.0b => 8.0b]: easeInQuad(b, 0.0b, 8.0b, 0.0, 1.0, 0.0, 1.0);
+                    [8.0b => 999.0b]: 1.0;
+                }
+            }
+            // 图层 2：乘性加性叠加层 (实现判定线宽度随时间呈正弦缩放波动)
+            layer {
+                scaleX {
+                    [0.0b => 64.0b]: 1.0 + 0.2 * sin(b * pi / 4.0);
+                }
+            }
+        }
+
+        notes {
+            // 定义隐藏渐现的 Tap 原型
+            tap ghostTap {
+                above: true;
+                speed: 1.2;
+                // 核心测试：不透明度 alpha 随着 Note 距离判定线的距离 d 动态变化
+                // 距离线 400px 时完全透明，靠近至 0px 时完全显现
+                alpha: easeInSine(d, 0px, 400px, 0.0, 1.0, 0.0, 1.0);
+            }
+
+            // 继承自 ghostTap 模版的常规 Note
+            tap note1 : ghostTap {
+                time: 4.0b;
+                positionX: -200px;
+                judgeShape: circle(60px); // 特化圆形碰撞判定
+            }
+
+            // 覆盖部分模版属性的 Note
+            tap note2 : ghostTap {
+                time: 8.0b;
+                positionX: 200px;
+                alpha: 1.0; // 覆写原型中的动态隐形逻辑，使其强行可见
+                judgeShape: rectangle(120px, 80px); // 特化矩形碰撞判定
+            }
+
+            // 极长且带动态形变的 Hold Note
+            hold longHold {
+                time: 12.0b;
+                endTime: 24.0b;
+                positionX: 0px;
+                speed: 1.5;
+                // Hold 的身体宽度随系统绝对秒数 s 实时产生呼吸波动
+                scaleX: 1.0 + 0.4 * sin(s * 2.0);
+                color: #55FF55FF;
+            }
+
+            // 极速 Flick 滑键
+            flick fastFlick {
+                time: 28.0b;
+                positionX: -150px;
+                yOffset: 45px; // 垂直打击点向上微调，测试偏移求值
+                judgeShape: infiniteY(1.5); // 沿Y轴无限延伸判定线
+            }
+
+            // 背面下落的 Drag 音符
+            drag reverseDrag {
+                time: 30.0b;
+                positionX: 150px;
+                above: false; // 判定线背面落键
+            }
+
+            // 诱导隐形 Fake 音符 (用于背景装饰/特殊交互)
+            fake bgDecoration {
+                time: 32.0b;
+                positionX: 0px;
+                color: #FFFF5588;
+                fake: true; // 开启假音符机制，不计 Combo/无判定
+            }
+        }
+    }
+}
