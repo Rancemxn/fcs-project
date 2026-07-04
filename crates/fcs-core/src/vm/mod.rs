@@ -112,10 +112,10 @@ impl<'a> Vm<'a> {
                 let _ = self.stack.pop();
             }
             Opcode::Dup => {
-                self.stack.dup().map_err(|e| VmResult::Error(e))?;
+                self.stack.dup().map_err(VmResult::Error)?;
             }
             Opcode::Swap => {
-                self.stack.swap().map_err(|e| VmResult::Error(e))?;
+                self.stack.swap().map_err(VmResult::Error)?;
             }
 
             // ── Environment variables ──
@@ -218,11 +218,11 @@ impl<'a> Vm<'a> {
         if !math::is_finite(v) {
             return Err(VmResult::Cull);
         }
-        self.stack.push(v).map_err(|e| VmResult::Error(e))
+        self.stack.push(v).map_err(VmResult::Error)
     }
 
     fn stack_pop(&mut self) -> Result<f64, VmResult> {
-        self.stack.pop().map_err(|e| VmResult::Error(e))
+        self.stack.pop().map_err(VmResult::Error)
     }
 
     fn binary_op<F>(&mut self, f: F) -> Result<(), VmResult>

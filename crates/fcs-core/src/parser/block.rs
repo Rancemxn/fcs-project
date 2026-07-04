@@ -200,7 +200,7 @@ fn parse_note_property_value(input: &str) -> IResult<&str, NotePropertyValue> {
     alt((
         map(parse_expression, NotePropertyValue::Expr),
         map(parse_color, NotePropertyValue::Color),
-        map(parse_string, |s| NotePropertyValue::String(s)),
+        map(parse_string, NotePropertyValue::String),
         map(parse_bool, NotePropertyValue::Bool),
     ))(input)
 }
@@ -277,7 +277,7 @@ fn parse_line_def(input: &str) -> IResult<&str, LineDef> {
         map(preceded(preceded(ws, tag("parent")), preceded(colon, terminated(preceded(ws, ident), semicolon))), |p: &str| { parent = Some(p.to_string()); }),
         map(preceded(preceded(ws, tag("inherit")), preceded(colon, terminated(parse_inherit_flags, semicolon))), |f| { inherit = f; }),
         map(preceded(preceded(ws, tag("bpmTimeline")), parse_bpm_timeline), |bt| { bpm_timeline = bt; }),
-        map(preceded(preceded(ws, tag("motion")), preceded(preceded(ws, char('{')), take_until_closing_brace)), |_raw: &str| { motion = Some(MotionBlock::default()); }),
+        map(preceded(preceded(ws, tag("motion")), delimited(preceded(ws, char('{')), take_until_closing_brace, preceded(ws, char('}')))), |_raw: &str| { motion = Some(MotionBlock::default()); }),
         map(parse_notes_block, |n| { notes = n; }),
     )))(input)?;
 

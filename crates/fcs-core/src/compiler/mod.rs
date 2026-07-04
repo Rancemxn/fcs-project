@@ -27,10 +27,7 @@ pub fn compile(doc: &Document) -> Result<FcbcFile, DiagnosticBag> {
     }
 
     // Emit bytecode
-    match emit(&mut ctx) {
-        Ok(file) => Ok(file),
-        Err(()) => Err(ctx.diagnostics),
-    }
+    emit(&mut ctx).map_err(|_| ctx.diagnostics)
 }
 
 /// Semantic validation — checks all rules from §8.1/§8.2.
@@ -45,9 +42,7 @@ fn validate(ctx: &mut CompileContext) {
     }
 
     // Validate masterTimeline
-    if doc.master_timeline.entries.is_empty() {
-        ctx.error(CompileError::MasterTimelineNonZeroStart);
-    } else if doc.master_timeline.entries[0].beat != 0.0 {
+    if doc.master_timeline.entries.is_empty() || doc.master_timeline.entries[0].beat != 0.0 {
         ctx.error(CompileError::MasterTimelineNonZeroStart);
     } else {
         for e in &doc.master_timeline.entries {
@@ -60,9 +55,7 @@ fn validate(ctx: &mut CompileContext) {
     // Validate each line's bpmTimeline
     for line in &doc.judgelines.lines {
         let bt = &line.bpm_timeline;
-        if bt.entries.is_empty() {
-            ctx.error(CompileError::BpmTimelineNonZeroStart);
-        } else if bt.entries[0].beat != 0.0 {
+        if bt.entries.is_empty() || bt.entries[0].beat != 0.0 {
             ctx.error(CompileError::BpmTimelineNonZeroStart);
         } else {
             for e in &bt.entries {

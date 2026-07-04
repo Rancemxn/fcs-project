@@ -17,7 +17,7 @@ use nom::{
 // ---------------------------------------------------------------------------
 
 /// Skip whitespace and line comments between tokens.
-pub fn ws<'a>(input: &'a str) -> IResult<&'a str, ()> {
+pub fn ws(input: &str) -> IResult<&str, ()> {
     let mut remaining = input;
     loop {
         let (rest, _matched) = opt(alt((

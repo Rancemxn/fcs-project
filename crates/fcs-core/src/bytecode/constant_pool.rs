@@ -21,6 +21,7 @@ impl ConstantPoolBuilder {
     }
     pub fn size(&self) -> u32 { self.values.len() as u32 * 8 }
     pub fn len(&self) -> usize { self.values.len() }
+    pub fn is_empty(&self) -> bool { self.values.is_empty() }
     pub fn as_slice(&self) -> &[f64] { &self.values }
 }
 

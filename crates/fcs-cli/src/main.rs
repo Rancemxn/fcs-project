@@ -25,6 +25,14 @@ enum Commands {
     Check { input: String },
     /// Show chart metadata from .fcs or .fcbc
     Info { input: String },
+    /// Convert a Phigros chart (PGR/RPE/PEC) to .fcs
+    Convert {
+        input: String,
+        #[arg(short, long)]
+        output: Option<String>,
+        #[arg(short, long)]
+        format: Option<String>,
+    },
 }
 
 fn main() {
@@ -34,6 +42,7 @@ fn main() {
         Commands::Dump { input } => cmd_dump(&input),
         Commands::Check { input } => cmd_check(&input),
         Commands::Info { input } => cmd_info(&input),
+        Commands::Convert { input, output, format } => cmd_convert(&input, output.as_deref(), format.as_deref()),
     }
 }
 
@@ -149,5 +158,160 @@ fn cmd_info(input: &str) {
             println!("BPM stops: {}", bpm_count);
         }
         Err(e) => eprintln!("parse error: {:?}", e),
+    }
+}
+
+fn cmd_convert(input: &str, output: Option<&str>, format: Option<&str>) {
+    let src = match fs::read_to_string(input) {
+        Ok(s) => s,
+        Err(e) => { eprintln!("error reading '{}': {}", input, e); return; }
+    };
+    let fmt = format.unwrap_or_else(|| detect_format(input, &src));
+    let doc = match fmt {
+        "pgr" => convert_with(&src, fcs_converter::pgr::parse_pgr, "PGR"),
+        "rpe" => convert_with(&src, fcs_converter::rpe::parse_rpe, "RPE"),
+        "pec" => convert_with(&src, fcs_converter::pec::parse_pec, "PEC"),
+        other => { eprintln!("unsupported format: '{}' (supported: pgr, rpe, pec)", other); return; }
+    };
+    let fcs_src = format_fcs(&doc);
+    match output {
+        Some(out) => { fs::write(out, &fcs_src).unwrap_or_else(|e| eprintln!("write error: {}", e)); println!("Converted '{}' -> '{}'", input, out); }
+        None => println!("{}", fcs_src),
+    }
+}
+
+fn convert_with(src: &str, parser: fn(&str) -> Result<fcs_converter::ir::IrChart, String>, name: &str) -> fcs_core::ast::Document {
+    match parser(src) {
+        Ok(ir) => fcs_converter::to_fcs::ir_to_fcs(&ir),
+        Err(e) => { eprintln!("{} parse error: {}", name, e); std::process::exit(1); }
+    }
+}
+
+fn detect_format(path: &str, src: &str) -> &'static str {
+    let path_lower = path.to_lowercase();
+    if path_lower.ends_with(".pec") || src.lines().next().map(|l| l.trim().parse::<f64>().is_ok()).unwrap_or(false) {
+        return "pec";
+    }
+    // Try to parse as JSON → check for RPE markers
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(src) {
+        if v.get("META").is_some() || v.get("BPMList").is_some() { return "rpe"; }
+        if v.get("judgeLineList").is_some() || v.get("formatVersion").is_some() { return "pgr"; }
+    }
+    // Fallback: extension-based
+    "pgr"
+}
+
+fn format_fcs(doc: &fcs_core::ast::Document) -> String {
+    let mut o = String::new();
+    o.push_str("meta {\n");
+    o.push_str(&format!("    name: {:?};\n", doc.meta.name));
+    let a: Vec<_> = doc.meta.artists.iter().map(|x| format!("{:?}", x)).collect();
+    o.push_str(&format!("    artists: [{}];\n", a.join(", ")));
+    let c: Vec<_> = doc.meta.charters.iter().map(|x| format!("{:?}", x)).collect();
+    o.push_str(&format!("    charters: [{}];\n", c.join(", ")));
+    o.push_str(&format!("    offset: {}ms;\n", doc.meta.offset as i64));
+    o.push_str(&format!("    version: {:?};\n", doc.meta.version));
+    o.push_str("}\n\nmasterTimeline {\n");
+    for e in &doc.master_timeline.entries {
+        o.push_str(&format!("    {:.1}b -> {:.1};\n", e.beat, e.bpm));
+    }
+    o.push_str("}\n\njudgelines {\n");
+    for line in &doc.judgelines.lines {
+        o.push_str(&format!("    line {} {{\n", line.name));
+        o.push_str(&format!("        zOrder: {};\n", line.z_order));
+        o.push_str("        bpmTimeline {\n");
+        for e in &line.bpm_timeline.entries {
+            o.push_str(&format!("            {:.1}b -> {:.1};\n", e.beat, e.bpm));
+        }
+        o.push_str("        }\n");
+        // Motion block
+        if let Some(ref motion) = line.motion {
+            if !motion.layers.is_empty() {
+                o.push_str("        motion {\n");
+                for layer in &motion.layers {
+                    o.push_str("            layer {\n");
+                    let props = [
+                        ("speed", &layer.speed),
+                        ("positionX", &layer.position_x),
+                        ("positionY", &layer.position_y),
+                        ("rotation", &layer.rotation),
+                        ("alpha", &layer.alpha),
+                        ("scaleX", &layer.scale_x),
+                        ("scaleY", &layer.scale_y),
+                    ];
+                    for (name, intervals) in &props {
+                        if !intervals.is_empty() {
+                            o.push_str(&format!("                {} {{\n", name));
+                            for intv in *intervals {
+                                let expr_str = fmt_lit_expr(&intv.expression);
+                                o.push_str(&format!("                    [{}b => {}b]: {};\n",
+                                    intv.start_beat, intv.end_beat, expr_str));
+                            }
+                            o.push_str("                }\n");
+                        }
+                    }
+                    o.push_str("            }\n");
+                }
+                o.push_str("        }\n");
+            }
+        }
+        if !line.notes.instances.is_empty() {
+            o.push_str("        notes {\n");
+            for n in &line.notes.instances {
+                o.push_str(&format!("            {} {{\n", n.kind.as_str()));
+                for (k, v) in &n.properties {
+                    o.push_str(&format!("                {}: {};\n", k, fmt_val(v)));
+                }
+                o.push_str("            }\n");
+            }
+            o.push_str("        }\n");
+        }
+        o.push_str("    }\n");
+    }
+    o.push_str("}\n");
+    o
+}
+
+fn fmt_val(v: &fcs_core::ast::NotePropertyValue) -> String {
+    match v {
+        fcs_core::ast::NotePropertyValue::Expr(e) => fmt_lit_expr(e),
+        fcs_core::ast::NotePropertyValue::Bool(b) => b.to_string(),
+        _ => "?".into(),
+    }
+}
+
+fn fmt_lit_expr(e: &fcs_core::ast::Expression) -> String {
+    match e {
+        fcs_core::ast::Expression::Literal(lit) => fmt_literal(lit),
+        _ => "?".into(),
+    }
+}
+
+fn fmt_literal(lit: &fcs_core::ast::Literal) -> String {
+    match lit {
+        fcs_core::ast::Literal::Float(f) => {
+            if f.fract() == 0.0 { format!("{:.1}", f) } else { f.to_string() }
+        }
+        fcs_core::ast::Literal::Integer(n) => n.to_string(),
+        fcs_core::ast::Literal::Quantified { value, unit } => {
+            format!("{}{}", value, unit_suffix(*unit))
+        }
+        fcs_core::ast::Literal::Boolean(b) => b.to_string(),
+        _ => "?".into(),
+    }
+}
+
+fn unit_suffix(unit: fcs_core::units::Unit) -> &'static str {
+    use fcs_core::units::{Unit, TimeUnit, LengthUnit, AngleUnit};
+    match unit {
+        Unit::Time(TimeUnit::Millisecond) => "ms",
+        Unit::Time(TimeUnit::Second) => "s",
+        Unit::Time(TimeUnit::Beat) => "b",
+        Unit::Length(LengthUnit::Pixel) => "px",
+        Unit::Length(LengthUnit::ViewportWidth) => "vw",
+        Unit::Length(LengthUnit::ViewportHeight) => "vh",
+        Unit::Angle(AngleUnit::Degree) => "deg",
+        Unit::Angle(AngleUnit::Radian) => "rad",
+        Unit::Dimensionless => "",
     }
 }

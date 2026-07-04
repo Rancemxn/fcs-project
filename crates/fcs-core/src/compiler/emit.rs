@@ -9,17 +9,17 @@ use crate::compiler::context::CompileContext;
 use crate::compiler::expr::compile_expression;
 use crate::compiler::prototype::{flatten_prototype, get_property};
 use crate::compiler::timeline::build_bpm_lut;
-use crate::error::CompileError;
+use crate::error::{CompileError, DiagnosticBag};
 
-pub fn emit(ctx: &mut CompileContext) -> Result<FcbcFile, ()> {
-    if ctx.has_errors() { return Err(()); }
-    validate_meta(ctx)?;
-    let master_lut = build_bpm_lut(&ctx.doc.master_timeline).map_err(|e| { ctx.error(e); })?;
+pub fn emit(ctx: &mut CompileContext) -> Result<FcbcFile, DiagnosticBag> {
+    if ctx.has_errors() { return Err(ctx.diagnostics.clone()); }
+    if let Err(()) = validate_meta(ctx) { return Err(ctx.diagnostics.clone()); }
+    let master_lut = match build_bpm_lut(&ctx.doc.master_timeline) { Ok(l) => l, Err(e) => { ctx.error(e); return Err(ctx.diagnostics.clone()); } };
     let master_timeline = MasterTimelineSection { entries: master_lut };
 
     let mut lines = Vec::new();
     for line_def in &ctx.doc.judgelines.lines {
-        lines.push(emit_line(line_def, ctx)?);
+        lines.push(match emit_line(line_def, ctx) { Ok(l) => l, Err(()) => return Err(ctx.diagnostics.clone()) });
     }
 
     let name_off = ctx.strings.intern(&ctx.doc.meta.name);

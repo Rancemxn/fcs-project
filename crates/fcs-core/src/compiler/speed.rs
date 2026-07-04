@@ -29,7 +29,7 @@ fn expr_depends_on_runtime(expr: &Expression) -> bool {
         Expression::Variable(name) => matches!(name.as_str(), "s" | "d"),
         Expression::BinaryOp { left, right, .. } => expr_depends_on_runtime(left) || expr_depends_on_runtime(right),
         Expression::UnaryOp { operand, .. } => expr_depends_on_runtime(operand),
-        Expression::Call { args, .. } => args.iter().any(|a| expr_depends_on_runtime(a)),
+        Expression::Call { args, .. } => args.iter().any(expr_depends_on_runtime),
         Expression::Ternary { cond, if_true, if_false } =>
             expr_depends_on_runtime(cond) || expr_depends_on_runtime(if_true) || expr_depends_on_runtime(if_false),
         Expression::ChainCompare { left, ops } =>

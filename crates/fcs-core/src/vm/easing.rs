@@ -28,8 +28,8 @@ pub fn evaluate(easing_id: u8, t: f64) -> f64 {
         21 => { let c=1.70158; let c3=c+1.0; c3*t.powi(3) - c*t.powi(2) },
         22 => if t < 0.5 { (1.0-(1.0-(2.0*t).powi(2)).sqrt())/2.0 } else { ((1.0-(-2.0*t+2.0).powi(2)).sqrt()+1.0)/2.0 },
         23 => { let c=2.5949095; if t<0.5 { ((2.0*t).powi(2)*((c+1.0)*2.0*t-c))/2.0 } else { ((2.0*t-2.0).powi(2)*((c+1.0)*(2.0*t-2.0)+c)+2.0)/2.0 } },
-        24 => { if t<=0.0 { return 0.0; } if t>=1.0 { return 1.0; } 2.0f64.powf(-10.0*t)*((10.0*t-0.75)*2.0*std::f64::consts::PI/3.0).sin()+1.0 },
-        25 => { if t<=0.0 { return 0.0; } if t>=1.0 { return 1.0; } -2.0f64.powf(10.0*t-10.0)*((10.0*t-10.75)*2.0*std::f64::consts::PI/3.0).sin() },
+        24 => { if t<=0.0 { return 0.0; } else if t>=1.0 { return 1.0; } 2.0f64.powf(-10.0*t)*((10.0*t-0.75)*2.0*std::f64::consts::PI/3.0).sin()+1.0 },
+        25 => { if t<=0.0 { return 0.0; } else if t>=1.0 { return 1.0; } -2.0f64.powf(10.0*t-10.0)*((10.0*t-10.75)*2.0*std::f64::consts::PI/3.0).sin() },
         26 => ease_out_bounce(t),
         27 => 1.0 - ease_out_bounce(1.0 - t),
         28 => if t < 0.5 { (1.0-ease_out_bounce(1.0-2.0*t))/2.0 } else { (1.0+ease_out_bounce(2.0*t-1.0))/2.0 },
@@ -47,7 +47,7 @@ fn ease_out_bounce(t: f64) -> f64 {
 }
 
 fn ease_in_out_elastic(t: f64) -> f64 {
-    if t <= 0.0 { return 0.0; } if t >= 1.0 { return 1.0; }
+    if t <= 0.0 { return 0.0; } else if t >= 1.0 { return 1.0; }
     let c = 2.0*std::f64::consts::PI/4.5;
     if t < 0.5 { -(2.0f64.powf(20.0*t-10.0)*((20.0*t-11.125)*c).sin())/2.0 }
     else { (2.0f64.powf(-20.0*t+10.0)*((20.0*t-11.125)*c).sin())/2.0+1.0 }
