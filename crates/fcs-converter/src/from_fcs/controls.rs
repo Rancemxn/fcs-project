@@ -107,7 +107,10 @@ fn sample_alpha(expr: &Expression) -> Vec<AlphaPoint> {
             if d > D_MAX {
                 return None;
             }
-            let e = EvalEnv { pixel_distance: d, ..Default::default() };
+            let e = EvalEnv {
+                pixel_distance: d,
+                ..Default::default()
+            };
             Some(AlphaPoint {
                 x: d_to_x(d),
                 easing: 1,
@@ -125,7 +128,10 @@ fn sample_alpha(expr: &Expression) -> Vec<AlphaPoint> {
 }
 
 fn sample_pos(expr: &Expression) -> Vec<PosPoint> {
-    let e0 = EvalEnv { pixel_distance: 0.0, ..Default::default() };
+    let e0 = EvalEnv {
+        pixel_distance: 0.0,
+        ..Default::default()
+    };
     let base = eval_expr(expr, &e0);
     if base.abs() < 1e-10 {
         return vec![];
@@ -137,7 +143,10 @@ fn sample_pos(expr: &Expression) -> Vec<PosPoint> {
             if d > D_MAX {
                 return None;
             }
-            let e = EvalEnv { pixel_distance: d, ..Default::default() };
+            let e = EvalEnv {
+                pixel_distance: d,
+                ..Default::default()
+            };
             let v = eval_expr(expr, &e);
             Some(PosPoint {
                 x: d_to_x(d),
@@ -163,7 +172,10 @@ fn sample_size(expr: &Expression) -> Vec<SizePoint> {
             if d > D_MAX {
                 return None;
             }
-            let e = EvalEnv { pixel_distance: d, ..Default::default() };
+            let e = EvalEnv {
+                pixel_distance: d,
+                ..Default::default()
+            };
             Some(SizePoint {
                 x: d_to_x(d),
                 easing: 1,

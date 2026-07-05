@@ -10,6 +10,7 @@ pub mod coord;
 pub mod easing_map;
 pub mod evaluator;
 pub mod flattener;
+pub mod note_util;
 pub mod pec_writer;
 pub mod pgr_writer;
 pub mod rpe_writer;

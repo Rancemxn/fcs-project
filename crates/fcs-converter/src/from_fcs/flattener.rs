@@ -99,7 +99,48 @@ pub fn flatten_note_block(block: &NoteBlock) -> FlattenedNotes {
         }
     }
 
+    // Stable sort: by time, then above=true first (prevents above-flag swapping
+    // when multiple notes share the same beat and position).
+    concrete.sort_by(|a, b| {
+        let ta = note_time_beat(a);
+        let tb = note_time_beat(b);
+        ta.partial_cmp(&tb)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                let aa = note_is_above(a);
+                let ab = note_is_above(b);
+                ab.cmp(&aa) // above=true sorts first
+            })
+    });
+
     FlattenedNotes { concrete, fake }
+}
+
+fn note_time_beat(inst: &NoteInstance) -> f64 {
+    inst.properties
+        .iter()
+        .find(|(k, _)| k == "time")
+        .and_then(|(_, v)| match v {
+            NotePropertyValue::Expr(e) => Some(crate::from_fcs::evaluator::eval_expr(
+                e,
+                &crate::from_fcs::evaluator::EvalEnv::default(),
+            )),
+            NotePropertyValue::Literal(fcs_core::ast::Literal::Float(f)) => Some(*f),
+            NotePropertyValue::Literal(fcs_core::ast::Literal::Integer(n)) => Some(*n as f64),
+            NotePropertyValue::Literal(fcs_core::ast::Literal::Quantified { value, .. }) => {
+                Some(*value)
+            }
+            _ => None,
+        })
+        .unwrap_or(0.0)
+}
+
+fn note_is_above(inst: &NoteInstance) -> bool {
+    inst.properties
+        .iter()
+        .find(|(k, _)| k == "above")
+        .map(|(_, v)| matches!(v, NotePropertyValue::Bool(true)))
+        .unwrap_or(true)
 }
 
 fn resolve_from_raw(
