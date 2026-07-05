@@ -213,7 +213,11 @@ fn convert_line(line: &LineDef) -> RpeLine {
         father: -1,
         is_cover: 1,
         z_order: line.z_order,
-        bpm_factor: 1.0,
+        bpm_factor: {
+            let chart_bpm = line.bpm_timeline.entries.first().map(|e| e.bpm).unwrap_or(120.0);
+            let bpm_0 = bpm;
+            if (chart_bpm - bpm_0).abs() > 0.01 { bpm_0 / chart_bpm } else { 1.0 }
+        },
         event_layers: motion_to_rpe_layers(&motion, bpm, &EvalEnv::default()),
         extended: RpeExtended {
             incline_events: vec![RpeEvent {

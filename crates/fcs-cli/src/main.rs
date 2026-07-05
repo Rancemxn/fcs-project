@@ -443,3 +443,32 @@ fn unit_suffix(unit: fcs_core::units::Unit) -> &'static str {
         Unit::Dimensionless => "",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use fcs_converter::from_fcs::{pec_writer, pgr_writer, rpe_writer};
+    use fcs_core::parser;
+
+    const SAMPLE_FCS: &str = r#"meta{name:"T";artists:["A"];charters:["C"];offset:0ms;version:"4.0.0";}masterTimeline{0.0b->120.0;}judgelines{line L{bpmTimeline{0.0b->120.0;}notes{tap{time:4.0b;positionX:0px;}}}}"#;
+
+    #[test]
+    fn test_convert_sample_to_pgr() {
+        let (_, doc) = parser::parse_document(SAMPLE_FCS).unwrap();
+        let json = pgr_writer::fcs_to_pgr_json(&doc, 3);
+        assert!(json.contains("\"formatVersion\""));
+    }
+
+    #[test]
+    fn test_convert_sample_to_rpe() {
+        let (_, doc) = parser::parse_document(SAMPLE_FCS).unwrap();
+        let json = rpe_writer::fcs_to_rpe_json(&doc);
+        assert!(json.contains("\"RPEVersion\""));
+    }
+
+    #[test]
+    fn test_convert_sample_to_pec() {
+        let (_, doc) = parser::parse_document(SAMPLE_FCS).unwrap();
+        let pec = pec_writer::fcs_to_pec(&doc);
+        assert!(pec.contains("bp "));
+    }
+}

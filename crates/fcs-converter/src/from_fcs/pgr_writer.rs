@@ -13,7 +13,7 @@ use fcs_core::ast::{
 };
 use serde::Serialize;
 
-const SAMPLES_PER_BEAT: f64 = 8.0;
+// adaptive sampling active
 
 // ---- PGR JSON output types ------------------------------------------------
 
@@ -244,7 +244,12 @@ fn convert_note(note: &NoteInstance, _bpm: f64, version: i32) -> PgrNote {
             let encoded = coord::encode_pgr_v1_position(x_pgr, 0.0);
             (encoded as f64, 0.0)
         }
-        _ => (x_pgr, 0.0),
+        _ => {
+            // floorPosition = accumulated position from speed * time
+            // Simplified: use speed * time_beat as rough estimate
+            let fp = speed * time_beat;
+            (x_pgr, fp)
+        },
     };
 
     PgrNote {
@@ -291,8 +296,10 @@ fn sample_to_events(
         min_beat = min_beat.min(iv.start_beat);
         max_beat = max_beat.max(iv.end_beat);
     }
-    let step = 1.0 / SAMPLES_PER_BEAT;
-    let n = ((max_beat - min_beat) * SAMPLES_PER_BEAT).ceil() as usize + 1;
+    // Adaptive step: larger intervals → coarser sampling (per tool-rpe2phi.py)
+    let dt_t = (max_beat - min_beat) * 32.0; // convert to PGR T units
+    let step = if dt_t >= 512.0 { 16.0 / 32.0 } else if dt_t >= 256.0 { 8.0 / 32.0 } else if dt_t >= 128.0 { 4.0 / 32.0 } else { 1.0 / 32.0 };
+    let n = ((max_beat - min_beat) / step).ceil() as usize + 1;
     let mut samples: Vec<(f64, f64)> = Vec::with_capacity(n);
     for i in 0..=n {
         let beat = min_beat + i as f64 * step;
