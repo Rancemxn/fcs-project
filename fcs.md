@@ -1,4 +1,4 @@
- # FCS (Functional Chart Specification) — 谱面格式规范 v4.0.0
+ # FCS (Functional Chart Specification) — 谱面格式规范 v4.1.0
 
  > FCS 是面向新一代社区谱面编辑器的声明式谱面格式。
  > 核心哲学：**一切动态属性皆为独立变量（时间或空间）的连续函数**。
@@ -222,6 +222,19 @@
 
  **开放扩展**: `meta` 允许任意额外键值对，类型限定为 `string`, `int`, `float`, `bool`, `string[]`。编译器对其不理解的键发出 `Warning` 但不影响编译。**注意**: `.fcbc` 字节码仅保留预定义的必需字段；自定义字段在编译时被剥离。
 
+ #### 5.2.1 RPE 预定义扩展元信息
+
+ FCS 转谱器在将 RPE 谱面转换为 FCS 格式时，会将以下 RPE 独有的 META 字段作为**预定义扩展键**（以 `rpe` 前缀标识）写入 `meta` 块。这些键在 FCS 引擎中**完全无语义**（no-op），仅供转谱器在 FCS → RPE 方向上**无损还原**原始 RPE 元信息。
+
+ | 扩展键 | 类型 | 说明 | RPE 原始字段 |
+ |--------|------|------|-------------|
+ | `rpeVersion` | `int` | RPE 版本号 (100–160) | `META.RPEVersion` |
+ | `rpeId` | `string` | 谱面 ID | `META.id` |
+ | `rpeChartTime` | `float` | 谱面编辑时长，单位秒 | `chartTime` |
+ | `rpeSong` | `string` | 音乐文件相对路径 | `META.song` |
+
+ **冲突规则**: FCS 原生 `version` / `offset` 等字段优先于任何 RPE 扩展键。转谱器处理冲突时遵循 §5.6.4.1 优先级规则。
+
 ---
 
  ### 5.3 `masterTimeline` 块
@@ -350,6 +363,45 @@
  **父线允许嵌套**。编译器在编译时展平继承链。
 
  **BPM 阶跃**: `bpmTimeline` 同样支持阶跃语法——同一 beat 处连续两条目即表示瞬时跳变，规则与 `masterTimeline` 一致。
+
+ #### 5.5.1.1 RPE 预定义扩展属性
+
+ FCS 转谱器在导入 RPE 谱面时，会将以下 RPE 独有的判定线字段作为**预定义扩展键**（以 `rpe` 前缀标识）写入 `line` 块。这些键在 FCS 引擎中**完全无语义**（no-op），仅供转谱器在 FCS → RPE 方向上**无损还原**原始 RPE 判定线配置。
+
+ | 扩展键 | 类型 | 默认值 | 说明 | RPE 原始字段 |
+ |--------|------|--------|------|-------------|
+ | `rpeGroup` | `int` | `0` | 判定线所属组索引 | `Group` |
+ | `rpeIsCover` | `int` | `1` | 是否遮罩 (1=遮罩, 0=不遮罩) | `isCover` |
+ | `rpeBpmFactor` | `float` | `1.0` | BPM 因子 (实际 BPM = nowBpm / factor) | `bpmfactor` |
+ | `rpeAttachUi` | `string` | — | UI 绑定标识 | `attachUI` |
+ | `rpeIsGif` | `bool` | `false` | 纹理是否为 GIF | `isGif` |
+ | `rpeRotateWithFather` | `bool` | `true` | 子线是否继承父线旋转角 | `rotateWithFather` |
+
+ **Note**: `textureAnchor` 在 FCS 中已有 `textureAnchor: (0.5, 0.5)` 等效字段，不设扩展键。`father` / `zOrder` 在 FCS 中已有 `parent` / `zOrder` 等效字段。
+
+ ##### 5.5.1.2 RPE Extended 事件层预定义扩展属性
+
+ RPE 的第五事件层（`extended`）包含判定线的特殊事件（故事板），其中部分属性在 FCS 中有等效机制，部分为 RPE 独有。FCS 转谱器按以下规则处理：
+
+ | RPE Extended 事件 | FCS 等效 | 转换策略 |
+ |-------------------|----------|----------|
+ | `colorEvents` | `color: #RRGGBBAA` (静态) | RPE→FCS: 保留为 `rpeExtendedColorEvents` 扩展键。FCS→RPE: 如 FCS motion 中有动态 alpha → 采样烘焙为 colorEvents；否则使用 line 静态 `color` 或扩展键回退 |
+ | `scaleXEvents` | `motion.layer.scaleX` | RPE→FCS: 保留为 `rpeExtendedScaleXEvents` 扩展键。FCS→RPE: FCS 优先，见 §5.6.4.3 |
+ | `scaleYEvents` | `motion.layer.scaleY` | 同上 |
+ | `textEvents` | 无等效 | RPE→FCS: 保留为 `rpeExtendedTextEvents` 扩展键。FCS→RPE: 扩展键回退 (FCS 无文字事件) |
+ | `inclineEvents` | 无等效 (RPE 已弃用) | 作为 `rpeExtendedInclineEvents` 原样保留 |
+ | `gifEvents` | 无等效 | 作为 `rpeExtendedGifEvents` 原样保留 |
+
+ ##### 5.5.1.3 Event 公共扩展字段
+
+ RPE 事件公有的 `linkgroup` 字段在 FCS 中无语义，作为 `linkgroup` 扩展键直接保留在事件的区间语法中。例如：
+
+ ```
+ positionX {
+     [0.0b => 16.0b]: easeOutCubic(b, 0.0b, 16.0b, 0px, 200px, 0.0, 1.0);
+     linkgroup: 0;
+ }
+ ```
 
  #### 5.5.2 `motion` 块与 `layer`
 
@@ -504,6 +556,50 @@ $$floorPosition(b) = \int_{0}^{b} speed(u) \, du$$
  #### 5.6.4 开放扩展
 
  Note 允许任意额外属性，类型必须为 `string | int | float | bool`。编译器对未识别的属性发出 `Warning`，但保留在 `.fcs` 源中。**`.fcbc` 字节码会剥离所有未识别的扩展属性。**
+
+ ##### 5.6.4.1 RPE 预定义扩展属性
+
+ FCS 转谱器在导入 RPE 谱面时，会将以下 RPE 独有的 Note 字段作为**预定义扩展键**（以 `rpe` 前缀标识）写入 Note 定义。这些键在 FCS 引擎中**完全无语义**（no-op），仅供转谱器在 FCS → RPE 方向上**无损还原**原始 RPE Note 配置。
+
+ | 扩展键 | 类型 | 默认值 | 说明 | RPE 原始字段 |
+ |--------|------|--------|------|-------------|
+ | `rpeIsFake` | `int` | `0` | 是否为可见诱导音符 (1=是, 0=否)。**语义不同于 FCS `kind: fake`** — 见下文 §5.6.4.2 | `isFake` |
+ | `rpeSize` | `float` | `1.0` | 音符宽度倍率 | `size` |
+ | `rpeVisibleTime` | `float` | `999999.0` | 音符可见时间，单位秒 | `visibleTime` |
+ | `rpeHitsound` | `string` | — | 自定义打击音文件相对路径 | `hitsound` |
+ | `rpeJudgeArea` | `float` | `1.0` | 判定区域宽度倍率 (RPE 170+) | `judgeArea` |
+ | `rpeTint` | `int[3]` | `[255,255,255]` | 音符顶点颜色乘法 `[R,G,B]`，范围 0–255 | `tint` / `color` |
+ | `rpeTintHitEffects` | `int[3]` | — | 打击特效顶点颜色乘法 `[R,G,B]` | `tintHitEffects` |
+ | `rpeAlphaControl` | `object[]` | 默认 | alpha 距离关键帧表 | `alphaControl` |
+ | `rpePosControl` | `object[]` | 默认 | positionX 倍率距离关键帧表 | `posControl` |
+ | `rpeSizeControl` | `object[]` | 默认 | 大小距离关键帧表 | `sizeControl` |
+ | `rpeYControl` | `object[]` | 默认 | Y 偏移距离关键帧表 | `yControl` |
+ | `rpeSkewControl` | `object[]` | 默认 | 倾斜距离关键帧表 | `skewControl` |
+
+ ##### 5.6.4.2 `kind: fake` 与 `rpeIsFake` 的语义区分
+
+ | 属性 | 渲染行为 | 判定行为 | 可见性 |
+ |------|----------|----------|--------|
+ | FCS `kind: fake` | 引擎完全跳过绘制 | 无判定、无音效、不计分 | **不可见** |
+ | RPE `isFake: 1` | 引擎正常渲染 | 无判定、无音效、不计分 | **可见** |
+ | FCS `fake: true` | 引擎正常渲染 | 无判定、无音效、不计分 | **可见** |
+
+ **转换规则**:
+ - FCS `kind: fake` → RPE: **丢弃该 Note**。前提是转谱器已事先解析原型继承链，将被该 fake note 所影响的子 Note 属性在编译期展平。
+ - FCS `fake: true` → RPE: 映射为 `isFake: 1`。
+ - RPE `isFake: 1` → FCS: 保留为 `rpeIsFake: 1` 扩展键；同时设置 `fake: true`。
+ - RPE 无 `kind: fake` 等效概念 → 转回 RPE 时不做特殊处理。
+
+ ##### 5.6.4.3 扩展属性冲突解决规则
+
+ 当同一 Note 同时存在 FCS 原生属性与 RPE 预定义扩展键时，转谱器按以下优先级处理：
+
+ 1. **FCS 原生优先 (Native Wins)**：若 FCS 原生属性被显式设置（非默认值），转谱器 MUST 使用 FCS 原生属性的求值结果。对应 RPE 扩展键被忽略，同时 MUST 发出 Warning: `"RPE extension key '<key>' overridden by native FCS property '<prop>'"`。
+ 2. **扩展键回退 (Extension Fallback)**：若 FCS 原生属性为默认值（谱师未显式设置），转谱器 SHOULD 使用 RPE 扩展键中的值。
+ 3. **保留被覆盖的键**：转谱器 SHOULD 在输出中保留被覆盖的扩展键（不删除），以便后续审查能发现冲突。
+
+ **语义不兼容的特殊处理**:
+ - `rpePosControl`（倍率）与 `positionX`（绝对值）语义不同。转谱器在 FCS 优先规则下，忽略 `rpePosControl`，仅使用 `positionX` 的求值结果。
 
  #### 5.6.5 原型继承 (Prototype Inheritance)
 
@@ -1160,5 +1256,94 @@ RET
 |--------|------|------|-------|
 | 0 | 4 | u32 (stOff) | uniformName | uniform 名称 |
 | 4 | 8 | PropertyDescriptor | value | 绑定的值 |
+
+---
+
+ ## 10. 附录：RPE ↔ FCS 转谱对照总表
+
+ ### 10.1 Note 类型映射
+
+ | FCS `kind` | PGR `type` | RPE `type` | 说明 |
+ |------------|-----------|-----------|------|
+ | `tap` | 1 | 1 | Tap |
+ | `drag` | 2 | **4** | Drag (注意 RPE 与 PGR 编号不同) |
+ | `hold` | 3 | **2** | Hold |
+ | `flick` | 4 | **3** | Flick |
+ | `fake` | 0 | — | RPE/PGR 无不可见音符等效 (见 §5.6.4.2) |
+
+ ### 10.2 Note 属性映射
+
+ | FCS 属性 | PGR 字段 | RPE 字段 | 方向 |
+ |----------|---------|---------|------|
+ | `time` | `time` (T 单位) | `startTime` (Beat `[a,b,c]`) | ↔ |
+ | `endTime` (Hold) | `holdTime` (T 单位) | `endTime` (Beat `[a,b,c]`) | ↔ |
+ | `positionX` | `positionX` (X 单位 或 V1 编码) | `positionX` (float) | ↔ |
+ | `speed` | `speed` | `speed` | ↔ |
+ | `above` | — (notesAbove/notesBelow 分离) | `above` (0/1) | ↔ |
+ | `alpha` (0.0–1.0) | — | `alpha` (0–255) | ↔ 需范围转换 |
+ | `scaleX` | — | `size` | → FCS `scaleX` ↔ RPE `size` |
+ | `yOffset` | — | `yOffset` | ↔ |
+ | `fake` | — | `isFake` | → (见 §5.6.4.2) |
+ | `color` | — | `tint` / `color` | ↔ 格式不同 |
+ | `judgeShape` | — | `judgeArea` (RPE 170+) | → 部分映射 |
+
+ ### 10.3 判定线属性映射
+
+ | FCS 属性 | PGR 字段 | RPE 字段 | 方向 |
+ |----------|---------|---------|------|
+ | `name` | — | `Name` | ↔ |
+ | `texture` | — | `Texture` | ↔ |
+ | `textureAnchor` | — | `anchor` | ↔ |
+ | `zOrder` | — | `zOrder` | ↔ |
+ | `parent` | — | `father` (索引) | ↔ (名称→索引转换) |
+ | `bpmTimeline` | `bpm` (标量) | `BPMList` + `bpmfactor` | → 展开 |
+ | `motion.layer.positionX` | `judgeLineMoveEvents` (start/start2) | `moveXEvents` | ↔ |
+ | `motion.layer.positionY` | `judgeLineMoveEvents` (end/end2) | `moveYEvents` | ↔ |
+ | `motion.layer.rotation` | `judgeLineRotateEvents` | `rotateEvents` | ↔ 方向取反 |
+ | `motion.layer.alpha` | `judgeLineDisappearEvents` | `alphaEvents` | ↔ 范围转换 |
+ | `motion.layer.speed` | `speedEvents` (value) | `speedEvents` | ↔ |
+ | `motion.layer.scaleX` | — | `extended.scaleXEvents` | → |
+ | `motion.layer.scaleY` | — | `extended.scaleYEvents` | → |
+ | `color` | — | `extended.colorEvents` | → |
+
+ ### 10.4 坐标系统对照
+
+ | | FCS | PGR | RPE | PEC |
+ |---|---|---|---|---|
+ | 画布尺寸 | 1920×1080 逻辑坐标 | — (屏幕百分比) | 1350×900 | — (2048/1400 编码) |
+ | X 中心 | 0 | 0.5 (屏幕比例) | 0 | 1024 |
+ | Y 中心 | 0 | 0.5 (屏幕比例) | 0 | 700 |
+ | X 范围 | [-960, 960] | [0, 1] | [-675, 675] | [0, 2048) |
+ | Y 范围 | [-540, 540] | [0, 1] | [-450, 450] | [0, 1400) |
+ | 1 单位 | 1px = 1 逻辑单位 | 1X = 108px (@1920w) | 1 单位 = 1/1350 屏宽 | 1 单位 = 1/2048 屏宽 |
+ | 时间单位 | beat (b) | T (1T = 1.875/BPM s) | Beat `[a,b,c]` | beat×2048 (int) |
+ | 缓动 | 29 种 + bezier | 无 (仅线性) | 1–28 + bezier | 无 (控制点线性) |
+
+ ### 10.5 缓动编号对照
+
+ | ID | FCS 函数名 | RPE easingType | 说明 |
+ |----|-----------|---------------|------|
+ | 1 | `easeLinear` | 1 | 线性 |
+ | 2 | `easeOutSine` | 2 | — |
+ | 3 | `easeInSine` | 3 | — |
+ | ... | ... | ... | 1–28 完全对应 |
+ | 28 | `easeInOutBounce` | 28 | — |
+ | 29 | `easeInOutElastic` | **不支持** | RPE 降级为 1 (linear) |
+ | — | `easeBezier` | 0 (bezier=1) | 控制点存 `bezierPoints` |
+
+ ### 10.6 转换方向与特性保留矩阵
+
+ | 特性 | FCS→PGR | FCS→RPE | FCS→PEC | RPE→FCS | PGR→FCS |
+ |------|---------|---------|---------|---------|---------|
+ | 模板 (templates) | AOT 展平 | AOT 展平 | AOT 展平 | — | — |
+ | 原型继承 (prototype) | AOT 展平 | AOT 展平 | AOT 展平 | — | — |
+ | 父子线 (parent) | AOT 展平 | 保留 father | AOT 展平 | 保留 parent | — |
+ | 数学表达式 | 采样求值 | 采样求值或直接映射 | 采样求值 | 保留为表达式 | 保留为表达式 |
+ | 缓动函数 | 展开为线性密集段 | 直接映射 easingType | 展开为线性段 | 直接映射 | 展开为线性段 |
+ | `kind: fake` | 丢弃 | 丢弃 | 丢弃 | — | — |
+ | `shaders` | 丢弃 + Warning | 丢弃 + Warning | 丢弃 + Warning | — | — |
+ | RPE Controls | — | 从 FCS 表达式采样烘焙 | — | 保留为扩展键 | — |
+ | RPE Extended | — | 扩展键回退 | — | 保留为扩展键 | — |
+ | RPE 独有 meta/line/note 字段 | — | 扩展键回退 | — | 保留为扩展键 | — |
 
 ---

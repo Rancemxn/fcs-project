@@ -26,12 +26,19 @@ enum Commands {
     /// Show chart metadata from .fcs or .fcbc
     Info { input: String },
     /// Convert a Phigros chart (PGR/RPE/PEC) to .fcs
+    #[command(name = "convert")]
     Convert {
         input: String,
         #[arg(short, long)]
         output: Option<String>,
         #[arg(short, long)]
         format: Option<String>,
+        /// Reverse: convert .fcs to target format (pgr, rpe, pec)
+        #[arg(long = "to")]
+        to_format: Option<String>,
+        /// PGR version for reverse conversion (1 or 3, default 3)
+        #[arg(long = "pgr-version", default_value = "3")]
+        pgr_version: i32,
     },
 }
 
@@ -46,7 +53,15 @@ fn main() {
             input,
             output,
             format,
-        } => cmd_convert(&input, output.as_deref(), format.as_deref()),
+            to_format,
+            pgr_version,
+        } => cmd_convert(
+            &input,
+            output.as_deref(),
+            format.as_deref(),
+            to_format.as_deref(),
+            pgr_version,
+        ),
     }
 }
 
@@ -193,7 +208,13 @@ fn cmd_info(input: &str) {
     }
 }
 
-fn cmd_convert(input: &str, output: Option<&str>, format: Option<&str>) {
+fn cmd_convert(
+    input: &str,
+    output: Option<&str>,
+    format: Option<&str>,
+    to_format: Option<&str>,
+    pgr_version: i32,
+) {
     let src = match fs::read_to_string(input) {
         Ok(s) => s,
         Err(e) => {
@@ -201,6 +222,39 @@ fn cmd_convert(input: &str, output: Option<&str>, format: Option<&str>) {
             return;
         }
     };
+
+    // Reverse direction: FCS → target format
+    if let Some(to) = to_format {
+        let (_, doc) = match fcs_core::parser::parse_document(&src) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("FCS parse error: {:?}", e);
+                return;
+            }
+        };
+        let out_str = match to {
+            "pgr" => fcs_converter::from_fcs::pgr_writer::fcs_to_pgr_json(&doc, pgr_version),
+            "rpe" => fcs_converter::from_fcs::rpe_writer::fcs_to_rpe_json(&doc),
+            "pec" => fcs_converter::from_fcs::pec_writer::fcs_to_pec(&doc),
+            other => {
+                eprintln!(
+                    "unsupported target format: '{}' (use: pgr, rpe, pec)",
+                    other
+                );
+                return;
+            }
+        };
+        match output {
+            Some(out) => {
+                fs::write(out, &out_str).unwrap_or_else(|e| eprintln!("write error: {}", e));
+                println!("Converted '{}' -> '{}'", input, out);
+            }
+            None => println!("{}", out_str),
+        }
+        return;
+    }
+
+    // Forward direction: source format → FCS
     let fmt = format.unwrap_or_else(|| detect_format(input, &src));
     let doc = match fmt {
         "pgr" => convert_with(&src, fcs_converter::pgr::parse_pgr, "PGR"),

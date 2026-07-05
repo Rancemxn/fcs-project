@@ -1,5 +1,6 @@
-//! FCS Converter — Phigros chart format conversion (PGR/RPE/PEC → FCS).
+//! FCS Converter — Phigros chart format conversion (PGR/RPE/PEC ↔ FCS).
 pub mod coord;
+pub mod from_fcs;
 pub mod ir;
 pub mod pec;
 pub mod pgr;
