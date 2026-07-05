@@ -100,16 +100,28 @@ pub struct DiagnosticBag {
 }
 
 impl DiagnosticBag {
-    pub fn new() -> Self { Self::default() }
-    pub fn has_errors(&self) -> bool { !self.errors.is_empty() }
-    pub fn error(&mut self, e: CompileError) { self.errors.push(e); }
-    pub fn warn(&mut self, w: Warning) { self.warnings.push(w); }
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
+    }
+    pub fn error(&mut self, e: CompileError) {
+        self.errors.push(e);
+    }
+    pub fn warn(&mut self, w: Warning) {
+        self.warnings.push(w);
+    }
 }
 
 impl fmt::Display for DiagnosticBag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for w in &self.warnings { writeln!(f, "warning: {}", w)?; }
-        for e in &self.errors { writeln!(f, "error: {}", e)?; }
+        for w in &self.warnings {
+            writeln!(f, "warning: {}", w)?;
+        }
+        for e in &self.errors {
+            writeln!(f, "error: {}", e)?;
+        }
         Ok(())
     }
 }
@@ -130,7 +142,18 @@ mod tests {
 
     #[test]
     fn test_error_codes() {
-        assert!(CompileError::TypeMismatch("test".into()).to_string().contains("E003"));
-        assert!(Warning::MotionOverlap { layer: 0, property: "x".into() }.to_string().contains("W001"));
+        assert!(
+            CompileError::TypeMismatch("test".into())
+                .to_string()
+                .contains("E003")
+        );
+        assert!(
+            Warning::MotionOverlap {
+                layer: 0,
+                property: "x".into()
+            }
+            .to_string()
+            .contains("W001")
+        );
     }
 }

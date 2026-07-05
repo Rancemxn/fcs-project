@@ -42,19 +42,29 @@ fn main() {
         Commands::Dump { input } => cmd_dump(&input),
         Commands::Check { input } => cmd_check(&input),
         Commands::Info { input } => cmd_info(&input),
-        Commands::Convert { input, output, format } => cmd_convert(&input, output.as_deref(), format.as_deref()),
+        Commands::Convert {
+            input,
+            output,
+            format,
+        } => cmd_convert(&input, output.as_deref(), format.as_deref()),
     }
 }
 
 fn cmd_compile(input: &str, output: Option<&str>) {
     let src = match fs::read_to_string(input) {
         Ok(s) => s,
-        Err(e) => { eprintln!("error reading '{}': {}", input, e); return; }
+        Err(e) => {
+            eprintln!("error reading '{}': {}", input, e);
+            return;
+        }
     };
 
     let (_, doc) = match fcs_core::parser::parse_document(&src) {
         Ok(r) => r,
-        Err(e) => { eprintln!("parse error: {:?}", e); return; }
+        Err(e) => {
+            eprintln!("parse error: {:?}", e);
+            return;
+        }
     };
 
     match fcs_core::compiler::compile(&doc) {
@@ -69,7 +79,12 @@ fn cmd_compile(input: &str, output: Option<&str>) {
             if let Err(e) = fs::write(out_path, &bytes) {
                 eprintln!("error writing '{}': {}", out_path, e);
             } else {
-                println!("Compiled '{}' -> '{}' ({} bytes)", input, out_path, bytes.len());
+                println!(
+                    "Compiled '{}' -> '{}' ({} bytes)",
+                    input,
+                    out_path,
+                    bytes.len()
+                );
             }
         }
         Err(diag) => {
@@ -81,16 +96,17 @@ fn cmd_compile(input: &str, output: Option<&str>) {
 fn cmd_check(input: &str) {
     let src = match fs::read_to_string(input) {
         Ok(s) => s,
-        Err(e) => { eprintln!("error reading '{}': {}", input, e); return; }
+        Err(e) => {
+            eprintln!("error reading '{}': {}", input, e);
+            return;
+        }
     };
 
     match fcs_core::parser::parse_document(&src) {
-        Ok((_, doc)) => {
-            match fcs_core::compiler::compile(&doc) {
-                Ok(_) => println!("'{}' is valid.", input),
-                Err(diag) => eprintln!("{}", diag),
-            }
-        }
+        Ok((_, doc)) => match fcs_core::compiler::compile(&doc) {
+            Ok(_) => println!("'{}' is valid.", input),
+            Err(diag) => eprintln!("{}", diag),
+        },
         Err(e) => eprintln!("parse error: {:?}", e),
     }
 }
@@ -98,7 +114,10 @@ fn cmd_check(input: &str) {
 fn cmd_dump(input: &str) {
     let data = match fs::read(input) {
         Ok(d) => d,
-        Err(e) => { eprintln!("error reading '{}': {}", input, e); return; }
+        Err(e) => {
+            eprintln!("error reading '{}': {}", input, e);
+            return;
+        }
     };
 
     if data.len() < 4 || &data[0..4] != b"FCSB" {
@@ -119,8 +138,12 @@ fn cmd_dump(input: &str) {
         let cp_size = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
 
         println!("Version: {}", version);
-        println!("Flags: 0x{:08X} (shader={}, expr={})", flags,
-            flags & 1 != 0, flags & 2 != 0);
+        println!(
+            "Flags: 0x{:08X} (shader={}, expr={})",
+            flags,
+            flags & 1 != 0,
+            flags & 2 != 0
+        );
         println!("StringTable: offset={} size={}", st_off, st_size);
         println!("ConstPool:   offset={} size={}", cp_off, cp_size);
     }
@@ -129,7 +152,9 @@ fn cmd_dump(input: &str) {
     let limit = data.len().min(128);
     for (i, chunk) in data[..limit].chunks(16).enumerate() {
         print!("{:08X}  ", i * 16);
-        for b in chunk { print!("{:02X} ", b); }
+        for b in chunk {
+            print!("{:02X} ", b);
+        }
         println!();
     }
     if data.len() > 128 {
@@ -140,7 +165,10 @@ fn cmd_dump(input: &str) {
 fn cmd_info(input: &str) {
     let src = match fs::read_to_string(input) {
         Ok(s) => s,
-        Err(e) => { eprintln!("error reading '{}': {}", input, e); return; }
+        Err(e) => {
+            eprintln!("error reading '{}': {}", input, e);
+            return;
+        }
     };
 
     match fcs_core::parser::parse_document(&src) {
@@ -151,8 +179,12 @@ fn cmd_info(input: &str) {
             println!("Offset:    {}ms", doc.meta.offset);
             println!("Version:   {}", doc.meta.version);
             println!("Lines:     {}", doc.judgelines.lines.len());
-            let total_notes: usize = doc.judgelines.lines.iter()
-                .map(|l| l.notes.instances.len()).sum();
+            let total_notes: usize = doc
+                .judgelines
+                .lines
+                .iter()
+                .map(|l| l.notes.instances.len())
+                .sum();
             println!("Notes:     {}", total_notes);
             let bpm_count = doc.master_timeline.entries.len();
             println!("BPM stops: {}", bpm_count);
@@ -164,38 +196,64 @@ fn cmd_info(input: &str) {
 fn cmd_convert(input: &str, output: Option<&str>, format: Option<&str>) {
     let src = match fs::read_to_string(input) {
         Ok(s) => s,
-        Err(e) => { eprintln!("error reading '{}': {}", input, e); return; }
+        Err(e) => {
+            eprintln!("error reading '{}': {}", input, e);
+            return;
+        }
     };
     let fmt = format.unwrap_or_else(|| detect_format(input, &src));
     let doc = match fmt {
         "pgr" => convert_with(&src, fcs_converter::pgr::parse_pgr, "PGR"),
         "rpe" => convert_with(&src, fcs_converter::rpe::parse_rpe, "RPE"),
         "pec" => convert_with(&src, fcs_converter::pec::parse_pec, "PEC"),
-        other => { eprintln!("unsupported format: '{}' (supported: pgr, rpe, pec)", other); return; }
+        other => {
+            eprintln!("unsupported format: '{}' (supported: pgr, rpe, pec)", other);
+            return;
+        }
     };
     let fcs_src = format_fcs(&doc);
     match output {
-        Some(out) => { fs::write(out, &fcs_src).unwrap_or_else(|e| eprintln!("write error: {}", e)); println!("Converted '{}' -> '{}'", input, out); }
+        Some(out) => {
+            fs::write(out, &fcs_src).unwrap_or_else(|e| eprintln!("write error: {}", e));
+            println!("Converted '{}' -> '{}'", input, out);
+        }
         None => println!("{}", fcs_src),
     }
 }
 
-fn convert_with(src: &str, parser: fn(&str) -> Result<fcs_converter::ir::IrChart, String>, name: &str) -> fcs_core::ast::Document {
+fn convert_with(
+    src: &str,
+    parser: fn(&str) -> Result<fcs_converter::ir::IrChart, String>,
+    name: &str,
+) -> fcs_core::ast::Document {
     match parser(src) {
         Ok(ir) => fcs_converter::to_fcs::ir_to_fcs(&ir),
-        Err(e) => { eprintln!("{} parse error: {}", name, e); std::process::exit(1); }
+        Err(e) => {
+            eprintln!("{} parse error: {}", name, e);
+            std::process::exit(1);
+        }
     }
 }
 
 fn detect_format(path: &str, src: &str) -> &'static str {
     let path_lower = path.to_lowercase();
-    if path_lower.ends_with(".pec") || src.lines().next().map(|l| l.trim().parse::<f64>().is_ok()).unwrap_or(false) {
+    if path_lower.ends_with(".pec")
+        || src
+            .lines()
+            .next()
+            .map(|l| l.trim().parse::<f64>().is_ok())
+            .unwrap_or(false)
+    {
         return "pec";
     }
     // Try to parse as JSON → check for RPE markers
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(src) {
-        if v.get("META").is_some() || v.get("BPMList").is_some() { return "rpe"; }
-        if v.get("judgeLineList").is_some() || v.get("formatVersion").is_some() { return "pgr"; }
+        if v.get("META").is_some() || v.get("BPMList").is_some() {
+            return "rpe";
+        }
+        if v.get("judgeLineList").is_some() || v.get("formatVersion").is_some() {
+            return "pgr";
+        }
     }
     // Fallback: extension-based
     "pgr"
@@ -205,9 +263,19 @@ fn format_fcs(doc: &fcs_core::ast::Document) -> String {
     let mut o = String::new();
     o.push_str("meta {\n");
     o.push_str(&format!("    name: {:?};\n", doc.meta.name));
-    let a: Vec<_> = doc.meta.artists.iter().map(|x| format!("{:?}", x)).collect();
+    let a: Vec<_> = doc
+        .meta
+        .artists
+        .iter()
+        .map(|x| format!("{:?}", x))
+        .collect();
     o.push_str(&format!("    artists: [{}];\n", a.join(", ")));
-    let c: Vec<_> = doc.meta.charters.iter().map(|x| format!("{:?}", x)).collect();
+    let c: Vec<_> = doc
+        .meta
+        .charters
+        .iter()
+        .map(|x| format!("{:?}", x))
+        .collect();
     o.push_str(&format!("    charters: [{}];\n", c.join(", ")));
     o.push_str(&format!("    offset: {}ms;\n", doc.meta.offset as i64));
     o.push_str(&format!("    version: {:?};\n", doc.meta.version));
@@ -225,35 +293,37 @@ fn format_fcs(doc: &fcs_core::ast::Document) -> String {
         }
         o.push_str("        }\n");
         // Motion block
-        if let Some(ref motion) = line.motion {
-            if !motion.layers.is_empty() {
-                o.push_str("        motion {\n");
-                for layer in &motion.layers {
-                    o.push_str("            layer {\n");
-                    let props = [
-                        ("speed", &layer.speed),
-                        ("positionX", &layer.position_x),
-                        ("positionY", &layer.position_y),
-                        ("rotation", &layer.rotation),
-                        ("alpha", &layer.alpha),
-                        ("scaleX", &layer.scale_x),
-                        ("scaleY", &layer.scale_y),
-                    ];
-                    for (name, intervals) in &props {
-                        if !intervals.is_empty() {
-                            o.push_str(&format!("                {} {{\n", name));
-                            for intv in *intervals {
-                                let expr_str = fmt_lit_expr(&intv.expression);
-                                o.push_str(&format!("                    [{}b => {}b]: {};\n",
-                                    intv.start_beat, intv.end_beat, expr_str));
-                            }
-                            o.push_str("                }\n");
+        if let Some(ref motion) = line.motion
+            && !motion.layers.is_empty()
+        {
+            o.push_str("        motion {\n");
+            for layer in &motion.layers {
+                o.push_str("            layer {\n");
+                let props = [
+                    ("speed", &layer.speed),
+                    ("positionX", &layer.position_x),
+                    ("positionY", &layer.position_y),
+                    ("rotation", &layer.rotation),
+                    ("alpha", &layer.alpha),
+                    ("scaleX", &layer.scale_x),
+                    ("scaleY", &layer.scale_y),
+                ];
+                for (name, intervals) in &props {
+                    if !intervals.is_empty() {
+                        o.push_str(&format!("                {} {{\n", name));
+                        for intv in *intervals {
+                            let expr_str = fmt_lit_expr(&intv.expression);
+                            o.push_str(&format!(
+                                "                    [{}b => {}b]: {};\n",
+                                intv.start_beat, intv.end_beat, expr_str
+                            ));
                         }
+                        o.push_str("                }\n");
                     }
-                    o.push_str("            }\n");
                 }
-                o.push_str("        }\n");
+                o.push_str("            }\n");
             }
+            o.push_str("        }\n");
         }
         if !line.notes.instances.is_empty() {
             o.push_str("        notes {\n");
@@ -290,7 +360,11 @@ fn fmt_lit_expr(e: &fcs_core::ast::Expression) -> String {
 fn fmt_literal(lit: &fcs_core::ast::Literal) -> String {
     match lit {
         fcs_core::ast::Literal::Float(f) => {
-            if f.fract() == 0.0 { format!("{:.1}", f) } else { f.to_string() }
+            if f.fract() == 0.0 {
+                format!("{:.1}", f)
+            } else {
+                f.to_string()
+            }
         }
         fcs_core::ast::Literal::Integer(n) => n.to_string(),
         fcs_core::ast::Literal::Quantified { value, unit } => {
@@ -302,7 +376,7 @@ fn fmt_literal(lit: &fcs_core::ast::Literal) -> String {
 }
 
 fn unit_suffix(unit: fcs_core::units::Unit) -> &'static str {
-    use fcs_core::units::{Unit, TimeUnit, LengthUnit, AngleUnit};
+    use fcs_core::units::{AngleUnit, LengthUnit, TimeUnit, Unit};
     match unit {
         Unit::Time(TimeUnit::Millisecond) => "ms",
         Unit::Time(TimeUnit::Second) => "s",

@@ -3,14 +3,15 @@
 
 use crate::ast::{BinaryOp, CompareOp, Expression, UnaryOp};
 use crate::parser::literal::{parse_literal, ws};
+use nom::Parser;
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::tag,
     character::complete::{alpha1, alphanumeric1, char},
     combinator::{map, opt, recognize, value},
     multi::{many0, separated_list0},
     sequence::{delimited, pair, preceded},
-    IResult,
 };
 
 // ---------------------------------------------------------------------------
@@ -21,7 +22,8 @@ fn ident(input: &str) -> IResult<&str, &str> {
     recognize(pair(
         alt((alpha1, tag("_"))),
         many0(alt((alphanumeric1, tag("_")))),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 // ---------------------------------------------------------------------------
@@ -34,7 +36,8 @@ fn primary(input: &str) -> IResult<&str, Expression> {
         map(ident, |name: &str| Expression::Variable(name.to_string())),
         parse_grouped,
         parse_unary,
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn parse_grouped(input: &str) -> IResult<&str, Expression> {
@@ -42,13 +45,20 @@ fn parse_grouped(input: &str) -> IResult<&str, Expression> {
         preceded(ws, char('(')),
         preceded(ws, parse_expression),
         preceded(ws, char(')')),
-    )(input)
+    )
+    .parse(input)
 }
 
 fn parse_unary(input: &str) -> IResult<&str, Expression> {
-    let (input, _) = preceded(ws, char('-'))(input)?;
+    let (input, _) = preceded(ws, char('-')).parse(input)?;
     let (input, operand) = primary(input)?;
-    Ok((input, Expression::UnaryOp { op: UnaryOp::Neg, operand: Box::new(operand) }))
+    Ok((
+        input,
+        Expression::UnaryOp {
+            op: UnaryOp::Neg,
+            operand: Box::new(operand),
+        },
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -59,16 +69,24 @@ fn parse_postfix(input: &str) -> IResult<&str, Expression> {
     let (input, base) = primary(input)?;
     let (input, args_opt) = opt(preceded(
         preceded(ws, char('(')),
-        preceded(ws, separated_list0(preceded(ws, char(',')), preceded(ws, parse_expression))),
-    ))(input)?;
+        preceded(
+            ws,
+            separated_list0(preceded(ws, char(',')), preceded(ws, parse_expression)),
+        ),
+    ))
+    .parse(input)?;
 
     match args_opt {
         Some(args) => {
-            let (input, _) = preceded(ws, char(')'))(input)?;
+            let (input, _) = preceded(ws, char(')')).parse(input)?;
             match &base {
-                Expression::Variable(name) => Ok((input, Expression::Call {
-                    name: name.clone(), args,
-                })),
+                Expression::Variable(name) => Ok((
+                    input,
+                    Expression::Call {
+                        name: name.clone(),
+                        args,
+                    },
+                )),
                 _ => Ok((input, base)),
             }
         }
@@ -81,7 +99,12 @@ fn parse_postfix(input: &str) -> IResult<&str, Expression> {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Prec { Compare = 1, Sum = 2, Product = 3, Power = 4 }
+enum Prec {
+    Compare = 1,
+    Sum = 2,
+    Product = 3,
+    Power = 4,
+}
 
 fn op_prec(op: &BinaryOp) -> Prec {
     match op {
@@ -100,7 +123,8 @@ fn parse_binary_op(input: &str) -> IResult<&str, BinaryOp> {
         value(BinaryOp::Div, char('/')),
         value(BinaryOp::Mod, char('%')),
         value(BinaryOp::Pow, char('^')),
-    ))(input)?;
+    ))
+    .parse(input)?;
     // Consume whitespace after operator
     let (input, _) = ws(input)?;
     Ok((input, op))
@@ -115,7 +139,8 @@ fn parse_compare_op(input: &str) -> IResult<&str, CompareOp> {
         value(CompareOp::Ne, tag("!=")),
         value(CompareOp::Lt, char('<')),
         value(CompareOp::Gt, char('>')),
-    ))(input)?;
+    ))
+    .parse(input)?;
     let (input, _) = ws(input)?;
     Ok((input, op))
 }
@@ -126,15 +151,20 @@ fn parse_compare_op(input: &str) -> IResult<&str, CompareOp> {
 
 fn parse_ternary(input: &str) -> IResult<&str, Expression> {
     let (input, cond) = parse_comparison(input)?;
-    let (input, has) = opt(preceded(ws, char('?')))(input)?;
+    let (input, has) = opt(preceded(ws, char('?'))).parse(input)?;
     match has {
         Some(_) => {
-            let (input, if_true) = preceded(ws, parse_expression)(input)?;
-            let (input, _) = preceded(ws, char(':'))(input)?;
-            let (input, if_false) = preceded(ws, parse_expression)(input)?;
-            Ok((input, Expression::Ternary {
-                cond: Box::new(cond), if_true: Box::new(if_true), if_false: Box::new(if_false),
-            }))
+            let (input, if_true) = preceded(ws, parse_expression).parse(input)?;
+            let (input, _) = preceded(ws, char(':')).parse(input)?;
+            let (input, if_false) = preceded(ws, parse_expression).parse(input)?;
+            Ok((
+                input,
+                Expression::Ternary {
+                    cond: Box::new(cond),
+                    if_true: Box::new(if_true),
+                    if_false: Box::new(if_false),
+                },
+            ))
         }
         None => Ok((input, cond)),
     }
@@ -149,15 +179,19 @@ fn parse_comparison(input: &str) -> IResult<&str, Expression> {
     let (input, ops) = many0(pair(
         parse_compare_op,
         preceded(ws, |i| parse_binary(i, Prec::Compare)),
-    ))(input)?;
+    ))
+    .parse(input)?;
 
     if ops.is_empty() {
         Ok((input, left))
     } else {
-        Ok((input, Expression::ChainCompare {
-            left: Box::new(left),
-            ops: ops.into_iter().map(|(op, e)| (op, Box::new(e))).collect(),
-        }))
+        Ok((
+            input,
+            Expression::ChainCompare {
+                left: Box::new(left),
+                ops: ops.into_iter().map(|(op, e)| (op, Box::new(e))).collect(),
+            },
+        ))
     }
 }
 
@@ -177,7 +211,11 @@ fn parse_binary(input: &str, min_prec: Prec) -> IResult<&str, Expression> {
                 }
                 input = rest;
                 let (rest, right) = parse_binary(input, prec)?;
-                left = Expression::BinaryOp { op, left: Box::new(left), right: Box::new(right) };
+                left = Expression::BinaryOp {
+                    op,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                };
                 input = rest;
             }
             Err(_) => break,
@@ -191,7 +229,7 @@ fn parse_binary(input: &str, min_prec: Prec) -> IResult<&str, Expression> {
 // ---------------------------------------------------------------------------
 
 pub fn parse_expression(input: &str) -> IResult<&str, Expression> {
-    preceded(ws, parse_ternary)(input)
+    preceded(ws, parse_ternary).parse(input)
 }
 
 // ---------------------------------------------------------------------------
@@ -206,34 +244,59 @@ mod tests {
 
     #[test]
     fn test_variable() {
-        assert_eq!(parse_expression("b").unwrap().1, Expression::Variable("b".into()));
+        assert_eq!(
+            parse_expression("b").unwrap().1,
+            Expression::Variable("b".into())
+        );
     }
 
     #[test]
     fn test_literal() {
-        assert_eq!(parse_expression("42").unwrap().1, Expression::Literal(Literal::Integer(42)));
+        assert_eq!(
+            parse_expression("42").unwrap().1,
+            Expression::Literal(Literal::Integer(42))
+        );
     }
 
     #[test]
     fn test_quantified() {
         assert_eq!(
             parse_expression("200px").unwrap().1,
-            Expression::Literal(Literal::Quantified { value: 200.0, unit: Unit::Length(LengthUnit::Pixel) })
+            Expression::Literal(Literal::Quantified {
+                value: 200.0,
+                unit: Unit::Length(LengthUnit::Pixel)
+            })
         );
     }
 
     #[test]
     fn test_binary() {
         let r = parse_expression("1 + 2").unwrap().1;
-        assert!(matches!(r, Expression::BinaryOp { op: BinaryOp::Add, .. }));
+        assert!(matches!(
+            r,
+            Expression::BinaryOp {
+                op: BinaryOp::Add,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn test_precedence() {
         let r = parse_expression("1 + 2 * 3").unwrap().1;
         match r {
-            Expression::BinaryOp { op: BinaryOp::Add, right, .. } => {
-                assert!(matches!(*right, Expression::BinaryOp { op: BinaryOp::Mul, .. }));
+            Expression::BinaryOp {
+                op: BinaryOp::Add,
+                right,
+                ..
+            } => {
+                assert!(matches!(
+                    *right,
+                    Expression::BinaryOp {
+                        op: BinaryOp::Mul,
+                        ..
+                    }
+                ));
             }
             _ => panic!(),
         }

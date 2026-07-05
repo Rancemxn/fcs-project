@@ -58,31 +58,52 @@ impl TypedValue {
     }
 
     pub const fn dim(value: f64) -> Self {
-        Self { value, unit: Unit::Dimensionless }
+        Self {
+            value,
+            unit: Unit::Dimensionless,
+        }
     }
 
     pub const fn seconds(value: f64) -> Self {
-        Self { value, unit: Unit::Time(TimeUnit::Second) }
+        Self {
+            value,
+            unit: Unit::Time(TimeUnit::Second),
+        }
     }
 
     pub const fn millis(value: f64) -> Self {
-        Self { value, unit: Unit::Time(TimeUnit::Millisecond) }
+        Self {
+            value,
+            unit: Unit::Time(TimeUnit::Millisecond),
+        }
     }
 
     pub const fn beats(value: f64) -> Self {
-        Self { value, unit: Unit::Time(TimeUnit::Beat) }
+        Self {
+            value,
+            unit: Unit::Time(TimeUnit::Beat),
+        }
     }
 
     pub const fn px(value: f64) -> Self {
-        Self { value, unit: Unit::Length(LengthUnit::Pixel) }
+        Self {
+            value,
+            unit: Unit::Length(LengthUnit::Pixel),
+        }
     }
 
     pub const fn deg(value: f64) -> Self {
-        Self { value, unit: Unit::Angle(AngleUnit::Degree) }
+        Self {
+            value,
+            unit: Unit::Angle(AngleUnit::Degree),
+        }
     }
 
     pub const fn rad(value: f64) -> Self {
-        Self { value, unit: Unit::Angle(AngleUnit::Radian) }
+        Self {
+            value,
+            unit: Unit::Angle(AngleUnit::Radian),
+        }
     }
 
     pub const fn is_dimensionless(&self) -> bool {

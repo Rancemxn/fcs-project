@@ -76,7 +76,8 @@ fn validate(ctx: &mut CompileContext) {
         // Validate note instances — check template references
         for inst in &line.notes.instances {
             if let Some(ref parent_name) = inst.parent {
-                let exists = ctx.prototypes
+                let exists = ctx
+                    .prototypes
                     .get(&line.name)
                     .map(|pmap| pmap.contains_key(parent_name.as_str()))
                     .unwrap_or(false);

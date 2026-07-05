@@ -1,21 +1,22 @@
 //! Structural block parsers — meta, masterTimeline, templates, judgelines, shaders.
 
 use crate::ast::{
-    BpmEntry, BpmTimeline, Document, InheritFlags, JudgelineBlock, LineDef,
-    MetaBlock, MetaValue, MotionBlock, NoteBlock, NoteInstance,
-    NoteKind, NotePropertyValue, NotePrototype, ShaderBlock, TemplateBlock,
+    BpmEntry, BpmTimeline, Document, InheritFlags, JudgelineBlock, LineDef, MetaBlock, MetaValue,
+    MotionBlock, NoteBlock, NoteInstance, NoteKind, NotePropertyValue, NotePrototype, ShaderBlock,
+    TemplateBlock,
 };
 use crate::parser::expr::parse_expression;
-use crate::parser::literal::{parse_color, parse_string, parse_bool, ws};
+use crate::parser::literal::{parse_bool, parse_color, parse_string, ws};
 use crate::units::Color;
+use nom::Parser;
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::tag,
     character::complete::{alpha1, alphanumeric1, char, digit1},
     combinator::{map, map_res, opt, recognize, value},
     multi::{many0, separated_list0},
-    sequence::{delimited, pair, preceded, terminated, tuple},
-    IResult,
+    sequence::{delimited, pair, preceded, terminated},
 };
 use std::collections::BTreeMap;
 
@@ -27,26 +28,32 @@ fn ident(input: &str) -> IResult<&str, &str> {
     recognize(pair(
         alt((alpha1, tag("_"))),
         many0(alt((alphanumeric1, tag("_")))),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn semicolon(input: &str) -> IResult<&str, ()> {
-    let (input, _) = preceded(ws, char(';'))(input)?;
+    let (input, _) = preceded(ws, char(';')).parse(input)?;
     Ok((input, ()))
 }
 
 fn colon(input: &str) -> IResult<&str, ()> {
-    let (input, _) = preceded(ws, char(':'))(input)?;
+    let (input, _) = preceded(ws, char(':')).parse(input)?;
     Ok((input, ()))
 }
 
 fn parse_key_value(input: &str) -> IResult<&str, (&str, MetaValue)> {
-    let (input, key) = preceded(ws, ident)(input)?;
-    let (input, _) = preceded(ws, char(':'))(input)?;
+    let (input, key) = preceded(ws, ident).parse(input)?;
+    let (input, _) = preceded(ws, char(':')).parse(input)?;
     let (input, _) = ws(input)?; // skip whitespace after colon
     let (input, val) = alt((
         map(parse_string, MetaValue::String),
-        map(map_res(recognize(tuple((opt(tag("-")), digit1))), |s: &str| s.parse::<i64>()), MetaValue::Int),
+        map(
+            map_res(recognize((opt(tag("-")), digit1)), |s: &str| {
+                s.parse::<i64>()
+            }),
+            MetaValue::Int,
+        ),
         map(parse_bool, MetaValue::Bool),
         map(
             delimited(
@@ -56,9 +63,20 @@ fn parse_key_value(input: &str) -> IResult<&str, (&str, MetaValue)> {
             ),
             MetaValue::StringArray,
         ),
-    ))(input)?;
+    ))
+    .parse(input)?;
     // Consume optional unit suffix after numeric values
-    let (input, _) = opt(alt((tag("ms"), tag("s"), tag("b"), tag("px"), tag("vw"), tag("vh"), tag("deg"), tag("rad"))))(input)?;
+    let (input, _) = opt(alt((
+        tag("ms"),
+        tag("s"),
+        tag("b"),
+        tag("px"),
+        tag("vw"),
+        tag("vh"),
+        tag("deg"),
+        tag("rad"),
+    )))
+    .parse(input)?;
     let (input, _) = semicolon(input)?;
     Ok((input, (key, val)))
 }
@@ -68,8 +86,8 @@ fn parse_key_value(input: &str) -> IResult<&str, (&str, MetaValue)> {
 // ---------------------------------------------------------------------------
 
 fn parse_meta_block(input: &str) -> IResult<&str, MetaBlock> {
-    let (input, _) = preceded(ws, tag("meta"))(input)?;
-    let (input, _) = preceded(ws, char('{'))(input)?;
+    let (input, _) = preceded(ws, tag("meta")).parse(input)?;
+    let (input, _) = preceded(ws, char('{')).parse(input)?;
 
     let mut name = String::new();
     let mut artists = Vec::new();
@@ -79,11 +97,15 @@ fn parse_meta_block(input: &str) -> IResult<&str, MetaBlock> {
     let mut version = String::new();
     let mut extra = BTreeMap::new();
 
-    let (input, pairs): (&str, Vec<(&str, MetaValue)>) = many0(parse_key_value)(input)?;
+    let (input, pairs): (&str, Vec<(&str, MetaValue)>) = many0(parse_key_value).parse(input)?;
 
     for (key, val) in pairs {
         match key {
-            "name" => { if let MetaValue::String(s) = val { name = s; } }
+            "name" => {
+                if let MetaValue::String(s) = val {
+                    name = s;
+                }
+            }
             "artists" => match val {
                 MetaValue::String(s) => artists = vec![s],
                 MetaValue::StringArray(arr) => artists = arr,
@@ -94,14 +116,35 @@ fn parse_meta_block(input: &str) -> IResult<&str, MetaBlock> {
                 MetaValue::StringArray(arr) => charters = arr,
                 _ => {}
             },
-            "offset" => { if let MetaValue::Int(n) = val { offset = n as f64; } }
-            "version" => { if let MetaValue::String(s) = val { version = s; } }
-            _ => { extra.insert(key.to_string(), val); }
+            "offset" => {
+                if let MetaValue::Int(n) = val {
+                    offset = n as f64;
+                }
+            }
+            "version" => {
+                if let MetaValue::String(s) = val {
+                    version = s;
+                }
+            }
+            _ => {
+                extra.insert(key.to_string(), val);
+            }
         }
     }
 
-    let (input, _) = preceded(ws, char('}'))(input)?;
-    Ok((input, MetaBlock { name, artists, charters, offset, offset_unit, version, extra }))
+    let (input, _) = preceded(ws, char('}')).parse(input)?;
+    Ok((
+        input,
+        MetaBlock {
+            name,
+            artists,
+            charters,
+            offset,
+            offset_unit,
+            version,
+            extra,
+        },
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -109,30 +152,37 @@ fn parse_meta_block(input: &str) -> IResult<&str, MetaBlock> {
 // ---------------------------------------------------------------------------
 
 fn parse_bpm_entry(input: &str) -> IResult<&str, BpmEntry> {
-    let (input, beat_str) = preceded(ws, recognize(digit1))(input)?;
-    let (input, _) = preceded(ws, tag(".0b"))(input)?;
+    let (input, beat_str) = preceded(ws, recognize(digit1)).parse(input)?;
+    let (input, _) = preceded(ws, tag(".0b")).parse(input)?;
     let beat = beat_str.parse::<f64>().unwrap_or(0.0);
-    let (input, _) = preceded(ws, tag("->"))(input)?;
-    let (input, bpm_str) = preceded(ws, recognize(digit1))(input)?;
-    let (input, _) = opt(preceded(ws, char('.')))(input)?;
-    let (input, frac) = opt(preceded(ws, digit1))(input)?;
+    let (input, _) = preceded(ws, tag("->")).parse(input)?;
+    let (input, bpm_str) = preceded(ws, recognize(digit1)).parse(input)?;
+    let (input, _) = opt(preceded(ws, char('.'))).parse(input)?;
+    let (input, frac) = opt(preceded(ws, digit1)).parse(input)?;
     let bpm = match frac {
         Some(f) => format!("{}.{}", bpm_str, f).parse::<f64>().unwrap_or(0.0),
         None => bpm_str.parse::<f64>().unwrap_or(0.0),
     };
     let (input, _) = semicolon(input)?;
-    Ok((input, BpmEntry { beat, bpm, is_step_before: false }))
+    Ok((
+        input,
+        BpmEntry {
+            beat,
+            bpm,
+            is_step_before: false,
+        },
+    ))
 }
 
 fn parse_bpm_timeline(input: &str) -> IResult<&str, BpmTimeline> {
-    let (input, _) = preceded(ws, char('{'))(input)?;
-    let (input, entries) = many0(parse_bpm_entry)(input)?;
-    let (input, _) = preceded(ws, char('}'))(input)?;
+    let (input, _) = preceded(ws, char('{')).parse(input)?;
+    let (input, entries) = many0(parse_bpm_entry).parse(input)?;
+    let (input, _) = preceded(ws, char('}')).parse(input)?;
     Ok((input, BpmTimeline { entries }))
 }
 
 fn parse_master_timeline(input: &str) -> IResult<&str, BpmTimeline> {
-    preceded(ws, preceded(tag("masterTimeline"), parse_bpm_timeline))(input)
+    preceded(ws, preceded(tag("masterTimeline"), parse_bpm_timeline)).parse(input)
 }
 
 // ---------------------------------------------------------------------------
@@ -145,7 +195,13 @@ fn take_until_closing_brace(input: &str) -> IResult<&str, &str> {
     for (i, c) in input.char_indices() {
         match c {
             '{' => depth += 1,
-            '}' => { depth -= 1; if depth == 0 { pos = i; break; } }
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    pos = i;
+                    break;
+                }
+            }
             _ => {}
         }
     }
@@ -153,10 +209,10 @@ fn take_until_closing_brace(input: &str) -> IResult<&str, &str> {
 }
 
 fn parse_template_block(input: &str) -> IResult<&str, TemplateBlock> {
-    let (input, _) = preceded(ws, tag("templates"))(input)?;
-    let (input, _) = preceded(ws, char('{'))(input)?;
+    let (input, _) = preceded(ws, tag("templates")).parse(input)?;
+    let (input, _) = preceded(ws, char('{')).parse(input)?;
     let (input, _) = take_until_closing_brace(input)?;
-    let (input, _) = preceded(ws, char('}'))(input)?;
+    let (input, _) = preceded(ws, char('}')).parse(input)?;
     Ok((input, TemplateBlock::default()))
 }
 
@@ -171,11 +227,12 @@ fn parse_note_kind(input: &str) -> IResult<&str, NoteKind> {
         value(NoteKind::Flick, tag("flick")),
         value(NoteKind::Drag, tag("drag")),
         value(NoteKind::Fake, tag("fake")),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn parse_inherit_flags(input: &str) -> IResult<&str, InheritFlags> {
-    let (input, _) = preceded(ws, char('['))(input)?;
+    let (input, _) = preceded(ws, char('[')).parse(input)?;
     let (input, flags) = separated_list0(
         preceded(ws, char(',')),
         alt((
@@ -184,14 +241,23 @@ fn parse_inherit_flags(input: &str) -> IResult<&str, InheritFlags> {
             value((false, false, true, false), tag("scale")),
             value((false, false, false, true), tag("alpha")),
         )),
-    )(input)?;
-    let (input, _) = preceded(ws, char(']'))(input)?;
+    )
+    .parse(input)?;
+    let (input, _) = preceded(ws, char(']')).parse(input)?;
     let mut result = InheritFlags::default();
     for (pos, rot, scl, a) in flags {
-        if pos { result.position = true; }
-        if rot { result.rotation = true; }
-        if scl { result.scale = true; }
-        if a { result.alpha = true; }
+        if pos {
+            result.position = true;
+        }
+        if rot {
+            result.rotation = true;
+        }
+        if scl {
+            result.scale = true;
+        }
+        if a {
+            result.alpha = true;
+        }
     }
     Ok((input, result))
 }
@@ -202,12 +268,13 @@ fn parse_note_property_value(input: &str) -> IResult<&str, NotePropertyValue> {
         map(parse_color, NotePropertyValue::Color),
         map(parse_string, NotePropertyValue::String),
         map(parse_bool, NotePropertyValue::Bool),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn parse_note_property(input: &str) -> IResult<&str, (&str, NotePropertyValue)> {
-    let (input, key) = preceded(ws, ident)(input)?;
-    let (input, _) = preceded(ws, char(':'))(input)?;
+    let (input, key) = preceded(ws, ident).parse(input)?;
+    let (input, _) = preceded(ws, char(':')).parse(input)?;
     let (input, _) = ws(input)?;
     let (input, val) = parse_note_property_value(input)?;
     let (input, _) = semicolon(input)?;
@@ -215,50 +282,77 @@ fn parse_note_property(input: &str) -> IResult<&str, (&str, NotePropertyValue)> 
 }
 
 fn parse_note_prototype(input: &str) -> IResult<&str, NotePrototype> {
-    let (input, kind) = preceded(ws, parse_note_kind)(input)?;
-    let (input, name) = preceded(ws, ident)(input)?;
-    let (input, parent) = opt(preceded(preceded(ws, char(':')), preceded(ws, ident)))(input)?;
-    let (input, _) = preceded(ws, char('{'))(input)?;
-    let (input, properties) = many0(parse_note_property)(input)?;
-    let (input, _) = preceded(ws, char('}'))(input)?;
-    Ok((input, NotePrototype {
-        kind, name: name.to_string(),
-        parent: parent.map(|s| s.to_string()),
-        properties: properties.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
-    }))
+    let (input, kind) = preceded(ws, parse_note_kind).parse(input)?;
+    let (input, name) = preceded(ws, ident).parse(input)?;
+    let (input, parent) =
+        opt(preceded(preceded(ws, char(':')), preceded(ws, ident))).parse(input)?;
+    let (input, _) = preceded(ws, char('{')).parse(input)?;
+    let (input, properties) = many0(parse_note_property).parse(input)?;
+    let (input, _) = preceded(ws, char('}')).parse(input)?;
+    Ok((
+        input,
+        NotePrototype {
+            kind,
+            name: name.to_string(),
+            parent: parent.map(|s| s.to_string()),
+            properties: properties
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+        },
+    ))
 }
 
 fn parse_note_instance(input: &str) -> IResult<&str, NoteInstance> {
-    let (input, kind) = preceded(ws, parse_note_kind)(input)?;
-    let (input, name) = opt(preceded(ws, ident))(input)?;
-    let (input, parent) = opt(preceded(preceded(ws, char(':')), preceded(ws, ident)))(input)?;
-    let (input, _) = preceded(ws, char('{'))(input)?;
-    let (input, properties) = many0(parse_note_property)(input)?;
-    let (input, _) = preceded(ws, char('}'))(input)?;
-    Ok((input, NoteInstance {
-        kind, name: name.map(|s| s.to_string()),
-        parent: parent.map(|s| s.to_string()),
-        properties: properties.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
-    }))
+    let (input, kind) = preceded(ws, parse_note_kind).parse(input)?;
+    let (input, name) = opt(preceded(ws, ident)).parse(input)?;
+    let (input, parent) =
+        opt(preceded(preceded(ws, char(':')), preceded(ws, ident))).parse(input)?;
+    let (input, _) = preceded(ws, char('{')).parse(input)?;
+    let (input, properties) = many0(parse_note_property).parse(input)?;
+    let (input, _) = preceded(ws, char('}')).parse(input)?;
+    Ok((
+        input,
+        NoteInstance {
+            kind,
+            name: name.map(|s| s.to_string()),
+            parent: parent.map(|s| s.to_string()),
+            properties: properties
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+        },
+    ))
 }
 
 fn parse_notes_block(input: &str) -> IResult<&str, NoteBlock> {
-    let (input, _) = preceded(ws, tag("notes"))(input)?;
-    let (input, _) = preceded(ws, char('{'))(input)?;
+    let (input, _) = preceded(ws, tag("notes")).parse(input)?;
+    let (input, _) = preceded(ws, char('{')).parse(input)?;
     let mut prototypes = Vec::new();
     let mut instances = Vec::new();
     let (input, _) = many0(alt((
-        map(parse_note_prototype, |p| { prototypes.push(p); }),
-        map(parse_note_instance, |i| { instances.push(i); }),
-    )))(input)?;
-    let (input, _) = preceded(ws, char('}'))(input)?;
-    Ok((input, NoteBlock { prototypes, instances }))
+        map(parse_note_prototype, |p| {
+            prototypes.push(p);
+        }),
+        map(parse_note_instance, |i| {
+            instances.push(i);
+        }),
+    )))
+    .parse(input)?;
+    let (input, _) = preceded(ws, char('}')).parse(input)?;
+    Ok((
+        input,
+        NoteBlock {
+            prototypes,
+            instances,
+        },
+    ))
 }
 
 fn parse_line_def(input: &str) -> IResult<&str, LineDef> {
-    let (input, _) = preceded(ws, tag("line"))(input)?;
-    let (input, name) = preceded(ws, ident)(input)?;
-    let (input, _) = preceded(ws, char('{'))(input)?;
+    let (input, _) = preceded(ws, tag("line")).parse(input)?;
+    let (input, name) = preceded(ws, ident).parse(input)?;
+    let (input, _) = preceded(ws, char('{')).parse(input)?;
 
     let mut texture = None;
     let texture_anchor = (0.5, 0.5);
@@ -271,25 +365,105 @@ fn parse_line_def(input: &str) -> IResult<&str, LineDef> {
     let mut notes = NoteBlock::default();
 
     let (input, _) = many0(alt((
-        map(preceded(preceded(ws, tag("texture")), preceded(colon, terminated(preceded(ws, parse_string), semicolon))), |t| { texture = Some(t); }),
-        map(preceded(preceded(ws, tag("zOrder")), preceded(colon, terminated(preceded(ws, map_res(recognize(digit1), |s: &str| s.parse::<i32>())), semicolon))), |z| { z_order = z; }),
-        map(preceded(preceded(ws, tag("color")), preceded(colon, terminated(preceded(ws, parse_color), semicolon))), |c| { color = c; }),
-        map(preceded(preceded(ws, tag("parent")), preceded(colon, terminated(preceded(ws, ident), semicolon))), |p: &str| { parent = Some(p.to_string()); }),
-        map(preceded(preceded(ws, tag("inherit")), preceded(colon, terminated(parse_inherit_flags, semicolon))), |f| { inherit = f; }),
-        map(preceded(preceded(ws, tag("bpmTimeline")), parse_bpm_timeline), |bt| { bpm_timeline = bt; }),
-        map(preceded(preceded(ws, tag("motion")), delimited(preceded(ws, char('{')), take_until_closing_brace, preceded(ws, char('}')))), |_raw: &str| { motion = Some(MotionBlock::default()); }),
-        map(parse_notes_block, |n| { notes = n; }),
-    )))(input)?;
+        map(
+            preceded(
+                preceded(ws, tag("texture")),
+                preceded(colon, terminated(preceded(ws, parse_string), semicolon)),
+            ),
+            |t| {
+                texture = Some(t);
+            },
+        ),
+        map(
+            preceded(
+                preceded(ws, tag("zOrder")),
+                preceded(
+                    colon,
+                    terminated(
+                        preceded(ws, map_res(recognize(digit1), |s: &str| s.parse::<i32>())),
+                        semicolon,
+                    ),
+                ),
+            ),
+            |z| {
+                z_order = z;
+            },
+        ),
+        map(
+            preceded(
+                preceded(ws, tag("color")),
+                preceded(colon, terminated(preceded(ws, parse_color), semicolon)),
+            ),
+            |c| {
+                color = c;
+            },
+        ),
+        map(
+            preceded(
+                preceded(ws, tag("parent")),
+                preceded(colon, terminated(preceded(ws, ident), semicolon)),
+            ),
+            |p: &str| {
+                parent = Some(p.to_string());
+            },
+        ),
+        map(
+            preceded(
+                preceded(ws, tag("inherit")),
+                preceded(colon, terminated(parse_inherit_flags, semicolon)),
+            ),
+            |f| {
+                inherit = f;
+            },
+        ),
+        map(
+            preceded(preceded(ws, tag("bpmTimeline")), parse_bpm_timeline),
+            |bt| {
+                bpm_timeline = bt;
+            },
+        ),
+        map(
+            preceded(
+                preceded(ws, tag("motion")),
+                delimited(
+                    preceded(ws, char('{')),
+                    take_until_closing_brace,
+                    preceded(ws, char('}')),
+                ),
+            ),
+            |_raw: &str| {
+                motion = Some(MotionBlock::default());
+            },
+        ),
+        map(parse_notes_block, |n| {
+            notes = n;
+        }),
+    )))
+    .parse(input)?;
 
-    let (input, _) = preceded(ws, char('}'))(input)?;
-    Ok((input, LineDef { name: name.to_string(), texture, texture_anchor, z_order, color, parent, inherit, bpm_timeline, motion, notes }))
+    let (input, _) = preceded(ws, char('}')).parse(input)?;
+    Ok((
+        input,
+        LineDef {
+            name: name.to_string(),
+            texture,
+            texture_anchor,
+            z_order,
+            color,
+            parent,
+            inherit,
+            bpm_timeline,
+            motion,
+            notes,
+        },
+    ))
 }
 
 fn parse_judgelines(input: &str) -> IResult<&str, JudgelineBlock> {
-    let (input, _) = preceded(ws, tag("judgelines"))(input)?;
-    let (input, _) = preceded(ws, char('{'))(input)?;
-    let (input, lines) = many0(parse_line_def)(input)?;
-    let (input, _) = preceded(ws, char('}'))(input)?;
+    let (input, _) = preceded(ws, tag("judgelines")).parse(input)?;
+    let (input, _) = preceded(ws, char('{')).parse(input)?;
+    let (input, lines) = many0(parse_line_def).parse(input)?;
+    let (input, _) = preceded(ws, char('}')).parse(input)?;
     Ok((input, JudgelineBlock { lines }))
 }
 
@@ -298,10 +472,10 @@ fn parse_judgelines(input: &str) -> IResult<&str, JudgelineBlock> {
 // ---------------------------------------------------------------------------
 
 fn parse_shaders_block(input: &str) -> IResult<&str, ShaderBlock> {
-    let (input, _) = preceded(ws, tag("shaders"))(input)?;
-    let (input, _) = preceded(ws, char('{'))(input)?;
+    let (input, _) = preceded(ws, tag("shaders")).parse(input)?;
+    let (input, _) = preceded(ws, char('{')).parse(input)?;
     let (input, _) = take_until_closing_brace(input)?;
-    let (input, _) = preceded(ws, char('}'))(input)?;
+    let (input, _) = preceded(ws, char('}')).parse(input)?;
     Ok((input, ShaderBlock::default()))
 }
 
@@ -311,16 +485,25 @@ fn parse_shaders_block(input: &str) -> IResult<&str, ShaderBlock> {
 
 /// Parse a complete `.fcs` document.
 pub fn parse_document(input: &str) -> IResult<&str, Document> {
-    let (input, meta) = preceded(ws, parse_meta_block)(input)?;
-    let (input, master_timeline) = preceded(ws, parse_master_timeline)(input)?;
-    let (input, templates) = opt(preceded(ws, parse_template_block))(input)?;
+    let (input, meta) = preceded(ws, parse_meta_block).parse(input)?;
+    let (input, master_timeline) = preceded(ws, parse_master_timeline).parse(input)?;
+    let (input, templates) = opt(preceded(ws, parse_template_block)).parse(input)?;
     // Shaders may appear before or after judgelines (spec says after; accept both)
-    let (input, shaders_before) = opt(preceded(ws, parse_shaders_block))(input)?;
-    let (input, judgelines) = preceded(ws, parse_judgelines)(input)?;
-    let (input, shaders_after) = opt(preceded(ws, parse_shaders_block))(input)?;
+    let (input, shaders_before) = opt(preceded(ws, parse_shaders_block)).parse(input)?;
+    let (input, judgelines) = preceded(ws, parse_judgelines).parse(input)?;
+    let (input, shaders_after) = opt(preceded(ws, parse_shaders_block)).parse(input)?;
     let (input, _) = ws(input)?;
     let shaders = shaders_before.or(shaders_after);
-    Ok((input, Document { meta, master_timeline, templates, judgelines, shaders }))
+    Ok((
+        input,
+        Document {
+            meta,
+            master_timeline,
+            templates,
+            judgelines,
+            shaders,
+        },
+    ))
 }
 
 // ---------------------------------------------------------------------------

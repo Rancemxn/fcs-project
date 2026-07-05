@@ -2,14 +2,15 @@
 
 use crate::ast::Literal;
 use crate::units::{AngleUnit, Color, LengthUnit, TimeUnit, Unit};
+use nom::Parser;
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::{tag, take_while, take_while_m_n},
     character::complete::{char, digit1, one_of, satisfy},
     combinator::{map, map_res, opt, recognize, value},
     multi::many0,
-    sequence::{pair, preceded, tuple},
-    IResult,
+    sequence::{pair, preceded},
 };
 
 // ---------------------------------------------------------------------------
@@ -23,7 +24,8 @@ pub fn ws(input: &str) -> IResult<&str, ()> {
         let (rest, _matched) = opt(alt((
             value((), nom::character::complete::multispace1),
             value((), recognize(pair(tag("//"), take_while(|c| c != '\n')))),
-        )))(remaining)?;
+        )))
+        .parse(remaining)?;
         if rest.len() == remaining.len() {
             // No progress — done
             break;
@@ -39,18 +41,36 @@ pub fn ws(input: &str) -> IResult<&str, ()> {
 
 /// Parse any number (with optional leading `-` and optional decimal/exponent).
 fn parse_number_loose(input: &str) -> IResult<&str, f64> {
-    map_res(recognize(tuple((opt(char('-')), digit1, opt(tuple((char('.'), digit1))), opt(tuple((one_of("eE"), opt(one_of("+-")), digit1)))))), |s: &str| s.parse::<f64>())(input)
+    map_res(
+        recognize((
+            opt(char('-')),
+            digit1,
+            opt((char('.'), digit1)),
+            opt((one_of("eE"), opt(one_of("+-")), digit1)),
+        )),
+        |s: &str| s.parse::<f64>(),
+    )
+    .parse(input)
 }
 
 /// Parse a float literal — must have a decimal point or exponent.
 fn parse_float(input: &str) -> IResult<&str, f64> {
-    let (input, s) = recognize(tuple((digit1, alt((recognize(tuple((char('.'), digit1))), recognize(tuple((one_of("eE"), opt(one_of("+-")), digit1))))))))(input)?;
-    let v = s.parse::<f64>().map_err(|_| nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Float)))?;
+    let (input, s) = recognize((
+        digit1,
+        alt((
+            recognize((char('.'), digit1)),
+            recognize((one_of("eE"), opt(one_of("+-")), digit1)),
+        )),
+    ))
+    .parse(input)?;
+    let v = s.parse::<f64>().map_err(|_| {
+        nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Float))
+    })?;
     Ok((input, v))
 }
 
 fn parse_integer(input: &str) -> IResult<&str, i64> {
-    map_res(recognize(digit1), |s: &str| s.parse::<i64>())(input)
+    map_res(recognize(digit1), |s: &str| s.parse::<i64>()).parse(input)
 }
 
 fn time_unit(input: &str) -> IResult<&str, TimeUnit> {
@@ -58,7 +78,8 @@ fn time_unit(input: &str) -> IResult<&str, TimeUnit> {
         value(TimeUnit::Millisecond, tag("ms")),
         value(TimeUnit::Second, tag("s")),
         value(TimeUnit::Beat, tag("b")),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn length_unit(input: &str) -> IResult<&str, LengthUnit> {
@@ -66,14 +87,16 @@ fn length_unit(input: &str) -> IResult<&str, LengthUnit> {
         value(LengthUnit::Pixel, tag("px")),
         value(LengthUnit::ViewportWidth, tag("vw")),
         value(LengthUnit::ViewportHeight, tag("vh")),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn angle_unit(input: &str) -> IResult<&str, AngleUnit> {
     alt((
         value(AngleUnit::Degree, tag("deg")),
         value(AngleUnit::Radian, tag("rad")),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 fn parse_quantified(input: &str) -> IResult<&str, Literal> {
@@ -82,7 +105,8 @@ fn parse_quantified(input: &str) -> IResult<&str, Literal> {
         map(time_unit, Unit::Time),
         map(length_unit, Unit::Length),
         map(angle_unit, Unit::Angle),
-    ))(input)?;
+    ))
+    .parse(input)?;
     Ok((input, Literal::Quantified { value, unit }))
 }
 
@@ -92,7 +116,8 @@ pub fn parse_numeric_literal(input: &str) -> IResult<&str, Literal> {
         // Float must come before integer to avoid "1.0" being parsed as integer "1"
         map(parse_float, Literal::Float),
         map(parse_integer, Literal::Integer),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 // ---------------------------------------------------------------------------
@@ -100,17 +125,20 @@ pub fn parse_numeric_literal(input: &str) -> IResult<&str, Literal> {
 // ---------------------------------------------------------------------------
 
 pub fn parse_string(input: &str) -> IResult<&str, String> {
-    let (input, _) = char('"')(input)?;
-    let (input, chars) = many0(string_fragment)(input)?;
-    let (input, _) = char('"')(input)?;
+    let (input, _) = char('"').parse(input)?;
+    let (input, chars) = many0(string_fragment).parse(input)?;
+    let (input, _) = char('"').parse(input)?;
     Ok((input, chars.concat()))
 }
 
 fn string_fragment(input: &str) -> IResult<&str, String> {
     alt((
         map(parse_escape, |c| c.to_string()),
-        map(satisfy(|c| c != '"' && c != '\\' && c != '\n'), |c| c.to_string()),
-    ))(input)
+        map(satisfy(|c| c != '"' && c != '\\' && c != '\n'), |c| {
+            c.to_string()
+        }),
+    ))
+    .parse(input)
 }
 
 fn parse_escape(input: &str) -> IResult<&str, char> {
@@ -123,17 +151,20 @@ fn parse_escape(input: &str) -> IResult<&str, char> {
             value('"', char('"')),
             parse_unicode_escape,
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
 fn parse_unicode_escape(input: &str) -> IResult<&str, char> {
-    let (input, _) = tag("u{")(input)?;
-    let (input, hex) = take_while_m_n(1, 6, |c: char| c.is_ascii_hexdigit())(input)?;
-    let (input, _) = char('}')(input)?;
-    let code = u32::from_str_radix(hex, 16)
-        .map_err(|_| nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Fail)))?;
-    let c = char::from_u32(code)
-        .ok_or_else(|| nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Fail)))?;
+    let (input, _) = tag("u{").parse(input)?;
+    let (input, hex) = take_while_m_n(1, 6, |c: char| c.is_ascii_hexdigit()).parse(input)?;
+    let (input, _) = char('}').parse(input)?;
+    let code = u32::from_str_radix(hex, 16).map_err(|_| {
+        nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Fail))
+    })?;
+    let c = char::from_u32(code).ok_or_else(|| {
+        nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Fail))
+    })?;
     Ok((input, c))
 }
 
@@ -142,8 +173,8 @@ fn parse_unicode_escape(input: &str) -> IResult<&str, char> {
 // ---------------------------------------------------------------------------
 
 pub fn parse_color(input: &str) -> IResult<&str, Color> {
-    let (input, _) = char('#')(input)?;
-    let (input, hex) = take_while_m_n(6, 8, |c: char| c.is_ascii_hexdigit())(input)?;
+    let (input, _) = char('#').parse(input)?;
+    let (input, hex) = take_while_m_n(6, 8, |c: char| c.is_ascii_hexdigit()).parse(input)?;
     let color = match hex.len() {
         6 => Color::rgb(
             u8::from_str_radix(&hex[0..2], 16).unwrap(),
@@ -166,7 +197,7 @@ pub fn parse_color(input: &str) -> IResult<&str, Color> {
 // ---------------------------------------------------------------------------
 
 pub fn parse_bool(input: &str) -> IResult<&str, bool> {
-    alt((value(true, tag("true")), value(false, tag("false"))))(input)
+    alt((value(true, tag("true")), value(false, tag("false")))).parse(input)
 }
 
 // ---------------------------------------------------------------------------
@@ -179,7 +210,8 @@ pub fn parse_literal(input: &str) -> IResult<&str, Literal> {
         map(parse_string, Literal::String),
         map(parse_bool, Literal::Boolean),
         parse_numeric_literal,
-    ))(input)
+    ))
+    .parse(input)
 }
 
 // ---------------------------------------------------------------------------
@@ -204,7 +236,10 @@ mod tests {
     fn test_quantified_time() {
         assert_eq!(
             parse_quantified("120ms").unwrap().1,
-            Literal::Quantified { value: 120.0, unit: Unit::Time(TimeUnit::Millisecond) }
+            Literal::Quantified {
+                value: 120.0,
+                unit: Unit::Time(TimeUnit::Millisecond)
+            }
         );
     }
 
@@ -212,7 +247,10 @@ mod tests {
     fn test_quantified_length() {
         assert_eq!(
             parse_quantified("200px").unwrap().1,
-            Literal::Quantified { value: 200.0, unit: Unit::Length(LengthUnit::Pixel) }
+            Literal::Quantified {
+                value: 200.0,
+                unit: Unit::Length(LengthUnit::Pixel)
+            }
         );
     }
 

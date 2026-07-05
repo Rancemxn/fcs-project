@@ -10,20 +10,36 @@
 //! We use the documented value: 1Y = 648px.
 
 const X_UNIT_TO_PX: f64 = 108.0;
-const Y_UNIT_TO_PX: f64 = 648.0;  // 1Y = 0.6 * 1080 = 648px
+const Y_UNIT_TO_PX: f64 = 648.0; // 1Y = 0.6 * 1080 = 648px
 
-pub fn x_to_fcs_px(x: f64) -> f64 { x * X_UNIT_TO_PX }
-pub fn y_to_fcs_px(y: f64) -> f64 { y * Y_UNIT_TO_PX }
-pub fn px_to_vw(px: f64) -> f64 { px / 19.2 }
-pub fn px_to_vh(px: f64) -> f64 { px / 10.8 }
-pub fn x_to_vw(x: f64) -> f64 { px_to_vw(x_to_fcs_px(x)) }
-pub fn y_to_vh(y: f64) -> f64 { px_to_vh(y_to_fcs_px(y)) }
+pub fn x_to_fcs_px(x: f64) -> f64 {
+    x * X_UNIT_TO_PX
+}
+pub fn y_to_fcs_px(y: f64) -> f64 {
+    y * Y_UNIT_TO_PX
+}
+pub fn px_to_vw(px: f64) -> f64 {
+    px / 19.2
+}
+pub fn px_to_vh(px: f64) -> f64 {
+    px / 10.8
+}
+pub fn x_to_vw(x: f64) -> f64 {
+    px_to_vw(x_to_fcs_px(x))
+}
+pub fn y_to_vh(y: f64) -> f64 {
+    px_to_vh(y_to_fcs_px(y))
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn test_x() { assert!((x_to_fcs_px(1.0) - 108.0).abs() < 1e-10); }
+    fn test_x() {
+        assert!((x_to_fcs_px(1.0) - 108.0).abs() < 1e-10);
+    }
     #[test]
-    fn test_y() { assert!((y_to_fcs_px(1.0) - 648.0).abs() < 1e-10); }
+    fn test_y() {
+        assert!((y_to_fcs_px(1.0) - 648.0).abs() < 1e-10);
+    }
 }

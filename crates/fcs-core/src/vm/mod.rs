@@ -33,7 +33,12 @@ impl VmEnv {
 
     /// Default environment for testing (all zeros).
     pub fn default_for_test() -> Self {
-        Self { s: 0.0, b: 0.0, d: 0.0, t: 0.0 }
+        Self {
+            s: 0.0,
+            b: 0.0,
+            d: 0.0,
+            t: 0.0,
+        }
     }
 }
 
@@ -131,8 +136,12 @@ impl<'a> Vm<'a> {
             Opcode::Div => self.binary_op(|a, b| math::safe_div(a, b).ok_or(()))?,
             Opcode::Mod => self.binary_op(|a, b| math::safe_mod(a, b).ok_or(()))?,
             Opcode::Pow => self.binary_op(|a, b| {
-                if a == 0.0 && b < 0.0 { return Err(()); }
-                if a < 0.0 && b.fract() != 0.0 { return Err(()); }
+                if a == 0.0 && b < 0.0 {
+                    return Err(());
+                }
+                if a < 0.0 && b.fract() != 0.0 {
+                    return Err(());
+                }
                 Ok(a.powf(b))
             })?,
             Opcode::Neg => self.unary_op(|a| Ok(-a))?,
@@ -148,19 +157,27 @@ impl<'a> Vm<'a> {
             Opcode::Abs => self.unary_op(|a| Ok(a.abs()))?,
             Opcode::Exp => self.unary_op(|a| Ok(a.exp()))?,
             Opcode::Ln => self.unary_op(|a| {
-                if a <= 0.0 { return Err(()); }
+                if a <= 0.0 {
+                    return Err(());
+                }
                 Ok(a.ln())
             })?,
             Opcode::Log2 => self.unary_op(|a| {
-                if a <= 0.0 { return Err(()); }
+                if a <= 0.0 {
+                    return Err(());
+                }
                 Ok(a.log2())
             })?,
             Opcode::Log10 => self.unary_op(|a| {
-                if a <= 0.0 { return Err(()); }
+                if a <= 0.0 {
+                    return Err(());
+                }
                 Ok(a.log10())
             })?,
             Opcode::Sqrt => self.unary_op(|a| {
-                if a < 0.0 { return Err(()); }
+                if a < 0.0 {
+                    return Err(());
+                }
                 Ok(a.sqrt())
             })?,
             Opcode::Floor => self.unary_op(|a| Ok(a.floor()))?,
@@ -172,8 +189,12 @@ impl<'a> Vm<'a> {
             Opcode::CmpLe => self.binary_op(|a, b| Ok(if a <= b { 1.0 } else { 0.0 }))?,
             Opcode::CmpGt => self.binary_op(|a, b| Ok(if a > b { 1.0 } else { 0.0 }))?,
             Opcode::CmpGe => self.binary_op(|a, b| Ok(if a >= b { 1.0 } else { 0.0 }))?,
-            Opcode::CmpEq => self.binary_op(|a, b| Ok(if (a - b).abs() < 1e-10 { 1.0 } else { 0.0 }))?,
-            Opcode::CmpNe => self.binary_op(|a, b| Ok(if (a - b).abs() >= 1e-10 { 1.0 } else { 0.0 }))?,
+            Opcode::CmpEq => {
+                self.binary_op(|a, b| Ok(if (a - b).abs() < 1e-10 { 1.0 } else { 0.0 }))?
+            }
+            Opcode::CmpNe => {
+                self.binary_op(|a, b| Ok(if (a - b).abs() >= 1e-10 { 1.0 } else { 0.0 }))?
+            }
             Opcode::JmpIfFalse => {
                 let offset = self.read_i16();
                 let cond = self.stack_pop()?;
@@ -354,7 +375,10 @@ mod tests {
         // PUSH_CONST[0] RET — const_pool[0] = 42.0
         let code = [0x01, 0x00, 0x00, 0xFF];
         let pool = [42.0];
-        assert_eq!(run(&code, &pool, VmEnv::default_for_test()), VmResult::Value(42.0));
+        assert_eq!(
+            run(&code, &pool, VmEnv::default_for_test()),
+            VmResult::Value(42.0)
+        );
     }
 
     #[test]
@@ -362,7 +386,10 @@ mod tests {
         // PUSH_CONST[0] PUSH_CONST[1] ADD RET
         let code = [0x01, 0x00, 0x00, 0x01, 0x01, 0x00, 0x20, 0xFF];
         let pool = [10.0, 32.0];
-        assert_eq!(run(&code, &pool, VmEnv::default_for_test()), VmResult::Value(42.0));
+        assert_eq!(
+            run(&code, &pool, VmEnv::default_for_test()),
+            VmResult::Value(42.0)
+        );
     }
 
     #[test]
@@ -400,7 +427,10 @@ mod tests {
         // PUSH_CONST[0] PUSH_CONST[1] CMP_LT RET
         let code = [0x01, 0x00, 0x00, 0x01, 0x01, 0x00, 0x50, 0xFF];
         let pool = [1.0, 2.0];
-        assert_eq!(run(&code, &pool, VmEnv::default_for_test()), VmResult::Value(1.0));
+        assert_eq!(
+            run(&code, &pool, VmEnv::default_for_test()),
+            VmResult::Value(1.0)
+        );
     }
 
     #[test]
@@ -410,12 +440,12 @@ mod tests {
         // constPool[0]=200.0, constPool[1]=pi
         let code = [
             0x01, 0x00, 0x00, // PUSH_CONST[0] = 200.0
-            0x11,               // PUSH_VAR_B
+            0x11, // PUSH_VAR_B
             0x01, 0x01, 0x00, // PUSH_CONST[1] = pi
-            0x22,               // MUL
-            0x30,               // SIN
-            0x22,               // MUL
-            0xFF,               // RET
+            0x22, // MUL
+            0x30, // SIN
+            0x22, // MUL
+            0xFF, // RET
         ];
         let pool = [200.0, std::f64::consts::PI];
         // b=0.5 → sin(0.5*pi) = sin(pi/2) = 1.0 → 200*1 = 200
@@ -436,14 +466,14 @@ mod tests {
         // Layout: [0x12] [0x01,idx0] [0x52] [0x56,0x06,0x00] [0x01,idx1] [0x57,0x03,0x00] [0x01,idx2] [0xFF]
         //           0       1-3       4       5-7              8-10        11-13           14-16       17
         let code = [
-            0x12,               // PUSH_VAR_D
+            0x12, // PUSH_VAR_D
             0x01, 0x00, 0x00, // PUSH_CONST[0] = 200
-            0x52,               // CMP_GT
+            0x52, // CMP_GT
             0x56, 0x06, 0x00, // JMP_IF_FALSE +6 — skip to position 14
             0x01, 0x01, 0x00, // PUSH_CONST[1] = 1.5
             0x57, 0x03, 0x00, // JMP +3 — skip to position 17 (RET)
             0x01, 0x02, 0x00, // PUSH_CONST[2] = 1.0
-            0xFF,               // RET
+            0xFF, // RET
         ];
         let pool = [200.0, 1.5, 1.0];
 
@@ -459,13 +489,23 @@ mod tests {
     #[test]
     fn test_clamp_lerp_select_min_max() {
         // CLAMP: PUSH 0.5, 0, 1 → CLAMP → 0.5
-        let code = [0x01, 0x00, 0x00, 0x01, 0x01, 0x00, 0x01, 0x02, 0x00, 0x70, 0xFF];
+        let code = [
+            0x01, 0x00, 0x00, 0x01, 0x01, 0x00, 0x01, 0x02, 0x00, 0x70, 0xFF,
+        ];
         let pool = [0.5, 0.0, 1.0];
-        assert_eq!(run(&code, &pool, VmEnv::default_for_test()), VmResult::Value(0.5));
+        assert_eq!(
+            run(&code, &pool, VmEnv::default_for_test()),
+            VmResult::Value(0.5)
+        );
 
         // LERP: PUSH 0, 10, 0.5 → LERP → 5.0
-        let code = [0x01, 0x00, 0x00, 0x01, 0x01, 0x00, 0x01, 0x02, 0x00, 0x71, 0xFF];
+        let code = [
+            0x01, 0x00, 0x00, 0x01, 0x01, 0x00, 0x01, 0x02, 0x00, 0x71, 0xFF,
+        ];
         let pool = [0.0, 10.0, 0.5];
-        assert_eq!(run(&code, &pool, VmEnv::default_for_test()), VmResult::Value(5.0));
+        assert_eq!(
+            run(&code, &pool, VmEnv::default_for_test()),
+            VmResult::Value(5.0)
+        );
     }
 }

@@ -6,11 +6,28 @@ use crate::units::{Color, Unit};
 pub enum Expression {
     Literal(Literal),
     Variable(String),
-    BinaryOp { op: BinaryOp, left: Box<Expression>, right: Box<Expression> },
-    UnaryOp { op: UnaryOp, operand: Box<Expression> },
-    Call { name: String, args: Vec<Expression> },
-    Ternary { cond: Box<Expression>, if_true: Box<Expression>, if_false: Box<Expression> },
-    ChainCompare { left: Box<Expression>, ops: Vec<(CompareOp, Box<Expression>)> },
+    BinaryOp {
+        op: BinaryOp,
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    UnaryOp {
+        op: UnaryOp,
+        operand: Box<Expression>,
+    },
+    Call {
+        name: String,
+        args: Vec<Expression>,
+    },
+    Ternary {
+        cond: Box<Expression>,
+        if_true: Box<Expression>,
+        if_false: Box<Expression>,
+    },
+    ChainCompare {
+        left: Box<Expression>,
+        ops: Vec<(CompareOp, Box<Expression>)>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -24,30 +41,66 @@ pub enum Literal {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ValueType { Note, Line, Float, Int, Bool, Time, Length, Angle }
+pub enum ValueType {
+    Note,
+    Line,
+    Float,
+    Int,
+    Bool,
+    Time,
+    Length,
+    Angle,
+}
 
 impl ValueType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            ValueType::Note => "Note", ValueType::Line => "Line",
-            ValueType::Float => "float", ValueType::Int => "int",
-            ValueType::Bool => "bool", ValueType::Time => "time",
-            ValueType::Length => "length", ValueType::Angle => "angle",
+            ValueType::Note => "Note",
+            ValueType::Line => "Line",
+            ValueType::Float => "float",
+            ValueType::Int => "int",
+            ValueType::Bool => "bool",
+            ValueType::Time => "time",
+            ValueType::Length => "length",
+            ValueType::Angle => "angle",
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BinaryOp { Add, Sub, Mul, Div, Mod, Pow }
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Pow,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnaryOp { Neg }
+pub enum UnaryOp {
+    Neg,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompareOp { Lt, Le, Gt, Ge, Eq, Ne }
+pub enum CompareOp {
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+    Ne,
+}
 
 impl CompareOp {
     pub fn as_str(&self) -> &'static str {
-        match self { CompareOp::Lt=>"<", CompareOp::Le=>"<=", CompareOp::Gt=>">", CompareOp::Ge=>">=", CompareOp::Eq=>"==", CompareOp::Ne=>"!=" }
+        match self {
+            CompareOp::Lt => "<",
+            CompareOp::Le => "<=",
+            CompareOp::Gt => ">",
+            CompareOp::Ge => ">=",
+            CompareOp::Eq => "==",
+            CompareOp::Ne => "!=",
+        }
     }
 }

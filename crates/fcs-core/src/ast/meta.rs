@@ -2,7 +2,13 @@
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum MetaValue { String(String), Int(i64), Float(f64), Bool(bool), StringArray(Vec<String>) }
+pub enum MetaValue {
+    String(String),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    StringArray(Vec<String>),
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MetaBlock {

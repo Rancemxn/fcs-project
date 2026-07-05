@@ -13,7 +13,12 @@ pub struct Color {
 }
 
 impl Color {
-    pub const WHITE: Self = Self { r: 255, g: 255, b: 255, a: 255 };
+    pub const WHITE: Self = Self {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
 
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b, a: 255 }
@@ -27,7 +32,11 @@ impl Color {
     #[inline]
     fn srgb_to_linear(c: u8) -> f64 {
         let cf = c as f64 / 255.0;
-        if cf <= 0.04045 { cf / 12.92 } else { ((cf + 0.055) / 1.055).powf(2.4) }
+        if cf <= 0.04045 {
+            cf / 12.92
+        } else {
+            ((cf + 0.055) / 1.055).powf(2.4)
+        }
     }
 
     pub fn to_linear(&self) -> [f64; 4] {
@@ -41,7 +50,9 @@ impl Color {
 }
 
 impl Default for Color {
-    fn default() -> Self { Self::WHITE }
+    fn default() -> Self {
+        Self::WHITE
+    }
 }
 
 impl fmt::Display for Color {
@@ -49,7 +60,11 @@ impl fmt::Display for Color {
         if self.a == 255 {
             write!(f, "#{:02X}{:02X}{:02X}", self.r, self.g, self.b)
         } else {
-            write!(f, "#{:02X}{:02X}{:02X}{:02X}", self.r, self.g, self.b, self.a)
+            write!(
+                f,
+                "#{:02X}{:02X}{:02X}{:02X}",
+                self.r, self.g, self.b, self.a
+            )
         }
     }
 }
@@ -63,16 +78,23 @@ impl FromStr for Color {
         let hex = &s[1..];
         match hex.len() {
             6 => {
-                let r = u8::from_str_radix(&hex[0..2], 16).map_err(|_| format!("bad red: '{}'", &hex[0..2]))?;
-                let g = u8::from_str_radix(&hex[2..4], 16).map_err(|_| format!("bad green: '{}'", &hex[2..4]))?;
-                let b = u8::from_str_radix(&hex[4..6], 16).map_err(|_| format!("bad blue: '{}'", &hex[4..6]))?;
+                let r = u8::from_str_radix(&hex[0..2], 16)
+                    .map_err(|_| format!("bad red: '{}'", &hex[0..2]))?;
+                let g = u8::from_str_radix(&hex[2..4], 16)
+                    .map_err(|_| format!("bad green: '{}'", &hex[2..4]))?;
+                let b = u8::from_str_radix(&hex[4..6], 16)
+                    .map_err(|_| format!("bad blue: '{}'", &hex[4..6]))?;
                 Ok(Self::rgb(r, g, b))
             }
             8 => {
-                let r = u8::from_str_radix(&hex[0..2], 16).map_err(|_| format!("bad red: '{}'", &hex[0..2]))?;
-                let g = u8::from_str_radix(&hex[2..4], 16).map_err(|_| format!("bad green: '{}'", &hex[2..4]))?;
-                let b = u8::from_str_radix(&hex[4..6], 16).map_err(|_| format!("bad blue: '{}'", &hex[4..6]))?;
-                let a = u8::from_str_radix(&hex[6..8], 16).map_err(|_| format!("bad alpha: '{}'", &hex[6..8]))?;
+                let r = u8::from_str_radix(&hex[0..2], 16)
+                    .map_err(|_| format!("bad red: '{}'", &hex[0..2]))?;
+                let g = u8::from_str_radix(&hex[2..4], 16)
+                    .map_err(|_| format!("bad green: '{}'", &hex[2..4]))?;
+                let b = u8::from_str_radix(&hex[4..6], 16)
+                    .map_err(|_| format!("bad blue: '{}'", &hex[4..6]))?;
+                let a = u8::from_str_radix(&hex[6..8], 16)
+                    .map_err(|_| format!("bad alpha: '{}'", &hex[6..8]))?;
                 Ok(Self::rgba(r, g, b, a))
             }
             _ => Err(format!("color must be #RRGGBB or #RRGGBBAA, got '{}'", s)),
@@ -105,6 +127,8 @@ mod tests {
     #[test]
     fn test_linear_white() {
         let linear = Color::WHITE.to_linear();
-        for &c in &linear[0..3] { assert!((c - 1.0).abs() < 0.01); }
+        for &c in &linear[0..3] {
+            assert!((c - 1.0).abs() < 0.01);
+        }
     }
 }

@@ -6,10 +6,10 @@ pub mod property;
 pub mod sections;
 pub mod string_table;
 
+use constant_pool::ConstantPoolBuilder;
 use header::FcbcHeader;
 use sections::{ExpressionEntry, LineSection, MasterTimelineSection, MetaSection, ShaderEntry};
 use string_table::StringTableBuilder;
-use constant_pool::ConstantPoolBuilder;
 
 /// The complete .fcbc file representation in memory.
 #[derive(Debug, Clone)]
@@ -31,7 +31,12 @@ impl FcbcFile {
             header: FcbcHeader::new(28, 0, 0, 0, 0),
             string_table: StringTableBuilder::new(),
             const_pool: ConstantPoolBuilder::new(),
-            meta: MetaSection { name_st_off: 0, artist_st_offs: vec![], charter_st_offs: vec![], offset_seconds: 0.0 },
+            meta: MetaSection {
+                name_st_off: 0,
+                artist_st_offs: vec![],
+                charter_st_offs: vec![],
+                offset_seconds: 0.0,
+            },
             master_timeline: MasterTimelineSection { entries: vec![] },
             lines: vec![],
             expressions: vec![],
@@ -53,8 +58,12 @@ impl FcbcFile {
         let has_expr = !self.expressions.is_empty();
         let has_shader = !self.shaders.is_empty();
         let mut flags = 0u32;
-        if has_shader { flags |= header::FLAG_HAS_SHADER; }
-        if has_expr { flags |= header::FLAG_HAS_EXPRESSION; }
+        if has_shader {
+            flags |= header::FLAG_HAS_SHADER;
+        }
+        if has_expr {
+            flags |= header::FLAG_HAS_EXPRESSION;
+        }
 
         let header = FcbcHeader::new(st_off, st_size, cp_off, cp_size, flags);
 
@@ -76,9 +85,13 @@ impl FcbcFile {
         // Write meta (simplified)
         buf.extend_from_slice(&self.meta.name_st_off.to_le_bytes());
         buf.extend_from_slice(&(self.meta.artist_st_offs.len() as u32).to_le_bytes());
-        for &a in &self.meta.artist_st_offs { buf.extend_from_slice(&a.to_le_bytes()); }
+        for &a in &self.meta.artist_st_offs {
+            buf.extend_from_slice(&a.to_le_bytes());
+        }
         buf.extend_from_slice(&(self.meta.charter_st_offs.len() as u32).to_le_bytes());
-        for &c in &self.meta.charter_st_offs { buf.extend_from_slice(&c.to_le_bytes()); }
+        for &c in &self.meta.charter_st_offs {
+            buf.extend_from_slice(&c.to_le_bytes());
+        }
         buf.extend_from_slice(&self.meta.offset_seconds.to_le_bytes());
 
         // Write master timeline
@@ -126,7 +139,9 @@ impl FcbcFile {
 }
 
 impl Default for FcbcFile {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -138,6 +153,10 @@ mod tests {
         let file = FcbcFile::new();
         let bytes = file.to_bytes();
         // Should have at least header + string table + constant pool + meta + timeline + line count
-        assert!(bytes.len() >= 28 + 4 + 8 + 4 + 4, "got {} bytes", bytes.len());
+        assert!(
+            bytes.len() >= 28 + 4 + 8 + 4 + 4,
+            "got {} bytes",
+            bytes.len()
+        );
     }
 }

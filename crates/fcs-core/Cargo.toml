@@ -6,8 +6,7 @@ license.workspace = true
 description = "FCS parser, compiler, and bytecode library"
 
 [dependencies]
-nom = "7"
+nom = "8"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 bytemuck = { version = "1", features = ["derive"] }
-ordered-float = "4"
