@@ -577,8 +577,21 @@ fn parse_shaders_block(input: &str) -> IResult<&str, ShaderBlock> {
 // Top-level document parser
 // ---------------------------------------------------------------------------
 
+/// Skip an optional `#fcs vX.Y.Z` header at the start of the input.
+/// FCS files may begin with `#fcs v4.0.0` as a format marker.
+/// If the header is not present, consumes no input.
+fn parse_fcs_header(input: &str) -> IResult<&str, ()> {
+    if let Some(rest) = input.strip_prefix("#fcs") {
+        let end = rest.find('\n').map(|i| i + 1).unwrap_or(rest.len());
+        Ok((&rest[end..], ()))
+    } else {
+        Ok((input, ()))
+    }
+}
+
 /// Parse a complete `.fcs` document.
 pub fn parse_document(input: &str) -> IResult<&str, Document> {
+    let (input, _) = preceded(ws, parse_fcs_header).parse(input)?;
     let (input, meta) = preceded(ws, parse_meta_block).parse(input)?;
     let (input, master_timeline) = preceded(ws, parse_master_timeline).parse(input)?;
     let (input, templates) = opt(preceded(ws, parse_template_block)).parse(input)?;

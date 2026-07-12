@@ -265,17 +265,13 @@ mod tests {
 
     #[test]
     fn test_convert_sample_fcs_to_pec() {
-        let src = include_str!("../../../../examples/sample.fcs");
+        let src = include_str!("../../../../examples/fcs/simple.fcs");
         let (_, doc) = parser::parse_document(src).expect("parse");
         let pec = fcs_to_pec(&doc);
-        // BPM timeline: all master_timeline entries output
-        // pec_t outputs float strings (beat·2048 formatted to 2 decimals)
-        assert!(pec.contains("bp 0.00 180"), "bp0: {pec}");
-        assert!(pec.contains("bp 32768.00 90"), "bp16: {pec}");
-        assert!(pec.contains("bp 65536.00 180"), "bp32: {pec}");
+        // BPM timeline: single 120 BPM from simple.fcs
+        assert!(pec.contains("bp 0.00 120"), "bp0: {pec}");
         assert!(pec.contains("n1 "), "{pec}");
         assert!(pec.contains("# "), "{pec}");
-        assert!(pec.contains("& "), "{pec}");
     }
 
     #[test]

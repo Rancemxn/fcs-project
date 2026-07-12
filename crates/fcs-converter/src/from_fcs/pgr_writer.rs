@@ -523,7 +523,7 @@ mod tests {
 
     #[test]
     fn test_convert_sample_fcs_to_pgr_v3() {
-        let src = include_str!("../../../../examples/sample.fcs");
+        let src = include_str!("../../../../examples/fcs/simple.fcs");
         let (_, doc) = parser::parse_document(src).expect("parse");
         let json = fcs_to_pgr_json(&doc, 3);
         let c: serde_json::Value = serde_json::from_str(&json).expect("json");
@@ -533,7 +533,7 @@ mod tests {
 
     #[test]
     fn test_convert_sample_fcs_to_pgr_v1() {
-        let src = include_str!("../../../../examples/sample.fcs");
+        let src = include_str!("../../../../examples/fcs/simple.fcs");
         let (_, doc) = parser::parse_document(src).expect("parse");
         let json = fcs_to_pgr_json(&doc, 1);
         let c: serde_json::Value = serde_json::from_str(&json).expect("json");

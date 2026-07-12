@@ -491,7 +491,7 @@ mod tests {
     use fcs_core::parser;
     #[test]
     fn test_convert_sample_fcs_to_rpe() {
-        let src = include_str!("../../../../examples/sample.fcs");
+        let src = include_str!("../../../../examples/fcs/simple.fcs");
         let (_, doc) = parser::parse_document(src).expect("parse");
         let json = fcs_to_rpe_json(&doc);
         let c: serde_json::Value = serde_json::from_str(&json).expect("json");
