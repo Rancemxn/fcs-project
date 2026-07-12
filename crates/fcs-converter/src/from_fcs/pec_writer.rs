@@ -22,6 +22,7 @@
 //! ```
 
 use crate::from_fcs::coord;
+use crate::from_fcs::easing_map;
 use crate::from_fcs::evaluator::{EvalEnv, eval_expr};
 use crate::from_fcs::{autofill, flattener};
 use fcs_core::ast::{Document, MotionBlock, MotionInterval, NoteInstance, NoteKind};
@@ -210,7 +211,7 @@ fn motion_to_pec(motion: &Option<MotionBlock>, line_id: usize) -> Vec<String> {
             out.extend(pec_cp(iv, line_id, true));
         }
         for iv in &layer.rotation {
-            out.extend(pec_simple(iv, line_id, "cd"));
+            out.extend(pec_easing_rotation(iv, line_id));
         }
         for iv in &layer.alpha {
             out.extend(pec_simple(iv, line_id, "ca"));
@@ -266,6 +267,41 @@ fn pec_simple(iv: &MotionInterval, line_id: usize, prefix: &str) -> Vec<String> 
     ]
 }
 
+/// `cd + cr` for rotation easing: sets start value then eases to end.
+fn pec_easing_rotation(iv: &MotionInterval, line_id: usize) -> Vec<String> {
+    let env = EvalEnv::default();
+    let st = pec_t(iv.start_beat);
+    let et = pec_t(iv.end_beat);
+    let mut es = env;
+    es.beat = iv.start_beat;
+    let sv = eval_expr(&iv.expression, &es);
+    es.beat = iv.end_beat;
+    let ev = eval_expr(&iv.expression, &es);
+    let fmt = |v: f64| -> String { format!("{v:.5}") };
+    if (sv - ev).abs() < 1e-9 || (iv.end_beat - iv.start_beat).abs() < 1e-12 {
+        // Constant or zero-width interval — single cd
+        vec![format!("cd {line_id} {st} {}", fmt(sv))]
+    } else {
+        // Easing interval — cd st sv + cr st et ev easeType
+        let easing = extract_pec_easing_type(&iv.expression);
+        vec![
+            format!("cd {line_id} {st} {}", fmt(sv)),
+            format!("cr {line_id} {st} {et} {} {}", fmt(ev), easing),
+        ]
+    }
+}
+
+/// Extract PEC easing type (1–28) from an FCS easing expression.
+fn extract_pec_easing_type(expr: &fcs_core::ast::Expression) -> u8 {
+    match expr {
+        fcs_core::ast::Expression::Call { name, .. } if name.starts_with("ease") => {
+            easing_map::fcs_id_to_rpe_easing_type(easing_map::fcs_easing_id(name).unwrap_or(1))
+                .unwrap_or(1)
+        }
+        _ => 1, // default linear
+    }
+}
+
 // ---- Tests ----------------------------------------------------------------
 
 #[cfg(test)]
@@ -311,6 +347,34 @@ judgelines {
         assert!(
             pec.contains("cp 0 16384.00 1024 1400"),
             "Y end should be top 1400:\n{pec}"
+        );
+    }
+
+    #[test]
+    fn test_rotation_uses_cr_for_easing() {
+        let src = r#"#fcs v4.0.0
+meta { name: "PEC Rot Test"; offset: 0ms; }
+masterTimeline { 0.0b -> 120.0; }
+judgelines {
+    line Main {
+        zOrder: 0;
+        bpmTimeline { 0.0b -> 120.0; }
+        motion { layer {
+            rotation { [0.0b => 4.0b]: easeLinear(b, 0.0b, 4.0b, 0deg, 90deg, 0.0, 1.0); }
+        } }
+        notes { tap { time: 0.0b; positionX: 0px; } }
+    }
+}"#;
+        let (_, doc) = parser::parse_document(src).expect("parse");
+        let pec = fcs_to_pec(&doc);
+        // Should have cd at 0 (start value) and cr for interpolation
+        assert!(pec.contains("cd 0 0.00 0"), "cd start: {pec}");
+        assert!(pec.contains("cr 0 0.00 8192.00 90"), "cr event: {pec}");
+        // Should NOT have cd with end value 90 at 8192 (replaced by cr)
+        // (autofill may add a cd at 8192 with value 0 from default margin)
+        assert!(
+            !pec.lines().any(|l| l.contains("cd 0 8192.00 90")),
+            "cd at end with value 90 should not exist:\n{pec}"
         );
     }
 
