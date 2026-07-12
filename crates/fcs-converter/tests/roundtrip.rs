@@ -68,7 +68,7 @@ fn test_pgr_roundtrip_small() {
         &ir_rt,
         200,
         common::EventTolerances {
-            rotate: 1.0,
+            rotate: 0.001,
             ..Default::default()
         },
     );
@@ -139,7 +139,7 @@ fn test_pgr_roundtrip_medium() {
         &ir_rt,
         200,
         common::EventTolerances {
-            rotate: 1.0,
+            rotate: 0.001,
             ..Default::default()
         },
     );
