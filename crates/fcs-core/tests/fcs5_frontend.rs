@@ -1,7 +1,31 @@
 use fcs_core::v5::ast::{Beat, Bpm};
+use fcs_core::v5::parser::{ParseError, parse_header};
 use fcs_core::v5::version::{
     EXECUTION_ABI_VERSION, FCBC_FORMAT_VERSION, FCS_SOURCE_VERSION, Version,
 };
+
+#[test]
+fn parses_exact_fcs5_header() {
+    let (rest, version) = parse_header("#fcs 5.0.0\nformat { profile: fragment; }").unwrap();
+    assert_eq!(version, FCS_SOURCE_VERSION);
+    assert_eq!(rest, "format { profile: fragment; }");
+}
+
+#[test]
+fn rejects_missing_or_wrong_major_header() {
+    assert_eq!(
+        parse_header("format { profile: fragment; }"),
+        Err(ParseError::MissingHeader)
+    );
+    assert_eq!(
+        parse_header("#fcs 4.1.0\n"),
+        Err(ParseError::UnsupportedSourceVersion(Version::new(4, 1, 0)))
+    );
+    assert_eq!(
+        parse_header("#fcs 5.1.0\n"),
+        Err(ParseError::UnsupportedSourceVersion(Version::new(5, 1, 0)))
+    );
+}
 
 #[test]
 fn exposes_independent_fcs_fcbc_and_abi_versions() {
