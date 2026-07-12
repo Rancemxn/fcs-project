@@ -354,18 +354,6 @@ fn motion_to_speed_events(motion: &Option<MotionBlock>, env: &EvalEnv) -> Vec<Pg
         .collect()
 }
 
-/// Build sorted unique beat boundaries from a list of intervals.
-fn build_beats(intervals: &[&[MotionInterval]]) -> Vec<f64> {
-    let mut beats = std::collections::BTreeSet::new();
-    for ivs in intervals {
-        for iv in *ivs {
-            beats.insert((iv.start_beat * 1e6) as i64);
-            beats.insert((iv.end_beat * 1e6) as i64);
-        }
-    }
-    beats.iter().map(|b| *b as f64 / 1e6).collect()
-}
-
 /// Sample a field at a given beat, returning the default if no interval covers it.
 fn sample_at(intervals: &[MotionInterval], beat: f64, default: f64, env: &EvalEnv) -> f64 {
     let mut es = *env;
@@ -378,6 +366,42 @@ fn sample_at(intervals: &[MotionInterval], beat: f64, default: f64, env: &EvalEn
         }
     }
     default
+}
+
+/// Collect union of junction_beats from all layers, sorted and deduped.
+fn union_junction_beats(motion: &Option<MotionBlock>) -> Vec<f64> {
+    match motion {
+        Some(m) => {
+            let mut all: Vec<f64> = m
+                .layers
+                .iter()
+                .flat_map(|l| l.junction_beats.iter().copied())
+                .collect();
+            if all.is_empty() {
+                return all;
+            }
+            all.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            all.dedup();
+            all
+        }
+        None => vec![],
+    }
+}
+
+/// Build beat boundaries for a set of intervals, using junction_beats when available.
+fn beats_or_junction<'a>(
+    intervals: impl IntoIterator<Item = &'a MotionInterval>,
+    jb: &[f64],
+) -> Vec<f64> {
+    if !jb.is_empty() {
+        return jb.to_vec();
+    }
+    let mut s = std::collections::BTreeSet::new();
+    for iv in intervals {
+        s.insert((iv.start_beat * 1e6) as i64);
+        s.insert((iv.end_beat * 1e6) as i64);
+    }
+    s.iter().map(|b| *b as f64 / 1e6).collect()
 }
 
 /// Build move/rotate/alpha events with correct PGR coordinate mapping.
@@ -395,8 +419,10 @@ fn motion_to_move_rotate_alpha(
     let rot_ivs = collect_intervals(motion, |l| &l.rotation);
     let alpha_ivs = collect_intervals(motion, |l| &l.alpha);
 
+    let jb = union_junction_beats(motion);
+
     // Move events: use x + y boundaries so both fields are well-represented
-    let move_beats = build_beats(&[&x_ivs, &y_ivs]);
+    let move_beats = beats_or_junction(x_ivs.iter().chain(&y_ivs), &jb);
     let moves: Vec<PgrEvent> = move_beats
         .windows(2)
         .map(|w| {
@@ -421,7 +447,7 @@ fn motion_to_move_rotate_alpha(
         .collect();
 
     // Rotate events: use rotation interval boundaries only
-    let rot_beats = build_beats(&[&rot_ivs]);
+    let rot_beats = beats_or_junction(&rot_ivs, &jb);
     let rots: Vec<PgrEvent> = rot_beats
         .windows(2)
         .map(|w| {
@@ -443,7 +469,7 @@ fn motion_to_move_rotate_alpha(
         .collect();
 
     // Alpha events: use alpha interval boundaries only
-    let alpha_beats = build_beats(&[&alpha_ivs]);
+    let alpha_beats = beats_or_junction(&alpha_ivs, &jb);
     let alphas: Vec<PgrEvent> = alpha_beats
         .windows(2)
         .map(|w| {

@@ -182,7 +182,9 @@ fn build_line(line: &IrLine) -> LineDef {
     }
 
     // Sort and deduplicate junction beats
-    layer.junction_beats.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    layer
+        .junction_beats
+        .sort_by(|a, b| a.partial_cmp(b).unwrap());
     layer.junction_beats.dedup();
 
     let motion = MotionBlock {

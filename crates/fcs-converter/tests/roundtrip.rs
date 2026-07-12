@@ -7,6 +7,20 @@
 //! 4. Parses target format string → IrChart
 //! 5. Compares structural properties, per-field note values, and
 //!    time-sampled event values (line parameters at specific times)
+//!
+//! Gaps (do NOT add assertions for these — known format limitations):
+//! - `ir_to_fcs()` ignores `chart.bpm_list` entirely, creating only a single
+//!   master_timeline entry from the first line's bpm. PEC charts with 33+ bp
+//!   entries round-trip to 1.
+//! - `visible_time`, `alpha`, `size`, `y_offset` are stored in IrNote but
+//!   not propagated to FCS NoteInstance properties in `to_fcs.rs`.
+//! - `IrNoteKind::Flick` doesn't get `endTime` set in `to_fcs.rs`, so
+//!   PEC n3 holdTime is lost.
+//! - PEC cp/cd/ca/cv point events inflate during round-trip because the
+//!   IR→FCS conversion creates intervals from point events, then the
+//!   writer creates additional center-position events from autofill.
+//! - PEC cm/cr/cf interpolation events: the writer only outputs cp/cd/ca/cv,
+//!   not the interpolation variants, so these are lost.
 
 mod common;
 
@@ -34,17 +48,27 @@ fn test_pgr_roundtrip_small() {
 
     assert_eq!(ir.lines.len(), ir_rt.lines.len(), "line count");
     assert_eq!(ir.meta.source_version, ir_rt.meta.source_version);
+    // PGR has no per-line BPM beyond the first entry; each line has one bpm.
+    // The line.bpm is preserved through the round-trip (no master_timeline loss).
+    for (i, (ol, rl)) in ir.lines.iter().zip(&ir_rt.lines).enumerate() {
+        assert!(
+            (ol.bpm - rl.bpm).abs() < 1e-6,
+            "line {i} bpm: {} vs {}",
+            ol.bpm,
+            rl.bpm
+        );
+    }
 
     // Per-field note comparison (exact, 3 notes)
     common::compare_notes_exact(&ir, &ir_rt, 1e-6);
 
-    // Time-sampled event comparison with half-split tolerance on rotate
+    // Time-sampled event comparison with tight tolerance (junctionBeats preserves boundaries)
     common::compare_events_sampled(
         &ir,
         &ir_rt,
         200,
         common::EventTolerances {
-            rotate: 90.0,
+            rotate: 1.0,
             ..Default::default()
         },
     );
@@ -61,6 +85,16 @@ fn test_pgr_roundtrip_medium() {
     let ir_rt = fcs_converter::pgr::parse_pgr(&rt_str).unwrap();
 
     assert_eq!(ir.lines.len(), ir_rt.lines.len(), "line count");
+
+    // BPM per-line preserved
+    for (i, (ol, rl)) in ir.lines.iter().zip(&ir_rt.lines).enumerate() {
+        assert!(
+            (ol.bpm - rl.bpm).abs() < 1e-6,
+            "line {i} bpm: {} vs {}",
+            ol.bpm,
+            rl.bpm
+        );
+    }
 
     // Note count per line
     for (i, (ol, rl)) in ir.lines.iter().zip(&ir_rt.lines).enumerate() {
@@ -99,13 +133,13 @@ fn test_pgr_roundtrip_medium() {
         }
     }
 
-    // Time-sampled event comparison
+    // Time-sampled event comparison (tight tolerance with junctionBeats)
     common::compare_events_sampled(
         &ir,
         &ir_rt,
         200,
         common::EventTolerances {
-            rotate: 90.0,
+            rotate: 1.0,
             ..Default::default()
         },
     );
@@ -244,4 +278,91 @@ fn test_pec_roundtrip() {
             alpha: 2.0,
         },
     );
+}
+
+// ---------------------------------------------------------------------------
+// Cross-format smoke tests
+// ---------------------------------------------------------------------------
+
+/// Cross-format: PGR → FCS → RPE. The output should parse as valid RPE
+/// with the same number of lines and roughly the same note count.
+#[test]
+fn test_cross_pgr_to_rpe() {
+    let path = manifest_path("examples/4886210000956270.json");
+    let src = std::fs::read_to_string(&path).unwrap();
+
+    let ir = fcs_converter::pgr::parse_pgr(&src).unwrap();
+    let doc = fcs_converter::to_fcs::ir_to_fcs(&ir);
+    let rpe_str = fcs_converter::from_fcs::rpe_writer::fcs_to_rpe_json(&doc);
+    let ir_rpe = fcs_converter::rpe::parse_rpe(&rpe_str).unwrap();
+
+    assert_eq!(ir.lines.len(), ir_rpe.lines.len(), "line count");
+
+    // Note count ratio -- cross-format has inherent quantization differences
+    for (i, (ol, rl)) in ir.lines.iter().zip(&ir_rpe.lines).enumerate() {
+        let o_count = ol.notes_above.len() + ol.notes_below.len();
+        let r_count = rl.notes_above.len() + rl.notes_below.len();
+        let ratio = if o_count > r_count {
+            o_count as f64 / r_count.max(1) as f64
+        } else {
+            r_count as f64 / o_count.max(1) as f64
+        };
+        assert!(
+            ratio < 3.0,
+            "line {i} note count: {o_count} vs {r_count} (ratio {ratio:.2})"
+        );
+    }
+}
+
+/// Cross-format: RPE → FCS → PGR. The output should parse as valid PGR
+/// with the same number of lines and roughly the same note count.
+#[test]
+fn test_cross_rpe_to_pgr() {
+    let path = manifest_path("examples/10176.json");
+    let src = std::fs::read_to_string(&path).unwrap();
+
+    let ir = fcs_converter::rpe::parse_rpe(&src).unwrap();
+    let doc = fcs_converter::to_fcs::ir_to_fcs(&ir);
+    let pgr_str = fcs_converter::from_fcs::pgr_writer::fcs_to_pgr_json(&doc, 3);
+    let ir_pgr = fcs_converter::pgr::parse_pgr(&pgr_str).unwrap();
+
+    assert_eq!(ir.lines.len(), ir_pgr.lines.len(), "line count");
+
+    // Note count ratio -- cross-format has inherent quantization differences
+    for (i, (ol, rl)) in ir.lines.iter().zip(&ir_pgr.lines).enumerate() {
+        let o_count = ol.notes_above.len() + ol.notes_below.len();
+        let r_count = rl.notes_above.len() + rl.notes_below.len();
+        let ratio = if o_count > r_count {
+            o_count as f64 / r_count.max(1) as f64
+        } else {
+            r_count as f64 / o_count.max(1) as f64
+        };
+        assert!(
+            ratio < 3.0,
+            "line {i} note count: {o_count} vs {r_count} (ratio {ratio:.2})"
+        );
+    }
+}
+
+/// Cross-format: PEC → FCS → PGR. The output should parse as valid PGR.
+#[test]
+fn test_cross_pec_to_pgr() {
+    let path = manifest_path("examples/3007.json");
+    let src = std::fs::read_to_string(&path).unwrap();
+
+    let ir = fcs_converter::pec::parse_pec(&src).unwrap();
+    let doc = fcs_converter::to_fcs::ir_to_fcs(&ir);
+    let pgr_str = fcs_converter::from_fcs::pgr_writer::fcs_to_pgr_json(&doc, 3);
+    let ir_pgr = fcs_converter::pgr::parse_pgr(&pgr_str).unwrap();
+
+    // Note count should be preserved exactly (PEC -> PGR coordinate conversion
+    // doesn't add or remove notes)
+    for (i, (ol, rl)) in ir.lines.iter().zip(&ir_pgr.lines).enumerate() {
+        let o_count = ol.notes_above.len() + ol.notes_below.len();
+        let r_count = rl.notes_above.len() + rl.notes_below.len();
+        assert_eq!(
+            o_count, r_count,
+            "line {i} note count: {o_count} vs {r_count}"
+        );
+    }
 }

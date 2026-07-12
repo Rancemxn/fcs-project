@@ -9,9 +9,9 @@
 //! n1 <line_id> <time> <x> <above> <fake>          # Tap
 //! # <speed>                                         # per-note speed
 //! & <size>                                          # per-note size
-//! n2 <line_id> <time> <visT> <x> <above> <fake>    # Drag (visT = visibleTime beats)
-//! n3 <line_id> <time> <x> <above> <fake> [<hold>]  # Hold (optional holdTime beats)
-//! n4 <line_id> <time> <x> <above> <fake>           # Flick
+//! n2 <line_id> <time> <visT> <x> <above> <fake>    # Hold (visT = visibleTime beats)
+//! n3 <line_id> <time> <x> <above> <fake> [<hold>]  # Flick (optional holdTime beats)
+//! n4 <line_id> <time> <x> <above> <fake>           # Drag
 //! cp <line_id> <time> <x> <y>                       # position
 //! cd <line_id> <time> <value>                       # rotation
 //! ca <line_id> <time> <value>                       # alpha
@@ -131,9 +131,9 @@ fn lit_to_f64(lit: &fcs_core::ast::Literal) -> f64 {
 fn pec_prefix(kind: NoteKind) -> &'static str {
     match kind {
         NoteKind::Tap => "n1",
-        NoteKind::Drag => "n2",
-        NoteKind::Hold => "n3",
-        NoteKind::Flick => "n4",
+        NoteKind::Hold => "n2",
+        NoteKind::Flick => "n3",
+        NoteKind::Drag => "n4",
         NoteKind::Fake => "n1",
     }
 }
@@ -168,19 +168,24 @@ fn note_to_pec(note: &NoteInstance, line_id: usize) -> Option<String> {
 
     let mut lines = Vec::new();
 
-    // Note line: <prefix> <line_id> <time> <x> <above> <fake> [<holdTime>]
-    // Drag (n2): includes visibleTime: <prefix> <line_id> <time> <x> <visT> <above> <fake>
-    if note.kind == NoteKind::Hold && eb > tb {
-        lines.push(format!(
-            "{prefix} {line_id} {t} {x} {above} {fake} {}",
-            pec_t(eb - tb)
-        ));
-    } else if note.kind == NoteKind::Drag {
-        let vis = note_f64(note, "visibleTime", 0.0) as i32;
-        // n2 format: <line> <time> <visT> <x> <above> <fake>
-        lines.push(format!("{prefix} {line_id} {t} {vis} {x} {above} {fake}"));
-    } else {
-        lines.push(format!("{prefix} {line_id} {t} {x} {above} {fake}"));
+    // PEC note format differs by prefix:
+    //   n2 (Hold): <line> <time> <visT> <x> <above> <fake>
+    //   n3 (Flick): <line> <time> <x> <above> <fake> [<holdTime>]
+    //   n1, n4 (Tap, Drag): <line> <time> <x> <above> <fake>
+    match prefix {
+        "n2" => {
+            let vis = note_f64(note, "visibleTime", 0.0) as i32;
+            lines.push(format!("{prefix} {line_id} {t} {vis} {x} {above} {fake}"));
+        }
+        "n3" if eb > tb => {
+            lines.push(format!(
+                "{prefix} {line_id} {t} {x} {above} {fake} {}",
+                pec_t(eb - tb)
+            ));
+        }
+        _ => {
+            lines.push(format!("{prefix} {line_id} {t} {x} {above} {fake}"));
+        }
     }
     // # speed, & size
     lines.push(format!("# {}", speed));
@@ -276,8 +281,8 @@ mod tests {
     #[test]
     fn test_pec_prefixes() {
         assert_eq!(pec_prefix(NoteKind::Tap), "n1");
-        assert_eq!(pec_prefix(NoteKind::Drag), "n2");
-        assert_eq!(pec_prefix(NoteKind::Hold), "n3");
-        assert_eq!(pec_prefix(NoteKind::Flick), "n4");
+        assert_eq!(pec_prefix(NoteKind::Hold), "n2");
+        assert_eq!(pec_prefix(NoteKind::Flick), "n3");
+        assert_eq!(pec_prefix(NoteKind::Drag), "n4");
     }
 }

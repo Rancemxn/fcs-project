@@ -7,9 +7,9 @@
 //!   <offset_line>                    -- offset = (value - 150) / 1000 seconds
 //!   bp <time> <bpm>                 -- BPM point (time in pec_t = beat·2048)
 //!   n1 <line> <time> <x> <above> <fake> # <speed> & <size>
-//!   n2 <line> <time> <visT> <x> <above> <fake> # <speed> & <size> (visT = visibleTime pec_t)
-//!   n3 <line> <time> <x> <above> <fake> [# <hold>] # <speed> & <size> (hold in pec_t)
-//!   n4 <line> <time> <x> <above> <fake> # <speed> & <size>
+//!   n2 <line> <time> <visT> <x> <above> <fake> # <speed> & <size> (visT = visibleTime pec_t) [Hold]
+//!   n3 <line> <time> <x> <above> <fake> [# <hold>] # <speed> & <size> (hold in pec_t) [Flick]
+//!   n4 <line> <time> <x> <above> <fake> # <speed> & <size> [Drag]
 //!   cp <line> <time> <x> <y>         -- position (point event)
 //!   cd <line> <time> <v>             -- rotate (point event)
 //!   ca <line> <time> <v>             -- alpha (point event)
@@ -139,17 +139,17 @@ pub fn parse_pec(text: &str) -> Result<IrChart, String> {
         let line_idx: i32 = raw.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
         let kind = match raw[0].as_str() {
             "n1" => IrNoteKind::Tap,
-            "n2" => IrNoteKind::Drag,
-            "n3" => IrNoteKind::Hold,
-            "n4" => IrNoteKind::Flick,
+            "n2" => IrNoteKind::Hold,
+            "n3" => IrNoteKind::Flick,
+            "n4" => IrNoteKind::Drag,
             _ => IrNoteKind::Fake,
         };
         let note_speed = speeds.get(i).copied().unwrap_or(1.0);
         let size = sizes.get(i).copied().unwrap_or(1.0);
         let time_beat = pec_t_to_beat(raw[2].parse::<f64>().unwrap_or(0.0));
 
-        let (x_pec, visible_time, above, is_fake) = if kind == IrNoteKind::Drag {
-            // n2: with or without visT — detect by token count
+        let (x_pec, visible_time, above, is_fake) = if raw[0].as_str() == "n2" {
+            // n2 (Hold): with or without visT — detect by token count
             let (x_pec, vis, above, fake) = if raw.len() >= 7 {
                 // Format: n2 <line> <time> <visT> <x> <above> <fake>
                 let x_pec = raw[4].parse::<f64>().unwrap_or(0.0);
@@ -179,8 +179,8 @@ pub fn parse_pec(text: &str) -> Result<IrChart, String> {
         };
         let x_fcs = pec_x_to_fcs(x_pec);
 
-        // n3 Hold: optional holdTime at raw[6], stored as PEC time units (beat*2048)
-        let hold_beat = if kind == IrNoteKind::Hold {
+        // n3 (Flick): optional holdTime at raw[6], stored as PEC time units (beat*2048)
+        let hold_beat = if raw[0].as_str() == "n3" {
             raw.get(6)
                 .and_then(|s| s.parse::<i32>().ok())
                 .map(|pec_time| pec_time as f64 / 2048.0)
