@@ -266,20 +266,6 @@ fn parse_motion_property<'a>(
     }
 }
 
-/// Parse `junctionBeats: [beat, beat, ...];`
-fn parse_junction_beats(input: &str) -> IResult<&str, Vec<f64>> {
-    let (input, _) = preceded(ws, tag("junctionBeats")).parse(input)?;
-    let (input, _) = preceded(ws, char(':')).parse(input)?;
-    let (input, beats) = delimited(
-        preceded(ws, char('[')),
-        separated_list0(preceded(ws, char(',')), parse_beat_value),
-        preceded(ws, char(']')),
-    )
-    .parse(input)?;
-    let (input, _) = semicolon(input)?;
-    Ok((input, beats))
-}
-
 /// Parse a motion layer: `layer { property* }`
 fn parse_motion_layer(input: &str) -> IResult<&str, MotionLayer> {
     let (input, _) = preceded(ws, tag("layer")).parse(input)?;
@@ -287,9 +273,6 @@ fn parse_motion_layer(input: &str) -> IResult<&str, MotionLayer> {
 
     let mut layer = MotionLayer::default();
     let (input, _) = many0(alt((
-        map(parse_junction_beats, |beats| {
-            layer.junction_beats = beats;
-        }),
         map(parse_motion_property("positionX"), |ivs| {
             layer.position_x = ivs;
         }),

@@ -33,7 +33,6 @@ pub struct MotionInterval {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MotionLayer {
-    pub junction_beats: Vec<f64>,
     pub position_x: Vec<MotionInterval>,
     pub position_y: Vec<MotionInterval>,
     pub rotation: Vec<MotionInterval>,

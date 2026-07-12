@@ -58,10 +58,6 @@ fn push_motion_interval(
     end_expr: Expression,
     start_expr: Expression,
 ) {
-    // Collect original event boundaries for junction_beats
-    layer.junction_beats.push(e.start_beat);
-    layer.junction_beats.push(e.end_beat);
-
     let end = if e.end_beat > e.start_beat {
         e.end_beat
     } else {
@@ -180,12 +176,6 @@ fn build_line(line: &IrLine) -> LineDef {
             Expression::Literal(Literal::Float(e.start_value)),
         );
     }
-
-    // Sort and deduplicate junction beats
-    layer
-        .junction_beats
-        .sort_by(|a, b| a.partial_cmp(b).unwrap());
-    layer.junction_beats.dedup();
 
     let motion = MotionBlock {
         layers: vec![layer],
