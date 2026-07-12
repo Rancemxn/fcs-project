@@ -1,0 +1,29 @@
+#fcs v4.0.0
+name: "Easing Coverage";
+offset: 0ms;
+judgelines: [
+    line {
+        name: "Main";
+        bpm: 120;
+        zOrder: 0;
+        color: #ffffffff;
+        motion {
+            layer {
+                positionX {
+                    [0.0b => 4.0b]: easeLinear(b, 0.0b, 4.0b, -300px, 300px, 0.0, 1.0);
+                    [4.0b => 8.0b]: easeOutSine(b, 4.0b, 8.0b, 300px, 0px, 0.0, 1.0);
+                    [8.0b => 12.0b]: easeInOutCubic(b, 8.0b, 12.0b, 0px, 300px, 0.0, 1.0);
+                }
+                rotation {
+                    [0.0b => 6.0b]: easeOutElastic(b, 0.0b, 6.0b, 0deg, 720deg, 0.0, 1.0);
+                    [6.0b => 12.0b]: easeInBounce(b, 6.0b, 12.0b, 0deg, 180deg, 0.0, 1.0);
+                }
+            }
+        }
+        notes {
+            tap(time: 0.0b, positionX: 0px);
+            tap(time: 6.0b, positionX: 100px);
+            tap(time: 12.0b, positionX: -100px);
+        }
+    }
+];

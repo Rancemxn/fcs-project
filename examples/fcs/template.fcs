@@ -1,0 +1,17 @@
+#fcs v4.0.0
+name: "Template Test";
+offset: 0ms;
+#template tap_note(time: time, x: length) : note {
+    tap(time: $time, positionX: $x * 2px);
+}
+judgelines: [
+    line {
+        name: "Main";
+        bpm: 120;
+        zOrder: 0;
+        color: #ffffffff;
+        #useTemplate tap_note(time: 0.0b, x: 0px);
+        #useTemplate tap_note(time: 2.0b, x: 100px);
+        #useTemplate tap_note(time: 4.0b, x: -100px);
+    }
+];

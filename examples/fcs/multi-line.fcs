@@ -1,0 +1,38 @@
+#fcs v4.0.0
+name: "Multi Line";
+offset: 0ms;
+judgelines: [
+    line {
+        name: "Top";
+        bpm: 140;
+        zOrder: 10;
+        color: #ff0000ff;
+        inherit { position: true; rotation: false; }
+        notes {
+            tap(time: 0.0b, positionX: 0px);
+        }
+    }
+    line {
+        name: "Mid";
+        bpm: 120;
+        zOrder: 5;
+        color: #00ff00ff;
+        inherit { position: true; rotation: true; }
+        notes {
+            tap(time: 0.0b, positionX: 200px);
+            tap(time: 2.0b, positionX: -200px);
+        }
+    }
+    line {
+        name: "Bot";
+        bpm: 100;
+        zOrder: 0;
+        color: #0000ffff;
+        notes {
+            tap(time: 0.0b, positionX: -200px);
+            tap(time: 1.0b, positionX: 0px);
+            tap(time: 2.0b, positionX: 200px);
+            tap(time: 3.0b, positionX: 0px);
+        }
+    }
+];
