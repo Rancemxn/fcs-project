@@ -368,34 +368,37 @@ fn sample_at(intervals: &[MotionInterval], beat: f64, default: f64, env: &EvalEn
     default
 }
 
-/// Collect union of junction_beats from all layers, sorted and deduped.
-fn union_junction_beats(motion: &Option<MotionBlock>) -> Vec<f64> {
-    match motion {
-        Some(m) => {
-            let mut all: Vec<f64> = m
-                .layers
-                .iter()
-                .flat_map(|l| l.junction_beats.iter().copied())
-                .collect();
-            if all.is_empty() {
-                return all;
-            }
-            all.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            all.dedup();
-            all
-        }
-        None => vec![],
+/// For a window [window_start, window_end], check if exactly one interval
+/// covers the entire window. If so, evaluate the expression at both endpoints
+/// and return (start_value, end_value). Otherwise return None (caller should
+/// fall back to midpoint sampling).
+fn covering_endpoints(
+    intervals: &[MotionInterval],
+    window_start: f64,
+    window_end: f64,
+    env: &EvalEnv,
+) -> Option<(f64, f64)> {
+    let covering: Vec<&MotionInterval> = intervals
+        .iter()
+        .filter(|iv| iv.start_beat <= window_start && iv.end_beat >= window_end)
+        .collect();
+    if covering.len() == 1 {
+        let expr = &covering[0].expression;
+        let mut es = *env;
+        es.beat = window_start;
+        let sv = eval_expr(expr, &es);
+        es.beat = window_end;
+        let ev = eval_expr(expr, &es);
+        Some((sv, ev))
+    } else {
+        None
     }
 }
 
-/// Build beat boundaries for a set of intervals, using junction_beats when available.
-fn beats_or_junction<'a>(
+/// Build sorted, deduped beat boundaries from interval endpoints.
+fn collect_beat_boundaries<'a>(
     intervals: impl IntoIterator<Item = &'a MotionInterval>,
-    jb: &[f64],
 ) -> Vec<f64> {
-    if !jb.is_empty() {
-        return jb.to_vec();
-    }
     let mut s = std::collections::BTreeSet::new();
     for iv in intervals {
         s.insert((iv.start_beat * 1e6) as i64);
@@ -419,48 +422,63 @@ fn motion_to_move_rotate_alpha(
     let rot_ivs = collect_intervals(motion, |l| &l.rotation);
     let alpha_ivs = collect_intervals(motion, |l| &l.alpha);
 
-    let jb = union_junction_beats(motion);
-
-    // Move events: use x + y boundaries so both fields are well-represented
-    let move_beats = beats_or_junction(x_ivs.iter().chain(&y_ivs), &jb);
+    // Each field uses its own interval boundaries to avoid event inflation
+    // from cross-field boundary leakage (e.g., alpha boundaries splitting rotation).
+    // Junction beats are preserved implicitly through FCS interval endpoints;
+    // the BTreeSet fallback in beats_or_junction captures them naturally.
+    let move_beats = collect_beat_boundaries(x_ivs.iter().chain(&y_ivs));
     let moves: Vec<PgrEvent> = move_beats
         .windows(2)
         .map(|w| {
-            let bm = (w[0] + w[1]) * 0.5;
             let mut es = *env;
-            es.beat = bm;
-            es.seconds = time::beat_to_seconds(bm, bpm);
-            let xv = sample_at(&x_ivs, bm, 0.0, &es);
-            let yv = sample_at(&y_ivs, bm, 0.0, &es);
-            let pgr_x = (coord::fcs_px_to_rpe_x(xv) + 675.0) / 1350.0;
-            let pgr_y = (coord::fcs_px_to_rpe_y(yv) + 450.0) / 900.0;
+            let (xv_s, xv_e) = covering_endpoints(&x_ivs, w[0], w[1], &es).unwrap_or_else(|| {
+                let bm = (w[0] + w[1]) * 0.5;
+                es.beat = bm;
+                es.seconds = time::beat_to_seconds(bm, bpm);
+                let v = sample_at(&x_ivs, bm, 0.0, &es);
+                (v, v)
+            });
+            let (yv_s, yv_e) = covering_endpoints(&y_ivs, w[0], w[1], &es).unwrap_or_else(|| {
+                let bm = (w[0] + w[1]) * 0.5;
+                es.beat = bm;
+                es.seconds = time::beat_to_seconds(bm, bpm);
+                let v = sample_at(&y_ivs, bm, 0.0, &es);
+                (v, v)
+            });
+            let pgr_xs = (coord::fcs_px_to_rpe_x(xv_s) + 675.0) / 1350.0;
+            let pgr_xe = (coord::fcs_px_to_rpe_x(xv_e) + 675.0) / 1350.0;
+            let pgr_ys = (coord::fcs_px_to_rpe_y(yv_s) + 450.0) / 900.0;
+            let pgr_ye = (coord::fcs_px_to_rpe_y(yv_e) + 450.0) / 900.0;
             PgrEvent {
                 start_time: time::beat_to_pgr_t(w[0]),
                 end_time: time::beat_to_pgr_t(w[1]),
-                start: pgr_x,
-                end: pgr_x,
-                start2: pgr_y,
-                end2: pgr_y,
+                start: pgr_xs,
+                end: pgr_xe,
+                start2: pgr_ys,
+                end2: pgr_ye,
                 value: 1.0,
             }
         })
         .collect();
 
     // Rotate events: use rotation interval boundaries only
-    let rot_beats = beats_or_junction(&rot_ivs, &jb);
+    let rot_beats = collect_beat_boundaries(&rot_ivs);
     let rots: Vec<PgrEvent> = rot_beats
         .windows(2)
         .map(|w| {
-            let bm = (w[0] + w[1]) * 0.5;
             let mut es = *env;
-            es.beat = bm;
-            es.seconds = time::beat_to_seconds(bm, bpm);
-            let rv = sample_at(&rot_ivs, bm, 0.0, &es);
+            let (sv, ev) = covering_endpoints(&rot_ivs, w[0], w[1], &es).unwrap_or_else(|| {
+                let bm = (w[0] + w[1]) * 0.5;
+                es.beat = bm;
+                es.seconds = time::beat_to_seconds(bm, bpm);
+                let v = sample_at(&rot_ivs, bm, 0.0, &es);
+                (v, v)
+            });
             PgrEvent {
                 start_time: time::beat_to_pgr_t(w[0]),
                 end_time: time::beat_to_pgr_t(w[1]),
-                start: -rv,
-                end: -rv,
+                start: -sv,
+                end: -ev,
                 start2: 0.0,
                 end2: 0.0,
                 value: 1.0,
@@ -469,20 +487,23 @@ fn motion_to_move_rotate_alpha(
         .collect();
 
     // Alpha events: use alpha interval boundaries only
-    let alpha_beats = beats_or_junction(&alpha_ivs, &jb);
+    let alpha_beats = collect_beat_boundaries(&alpha_ivs);
     let alphas: Vec<PgrEvent> = alpha_beats
         .windows(2)
         .map(|w| {
-            let bm = (w[0] + w[1]) * 0.5;
             let mut es = *env;
-            es.beat = bm;
-            es.seconds = time::beat_to_seconds(bm, bpm);
-            let av = sample_at(&alpha_ivs, bm, 1.0, &es);
+            let (sv, ev) = covering_endpoints(&alpha_ivs, w[0], w[1], &es).unwrap_or_else(|| {
+                let bm = (w[0] + w[1]) * 0.5;
+                es.beat = bm;
+                es.seconds = time::beat_to_seconds(bm, bpm);
+                let v = sample_at(&alpha_ivs, bm, 1.0, &es);
+                (v, v)
+            });
             PgrEvent {
                 start_time: time::beat_to_pgr_t(w[0]),
                 end_time: time::beat_to_pgr_t(w[1]),
-                start: av,
-                end: av,
+                start: sv,
+                end: ev,
                 start2: 0.0,
                 end2: 0.0,
                 value: 1.0,
