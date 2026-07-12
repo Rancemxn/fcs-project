@@ -64,12 +64,22 @@ fn push_motion_interval(
         e.start_beat + EPS
     };
     // PGR events with start ≠ end use linear interpolation over [start_beat, end_beat].
-    // FCS motion intervals are piecewise-constant. Approximate by splitting into
-    // two sub-intervals: first half = start_value, second half = end_value.
+    // Emit an easeLinear call so the linear transition is preserved in FCS,
+    // enabling lossless round-trip through the PGR writer.
     if (e.start_value - e.end_value).abs() > 1e-10 {
-        let mid = (e.start_beat + end) * 0.5;
-        push_to_layer(layer, field, e.start_beat, mid, &start_expr);
-        push_to_layer(layer, field, mid, end, &end_expr);
+        let ease_call = Expression::Call {
+            name: "easeLinear".into(),
+            args: vec![
+                Expression::Variable("b".into()),
+                q_time_beat(e.start_beat),
+                q_time_beat(end),
+                start_expr,
+                end_expr,
+                Expression::Literal(Literal::Float(0.0)),
+                Expression::Literal(Literal::Float(1.0)),
+            ],
+        };
+        push_to_layer(layer, field, e.start_beat, end, &ease_call);
     } else {
         push_to_layer(layer, field, e.start_beat, end, &end_expr);
     }
