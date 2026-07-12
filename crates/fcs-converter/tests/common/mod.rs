@@ -232,3 +232,11 @@ pub fn compare_notes_exact(orig: &IrChart, rt: &IrChart, tolerance: f64) {
         }
     }
 }
+
+/// Resolve a path relative to the project root
+/// from a crate's manifest directory (tests live in `crates/fcs-converter/`).
+pub fn manifest_path(rel: &str) -> String {
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let full = std::path::Path::new(dir).join("../../").join(rel);
+    full.to_string_lossy().to_string()
+}

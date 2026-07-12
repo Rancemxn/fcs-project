@@ -1,12 +1,11 @@
 #fcs v4.0.0
-name: "Overlapping Intervals";
-offset: 0ms;
-judgelines: [
-    line {
-        name: "Main";
-        bpm: 120;
+meta { name: "Overlapping Intervals"; artists: ["Author"]; charters: ["Charter"]; offset: 0ms; version: "4.0.0"; }
+masterTimeline { 0.0b -> 120.0; }
+judgelines {
+    line Main {
         zOrder: 0;
         color: #ffffffff;
+        bpmTimeline { 0.0b -> 120.0; }
         motion {
             layer {
                 positionX {
@@ -23,7 +22,7 @@ judgelines: [
             }
         }
         notes {
-            tap(time: 0.0b, positionX: 0px);
+            tap { time: 0.0b; positionX: 0px; }
         }
     }
-];
+}

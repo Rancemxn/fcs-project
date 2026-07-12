@@ -1,38 +1,33 @@
 #fcs v4.0.0
-name: "Multi Line";
-offset: 0ms;
-judgelines: [
-    line {
-        name: "Top";
-        bpm: 140;
+meta { name: "Multi Line"; artists: ["Author"]; charters: ["Charter"]; offset: 0ms; version: "4.0.0"; }
+masterTimeline { 0.0b -> 120.0; }
+judgelines {
+    line Top {
         zOrder: 10;
         color: #ff0000ff;
-        inherit { position: true; rotation: false; }
+        bpmTimeline { 0.0b -> 140.0; }
         notes {
-            tap(time: 0.0b, positionX: 0px);
+            tap { time: 0.0b; positionX: 0px; }
         }
     }
-    line {
-        name: "Mid";
-        bpm: 120;
+    line Mid {
         zOrder: 5;
         color: #00ff00ff;
-        inherit { position: true; rotation: true; }
+        bpmTimeline { 0.0b -> 120.0; }
         notes {
-            tap(time: 0.0b, positionX: 200px);
-            tap(time: 2.0b, positionX: -200px);
+            tap { time: 0.0b; positionX: 200px; }
+            tap { time: 2.0b; positionX: -200px; }
         }
     }
-    line {
-        name: "Bot";
-        bpm: 100;
+    line Bot {
         zOrder: 0;
         color: #0000ffff;
+        bpmTimeline { 0.0b -> 100.0; }
         notes {
-            tap(time: 0.0b, positionX: -200px);
-            tap(time: 1.0b, positionX: 0px);
-            tap(time: 2.0b, positionX: 200px);
-            tap(time: 3.0b, positionX: 0px);
+            tap { time: 0.0b; positionX: -200px; }
+            tap { time: 1.0b; positionX: 0px; }
+            tap { time: 2.0b; positionX: 200px; }
+            tap { time: 3.0b; positionX: 0px; }
         }
     }
-];
+}

@@ -1,27 +1,19 @@
 {
   "formatVersion": 3,
-  "title": "PGR V3 Features",
-  "artist": "Test",
-  "charter": "Test",
-  "music": { "id": 0, "preview": 0 },
-  "cover": { "id": 0 },
   "offset": 0,
-  "lines": [
+  "judgeLineList": [
     {
       "bpm": 120,
       "notesAbove": [
         { "type": 1, "time": 0, "positionX": 0, "speed": 1.0, "size": 1.0, "above": 1 },
-        { "type": 3, "time": 4, "positionX": 1, "speed": 1.0, "size": 1.0, "above": 1, "visibleTime": 2 }
+        { "type": 3, "time": 4, "positionX": 10, "speed": 1.0, "size": 1.0, "above": 1, "visibleTime": 2 }
       ],
       "notesBelow": [],
       "speedEvents": [
         { "startTime": 0, "endTime": 8, "start": 1.0, "end": 2.0, "value": 1 }
       ],
-      "moveXEvents": [
+      "judgeLineMoveEvents": [
         { "startTime": 0, "endTime": 16, "start": 0.3, "end": 0.7, "start2": 0.5, "end2": 0.5, "value": 1 }
-      ],
-      "moveYEvents": [
-        { "startTime": 0, "endTime": 16, "start": 0.5, "end": 0.5, "start2": 0.4, "end2": 0.6, "value": 1 }
       ]
     },
     {
@@ -31,9 +23,9 @@
       ],
       "notesBelow": [],
       "speedEvents": [],
-      "moveXEvents": [],
-      "rotateEvents": [],
-      "alphaEvents": []
+      "judgeLineMoveEvents": [],
+      "judgeLineRotateEvents": [],
+      "judgeLineDisappearEvents": []
     }
   ]
 }
