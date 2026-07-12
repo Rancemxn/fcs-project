@@ -66,6 +66,7 @@ fn expr_f(v: f64) -> Expression {
 
 pub fn autofill_layer(layer: &MotionLayer) -> MotionLayer {
     MotionLayer {
+        junction_beats: layer.junction_beats.clone(),
         position_x: autofill_intervals(&layer.position_x, 0.0),
         position_y: autofill_intervals(&layer.position_y, 0.0),
         rotation: autofill_intervals(&layer.rotation, 0.0),
