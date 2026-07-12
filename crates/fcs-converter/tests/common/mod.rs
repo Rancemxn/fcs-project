@@ -6,20 +6,30 @@
 use fcs_converter::ir::*;
 
 /// Linear interpolation: value at time_beat given a time-sorted event list.
+/// Uses binary search (partition_point) for O(log N) lookup.
 /// Returns None if no event covers the time.
 pub fn sample_event_value(events: &[IrEvent], time_beat: f64) -> Option<f64> {
-    for e in events {
-        if (e.start_beat - time_beat).abs() < 1e-12 && e.start_beat == e.end_beat {
+    // Find the last event with start_beat <= time_beat.
+    // partition_point requires a sorted/partitioned input — events must be
+    // ordered by start_beat (all format parsers and ir_to_fcs guarantee this).
+    let idx = events.partition_point(|e| e.start_beat <= time_beat);
+    let idx = idx.checked_sub(1)?;
+    let e = &events[idx];
+
+    // Instant event at exact time (start == end seen as a step)
+    if (e.start_beat - time_beat).abs() < 1e-12 && e.start_beat == e.end_beat {
+        return Some(e.start_value);
+    }
+
+    // Normal range coverage
+    if time_beat >= e.start_beat && time_beat < e.end_beat {
+        if (e.end_beat - e.start_beat).abs() < 1e-12 {
             return Some(e.start_value);
         }
-        if time_beat >= e.start_beat && time_beat < e.end_beat {
-            if (e.end_beat - e.start_beat).abs() < 1e-12 {
-                return Some(e.start_value);
-            }
-            let t = (time_beat - e.start_beat) / (e.end_beat - e.start_beat);
-            return Some(e.start_value + (e.end_value - e.start_value) * t);
-        }
+        let t = (time_beat - e.start_beat) / (e.end_beat - e.start_beat);
+        return Some(e.start_value + (e.end_value - e.start_value) * t);
     }
+
     None
 }
 

@@ -91,6 +91,7 @@ enum MotionField {
     PositionY,
     Rotation,
     Alpha,
+    Speed,
 }
 
 fn push_to_layer(
@@ -111,6 +112,7 @@ fn push_to_layer(
         MotionField::PositionY => layer.position_y.push(mi),
         MotionField::Rotation => layer.rotation.push(mi),
         MotionField::Alpha => layer.alpha.push(mi),
+        MotionField::Speed => layer.speed.push(mi),
     }
 }
 
@@ -129,17 +131,13 @@ fn build_line(line: &IrLine) -> LineDef {
 
     let mut layer = MotionLayer::default();
     for e in &line.events.speed {
-        let end = if e.end_beat > e.start_beat {
-            e.end_beat
-        } else {
-            e.start_beat + EPS
-        };
-        layer.speed.push(MotionInterval {
-            start_beat: e.start_beat,
-            end_beat: end,
-            end_inclusive: true,
-            expression: Expression::Literal(Literal::Float(e.end_value)),
-        });
+        push_motion_interval(
+            &mut layer,
+            MotionField::Speed,
+            e,
+            Expression::Literal(Literal::Float(e.end_value)),
+            Expression::Literal(Literal::Float(e.start_value)),
+        );
     }
     for e in &line.events.move_x {
         // PGR move_x uses "谱面渲染范围宽度" unit: 0.5=center, 1.0=right edge.

@@ -5,11 +5,53 @@ mod common;
 
 use std::path::Path;
 
+fn file_size(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+/// 5MB threshold: files above this only get structural checks.
+const SAMPLED_SIZE_LIMIT: u64 = 5 * 1024 * 1024;
+
 /// Try to parse a string with PGR first, then RPE, then PEC.
 fn parse_any(src: &str) -> Result<fcs_converter::ir::IrChart, String> {
     fcs_converter::pgr::parse_pgr(src)
         .or_else(|_| fcs_converter::rpe::parse_rpe(src))
         .or_else(|_| fcs_converter::pec::parse_pec(src))
+}
+
+/// Parse and return the detected format alongside the chart.
+fn detect_and_parse(src: &str) -> Result<(fcs_converter::ir::IrChart, &'static str), String> {
+    if let Ok(c) = fcs_converter::pgr::parse_pgr(src) {
+        return Ok((c, "PGR"));
+    }
+    if let Ok(c) = fcs_converter::rpe::parse_rpe(src) {
+        return Ok((c, "RPE"));
+    }
+    if let Ok(c) = fcs_converter::pec::parse_pec(src) {
+        return Ok((c, "PEC"));
+    }
+    Err("unknown format".into())
+}
+
+/// Round-trip through PGR: IR → FCS → PGR V3 → parse.
+fn roundtrip_pgr(chart: &fcs_converter::ir::IrChart) -> Result<fcs_converter::ir::IrChart, String> {
+    let doc = fcs_converter::to_fcs::ir_to_fcs(chart);
+    let json = fcs_converter::from_fcs::pgr_writer::fcs_to_pgr_json(&doc, 3);
+    fcs_converter::pgr::parse_pgr(&json).map_err(|e| e.to_string())
+}
+
+/// Round-trip through RPE: IR → FCS → RPE JSON → parse.
+fn roundtrip_rpe(chart: &fcs_converter::ir::IrChart) -> Result<fcs_converter::ir::IrChart, String> {
+    let doc = fcs_converter::to_fcs::ir_to_fcs(chart);
+    let json = fcs_converter::from_fcs::rpe_writer::fcs_to_rpe_json(&doc);
+    fcs_converter::rpe::parse_rpe(&json).map_err(|e| e.to_string())
+}
+
+/// Round-trip through PEC: IR → FCS → PEC text → parse.
+fn roundtrip_pec(chart: &fcs_converter::ir::IrChart) -> Result<fcs_converter::ir::IrChart, String> {
+    let doc = fcs_converter::to_fcs::ir_to_fcs(chart);
+    let text = fcs_converter::from_fcs::pec_writer::fcs_to_pec(&doc);
+    fcs_converter::pec::parse_pec(&text).map_err(|e| e.to_string())
 }
 
 /// Count notes across all lines in a chart.
@@ -107,7 +149,7 @@ fn test_copyright_roundtrip() {
             continue;
         }
 
-        // Phase 1: Parse to IR
+        // Phase 1: Parse to IR + detect source format
         let src = match std::fs::read_to_string(&path) {
             Ok(s) => s,
             Err(e) => {
@@ -115,37 +157,81 @@ fn test_copyright_roundtrip() {
                 continue;
             }
         };
-        let chart_a = match parse_any(&src) {
+        let (chart_a, fmt) = match detect_and_parse(&src) {
             Ok(c) => c,
             Err(e) => {
                 errors.push(format!("{name}: parse failed: {e}"));
                 continue;
             }
         };
-        let lines_a = chart_a.lines.len();
         let notes_a = total_notes(&chart_a);
 
-        // Phase 2: Round-trip through FCS → PGR V3 → parse
-        let doc = fcs_converter::to_fcs::ir_to_fcs(&chart_a);
-        let pgr_json = fcs_converter::from_fcs::pgr_writer::fcs_to_pgr_json(&doc, 3);
-
-        let chart_b = match fcs_converter::pgr::parse_pgr(&pgr_json) {
-            Ok(c) => c,
-            Err(e) => {
-                errors.push(format!("{name}: PGR round-trip failed: {e}"));
-                continue;
-            }
+        // Phase 2: Round-trip through the ORIGINAL format (same-format only)
+        let chart_b = match fmt {
+            "PGR" => match roundtrip_pgr(&chart_a) {
+                Ok(c) => c,
+                Err(e) => {
+                    errors.push(format!("{name}: PGR round-trip failed: {e}"));
+                    continue;
+                }
+            },
+            "RPE" => match roundtrip_rpe(&chart_a) {
+                Ok(c) => c,
+                Err(e) => {
+                    errors.push(format!("{name}: RPE round-trip failed: {e}"));
+                    continue;
+                }
+            },
+            "PEC" => match roundtrip_pec(&chart_a) {
+                Ok(c) => c,
+                Err(e) => {
+                    errors.push(format!("{name}: PEC round-trip failed: {e}"));
+                    continue;
+                }
+            },
+            _ => unreachable!(),
         };
         let notes_b = total_notes(&chart_b);
 
         // Phase 3: Structural comparison
-        // PGR may repack lines (empty lines dropped, unused lines merged)
-        // so only compare total note count, not line count.
+        // Some formats may repack lines, so only compare total note count.
         if notes_a != notes_b {
             errors.push(format!(
                 "{name}: note count mismatch: {notes_a} (original) vs {notes_b} (round-trip)"
             ));
             continue;
+        }
+
+        // Phase 4: Sampled event precision (small files only)
+        if file_size(&path) <= SAMPLED_SIZE_LIMIT {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                common::compare_events_sampled(
+                    &chart_a,
+                    &chart_b,
+                    200,
+                    common::EventTolerances {
+                        move_x: 0.1,
+                        move_y: 0.1,
+                        rotate: 0.001,
+                        speed: 0.01,
+                        alpha: 0.01,
+                    },
+                );
+            }));
+            match result {
+                Ok(()) => {}
+                Err(e) => {
+                    let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = e.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "unknown error".into()
+                    };
+                    errors.push(format!("{name}: {msg}"));
+                    continue;
+                }
+            }
         }
         passed += 1;
     }
