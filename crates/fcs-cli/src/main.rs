@@ -366,7 +366,7 @@ fn format_fcs(doc: &fcs_core::ast::Document) -> String {
                     if !intervals.is_empty() {
                         o.push_str(&format!("                {} {{\n", name));
                         for intv in *intervals {
-                            let expr_str = fmt_lit_expr(&intv.expression);
+                            let expr_str = fmt_expr(&intv.expression);
                             o.push_str(&format!(
                                 "                    [{}b => {}b]: {};\n",
                                 intv.start_beat, intv.end_beat, expr_str
@@ -398,16 +398,70 @@ fn format_fcs(doc: &fcs_core::ast::Document) -> String {
 
 fn fmt_val(v: &fcs_core::ast::NotePropertyValue) -> String {
     match v {
-        fcs_core::ast::NotePropertyValue::Expr(e) => fmt_lit_expr(e),
+        fcs_core::ast::NotePropertyValue::Expr(e) => fmt_expr(e),
         fcs_core::ast::NotePropertyValue::Bool(b) => b.to_string(),
         _ => "?".into(),
     }
 }
 
-fn fmt_lit_expr(e: &fcs_core::ast::Expression) -> String {
+fn binop_symbol(op: &fcs_core::ast::BinaryOp) -> &'static str {
+    use fcs_core::ast::BinaryOp;
+    match op {
+        BinaryOp::Add => "+",
+        BinaryOp::Sub => "-",
+        BinaryOp::Mul => "*",
+        BinaryOp::Div => "/",
+        BinaryOp::Mod => "%",
+        BinaryOp::Pow => "^",
+    }
+}
+
+fn unop_symbol(op: &fcs_core::ast::UnaryOp) -> &'static str {
+    use fcs_core::ast::UnaryOp;
+    match op {
+        UnaryOp::Neg => "-",
+    }
+}
+
+fn fmt_expr(e: &fcs_core::ast::Expression) -> String {
+    use fcs_core::ast::Expression;
     match e {
-        fcs_core::ast::Expression::Literal(lit) => fmt_literal(lit),
-        _ => "?".into(),
+        Expression::Literal(lit) => fmt_literal(lit),
+        Expression::Variable(name) => name.clone(),
+        Expression::BinaryOp { op, left, right } => {
+            format!(
+                "({} {} {})",
+                fmt_expr(left),
+                binop_symbol(op),
+                fmt_expr(right)
+            )
+        }
+        Expression::UnaryOp { op, operand } => {
+            format!("({}{})", unop_symbol(op), fmt_expr(operand))
+        }
+        Expression::Call { name, args } => {
+            let args: Vec<String> = args.iter().map(fmt_expr).collect();
+            format!("{}({})", name, args.join(", "))
+        }
+        Expression::Ternary {
+            cond,
+            if_true,
+            if_false,
+        } => {
+            format!(
+                "({} ? {} : {})",
+                fmt_expr(cond),
+                fmt_expr(if_true),
+                fmt_expr(if_false)
+            )
+        }
+        Expression::ChainCompare { left, ops } => {
+            let mut s = fmt_expr(left);
+            for (op, expr) in ops {
+                s = format!("{} {} {}", s, op.as_str(), fmt_expr(expr));
+            }
+            s
+        }
     }
 }
 
