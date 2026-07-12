@@ -214,7 +214,7 @@ fn motion_to_pec(motion: &Option<MotionBlock>, line_id: usize) -> Vec<String> {
             out.extend(pec_easing_rotation(iv, line_id));
         }
         for iv in &layer.alpha {
-            out.extend(pec_simple(iv, line_id, "ca"));
+            out.extend(pec_easing_alpha(iv, line_id));
         }
         for iv in &layer.speed {
             out.extend(pec_simple(iv, line_id, "cv"));
@@ -287,6 +287,31 @@ fn pec_easing_rotation(iv: &MotionInterval, line_id: usize) -> Vec<String> {
         vec![
             format!("cd {line_id} {st} {}", fmt(sv)),
             format!("cr {line_id} {st} {et} {} {}", fmt(ev), easing),
+        ]
+    }
+}
+
+/// `ca + cf` for alpha easing: sets start value then eases to end.
+///
+/// Note: `cf` does not support a custom easing type — it is always linear.
+fn pec_easing_alpha(iv: &MotionInterval, line_id: usize) -> Vec<String> {
+    let env = EvalEnv::default();
+    let st = pec_t(iv.start_beat);
+    let et = pec_t(iv.end_beat);
+    let mut es = env;
+    es.beat = iv.start_beat;
+    let sv = eval_expr(&iv.expression, &es);
+    es.beat = iv.end_beat;
+    let ev = eval_expr(&iv.expression, &es);
+    let fmt = |v: f64| -> String { format!("{v:.5}") };
+    if (sv - ev).abs() < 1e-9 || (iv.end_beat - iv.start_beat).abs() < 1e-12 {
+        // Constant or zero-width interval — single ca
+        vec![format!("ca {line_id} {st} {}", fmt(sv))]
+    } else {
+        // Easing interval — ca st sv + cf st et ev
+        vec![
+            format!("ca {line_id} {st} {}", fmt(sv)),
+            format!("cf {line_id} {st} {et} {}", fmt(ev)),
         ]
     }
 }
@@ -375,6 +400,38 @@ judgelines {
         assert!(
             !pec.lines().any(|l| l.contains("cd 0 8192.00 90")),
             "cd at end with value 90 should not exist:\n{pec}"
+        );
+    }
+
+    #[test]
+    fn test_alpha_uses_cf_for_easing() {
+        let src = r#"#fcs v4.0.0
+meta { name: "PEC Alpha Test"; offset: 0ms; }
+masterTimeline { 0.0b -> 120.0; }
+judgelines {
+    line Main {
+        zOrder: 0;
+        bpmTimeline { 0.0b -> 120.0; }
+        motion { layer {
+            alpha { [0.0b => 4.0b]: easeLinear(b, 0.0b, 4.0b, 0.0, 1.0, 0.0, 1.0); }
+        } }
+        notes { tap { time: 0.0b; positionX: 0px; } }
+    }
+}"#;
+        let (_, doc) = parser::parse_document(src).expect("parse");
+        let pec = fcs_to_pec(&doc);
+        // Should have ca at 0 (start value) and cf for interpolation
+        assert!(pec.contains("ca 0 0.00 0"), "ca start: {pec}");
+        assert!(pec.contains("cf 0 0.00 8192.00 1"), "cf event: {pec}");
+        // Old code would have ca at 8192 from interval end evaluation.
+        // New code replaces that with cf — any ca at 8192 is only from margin.
+        let ca_at_8192 = pec
+            .lines()
+            .filter(|l| l.starts_with("ca 0 8192.00"))
+            .count();
+        assert!(
+            ca_at_8192 <= 1,
+            "more than 1 ca at 8192 ({ca_at_8192}), old-style double-ca likely present:\n{pec}"
         );
     }
 
