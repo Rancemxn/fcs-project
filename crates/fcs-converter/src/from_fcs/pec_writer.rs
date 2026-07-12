@@ -204,10 +204,10 @@ fn motion_to_pec(motion: &Option<MotionBlock>, line_id: usize) -> Vec<String> {
     };
     for layer in &m.layers {
         for iv in &layer.position_x {
-            out.extend(pec_cp(iv, line_id));
+            out.extend(pec_cp(iv, line_id, false));
         }
         for iv in &layer.position_y {
-            out.extend(pec_cp(iv, line_id));
+            out.extend(pec_cp(iv, line_id, true));
         }
         for iv in &layer.rotation {
             out.extend(pec_simple(iv, line_id, "cd"));
@@ -222,8 +222,11 @@ fn motion_to_pec(motion: &Option<MotionBlock>, line_id: usize) -> Vec<String> {
     out
 }
 
-/// `cp <line> <time> <x> <y>` — no easing, just start/end points
-fn pec_cp(iv: &MotionInterval, line_id: usize) -> Vec<String> {
+/// `cp <line> <time> <x> <y>` — no easing, just start/end points.
+///
+/// `is_y` selects the axis: `false` maps the expression value to X,
+/// `true` maps it to Y. The other coordinate stays at center (1024, 700).
+fn pec_cp(iv: &MotionInterval, line_id: usize, is_y: bool) -> Vec<String> {
     let env = EvalEnv::default();
     let st = pec_t(iv.start_beat);
     let et = pec_t(iv.end_beat);
@@ -232,10 +235,17 @@ fn pec_cp(iv: &MotionInterval, line_id: usize) -> Vec<String> {
     let sv = eval_expr(&iv.expression, &es);
     es.beat = iv.end_beat;
     let ev = eval_expr(&iv.expression, &es);
-    vec![
-        format!("cp {line_id} {st} {} {}", pec_x(sv), pec_y(0.0)),
-        format!("cp {line_id} {et} {} {}", pec_x(ev), pec_y(0.0)),
-    ]
+    if is_y {
+        vec![
+            format!("cp {line_id} {st} {} {}", pec_x(0.0), pec_y(sv)),
+            format!("cp {line_id} {et} {} {}", pec_x(0.0), pec_y(ev)),
+        ]
+    } else {
+        vec![
+            format!("cp {line_id} {st} {} {}", pec_x(sv), pec_y(0.0)),
+            format!("cp {line_id} {et} {} {}", pec_x(ev), pec_y(0.0)),
+        ]
+    }
 }
 
 /// `cd/ca/cv <line> <time> <value>` — no easing
@@ -272,6 +282,36 @@ mod tests {
         assert!(pec.contains("bp 0.00 120"), "bp0: {pec}");
         assert!(pec.contains("n1 "), "{pec}");
         assert!(pec.contains("# "), "{pec}");
+    }
+
+    #[test]
+    fn test_position_y_preserved_in_cp() {
+        let src = r#"#fcs v4.0.0
+meta { name: "PEC Y Test"; offset: 0ms; }
+masterTimeline { 0.0b -> 120.0; }
+judgelines {
+    line Main {
+        zOrder: 0;
+        bpmTimeline { 0.0b -> 120.0; }
+        motion { layer {
+            positionY { [0.0b => 8.0b]: easeLinear(b, 0.0b, 8.0b, 0px, 540px, 0.0, 1.0); }
+        } }
+        notes { tap { time: 0.0b; positionX: 0px; } }
+    }
+}"#;
+        let (_, doc) = parser::parse_document(src).expect("parse");
+        let pec = fcs_to_pec(&doc);
+        // positionY interval [0, 8] beats, easeLinear from 0px to 540px.
+        // At start (0 beats): Y=700 (pec_y(0) = center)
+        assert!(
+            pec.contains("cp 0 0.00 1024 700"),
+            "Y start should be center 700:\n{pec}"
+        );
+        // At end (8 beats * 2048 = 16384): Y=1400 (pec_y(540) = FCS top)
+        assert!(
+            pec.contains("cp 0 16384.00 1024 1400"),
+            "Y end should be top 1400:\n{pec}"
+        );
     }
 
     #[test]
