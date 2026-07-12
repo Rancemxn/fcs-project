@@ -48,8 +48,11 @@ fn test_rpe_roundtrip_simple() {
         &rt,
         200,
         common::EventTolerances {
-            rotate: 40000.0,
-            ..Default::default()
+            rotate: 0.001,
+            move_x: 0.1,
+            move_y: 0.1,
+            speed: 0.01,
+            alpha: 0.01,
         },
     );
 }
@@ -64,8 +67,11 @@ fn test_rpe_roundtrip_extremes() {
         &rt,
         200,
         common::EventTolerances {
-            rotate: 40000.0,
-            ..Default::default()
+            rotate: 0.001,
+            move_x: 0.1,
+            move_y: 0.1,
+            speed: 0.01,
+            alpha: 0.01,
         },
     );
 }

@@ -52,7 +52,10 @@ fn test_pgr_roundtrip_simple() {
         200,
         common::EventTolerances {
             rotate: 0.001,
-            ..Default::default()
+            move_x: 0.1,
+            move_y: 0.1,
+            speed: 0.01,
+            alpha: 0.01,
         },
     );
 }
@@ -62,5 +65,16 @@ fn test_pgr_roundtrip_features() {
     let orig = load_pgr("features.pgr.json");
     let rt = roundtrip_pgr(&orig);
     assert_eq!(orig.lines.len(), rt.lines.len());
-    common::compare_events_sampled(&orig, &rt, 200, common::EventTolerances::default());
+    common::compare_events_sampled(
+        &orig,
+        &rt,
+        200,
+        common::EventTolerances {
+            rotate: 0.001,
+            move_x: 0.1,
+            move_y: 0.1,
+            speed: 0.01,
+            alpha: 0.01,
+        },
+    );
 }

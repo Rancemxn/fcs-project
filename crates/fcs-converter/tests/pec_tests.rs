@@ -57,7 +57,7 @@ fn test_pec_roundtrip_simple() {
             move_x: 0.1,
             move_y: 0.1,
             rotate: 0.01,
-            speed: 10.0,
+            speed: 0.01,
             alpha: 0.01,
         },
     );
