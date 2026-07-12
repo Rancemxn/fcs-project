@@ -2,5 +2,6 @@
 **/*.fcbc
 .DS_Store
 /refer
-/examples
+/examples/COPYRIGHT
 /.claude
+/.ccg
