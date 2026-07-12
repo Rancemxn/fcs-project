@@ -42,8 +42,16 @@ fn pec_x_to_fcs(x: f64) -> f64 {
     (x / 2048.0 - 0.5) * 1920.0
 }
 
-fn pec_y_to_fcs(y: f64) -> f64 {
-    (y / 1400.0 - 0.5) * RPE_H * (1920.0 / 1350.0)
+/// PEC x → IR normalized [0,1] (0=left, 0.5=center, 1=right).
+/// Used for move_x events (matching RPE/PGR IR convention).
+fn pec_x_to_ir(x: f64) -> f64 {
+    x / 2048.0
+}
+
+/// PEC y → IR normalized [0,1] (0=bottom, 0.5=center, 1=top).
+/// Used for move_y events (matching RPE/PGR IR convention).
+fn pec_y_to_ir(y: f64) -> f64 {
+    y / 1400.0
 }
 
 fn pec_speed_to_ir(v: f64) -> f64 {
@@ -212,23 +220,21 @@ pub fn parse_pec(text: &str) -> Result<IrChart, String> {
         let x = raw[3].parse::<f64>().unwrap_or(0.0);
         let y = raw[4].parse::<f64>().unwrap_or(0.0);
         let entry = lines_map.entry(k).or_default();
-        let x_fcs = pec_x_to_fcs(x);
         entry.move_x.push(IrEvent {
             kind: IrEventKind::MoveX,
             start_beat: t,
             end_beat: t,
-            start_value: x_fcs,
-            end_value: x_fcs,
+            start_value: pec_x_to_ir(x),
+            end_value: pec_x_to_ir(x),
             easing_type: 0,
             bezier_points: None,
         });
-        let y_fcs = pec_y_to_fcs(y);
         entry.move_y.push(IrEvent {
             kind: IrEventKind::MoveY,
             start_beat: t,
             end_beat: t,
-            start_value: y_fcs,
-            end_value: y_fcs,
+            start_value: pec_y_to_ir(y),
+            end_value: pec_y_to_ir(y),
             easing_type: 0,
             bezier_points: None,
         });
@@ -290,16 +296,22 @@ pub fn parse_pec(text: &str) -> Result<IrChart, String> {
         let ey = raw[5].parse::<f64>().unwrap_or(0.0);
         let ease: u8 = raw.get(6).and_then(|s| s.parse().ok()).unwrap_or(0);
         let entry = lines_map.entry(k).or_default();
-        let ex_fcs = pec_x_to_fcs(ex);
-        let ey_fcs = pec_y_to_fcs(ey);
-        let start_x = entry.move_x.last().map(|e| e.end_value).unwrap_or(ex_fcs);
-        let start_y = entry.move_y.last().map(|e| e.end_value).unwrap_or(ey_fcs);
+        let start_x = entry
+            .move_x
+            .last()
+            .map(|e| e.end_value)
+            .unwrap_or(pec_x_to_ir(ex));
+        let start_y = entry
+            .move_y
+            .last()
+            .map(|e| e.end_value)
+            .unwrap_or(pec_y_to_ir(ey));
         entry.move_x.push(IrEvent {
             kind: IrEventKind::MoveX,
             start_beat: st,
             end_beat: et,
             start_value: start_x,
-            end_value: ex_fcs,
+            end_value: pec_x_to_ir(ex),
             easing_type: ease,
             bezier_points: None,
         });
@@ -308,7 +320,7 @@ pub fn parse_pec(text: &str) -> Result<IrChart, String> {
             start_beat: st,
             end_beat: et,
             start_value: start_y,
-            end_value: ey_fcs,
+            end_value: pec_y_to_ir(ey),
             easing_type: ease,
             bezier_points: None,
         });

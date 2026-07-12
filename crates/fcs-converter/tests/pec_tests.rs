@@ -54,9 +54,9 @@ fn test_pec_roundtrip_simple() {
         &rt,
         200,
         common::EventTolerances {
+            move_x: 0.1,
+            move_y: 0.1,
             rotate: 0.01,
-            move_x: 1000.0,
-            move_y: 1000.0,
             speed: 10.0,
             alpha: 0.01,
         },

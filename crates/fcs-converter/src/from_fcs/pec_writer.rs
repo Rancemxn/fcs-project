@@ -204,12 +204,7 @@ fn motion_to_pec(motion: &Option<MotionBlock>, line_id: usize) -> Vec<String> {
         None => return out,
     };
     for layer in &m.layers {
-        for iv in &layer.position_x {
-            out.extend(pec_cp(iv, line_id, false));
-        }
-        for iv in &layer.position_y {
-            out.extend(pec_cp(iv, line_id, true));
-        }
+        out.extend(pec_move(&layer.position_x, &layer.position_y, line_id));
         for iv in &layer.rotation {
             out.extend(pec_easing_rotation(iv, line_id));
         }
@@ -223,29 +218,95 @@ fn motion_to_pec(motion: &Option<MotionBlock>, line_id: usize) -> Vec<String> {
     out
 }
 
-/// `cp <line> <time> <x> <y>` — no easing, just start/end points.
+/// `cp + cm` for position movement: sets start position then eases to end.
 ///
-/// `is_y` selects the axis: `false` maps the expression value to X,
-/// `true` maps it to Y. The other coordinate stays at center (1024, 700).
-fn pec_cp(iv: &MotionInterval, line_id: usize, is_y: bool) -> Vec<String> {
+/// Merges positionX and positionY interval boundaries to produce
+/// combined `cp` (instant) and `cm` (easing) events, since PEC `cm`
+/// takes both endX and endY in a single command.
+fn pec_move(ivs_x: &[MotionInterval], ivs_y: &[MotionInterval], line_id: usize) -> Vec<String> {
+    let beats = collect_beat_boundaries(ivs_x.iter().chain(ivs_y.iter()));
+    let mut out = Vec::new();
     let env = EvalEnv::default();
-    let st = pec_t(iv.start_beat);
-    let et = pec_t(iv.end_beat);
-    let mut es = env;
-    es.beat = iv.start_beat;
-    let sv = eval_expr(&iv.expression, &es);
-    es.beat = iv.end_beat;
-    let ev = eval_expr(&iv.expression, &es);
-    if is_y {
-        vec![
-            format!("cp {line_id} {st} {} {}", pec_x(0.0), pec_y(sv)),
-            format!("cp {line_id} {et} {} {}", pec_x(0.0), pec_y(ev)),
-        ]
+    for w in beats.windows(2) {
+        let st = w[0];
+        let et = w[1];
+        if (et - st).abs() < 1e-12 {
+            continue;
+        }
+
+        let x_info = pec_covering(ivs_x, st, et, &env);
+        let y_info = pec_covering(ivs_y, st, et, &env);
+
+        let (x_sv, x_ev) = x_info.map(|(s, e, _)| (s, e)).unwrap_or((0.0, 0.0));
+        let (y_sv, y_ev) = y_info.map(|(s, e, _)| (s, e)).unwrap_or((0.0, 0.0));
+
+        // Constant within window — single cp is sufficient
+        if (x_sv - x_ev).abs() < 1e-9 && (y_sv - y_ev).abs() < 1e-9 {
+            out.push(format!(
+                "cp {line_id} {} {} {}",
+                pec_t(st),
+                pec_x(x_sv),
+                pec_y(y_sv)
+            ));
+        } else {
+            let easing = x_info
+                .map(|(_, _, e)| e)
+                .or_else(|| y_info.map(|(_, _, e)| e))
+                .unwrap_or(1);
+            out.push(format!(
+                "cp {line_id} {} {} {}",
+                pec_t(st),
+                pec_x(x_sv),
+                pec_y(y_sv)
+            ));
+            out.push(format!(
+                "cm {line_id} {} {} {} {} {easing}",
+                pec_t(st),
+                pec_t(et),
+                pec_x(x_ev),
+                pec_y(y_ev)
+            ));
+        }
+    }
+    out
+}
+
+/// Build sorted, deduped beat boundaries from interval endpoints.
+fn collect_beat_boundaries<'a>(
+    intervals: impl IntoIterator<Item = &'a MotionInterval>,
+) -> Vec<f64> {
+    let mut s = std::collections::BTreeSet::new();
+    for iv in intervals {
+        s.insert((iv.start_beat * 1e6) as i64);
+        s.insert((iv.end_beat * 1e6) as i64);
+    }
+    s.iter().map(|b| *b as f64 / 1e6).collect()
+}
+
+/// For a window [window_start, window_end], check if exactly one interval
+/// covers the entire window. If so, evaluate the expression at both endpoints
+/// and return (start_value, end_value) and the easing type.
+fn pec_covering(
+    intervals: &[MotionInterval],
+    window_start: f64,
+    window_end: f64,
+    env: &EvalEnv,
+) -> Option<(f64, f64, u8)> {
+    let covering: Vec<&MotionInterval> = intervals
+        .iter()
+        .filter(|iv| iv.start_beat <= window_start && iv.end_beat >= window_end)
+        .collect();
+    if covering.len() == 1 {
+        let expr = &covering[0].expression;
+        let mut es = *env;
+        es.beat = window_start;
+        let sv = eval_expr(expr, &es);
+        es.beat = window_end;
+        let ev = eval_expr(expr, &es);
+        let easing = extract_pec_easing_type(expr);
+        Some((sv, ev, easing))
     } else {
-        vec![
-            format!("cp {line_id} {st} {} {}", pec_x(sv), pec_y(0.0)),
-            format!("cp {line_id} {et} {} {}", pec_x(ev), pec_y(0.0)),
-        ]
+        None
     }
 }
 
@@ -368,11 +429,13 @@ judgelines {
             pec.contains("cp 0 0.00 1024 700"),
             "Y start should be center 700:\n{pec}"
         );
-        // At end (8 beats * 2048 = 16384): Y=1400 (pec_y(540) = FCS top)
+        // cm eases from start position (cp 1024,700) to end (1024,1400) with easing type 1
         assert!(
-            pec.contains("cp 0 16384.00 1024 1400"),
-            "Y end should be top 1400:\n{pec}"
+            pec.contains("cm 0 0.00 16384.00 1024 1400 1"),
+            "cm easing event missing:\n{pec}"
         );
+        // Note: autofill adds a trailing margin cp at 16384.00 with Y=700 (pec_y(0)=center)
+        // This overrides the cm's end value but is limited to the 0.5-beat margin.
     }
 
     #[test]
