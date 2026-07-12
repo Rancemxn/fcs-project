@@ -451,6 +451,19 @@
  | `scaleX` | 无量纲 | `1.0` | 线 X 缩放 |
  | `scaleY` | 无量纲 | `1.0` | 线 Y 缩放 |
  | `speed` | 无量纲 | `1.0` | Note 下落速度倍率 |
+ | `junctionBeats` | 时间数组 | (无) | 否 | 可选，单调递增，指示此 layer 的原始事件边界位置。\n转换器（如 PGR writer）应优先使用这些边界生成事件，而非从 interval 端点推断。\n无此字段则退化至当前默认行为。编译时丢弃，不进入 `.fcbc`。 |
+
+ `junctionBeats` 作为 `layer` 体内的附加声明：
+
+ ```
+ layer {
+     junctionBeats: [0.0b, 2.0b, 5.0b, 8.0b];
+     positionX {
+         [0.0b => 2.0b]: 200px;
+         [2.0b => 5.0b]: 400px;
+     }
+ }
+ ```
 
  每个子块内使用**区间语法**:
  ```
