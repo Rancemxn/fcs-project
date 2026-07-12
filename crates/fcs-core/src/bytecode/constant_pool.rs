@@ -48,7 +48,7 @@ mod tests {
     #[test]
     fn test_dedup() {
         let mut p = ConstantPoolBuilder::new();
-        assert_eq!(p.intern(3.14), p.intern(3.14));
+        assert_eq!(p.intern(2.5), p.intern(2.5));
         assert_eq!(p.len(), 1);
     }
 }

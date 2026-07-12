@@ -9,8 +9,8 @@
 //! n1 <line_id> <time> <x> <above> <fake>          # Tap
 //! # <speed>                                         # per-note speed
 //! & <size>                                          # per-note size
-//! n2 <line_id> <time> <x> <above> <fake> <holdTime># Drag
-//! n3 <line_id> <time> <x> <above> <fake>           # Hold
+//! n2 <line_id> <time> <visT> <x> <above> <fake>    # Drag (visT = visibleTime beats)
+//! n3 <line_id> <time> <x> <above> <fake> [<hold>]  # Hold (optional holdTime beats)
 //! n4 <line_id> <time> <x> <above> <fake>           # Flick
 //! cp <line_id> <time> <x> <y>                       # position
 //! cd <line_id> <time> <value>                       # rotation
@@ -23,7 +23,6 @@
 
 use crate::from_fcs::coord;
 use crate::from_fcs::evaluator::{EvalEnv, eval_expr};
-use crate::from_fcs::time;
 use crate::from_fcs::{autofill, flattener};
 use fcs_core::ast::{Document, MotionBlock, MotionInterval, NoteInstance, NoteKind};
 use std::fmt::Write;
@@ -35,26 +34,15 @@ const PEC_Y_ENC: f64 = 1400.0;
 
 pub fn fcs_to_pec(doc: &Document) -> String {
     let mut out = String::new();
-    let _ = writeln!(out, "{}", doc.meta.offset as i32 - 150);
+    let _ = writeln!(out, "{}", (doc.meta.offset + 150.0) as i32);
 
     // Pre-process: flatten parent lines (PEC has no hierarchy)
     let doc = flattener::flatten_parent_lines(doc);
-    let bpm = doc
-        .master_timeline
-        .entries
-        .first()
-        .map(|e| e.bpm)
-        .unwrap_or(120.0);
+    for entry in &doc.master_timeline.entries {
+        let _ = writeln!(out, "bp {} {}", pec_t(entry.beat), entry.bpm as i32);
+    }
 
     for (li, line) in doc.judgelines.lines.iter().enumerate() {
-        let line_bpm = line
-            .bpm_timeline
-            .entries
-            .first()
-            .map(|e| e.bpm)
-            .unwrap_or(bpm);
-        let _ = writeln!(out, "bp {} {}", 0, line_bpm as i32);
-
         // Flatten proto inheritance
         let flat_notes = flattener::flatten_note_block(&line.notes);
         for note in &flat_notes.concrete {
@@ -150,14 +138,15 @@ fn pec_prefix(kind: NoteKind) -> &'static str {
     }
 }
 
-/// PEC time: beat * 2048
-fn pec_t(beat: f64) -> i32 {
-    time::beat_to_pec_time(beat)
+/// PEC time: beat * 2048, output as float with 2 decimal places
+/// to preserve sub-tick precision through round-trip.
+fn pec_t(beat: f64) -> String {
+    format!("{:.2}", beat * 2048.0)
 }
 
 /// PEC X: FCS px → PEC x = (fcs_px_to_rpe_x(px) / 1350.0) * 2048.0 = fcs_px_to_pec_x(px)
 fn pec_x(px: f64) -> i32 {
-    coord::fcs_px_to_pec_x(px) as i32
+    coord::fcs_px_to_pec_x(px)
 }
 
 /// PEC Y: uses 1400 denominator. rpe_y = (y/1400 - 0.5) * 900 → y = (rpe_y/900 + 0.5) * 1400
@@ -180,11 +169,16 @@ fn note_to_pec(note: &NoteInstance, line_id: usize) -> Option<String> {
     let mut lines = Vec::new();
 
     // Note line: <prefix> <line_id> <time> <x> <above> <fake> [<holdTime>]
+    // Drag (n2): includes visibleTime: <prefix> <line_id> <time> <x> <visT> <above> <fake>
     if note.kind == NoteKind::Hold && eb > tb {
         lines.push(format!(
             "{prefix} {line_id} {t} {x} {above} {fake} {}",
             pec_t(eb - tb)
         ));
+    } else if note.kind == NoteKind::Drag {
+        let vis = note_f64(note, "visibleTime", 0.0) as i32;
+        // n2 format: <line> <time> <visT> <x> <above> <fake>
+        lines.push(format!("{prefix} {line_id} {t} {vis} {x} {above} {fake}"));
     } else {
         lines.push(format!("{prefix} {line_id} {t} {x} {above} {fake}"));
     }
@@ -249,10 +243,11 @@ fn pec_simple(iv: &MotionInterval, line_id: usize, prefix: &str) -> Vec<String> 
     let sv = eval_expr(&iv.expression, &es);
     es.beat = iv.end_beat;
     let ev = eval_expr(&iv.expression, &es);
-    let enc = |v: f64| -> i32 { (v * 2048.0).round() as i32 };
+    // PEC cd/ca/cv store values directly (rotation in degrees, alpha raw, speed raw).
+    let fmt = |v: f64| -> String { format!("{v:.5}") };
     vec![
-        format!("{prefix} {line_id} {st} {}", enc(sv)),
-        format!("{prefix} {line_id} {et} {}", enc(ev)),
+        format!("{prefix} {line_id} {st} {}", fmt(sv)),
+        format!("{prefix} {line_id} {et} {}", fmt(ev)),
     ]
 }
 
@@ -268,7 +263,11 @@ mod tests {
         let src = include_str!("../../../../examples/sample.fcs");
         let (_, doc) = parser::parse_document(src).expect("parse");
         let pec = fcs_to_pec(&doc);
-        assert!(pec.contains("bp "), "{pec}");
+        // BPM timeline: all master_timeline entries output
+        // pec_t outputs float strings (beat·2048 formatted to 2 decimals)
+        assert!(pec.contains("bp 0.00 180"), "bp0: {pec}");
+        assert!(pec.contains("bp 32768.00 90"), "bp16: {pec}");
+        assert!(pec.contains("bp 65536.00 180"), "bp32: {pec}");
         assert!(pec.contains("n1 "), "{pec}");
         assert!(pec.contains("# "), "{pec}");
         assert!(pec.contains("& "), "{pec}");

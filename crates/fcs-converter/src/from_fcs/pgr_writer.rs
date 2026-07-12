@@ -100,24 +100,12 @@ fn convert_line(line: &LineDef, version: i32) -> PgrLine {
 
     // Flatten proto inheritance, discard kind=fake
     let flat_notes = flattener::flatten_note_block(&line.notes);
-    let notes_above: Vec<PgrNote> = flat_notes
-        .concrete
-        .iter()
-        .filter(|n| note_is_above(n))
-        .map(|n| convert_note(n, line_bpm, version))
-        .collect();
-    let notes_below: Vec<PgrNote> = flat_notes
-        .concrete
-        .iter()
-        .filter(|n| !note_is_above(n))
-        .map(|n| convert_note(n, line_bpm, version))
-        .collect();
 
-    // Autofill motion gaps
+    // Autofill motion gaps (needed before speed_events for floor positions)
     let motion = line.motion.as_ref().map(|m| MotionBlock {
         layers: m.layers.iter().map(autofill::autofill_layer).collect(),
     });
-    let mut speed_events = motion_to_speed_events(&motion, line_bpm, &env_base);
+    let mut speed_events = motion_to_speed_events(&motion, &env_base);
     // PGR requires at least one speed event — emit default if empty
     if speed_events.is_empty() {
         speed_events.push(PgrEvent {
@@ -130,6 +118,26 @@ fn convert_line(line: &LineDef, version: i32) -> PgrLine {
             value: 1.0,
         });
     }
+
+    // Compute floor positions matching sim-phi's speed integral
+    let all_notes: Vec<&NoteInstance> = flat_notes.concrete.iter().collect();
+    let floor_positions = compute_floor_positions(&all_notes, &speed_events, line_bpm);
+
+    let notes_above: Vec<PgrNote> = flat_notes
+        .concrete
+        .iter()
+        .zip(&floor_positions)
+        .filter(|(n, _)| note_is_above(n))
+        .map(|(n, fp)| convert_note(n, line_bpm, version, *fp))
+        .collect();
+    let notes_below: Vec<PgrNote> = flat_notes
+        .concrete
+        .iter()
+        .zip(&floor_positions)
+        .filter(|(n, _)| !note_is_above(n))
+        .map(|(n, fp)| convert_note(n, line_bpm, version, *fp))
+        .collect();
+
     let (move_ev, rot_ev, alpha_ev) = motion_to_move_rotate_alpha(&motion, line_bpm, &env_base);
 
     PgrLine {
@@ -231,7 +239,51 @@ fn note_kind_to_pgr_type(kind: NoteKind) -> u8 {
     }
 }
 
-fn convert_note(note: &NoteInstance, _bpm: f64, version: i32) -> PgrNote {
+/// Compute floor position for each note matching sim-phi's speed event integral.
+///
+/// sim-phi's `prerenderChart` computes:
+///   y = firstEvent.startTime / bpm * 1.875
+///   for each event: floorPosition = y, then y += (endTime - startTime) / bpm * 1.875 * value
+///
+/// A note's floorPosition is the accumulated y at its time: the event's floorPosition
+/// plus the partial contribution through the event to the note's time.
+fn compute_floor_positions(
+    notes: &[&NoteInstance],
+    speed_events: &[PgrEvent],
+    bpm: f64,
+) -> Vec<f64> {
+    if speed_events.is_empty() {
+        return vec![0.0; notes.len()];
+    }
+
+    // Precompute cumulative floor at each speed event start boundary.
+    // cum[i] = (start_time, floor_at_start, value)
+    let mut cum: Vec<(f64, f64, f64)> = Vec::with_capacity(speed_events.len());
+    let mut y = speed_events[0].start_time / bpm * 1.875;
+    for evt in speed_events {
+        cum.push((evt.start_time, y, evt.value));
+        let dy = (evt.end_time - evt.start_time) / bpm * 1.875;
+        y += dy * evt.value;
+    }
+    let final_y = y;
+
+    notes
+        .iter()
+        .map(|note| {
+            let pgr_t = time::beat_to_pgr_t(note_time_beat(note));
+            // Reverse-scan to find the covering speed event
+            for &(st, y0, val) in cum.iter().rev() {
+                if pgr_t >= st {
+                    let dy = (pgr_t - st) / bpm * 1.875;
+                    return y0 + dy * val;
+                }
+            }
+            final_y
+        })
+        .collect()
+}
+
+fn convert_note(note: &NoteInstance, _bpm: f64, version: i32, floor_position: f64) -> PgrNote {
     let time_beat = note_time_beat(note);
     let end_beat = note_end_beat(note);
     let pgr_time = time::beat_to_pgr_t(time_beat);
@@ -244,12 +296,7 @@ fn convert_note(note: &NoteInstance, _bpm: f64, version: i32) -> PgrNote {
             let encoded = coord::encode_pgr_v1_position(x_pgr, 0.0);
             (encoded as f64, 0.0)
         }
-        _ => {
-            // floorPosition = accumulated position from speed * time
-            // Simplified: use speed * time_beat as rough estimate
-            let fp = speed * time_beat;
-            (x_pgr, fp)
-        },
+        _ => (x_pgr, floor_position),
     };
 
     PgrNote {
@@ -281,76 +328,61 @@ where
     out
 }
 
-fn sample_to_events(
-    intervals: &[MotionInterval],
-    bpm: f64,
-    env: &EvalEnv,
-    default: f64,
-) -> Vec<PgrEvent> {
-    if intervals.is_empty() {
+fn motion_to_speed_events(motion: &Option<MotionBlock>, env: &EvalEnv) -> Vec<PgrEvent> {
+    let ivs = collect_intervals(motion, |l| &l.speed);
+    if ivs.is_empty() {
         return vec![];
     }
-    let mut min_beat = f64::MAX;
-    let mut max_beat = f64::MIN;
-    for iv in intervals {
-        min_beat = min_beat.min(iv.start_beat);
-        max_beat = max_beat.max(iv.end_beat);
-    }
-    // Adaptive step: larger intervals → coarser sampling (per tool-rpe2phi.py)
-    let dt_t = (max_beat - min_beat) * 32.0; // convert to PGR T units
-    let step = if dt_t >= 512.0 { 16.0 / 32.0 } else if dt_t >= 256.0 { 8.0 / 32.0 } else if dt_t >= 128.0 { 4.0 / 32.0 } else { 1.0 / 32.0 };
-    let n = ((max_beat - min_beat) / step).ceil() as usize + 1;
-    let mut samples: Vec<(f64, f64)> = Vec::with_capacity(n);
-    for i in 0..=n {
-        let beat = min_beat + i as f64 * step;
-        if beat > max_beat {
-            break;
-        }
-        let mut es = *env;
-        es.beat = beat;
-        es.seconds = time::beat_to_seconds(beat, bpm);
-        let mut v = default;
-        for iv in intervals.iter().rev() {
-            if beat >= iv.start_beat
-                && (beat < iv.end_beat || (iv.end_inclusive && beat <= iv.end_beat))
-            {
-                v = eval_expr(&iv.expression, &es);
-                break;
+    // Speed events are piecewise-constant — convert FCS intervals directly
+    // without resampling. This preserves exact event boundaries from the
+    // original PGR (including speed=80 tap-notes at 2 T-units wide).
+    ivs.iter()
+        .map(|iv| {
+            let mut es = *env;
+            es.beat = iv.start_beat;
+            let v = eval_expr(&iv.expression, &es);
+            PgrEvent {
+                start_time: time::beat_to_pgr_t(iv.start_beat),
+                end_time: time::beat_to_pgr_t(iv.end_beat),
+                start: 0.0,
+                end: 0.0,
+                start2: 0.0,
+                end2: 0.0,
+                value: v,
             }
-        }
-        samples.push((beat, v));
-    }
-    let mut events = Vec::new();
-    for w in samples.windows(2) {
-        let (b0, v0) = w[0];
-        let (b1, v1) = w[1];
-        events.push(PgrEvent {
-            start_time: time::beat_to_pgr_t(b0),
-            end_time: time::beat_to_pgr_t(b1),
-            start: v0,
-            end: v1,
-            start2: 0.0,
-            end2: 0.0,
-            value: 1.0,
-        });
-    }
-    events
-}
-
-fn motion_to_speed_events(motion: &Option<MotionBlock>, bpm: f64, env: &EvalEnv) -> Vec<PgrEvent> {
-    let ivs = collect_intervals(motion, |l| &l.speed);
-    sample_to_events(&ivs, bpm, env, 1.0)
-        .into_iter()
-        .map(|mut e| {
-            e.value = e.end;
-            e.start = 0.0;
-            e.end = 0.0;
-            e
         })
         .collect()
 }
 
+/// Build sorted unique beat boundaries from a list of intervals.
+fn build_beats(intervals: &[&[MotionInterval]]) -> Vec<f64> {
+    let mut beats = std::collections::BTreeSet::new();
+    for ivs in intervals {
+        for iv in *ivs {
+            beats.insert((iv.start_beat * 1e6) as i64);
+            beats.insert((iv.end_beat * 1e6) as i64);
+        }
+    }
+    beats.iter().map(|b| *b as f64 / 1e6).collect()
+}
+
+/// Sample a field at a given beat, returning the default if no interval covers it.
+fn sample_at(intervals: &[MotionInterval], beat: f64, default: f64, env: &EvalEnv) -> f64 {
+    let mut es = *env;
+    es.beat = beat;
+    for iv in intervals.iter().rev() {
+        if beat >= iv.start_beat
+            && (beat < iv.end_beat || (iv.end_inclusive && beat <= iv.end_beat))
+        {
+            return eval_expr(&iv.expression, &es);
+        }
+    }
+    default
+}
+
 /// Build move/rotate/alpha events with correct PGR coordinate mapping.
+/// Each field uses only its own interval boundaries for event generation,
+/// avoiding inflation from the union of all fields.
 /// Move X: FCS px → RPE x → PGR [0,1] = (rpe_x + 675) / 1350
 /// Move Y: FCS px → RPE y → PGR [0,1] = (rpe_y + 450) / 900
 fn motion_to_move_rotate_alpha(
@@ -363,93 +395,76 @@ fn motion_to_move_rotate_alpha(
     let rot_ivs = collect_intervals(motion, |l| &l.rotation);
     let alpha_ivs = collect_intervals(motion, |l| &l.alpha);
 
-    let mut beats = std::collections::BTreeSet::new();
-    for iv in x_ivs.iter().chain(&y_ivs).chain(&rot_ivs).chain(&alpha_ivs) {
-        beats.insert((iv.start_beat * 1e6) as i64);
-        beats.insert((iv.end_beat * 1e6) as i64);
-    }
-    let beat_list: Vec<f64> = beats.iter().map(|b| *b as f64 / 1e6).collect();
-    if beat_list.is_empty() {
-        return (vec![], vec![], vec![]);
-    }
+    // Move events: use x + y boundaries so both fields are well-represented
+    let move_beats = build_beats(&[&x_ivs, &y_ivs]);
+    let moves: Vec<PgrEvent> = move_beats
+        .windows(2)
+        .map(|w| {
+            let bm = (w[0] + w[1]) * 0.5;
+            let mut es = *env;
+            es.beat = bm;
+            es.seconds = time::beat_to_seconds(bm, bpm);
+            let xv = sample_at(&x_ivs, bm, 0.0, &es);
+            let yv = sample_at(&y_ivs, bm, 0.0, &es);
+            let pgr_x = (coord::fcs_px_to_rpe_x(xv) + 675.0) / 1350.0;
+            let pgr_y = (coord::fcs_px_to_rpe_y(yv) + 450.0) / 900.0;
+            PgrEvent {
+                start_time: time::beat_to_pgr_t(w[0]),
+                end_time: time::beat_to_pgr_t(w[1]),
+                start: pgr_x,
+                end: pgr_x,
+                start2: pgr_y,
+                end2: pgr_y,
+                value: 1.0,
+            }
+        })
+        .collect();
 
-    let mut moves = Vec::new();
-    let mut rots = Vec::new();
-    let mut alphas = Vec::new();
+    // Rotate events: use rotation interval boundaries only
+    let rot_beats = build_beats(&[&rot_ivs]);
+    let rots: Vec<PgrEvent> = rot_beats
+        .windows(2)
+        .map(|w| {
+            let bm = (w[0] + w[1]) * 0.5;
+            let mut es = *env;
+            es.beat = bm;
+            es.seconds = time::beat_to_seconds(bm, bpm);
+            let rv = sample_at(&rot_ivs, bm, 0.0, &es);
+            PgrEvent {
+                start_time: time::beat_to_pgr_t(w[0]),
+                end_time: time::beat_to_pgr_t(w[1]),
+                start: -rv,
+                end: -rv,
+                start2: 0.0,
+                end2: 0.0,
+                value: 1.0,
+            }
+        })
+        .collect();
 
-    for w in beat_list.windows(2) {
-        let bm = (w[0] + w[1]) * 0.5;
-        let mut es = *env;
-        es.beat = bm;
-        es.seconds = time::beat_to_seconds(bm, bpm);
-
-        let xv = eval_at_beat(&x_ivs, bm, 0.0, &es);
-        let yv = eval_at_beat(&y_ivs, bm, 0.0, &es);
-        let rv = eval_at_beat(&rot_ivs, bm, 0.0, &es);
-        let av = eval_at_beat(&alpha_ivs, bm, 1.0, &es);
-
-        let t0 = time::beat_to_pgr_t(w[0]);
-        let t1 = time::beat_to_pgr_t(w[1]);
-
-        // PGR [0,1] normalization (matching tool-rpe2phi.py)
-        let pgr_x = (coord::fcs_px_to_rpe_x(xv) + 675.0) / 1350.0;
-        let pgr_y = (coord::fcs_px_to_rpe_y(yv) + 450.0) / 900.0;
-
-        moves.push(PgrEvent {
-            start_time: t0,
-            end_time: t1,
-            start: pgr_x,
-            end: pgr_x,
-            start2: pgr_y,
-            end2: pgr_y,
-            value: 1.0,
-        });
-        rots.push(PgrEvent {
-            start_time: t0,
-            end_time: t1,
-            start: rv,
-            end: rv,
-            start2: 0.0,
-            end2: 0.0,
-            value: 1.0,
-        });
-        alphas.push(PgrEvent {
-            start_time: t0,
-            end_time: t1,
-            start: av,
-            end: av,
-            start2: 0.0,
-            end2: 0.0,
-            value: 1.0,
-        });
-    }
-
-    // Chain start = previous end
-    for i in 1..moves.len() {
-        moves[i].start = moves[i - 1].end;
-        moves[i].start2 = moves[i - 1].end2;
-    }
-    for i in 1..rots.len() {
-        rots[i].start = rots[i - 1].end;
-    }
-    for i in 1..alphas.len() {
-        alphas[i].start = alphas[i - 1].end;
-    }
+    // Alpha events: use alpha interval boundaries only
+    let alpha_beats = build_beats(&[&alpha_ivs]);
+    let alphas: Vec<PgrEvent> = alpha_beats
+        .windows(2)
+        .map(|w| {
+            let bm = (w[0] + w[1]) * 0.5;
+            let mut es = *env;
+            es.beat = bm;
+            es.seconds = time::beat_to_seconds(bm, bpm);
+            let av = sample_at(&alpha_ivs, bm, 1.0, &es);
+            PgrEvent {
+                start_time: time::beat_to_pgr_t(w[0]),
+                end_time: time::beat_to_pgr_t(w[1]),
+                start: av,
+                end: av,
+                start2: 0.0,
+                end2: 0.0,
+                value: 1.0,
+            }
+        })
+        .collect();
 
     (moves, rots, alphas)
-}
-
-fn eval_at_beat(intervals: &[MotionInterval], beat: f64, default: f64, env: &EvalEnv) -> f64 {
-    for iv in intervals.iter().rev() {
-        if beat >= iv.start_beat
-            && (beat < iv.end_beat || (iv.end_inclusive && beat <= iv.end_beat))
-        {
-            let mut es = *env;
-            es.beat = beat;
-            return eval_expr(&iv.expression, &es);
-        }
-    }
-    default
 }
 
 // ---- Tests ----------------------------------------------------------------

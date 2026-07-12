@@ -142,17 +142,16 @@ pub fn fcs_to_rpe_json(doc: &Document) -> String {
 }
 
 fn fcs_to_rpe(doc: &Document) -> RpeChart {
-    let bpm = doc
-        .master_timeline
-        .entries
-        .first()
-        .map(|e| e.bpm as f32)
-        .unwrap_or(120.0);
     RpeChart {
-        bpm_list: vec![RpeBpmPoint {
-            bpm,
-            start_time: [0, 0, 1],
-        }],
+        bpm_list: doc
+            .master_timeline
+            .entries
+            .iter()
+            .map(|e| RpeBpmPoint {
+                bpm: e.bpm as f32,
+                start_time: beat_arr(e.beat),
+            })
+            .collect(),
         meta: RpeMeta {
             rpe_version: 140,
             name: doc.meta.name.clone(),
@@ -206,6 +205,21 @@ fn convert_line(line: &LineDef) -> RpeLine {
         None => (vec![], vec![], vec![]),
     };
 
+    // Sort notes by start time then position X to preserve original order
+    // (above/below split in IR destroys it)
+    let mut sorted_notes = flat_notes.concrete;
+    sorted_notes.sort_by(|a, b| {
+        let ta = note_time_beat(a);
+        let tb = note_time_beat(b);
+        ta.partial_cmp(&tb)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                note_f64(a, "positionX", 0.0)
+                    .partial_cmp(&note_f64(b, "positionX", 0.0))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+
     RpeLine {
         group: 0,
         name: line.name.clone(),
@@ -214,9 +228,18 @@ fn convert_line(line: &LineDef) -> RpeLine {
         is_cover: 1,
         z_order: line.z_order,
         bpm_factor: {
-            let chart_bpm = line.bpm_timeline.entries.first().map(|e| e.bpm).unwrap_or(120.0);
+            let chart_bpm = line
+                .bpm_timeline
+                .entries
+                .first()
+                .map(|e| e.bpm)
+                .unwrap_or(120.0);
             let bpm_0 = bpm;
-            if (chart_bpm - bpm_0).abs() > 0.01 { bpm_0 / chart_bpm } else { 1.0 }
+            if (chart_bpm - bpm_0).abs() > 0.01 {
+                bpm_0 / chart_bpm
+            } else {
+                1.0
+            }
         },
         event_layers: motion_to_rpe_layers(&motion, bpm, &EvalEnv::default()),
         extended: RpeExtended {
@@ -236,7 +259,7 @@ fn convert_line(line: &LineDef) -> RpeLine {
         alpha_control: alpha_ctrl,
         pos_control: pos_ctrl,
         size_control: size_ctrl,
-        notes: flat_notes.concrete.iter().map(convert_note).collect(),
+        notes: sorted_notes.iter().map(convert_note).collect(),
     }
 }
 
@@ -309,9 +332,9 @@ fn lit_to_f64(lit: &fcs_core::ast::Literal) -> f64 {
 fn note_kind_to_rpe_type(kind: NoteKind) -> i32 {
     match kind {
         NoteKind::Tap => 1,
-        NoteKind::Hold => 2,
-        NoteKind::Flick => 3,
-        NoteKind::Drag => 4,
+        NoteKind::Drag => 2,
+        NoteKind::Hold => 3,
+        NoteKind::Flick => 4,
         NoteKind::Fake => 0,
     }
 }
@@ -345,6 +368,21 @@ fn convert_note(note: &NoteInstance) -> RpeNote {
 
 // ---- Motion → RPE events --------------------------------------------------
 
+/// Controls how the FCS expression value is converted to RPE coordinate space.
+#[derive(Clone, Copy)]
+enum RpeValueConv {
+    /// Pass through as-is (rotate, scale, colors).
+    Raw,
+    /// Speed: IR canonical × 4.5.
+    Speed,
+    /// PositionX: FCS px → RPE x (center-origin [-675, 675]).
+    PosX,
+    /// PositionY: FCS px → RPE y (center-origin [-450, 450]).
+    PosY,
+    /// Alpha: IR [0,1] → RPE [0,255].
+    Alpha,
+}
+
 fn motion_to_rpe_layers(
     motion: &Option<MotionBlock>,
     bpm: f64,
@@ -362,11 +400,11 @@ fn motion_to_rpe_layers(
 
 fn convert_layer(layer: &MotionLayer, bpm: f64, env: &EvalEnv) -> RpeEventLayer {
     RpeEventLayer {
-        speed_events: intervals_to_rpe(&layer.speed, bpm, env, true),
-        move_x_events: intervals_to_rpe(&layer.position_x, bpm, env, false),
-        move_y_events: intervals_to_rpe(&layer.position_y, bpm, env, false),
-        rotate_events: intervals_to_rpe(&layer.rotation, bpm, env, false),
-        alpha_events: intervals_to_rpe(&layer.alpha, bpm, env, false),
+        speed_events: intervals_to_rpe(&layer.speed, bpm, env, RpeValueConv::Speed),
+        move_x_events: intervals_to_rpe(&layer.position_x, bpm, env, RpeValueConv::PosX),
+        move_y_events: intervals_to_rpe(&layer.position_y, bpm, env, RpeValueConv::PosY),
+        rotate_events: intervals_to_rpe(&layer.rotation, bpm, env, RpeValueConv::Raw),
+        alpha_events: intervals_to_rpe(&layer.alpha, bpm, env, RpeValueConv::Alpha),
     }
 }
 
@@ -374,7 +412,7 @@ fn intervals_to_rpe(
     intervals: &[MotionInterval],
     bpm: f64,
     env: &EvalEnv,
-    is_speed: bool,
+    conv: RpeValueConv,
 ) -> Vec<RpeEvent> {
     intervals
         .iter()
@@ -387,10 +425,18 @@ fn intervals_to_rpe(
             es.seconds = time::beat_to_seconds(iv.end_beat, bpm);
             let ev = eval_expr(&iv.expression, &es);
             let (et, bz, bps) = extract_easing(&iv.expression);
-            let (s, e): (f32, f32) = if is_speed {
-                (sv as f32 * 4.5, ev as f32 * 4.5)
-            } else {
-                (sv as f32, ev as f32)
+            let (s, e): (f32, f32) = match conv {
+                RpeValueConv::Speed => (sv as f32 * 4.5, ev as f32 * 4.5),
+                RpeValueConv::PosX => (
+                    coord::fcs_px_to_rpe_x(sv) as f32,
+                    coord::fcs_px_to_rpe_x(ev) as f32,
+                ),
+                RpeValueConv::PosY => (
+                    coord::fcs_px_to_rpe_y(sv) as f32,
+                    coord::fcs_px_to_rpe_y(ev) as f32,
+                ),
+                RpeValueConv::Alpha => (sv as f32 * 255.0, ev as f32 * 255.0),
+                RpeValueConv::Raw => (sv as f32, ev as f32),
             };
             RpeEvent {
                 start_time: beat_arr(iv.start_beat),
@@ -454,8 +500,8 @@ mod tests {
     #[test]
     fn test_note_types() {
         assert_eq!(note_kind_to_rpe_type(NoteKind::Tap), 1);
-        assert_eq!(note_kind_to_rpe_type(NoteKind::Hold), 2);
-        assert_eq!(note_kind_to_rpe_type(NoteKind::Flick), 3);
-        assert_eq!(note_kind_to_rpe_type(NoteKind::Drag), 4);
+        assert_eq!(note_kind_to_rpe_type(NoteKind::Drag), 2);
+        assert_eq!(note_kind_to_rpe_type(NoteKind::Hold), 3);
+        assert_eq!(note_kind_to_rpe_type(NoteKind::Flick), 4);
     }
 }

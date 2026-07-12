@@ -407,7 +407,7 @@
 
 在进行多图层混合渲染时，各 `layer` 对应属性值按以下规则叠加：
  - **加性叠加**：`positionX`, `positionY`, `rotation` 以及 **`speed`** 采用相加计算。
- - **乘性叠加：`scaleX`, `scaleY`, `alpha` 采用相乘计算。
+ - **乘性叠加**：`scaleX`, `scaleY`, `alpha` 采用相乘计算。
 
 * **数学保证**：
   由于 `speed` 采用加性叠加，判定线的综合流速为 $speed_{total}(b) = \sum speed_i(b)$。其位置积分函数同样满足加性展开：

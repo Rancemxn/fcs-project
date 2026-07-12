@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn test_float() {
-        assert!((parse_float("3.14").unwrap().1 - 3.14).abs() < 1e-10);
+        assert!((parse_float("2.5").unwrap().1 - 2.5).abs() < 1e-10);
     }
 
     #[test]
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn test_bool() {
-        assert_eq!(parse_bool("true").unwrap().1, true);
-        assert_eq!(parse_bool("false").unwrap().1, false);
+        assert!(parse_bool("true").unwrap().1);
+        assert!(!parse_bool("false").unwrap().1);
     }
 }

@@ -72,7 +72,7 @@ pub fn beat_to_rpe_beat(beat: f64) -> RpeBeat {
         }
     }
 
-    if best_err < 0.001 {
+    if best_err < 0.005 {
         RpeBeat {
             a: integer_part,
             b: best_n,

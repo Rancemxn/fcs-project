@@ -98,7 +98,7 @@ pub struct RpeEventLayer {
     #[serde(rename = "moveYEvents")]
     pub move_y_events: Vec<RpeCommonEvent>,
     pub rotate_events: Vec<RpeCommonEvent>,
-    pub alpha_events: Vec<RpeCommonEvent<i32>>,
+    pub alpha_events: Vec<RpeCommonEvent>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -143,7 +143,7 @@ pub struct RpeNote {
     #[serde(default, rename = "isFake")]
     pub is_fake: i32,
     #[serde(default)]
-    pub alpha: i32,
+    pub alpha: f32,
     #[serde(default)]
     pub size: f32,
     #[serde(default)]

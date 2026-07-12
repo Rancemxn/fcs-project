@@ -33,20 +33,20 @@ fn to_ir(rpe: &types::RpeChart) -> Result<IrChart, String> {
             let note = IrNote {
                 kind: match n.kind {
                     1 => IrNoteKind::Tap,
-                    2 => IrNoteKind::Hold,
-                    3 => IrNoteKind::Flick,
-                    4 => IrNoteKind::Drag,
+                    2 => IrNoteKind::Drag,
+                    3 => IrNoteKind::Hold,
+                    4 => IrNoteKind::Flick,
                     _ => IrNoteKind::Fake,
                 },
                 time_beat: n.start_time.to_f64(),
                 position_x: x_fcs,
                 speed: n.speed as f64,
-                hold_beat: if n.kind == 2 {
+                hold_beat: if n.kind == 3 {
                     n.end_time.to_f64() - n.start_time.to_f64()
                 } else {
                     0.0
                 },
-                above: n.above == 1,
+                above: n.above >= 1,
                 is_fake: n.is_fake == 1,
                 alpha: n.alpha as f64 / 255.0,
                 size: n.size as f64,
@@ -99,8 +99,12 @@ fn merge_all_layers(layers: &[types::RpeEventLayer]) -> IrEventBundle {
                 kind: IrEventKind::Speed,
                 start_beat: e.start_time.to_f64(),
                 end_beat: e.end_time.to_f64(),
-                start_value: e.start as f64,
-                end_value: e.end as f64,
+                // RPE speed events use a 4.5x scale vs PGR/FCS canonical units
+                // (from tool-phi2rpe.py: RPE_value = PGR_value * PGR_UH * 900 / 120 = PGR_value * 4.5)
+                // Normalize to canonical unit so the RPE writer's * 4.5 factor
+                // produces correct values for both PGR->RPE and RPE->RPE paths.
+                start_value: e.start as f64 / 4.5,
+                end_value: e.end as f64 / 4.5,
                 easing_type: 0,
                 bezier_points: None,
             });
@@ -110,8 +114,9 @@ fn merge_all_layers(layers: &[types::RpeEventLayer]) -> IrEventBundle {
                 kind: IrEventKind::MoveX,
                 start_beat: e.start_time.to_f64(),
                 end_beat: e.end_time.to_f64(),
-                start_value: e.start as f64 / 1350.0 * 1920.0,
-                end_value: e.end as f64 / 1350.0 * 1920.0,
+                // RPE x: [-675, 675] → IR [0,1] (0=left, 0.5=center, 1=right)
+                start_value: e.start as f64 / 1350.0 + 0.5,
+                end_value: e.end as f64 / 1350.0 + 0.5,
                 easing_type: e.easing_type as u8,
                 bezier_points: if e.bezier == 1 {
                     Some([e.bezier_points[0] as f64; 4])
@@ -125,8 +130,9 @@ fn merge_all_layers(layers: &[types::RpeEventLayer]) -> IrEventBundle {
                 kind: IrEventKind::MoveY,
                 start_beat: e.start_time.to_f64(),
                 end_beat: e.end_time.to_f64(),
-                start_value: e.start as f64 / 900.0 * 1080.0,
-                end_value: e.end as f64 / 900.0 * 1080.0,
+                // RPE y: [-450, 450] → IR [0,1] (0=bottom, 0.5=center, 1=top)
+                start_value: e.start as f64 / 900.0 + 0.5,
+                end_value: e.end as f64 / 900.0 + 0.5,
                 easing_type: e.easing_type as u8,
                 bezier_points: if e.bezier == 1 {
                     Some([e.bezier_points[0] as f64; 4])

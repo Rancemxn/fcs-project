@@ -12,7 +12,7 @@ pub mod evaluator;
 pub mod flattener;
 pub mod note_util;
 pub mod pec_writer;
-pub mod warnings;
 pub mod pgr_writer;
 pub mod rpe_writer;
 pub mod time;
+pub mod warnings;

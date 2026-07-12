@@ -2,8 +2,8 @@
 
 use crate::ast::{
     BpmEntry, BpmTimeline, Document, InheritFlags, JudgelineBlock, LineDef, MetaBlock, MetaValue,
-    MotionBlock, NoteBlock, NoteInstance, NoteKind, NotePropertyValue, NotePrototype, ShaderBlock,
-    TemplateBlock,
+    MotionBlock, MotionInterval, MotionLayer, NoteBlock, NoteInstance, NoteKind, NotePropertyValue,
+    NotePrototype, ShaderBlock, TemplateBlock,
 };
 use crate::parser::expr::parse_expression;
 use crate::parser::literal::{parse_bool, parse_color, parse_string, ws};
@@ -206,6 +206,110 @@ fn take_until_closing_brace(input: &str) -> IResult<&str, &str> {
         }
     }
     Ok((&input[pos..], &input[..pos]))
+}
+
+// ---------------------------------------------------------------------------
+// Motion block parser (§5.5.2)
+// ---------------------------------------------------------------------------
+
+/// Parse a beat literal like `0.0b` → f64 beat value.
+fn parse_beat_value(input: &str) -> IResult<&str, f64> {
+    let (input, num_str) =
+        recognize((opt(char('-')), digit1, opt(preceded(char('.'), digit1)))).parse(input)?;
+    let (input, _) = opt(tag("b")).parse(input)?;
+    let value = num_str.parse::<f64>().map_err(|_| {
+        nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Float))
+    })?;
+    Ok((input, value))
+}
+
+/// Parse a motion interval: `[startBeat => endBeat]: expression;` or `[startBeat => endBeat): expression;`
+fn parse_motion_interval(input: &str) -> IResult<&str, MotionInterval> {
+    let (input, _) = preceded(ws, char('[')).parse(input)?;
+    let (input, start_beat) = preceded(ws, parse_beat_value).parse(input)?;
+    let (input, _) = preceded(ws, tag("=>")).parse(input)?;
+    let (input, end_beat) = preceded(ws, parse_beat_value).parse(input)?;
+    let (input, end_inclusive) =
+        alt((value(true, char(']')), value(false, char(')')))).parse(input)?;
+    let (input, _) = preceded(ws, char(':')).parse(input)?;
+    let (input, _) = ws(input)?;
+    let (input, expression) = parse_expression(input)?;
+    let (input, _) = preceded(ws, char(';')).parse(input)?;
+    Ok((
+        input,
+        MotionInterval {
+            start_beat,
+            end_beat,
+            end_inclusive,
+            expression,
+        },
+    ))
+}
+
+/// Parse a block of motion intervals: `{ intervals* }`
+fn parse_motion_intervals(input: &str) -> IResult<&str, Vec<MotionInterval>> {
+    delimited(
+        preceded(ws, char('{')),
+        many0(parse_motion_interval),
+        preceded(ws, char('}')),
+    )
+    .parse(input)
+}
+
+/// Parse a single motion property block by name.
+fn parse_motion_property<'a>(
+    name: &'static str,
+) -> impl FnMut(&'a str) -> IResult<&'a str, Vec<MotionInterval>> {
+    move |input: &'a str| {
+        let (input, _) = preceded(ws, tag(name)).parse(input)?;
+        parse_motion_intervals(input)
+    }
+}
+
+/// Parse a motion layer: `layer { property* }`
+fn parse_motion_layer(input: &str) -> IResult<&str, MotionLayer> {
+    let (input, _) = preceded(ws, tag("layer")).parse(input)?;
+    let (input, _) = preceded(ws, char('{')).parse(input)?;
+
+    let mut layer = MotionLayer::default();
+    let (input, _) = many0(alt((
+        map(parse_motion_property("positionX"), |ivs| {
+            layer.position_x = ivs;
+        }),
+        map(parse_motion_property("positionY"), |ivs| {
+            layer.position_y = ivs;
+        }),
+        map(parse_motion_property("rotation"), |ivs| {
+            layer.rotation = ivs;
+        }),
+        map(parse_motion_property("alpha"), |ivs| {
+            layer.alpha = ivs;
+        }),
+        map(parse_motion_property("scaleX"), |ivs| {
+            layer.scale_x = ivs;
+        }),
+        map(parse_motion_property("scaleY"), |ivs| {
+            layer.scale_y = ivs;
+        }),
+        map(parse_motion_property("speed"), |ivs| {
+            layer.speed = ivs;
+        }),
+    )))
+    .parse(input)?;
+    let (input, _) = preceded(ws, char('}')).parse(input)?;
+    Ok((input, layer))
+}
+
+/// Parse a full motion block: `motion { layer* }`
+fn parse_motion_block(input: &str) -> IResult<&str, MotionBlock> {
+    let (input, _) = preceded(ws, tag("motion")).parse(input)?;
+    let (input, layers) = delimited(
+        preceded(ws, char('{')),
+        many0(parse_motion_layer),
+        preceded(ws, char('}')),
+    )
+    .parse(input)?;
+    Ok((input, MotionBlock { layers }))
 }
 
 fn parse_template_block(input: &str) -> IResult<&str, TemplateBlock> {
@@ -422,19 +526,9 @@ fn parse_line_def(input: &str) -> IResult<&str, LineDef> {
                 bpm_timeline = bt;
             },
         ),
-        map(
-            preceded(
-                preceded(ws, tag("motion")),
-                delimited(
-                    preceded(ws, char('{')),
-                    take_until_closing_brace,
-                    preceded(ws, char('}')),
-                ),
-            ),
-            |_raw: &str| {
-                motion = Some(MotionBlock::default());
-            },
-        ),
+        map(parse_motion_block, |mb| {
+            motion = Some(mb);
+        }),
         map(parse_notes_block, |n| {
             notes = n;
         }),

@@ -81,15 +81,15 @@ pub fn fcs_px_to_rpe_y(px: f64) -> f64 {
 
 /// Convert FCS px to PEC encoded x coordinate.
 /// PEC: x_pec = (rpe_x / RPE_W + 0.5) * 2048
-pub fn fcs_px_to_pec_x(px: f64) -> u32 {
+pub fn fcs_px_to_pec_x(px: f64) -> i32 {
     let rpe_x = fcs_px_to_rpe_x(px);
-    ((rpe_x / RPE_W + 0.5) * PEC_ENC).round() as u32
+    ((rpe_x / RPE_W + 0.5) * PEC_ENC).round() as i32
 }
 
 /// Convert FCS px to PEC encoded y coordinate.
-pub fn fcs_px_to_pec_y(px: f64) -> u32 {
+pub fn fcs_px_to_pec_y(px: f64) -> i32 {
     let rpe_y = fcs_px_to_rpe_y(px);
-    ((rpe_y / RPE_H + 0.5) * PEC_ENC).round() as u32
+    ((rpe_y / RPE_H + 0.5) * PEC_ENC).round() as i32
 }
 
 #[cfg(test)]

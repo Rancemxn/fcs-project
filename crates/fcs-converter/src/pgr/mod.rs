@@ -10,6 +10,15 @@ pub fn parse_pgr(json: &str) -> Result<IrChart, String> {
     to_ir(&pgr)
 }
 
+/// PGR INF sentinel events: both startTime and endTime are sentinel values
+/// (startTime=-999999, endTime=1e9), marking "default value for all time".
+/// Filter them out — they have no meaningful animation data.
+/// Events with only one sentinel bound (e.g., startTime=17952, endTime=1e9)
+/// are REAL events that must be preserved.
+fn is_inf_event(e: &types::PgrEvent) -> bool {
+    e.start_time.abs() > 1e8 && e.end_time.abs() > 1e8
+}
+
 fn to_ir(pgr: &types::PgrChart) -> Result<IrChart, String> {
     let mut lines = Vec::new();
     for (i, jl) in pgr.judge_line_list.iter().enumerate() {
@@ -30,26 +39,31 @@ fn to_ir(pgr: &types::PgrChart) -> Result<IrChart, String> {
             speed: jl
                 .speed_events
                 .iter()
+                .filter(|e| !is_inf_event(e))
                 .map(|e| speed_event(e, bpm))
                 .collect(),
             alpha: jl
                 .judge_line_disappear_events
                 .iter()
+                .filter(|e| !is_inf_event(e))
                 .map(|e| simple_event(e, IrEventKind::Alpha, bpm))
                 .collect(),
             move_x: jl
                 .judge_line_move_events
                 .iter()
+                .filter(|e| !is_inf_event(e))
                 .map(|e| move_event_x(e, bpm, &pgr.format_version))
                 .collect(),
             move_y: jl
                 .judge_line_move_events
                 .iter()
+                .filter(|e| !is_inf_event(e))
                 .map(|e| move_event_y(e, bpm, &pgr.format_version))
                 .collect(),
             rotate: jl
                 .judge_line_rotate_events
                 .iter()
+                .filter(|e| !is_inf_event(e))
                 .map(|e| simple_event(e, IrEventKind::Rotate, bpm))
                 .collect(),
             ..Default::default()

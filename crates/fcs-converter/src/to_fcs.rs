@@ -1,10 +1,12 @@
 //! IR → FCS Document (AST) conversion with strict unit system.
 
-use crate::coord;
 use crate::ir::*;
 use fcs_core::ast::*;
 use fcs_core::units::{AngleUnit, Color, LengthUnit, TimeUnit, TypedValue, Unit};
 use std::collections::BTreeMap;
+
+/// Minimal duration for step keyframes so they survive round-trip.
+const EPS: f64 = 0.001;
 
 pub fn ir_to_fcs(chart: &IrChart) -> Document {
     let meta = MetaBlock {
@@ -49,6 +51,59 @@ pub fn ir_to_fcs(chart: &IrChart) -> Document {
     }
 }
 
+fn push_motion_interval(
+    layer: &mut MotionLayer,
+    field: MotionField,
+    e: &IrEvent,
+    end_expr: Expression,
+    start_expr: Expression,
+) {
+    let end = if e.end_beat > e.start_beat {
+        e.end_beat
+    } else {
+        e.start_beat + EPS
+    };
+    // PGR events with start ≠ end use linear interpolation over [start_beat, end_beat].
+    // FCS motion intervals are piecewise-constant. Approximate by splitting into
+    // two sub-intervals: first half = start_value, second half = end_value.
+    if (e.start_value - e.end_value).abs() > 1e-10 {
+        let mid = (e.start_beat + end) * 0.5;
+        push_to_layer(layer, field, e.start_beat, mid, &start_expr);
+        push_to_layer(layer, field, mid, end, &end_expr);
+    } else {
+        push_to_layer(layer, field, e.start_beat, end, &end_expr);
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MotionField {
+    PositionX,
+    PositionY,
+    Rotation,
+    Alpha,
+}
+
+fn push_to_layer(
+    layer: &mut MotionLayer,
+    field: MotionField,
+    start: f64,
+    end: f64,
+    expr: &Expression,
+) {
+    let mi = MotionInterval {
+        start_beat: start,
+        end_beat: end,
+        end_inclusive: true,
+        expression: expr.clone(),
+    };
+    match field {
+        MotionField::PositionX => layer.position_x.push(mi),
+        MotionField::PositionY => layer.position_y.push(mi),
+        MotionField::Rotation => layer.rotation.push(mi),
+        MotionField::Alpha => layer.alpha.push(mi),
+    }
+}
+
 fn build_line(line: &IrLine) -> LineDef {
     let bt = BpmTimeline {
         entries: vec![BpmEntry {
@@ -58,60 +113,68 @@ fn build_line(line: &IrLine) -> LineDef {
         }],
     };
 
+    // Convert IR events → FCS motion intervals.
+    // PGR events with start==end are step keyframes — give them minimal
+    // duration so they survive the round-trip.
+
     let mut layer = MotionLayer::default();
     for e in &line.events.speed {
-        if e.start_beat < e.end_beat {
-            // PGR speed: raw multiplier, FCS speed: dimensionless — use as-is
-            layer.speed.push(MotionInterval {
-                start_beat: e.start_beat,
-                end_beat: e.end_beat,
-                end_inclusive: true,
-                expression: Expression::Literal(Literal::Float(e.end_value)),
-            });
-        }
+        let end = if e.end_beat > e.start_beat {
+            e.end_beat
+        } else {
+            e.start_beat + EPS
+        };
+        layer.speed.push(MotionInterval {
+            start_beat: e.start_beat,
+            end_beat: end,
+            end_inclusive: true,
+            expression: Expression::Literal(Literal::Float(e.end_value)),
+        });
     }
     for e in &line.events.move_x {
-        if e.start_beat < e.end_beat {
-            let px = coord::x_to_fcs_px(e.end_value);
-            layer.position_x.push(MotionInterval {
-                start_beat: e.start_beat,
-                end_beat: e.end_beat,
-                end_inclusive: true,
-                expression: q_length(px, LengthUnit::Pixel),
-            });
-        }
+        // PGR move_x uses "谱面渲染范围宽度" unit: 0.5=center, 1.0=right edge.
+        // Map to FCS center-origin: (v - 0.5) * 1920
+        let end_px = (e.end_value - 0.5) * 1920.0;
+        let start_px = (e.start_value - 0.5) * 1920.0;
+        push_motion_interval(
+            &mut layer,
+            MotionField::PositionX,
+            e,
+            q_length(end_px, LengthUnit::Pixel),
+            q_length(start_px, LengthUnit::Pixel),
+        );
     }
     for e in &line.events.move_y {
-        if e.start_beat < e.end_beat {
-            let px = coord::y_to_fcs_px(e.end_value);
-            layer.position_y.push(MotionInterval {
-                start_beat: e.start_beat,
-                end_beat: e.end_beat,
-                end_inclusive: true,
-                expression: q_length(px, LengthUnit::Pixel),
-            });
-        }
+        // PGR move_y (V3 start2/end2) uses "谱面渲染范围高度" unit: 0.5=center.
+        // Map to FCS center-origin: (v - 0.5) * 1080
+        let end_px = (e.end_value - 0.5) * 1080.0;
+        let start_px = (e.start_value - 0.5) * 1080.0;
+        push_motion_interval(
+            &mut layer,
+            MotionField::PositionY,
+            e,
+            q_length(end_px, LengthUnit::Pixel),
+            q_length(start_px, LengthUnit::Pixel),
+        );
     }
     for e in &line.events.rotate {
-        if e.start_beat < e.end_beat {
-            layer.rotation.push(MotionInterval {
-                start_beat: e.start_beat,
-                end_beat: e.end_beat,
-                end_inclusive: true,
-                expression: q_angle(e.end_value, AngleUnit::Degree),
-            });
-        }
+        // PGR ↔ FCS rotation uses opposite sign convention (per tool-rpe2phi.py).
+        push_motion_interval(
+            &mut layer,
+            MotionField::Rotation,
+            e,
+            q_angle(-e.end_value, AngleUnit::Degree),
+            q_angle(-e.start_value, AngleUnit::Degree),
+        );
     }
     for e in &line.events.alpha {
-        if e.start_beat < e.end_beat {
-            // PGR alpha: 0-1 → FCS alpha: dimensionless 0-1 — use as-is
-            layer.alpha.push(MotionInterval {
-                start_beat: e.start_beat,
-                end_beat: e.end_beat,
-                end_inclusive: true,
-                expression: Expression::Literal(Literal::Float(e.end_value)),
-            });
-        }
+        push_motion_interval(
+            &mut layer,
+            MotionField::Alpha,
+            e,
+            Expression::Literal(Literal::Float(e.end_value)),
+            Expression::Literal(Literal::Float(e.start_value)),
+        );
     }
 
     let motion = MotionBlock {

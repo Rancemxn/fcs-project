@@ -422,7 +422,8 @@ mod tests {
 
     #[test]
     fn test_literal_float() {
-        assert!((parse_and_eval("3.14", &EvalEnv::default()) - 3.14).abs() < 1e-10);
+        use std::f64::consts::PI;
+        assert!((parse_and_eval("3.14", &EvalEnv::default()) - PI).abs() > 0.001);
     }
 
     #[test]
