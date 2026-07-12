@@ -1,0 +1,29 @@
+{
+  "META": {
+    "name": "RPE Extremes",
+    "offset": 0,
+    "composer": "Test",
+    "charter": "Test"
+  },
+  "judgeLineList": [
+    {
+      "bpm": 120,
+      "extended": [],
+      "eventList": {
+        "speedEvent": [
+          { "startTime": 0, "endTime": 10000, "start": 1.0, "end": 1.0 }
+        ],
+        "positionX": [
+          { "startTime": 0, "endTime": 5000, "start": -675, "end": 675, "easing": "easeLinear" }
+        ],
+        "rotate": [
+          { "startTime": 0, "endTime": 10000, "start": -72000, "end": 72000, "easing": "easeLinear" }
+        ]
+      },
+      "notesList": [
+        { "type": "Tap", "time": 0, "positionX": -675, "speed": 1.0, "above": 1 },
+        { "type": "Tap", "time": 5000, "positionX": 675, "speed": 1.0, "above": 1 }
+      ]
+    }
+  ]
+}
