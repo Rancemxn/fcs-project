@@ -1,9 +1,15 @@
-//! Dynamic scan of COPYRIGHT charts: verify all community charts parse.
-//! These charts are NOT version-controlled (see .gitignore).
+//! Dynamic scan of local community charts.
+//!
+//! This test target is opt-in: run it with `--features copyright-fixtures`.
+//! Set `FCS_COPYRIGHT_DIR` to a private fixture directory, or populate the
+//! ignored `examples/COPYRIGHT` fallback directory.
 
-mod common;
+#[path = "common/paths.rs"]
+mod paths;
+#[path = "common/roundtrip.rs"]
+mod roundtrip;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn file_size(path: &Path) -> u64 {
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
@@ -12,11 +18,17 @@ fn file_size(path: &Path) -> u64 {
 /// 5MB threshold: files above this only get structural checks.
 const SAMPLED_SIZE_LIMIT: u64 = 5 * 1024 * 1024;
 
-/// Try to parse a string with PGR first, then RPE, then PEC.
-fn parse_any(src: &str) -> Result<fcs_converter::ir::IrChart, String> {
-    fcs_converter::pgr::parse_pgr(src)
-        .or_else(|_| fcs_converter::rpe::parse_rpe(src))
-        .or_else(|_| fcs_converter::pec::parse_pec(src))
+fn copyright_dir() -> PathBuf {
+    let dir = match std::env::var("FCS_COPYRIGHT_DIR") {
+        Ok(path) if !path.trim().is_empty() => PathBuf::from(path),
+        _ => PathBuf::from(paths::manifest_path("examples/COPYRIGHT")),
+    };
+    assert!(
+        dir.is_dir(),
+        "COPYRIGHT fixture directory missing: {}. Set FCS_COPYRIGHT_DIR or populate examples/COPYRIGHT.",
+        dir.display()
+    );
+    dir
 }
 
 /// Parse and return the detected format alongside the chart.
@@ -65,15 +77,14 @@ fn total_notes(chart: &fcs_converter::ir::IrChart) -> usize {
 
 #[test]
 fn test_copyright_files_exist() {
-    let dir = Path::new(&common::manifest_path("examples/COPYRIGHT")).to_path_buf();
-    assert!(dir.exists(), "COPYRIGHT directory missing");
+    let dir = copyright_dir();
     let entries: Vec<_> = std::fs::read_dir(dir)
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| {
             e.path()
                 .extension()
-                .map_or(false, |ext| ext == "json" || ext == "pec")
+                .is_some_and(|ext| ext == "json" || ext == "pec")
         })
         .collect();
     assert!(!entries.is_empty(), "no copyright chart files found");
@@ -81,7 +92,7 @@ fn test_copyright_files_exist() {
 
 #[test]
 fn test_copyright_all_parse() {
-    let dir = Path::new(&common::manifest_path("examples/COPYRIGHT")).to_path_buf();
+    let dir = copyright_dir();
     let mut parsed = 0u32;
     let mut errors = Vec::new();
 
@@ -92,7 +103,7 @@ fn test_copyright_all_parse() {
 
         if !path
             .extension()
-            .map_or(false, |ext| ext == "json" || ext == "pec")
+            .is_some_and(|ext| ext == "json" || ext == "pec")
         {
             continue;
         }
@@ -133,7 +144,7 @@ fn test_copyright_all_parse() {
 
 #[test]
 fn test_copyright_roundtrip() {
-    let dir = Path::new(&common::manifest_path("examples/COPYRIGHT")).to_path_buf();
+    let dir = copyright_dir();
     let mut passed = 0u32;
     let mut errors = Vec::new();
 
@@ -144,7 +155,7 @@ fn test_copyright_roundtrip() {
 
         if !path
             .extension()
-            .map_or(false, |ext| ext == "json" || ext == "pec")
+            .is_some_and(|ext| ext == "json" || ext == "pec")
         {
             continue;
         }
@@ -205,11 +216,11 @@ fn test_copyright_roundtrip() {
         // Phase 4: Sampled event precision (small files only)
         if file_size(&path) <= SAMPLED_SIZE_LIMIT {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                common::compare_events_sampled(
+                roundtrip::compare_events_sampled(
                     &chart_a,
                     &chart_b,
                     200,
-                    common::EventTolerances {
+                    roundtrip::EventTolerances {
                         move_x: 0.1,
                         move_y: 0.1,
                         rotate: 0.001,
