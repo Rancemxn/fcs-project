@@ -50,34 +50,25 @@ fn parses_chart_tempo_map_with_exact_beats() {
 }
 
 #[test]
-fn parses_negative_decimal_beats_exactly() {
-    let document =
-        parse_document("#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { -0.5beat -> 180bpm; }")
-            .unwrap();
+fn rejects_tempo_maps_without_zero_start() {
+    let negative_decimal =
+        "#fcs 5.0.0\nformat { profile: fragment; }\ntempoMap { -0.5beat -> 180bpm; }";
+    let negative_integer =
+        "#fcs 5.0.0\nformat { profile: fragment; }\ntempoMap { -1beat -> 120bpm; }";
+    let empty = "#fcs 5.0.0\nformat { profile: fragment; }\ntempoMap { }";
 
     assert_eq!(
-        document.tempo_map.unwrap().points[0].beat,
-        Beat::new(-1, 2).unwrap()
+        parse_document(negative_decimal),
+        Err(ParseError::InvalidTempoMap("first beat must be zero"))
     );
-}
-
-#[test]
-fn parses_negative_integer_beats_exactly() {
-    let document =
-        parse_document("#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { -1beat -> 120bpm; }")
-            .unwrap();
-
     assert_eq!(
-        document.tempo_map.unwrap().points[0].beat,
-        Beat::new(-1, 1).unwrap()
+        parse_document(negative_integer),
+        Err(ParseError::InvalidTempoMap("first beat must be zero"))
     );
-}
-
-#[test]
-fn accepts_empty_tempo_map() {
-    let document = parse_document("#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { }").unwrap();
-
-    assert!(document.tempo_map.unwrap().points.is_empty());
+    assert_eq!(
+        parse_document(empty),
+        Err(ParseError::InvalidTempoMap("first beat must be zero"))
+    );
 }
 
 #[test]
@@ -102,8 +93,31 @@ fn parses_tempo_map_after_block_comment() {
 
 #[test]
 fn accepts_trailing_comments_without_tempo_map() {
-    assert!(parse_document("#fcs 5.0.0\nformat { profile: chart; }\n// comment").is_ok());
-    assert!(parse_document("#fcs 5.0.0\nformat { profile: chart; }\n/* comment */").is_ok());
+    assert!(parse_document("#fcs 5.0.0\nformat { profile: fragment; }\n// comment").is_ok());
+    assert!(parse_document("#fcs 5.0.0\nformat { profile: fragment; }\n/* comment */").is_ok());
+}
+
+#[test]
+fn chart_profile_requires_tempo_starting_at_zero() {
+    let missing = "#fcs 5.0.0\nformat { profile: chart; }";
+    let non_zero = "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { 1beat -> 120bpm; }";
+    assert!(matches!(
+        parse_document(missing),
+        Err(ParseError::MissingRequiredBlock("tempoMap"))
+    ));
+    assert!(matches!(
+        parse_document(non_zero),
+        Err(ParseError::InvalidTempoMap("first beat must be zero"))
+    ));
+}
+
+#[test]
+fn tempo_points_must_be_non_decreasing() {
+    let source = "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { 0beat -> 120bpm; 4beat -> 180bpm; 3beat -> 200bpm; }";
+    assert!(matches!(
+        parse_document(source),
+        Err(ParseError::InvalidTempoMap("beats must be non-decreasing"))
+    ));
 }
 
 #[test]

@@ -1,4 +1,5 @@
 use crate::v5::ast::{Document, DocumentProfile};
+use crate::v5::validation::validate_profile;
 
 use super::{ParseError, parse_header, tempo::parse_tempo_map};
 
@@ -32,6 +33,7 @@ pub fn parse_document(input: &str) -> Result<Document, ParseError> {
         return Err(ParseError::InvalidSyntax("document profile"));
     }
     let profile = parse_profile(value.trim())?;
+    validate_profile(profile, tempo_map.as_ref())?;
     Ok(Document {
         source_version,
         profile,

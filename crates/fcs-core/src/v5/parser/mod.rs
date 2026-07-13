@@ -12,5 +12,7 @@ pub enum ParseError {
     MissingHeader,
     InvalidVersion,
     UnsupportedSourceVersion(Version),
+    MissingRequiredBlock(&'static str),
+    InvalidTempoMap(&'static str),
     InvalidSyntax(&'static str),
 }
