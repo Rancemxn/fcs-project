@@ -1,5 +1,5 @@
-use fcs_core::v5::ast::{Beat, Bpm};
-use fcs_core::v5::parser::{ParseError, parse_header};
+use fcs_core::v5::ast::{Beat, Bpm, DocumentProfile};
+use fcs_core::v5::parser::{ParseError, parse_document, parse_header};
 use fcs_core::v5::version::{
     EXECUTION_ABI_VERSION, FCBC_FORMAT_VERSION, FCS_SOURCE_VERSION, Version,
 };
@@ -24,6 +24,49 @@ fn rejects_missing_or_wrong_major_header() {
     assert_eq!(
         parse_header("#fcs 5.1.0\n"),
         Err(ParseError::UnsupportedSourceVersion(Version::new(5, 1, 0)))
+    );
+}
+
+#[test]
+fn parses_fragment_profile() {
+    let document = parse_document("#fcs 5.0.0\nformat { profile: fragment; }").unwrap();
+
+    assert_eq!(document.profile, DocumentProfile::Fragment);
+    assert_eq!(document.source_version, FCS_SOURCE_VERSION);
+    assert_eq!(document.tempo_map, None);
+}
+
+#[test]
+fn rejects_unknown_profile() {
+    assert_eq!(
+        parse_document("#fcs 5.0.0\nformat { profile: unknown; }").unwrap_err(),
+        ParseError::InvalidSyntax("document profile")
+    );
+}
+
+#[test]
+fn rejects_profile_without_statement_terminator() {
+    assert_eq!(
+        parse_document("#fcs 5.0.0\nformat { profile: fragment }").unwrap_err(),
+        ParseError::InvalidSyntax("document profile")
+    );
+}
+
+#[test]
+fn parses_profile_with_line_and_block_comments() {
+    let document = parse_document(
+        "#fcs 5.0.0\nformat {\n // leading }\n /* block { } */\n profile: fragment; /* trailing } */\n}",
+    )
+    .unwrap();
+
+    assert_eq!(document.profile, DocumentProfile::Fragment);
+}
+
+#[test]
+fn ignores_braces_in_unclosed_format_string() {
+    assert_eq!(
+        parse_document("#fcs 5.0.0\nformat { profile: fragment; \"}\"").unwrap_err(),
+        ParseError::InvalidSyntax("format block")
     );
 }
 
