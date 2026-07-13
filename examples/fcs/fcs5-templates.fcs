@@ -1,0 +1,28 @@
+#fcs 5.0.0
+format { profile: chart; }
+tempoMap {
+    0beat -> 180bpm;
+}
+
+definitions {
+    const DEFAULT_X: length = 12px;
+}
+
+templates {
+    template ghost(time: beat, x: length) -> Note {
+        return tap {
+            gameplay.time: time;
+            presentation.positionX: x;
+        };
+    }
+}
+
+collections {
+    notes {
+        if true {
+            ghost(1beat, DEFAULT_X) with { presentation.alpha: 0.5; };
+        } else {
+            ghost(2beat, DEFAULT_X);
+        }
+    }
+}

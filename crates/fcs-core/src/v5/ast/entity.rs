@@ -2,7 +2,71 @@
 
 use std::collections::BTreeMap;
 
+use super::{DocumentProfile, TempoMap};
 use super::{SourceExpression, SourceSpan, Type, TypedValue};
+use crate::v5::version::Version;
+
+/// A concrete named collection produced by compile-time expansion.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExpandedCollection {
+    name: String,
+    entities: Vec<ExpandedEntity>,
+}
+
+impl ExpandedCollection {
+    pub(crate) fn new(name: String, entities: Vec<ExpandedEntity>) -> Self {
+        Self { name, entities }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn entities(&self) -> impl Iterator<Item = &ExpandedEntity> {
+        self.entities.iter()
+    }
+}
+
+/// Read-only result of elaborating an FCS 5 source document.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExpandedSourceDocument {
+    source_version: Version,
+    profile: DocumentProfile,
+    tempo_map: Option<TempoMap>,
+    collections: Vec<ExpandedCollection>,
+}
+
+impl ExpandedSourceDocument {
+    pub const fn source_version(&self) -> Version {
+        self.source_version
+    }
+
+    pub const fn profile(&self) -> DocumentProfile {
+        self.profile
+    }
+
+    pub const fn tempo_map(&self) -> Option<&TempoMap> {
+        self.tempo_map.as_ref()
+    }
+
+    pub fn collections(&self) -> impl Iterator<Item = &ExpandedCollection> {
+        self.collections.iter()
+    }
+
+    pub(crate) fn from_collections(
+        source_version: Version,
+        profile: DocumentProfile,
+        tempo_map: Option<TempoMap>,
+        collections: Vec<ExpandedCollection>,
+    ) -> Self {
+        Self {
+            source_version,
+            profile,
+            tempo_map,
+            collections,
+        }
+    }
+}
 
 /// A Note constructor variant recognized by the Phase 2 construction language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -37,6 +101,33 @@ pub struct EntityConstructor {
     pub span: SourceSpan,
 }
 
+/// A typed parameter accepted by a compile-time entity template.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemplateParameter {
+    pub name: String,
+    pub name_span: SourceSpan,
+    pub ty: Type,
+    pub span: SourceSpan,
+}
+
+/// A compile-time entity template declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemplateDeclaration {
+    pub name: String,
+    pub name_span: SourceSpan,
+    pub parameters: Vec<TemplateParameter>,
+    pub return_type: Type,
+    pub body: EntityExpression,
+    pub span: SourceSpan,
+}
+
+/// The source-level template registry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemplatesBlock {
+    pub declarations: Vec<TemplateDeclaration>,
+    pub span: SourceSpan,
+}
+
 /// A source item contained directly in a collection block.
 ///
 /// Task 6 may add generator, `emit`, local binding, and compile-time conditional variants.
@@ -45,6 +136,13 @@ pub struct EntityConstructor {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CollectionItem {
     Constructor(EntityConstructor),
+    Expression(EntityExpression),
+    Conditional {
+        condition: SourceExpression,
+        then_items: Vec<CollectionItem>,
+        else_items: Vec<CollectionItem>,
+        span: SourceSpan,
+    },
 }
 
 impl CollectionItem {
@@ -52,6 +150,8 @@ impl CollectionItem {
     pub const fn span(&self) -> SourceSpan {
         match self {
             Self::Constructor(constructor) => constructor.span,
+            Self::Expression(expression) => expression.span(),
+            Self::Conditional { span, .. } => *span,
         }
     }
 }
@@ -94,6 +194,13 @@ pub struct CollectionBlock {
     pub span: SourceSpan,
 }
 
+/// The source-level named collection blocks in document order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CollectionsBlock {
+    pub collections: Vec<CollectionBlock>,
+    pub span: SourceSpan,
+}
+
 /// A concrete field value retained after successful elaboration.
 ///
 /// Lowered fields own their value and source span and cannot retain a source expression.
@@ -105,6 +212,10 @@ pub struct ExpandedField {
 }
 
 impl ExpandedField {
+    pub(crate) fn new(path: String, value: TypedValue, span: SourceSpan) -> Self {
+        Self { path, value, span }
+    }
+
     /// Returns the canonical dotted field path.
     pub fn path(&self) -> &str {
         &self.path
@@ -131,6 +242,28 @@ pub struct ExpandedEntity {
 }
 
 impl ExpandedEntity {
+    pub(crate) fn new(
+        entity_type: Type,
+        note_variant: Option<NoteVariant>,
+        fields: BTreeMap<String, ExpandedField>,
+        span: SourceSpan,
+    ) -> Self {
+        Self {
+            entity_type,
+            note_variant,
+            fields,
+            span,
+        }
+    }
+
+    pub(crate) fn replace_field(&mut self, field: ExpandedField) {
+        self.fields.insert(field.path.clone(), field);
+    }
+
+    pub(crate) fn has_field(&self, path: &str) -> bool {
+        self.fields.contains_key(path)
+    }
+
     /// Returns the concrete entity type produced by elaboration.
     pub fn entity_type(&self) -> &Type {
         &self.entity_type

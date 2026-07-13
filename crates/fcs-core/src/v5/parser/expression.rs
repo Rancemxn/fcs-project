@@ -18,6 +18,13 @@ pub fn parse_expression(input: &str) -> Result<SourceExpression, ParseError> {
     Ok(expression)
 }
 
+pub(super) fn parse_expression_at(
+    input: &str,
+    byte_offset: usize,
+) -> Result<SourceExpression, ParseError> {
+    parse_expression(input).map(|expression| shift_expression(expression, byte_offset))
+}
+
 pub fn parse_type(input: &str) -> Result<Type, ParseError> {
     let tokens = lex(input).map_err(|()| ParseError::InvalidSyntax("type"))?;
     let mut parser = Parser::new(tokens);
@@ -405,5 +412,61 @@ fn with_span(expression: SourceExpression, span: SourceSpan) -> SourceExpression
             SourceExpression::FieldAccess { base, field, span }
         }
         SourceExpression::Vec2 { x, y, .. } => SourceExpression::Vec2 { x, y, span },
+    }
+}
+
+fn shift_expression(expression: SourceExpression, offset: usize) -> SourceExpression {
+    let shift = |span: SourceSpan| SourceSpan::new(span.start + offset, span.end + offset);
+    match expression {
+        SourceExpression::Literal { literal, span } => SourceExpression::Literal {
+            literal,
+            span: shift(span),
+        },
+        SourceExpression::Name { name, span } => SourceExpression::Name {
+            name,
+            span: shift(span),
+        },
+        SourceExpression::Unary {
+            operator,
+            operand,
+            span,
+        } => SourceExpression::Unary {
+            operator,
+            operand: Box::new(shift_expression(*operand, offset)),
+            span: shift(span),
+        },
+        SourceExpression::Binary {
+            left,
+            operator,
+            right,
+            span,
+        } => SourceExpression::Binary {
+            left: Box::new(shift_expression(*left, offset)),
+            operator,
+            right: Box::new(shift_expression(*right, offset)),
+            span: shift(span),
+        },
+        SourceExpression::Call {
+            callee,
+            arguments,
+            span,
+        } => SourceExpression::Call {
+            callee: Box::new(shift_expression(*callee, offset)),
+            arguments: arguments
+                .into_iter()
+                .map(|argument| shift_expression(argument, offset))
+                .collect(),
+            span: shift(span),
+        },
+        SourceExpression::FieldAccess { base, field, span } => SourceExpression::FieldAccess {
+            base: Box::new(shift_expression(*base, offset)),
+            field,
+            span: shift(span),
+        },
+        SourceExpression::Vec2 { x, y, span } => SourceExpression::Vec2 {
+            x: Box::new(shift_expression(*x, offset)),
+            y: Box::new(shift_expression(*y, offset)),
+            span: shift(span),
+        },
     }
 }

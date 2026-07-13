@@ -1,10 +1,12 @@
+mod definitions;
 mod entity;
 mod time;
 mod types;
 
 pub use entity::{
-    CollectionBlock, CollectionItem, EntityConstructor, EntityExpression, EntityField,
-    ExpandedEntity, ExpandedField, FieldPath, NoteVariant, WithExpression,
+    CollectionBlock, CollectionItem, CollectionsBlock, EntityConstructor, EntityExpression,
+    EntityField, ExpandedCollection, ExpandedEntity, ExpandedField, ExpandedSourceDocument,
+    FieldPath, NoteVariant, TemplateDeclaration, TemplateParameter, TemplatesBlock, WithExpression,
 };
 pub use time::{Beat, BeatError, Bpm, InvalidBpm};
 pub use types::{
@@ -28,6 +30,9 @@ pub struct Document {
     pub source_version: Version,
     pub profile: DocumentProfile,
     pub tempo_map: Option<TempoMap>,
+    pub definitions: Option<DefinitionsBlock>,
+    pub templates: Option<TemplatesBlock>,
+    pub collections: Vec<CollectionBlock>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,3 +45,7 @@ pub struct TempoPoint {
     pub beat: Beat,
     pub bpm: Bpm,
 }
+pub use definitions::{
+    ConstDeclaration, Definition, DefinitionsBlock, FunctionDeclaration, FunctionParameter,
+    FunctionStatement, IfStatement, LetStatement, ReturnStatement,
+};

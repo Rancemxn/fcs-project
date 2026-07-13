@@ -1,4 +1,6 @@
+mod definitions;
 mod document;
+mod entities;
 mod expression;
 mod header;
 mod lexer;

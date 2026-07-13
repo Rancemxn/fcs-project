@@ -1,11 +1,312 @@
 use fcs_core::units::Color;
 use fcs_core::v5::ast::{
-    Beat, BinaryOperator, CollectionBlock, CollectionItem, EntityConstructor, EntityExpression,
-    ExpandedEntity, ExpandedField, NoteVariant, SourceExpression, SourceLiteral, SourceSpan, Type,
-    TypedExpression, TypedExpressionKind, TypedValue, UnaryOperator, WithExpression,
+    Beat, BinaryOperator, CollectionBlock, CollectionItem, Definition, EntityConstructor,
+    EntityExpression, ExpandedEntity, ExpandedField, FunctionStatement, NoteVariant,
+    SourceExpression, SourceLiteral, SourceSpan, Type, TypedExpression, TypedExpressionKind,
+    TypedValue, UnaryOperator, WithExpression,
 };
-use fcs_core::v5::parser::{ParseError, parse_expression, parse_type};
+use fcs_core::v5::elaborator::{CompileTimeLimits, Diagnostic, elaborate};
+use fcs_core::v5::parser::{ParseError, parse_document, parse_expression, parse_type};
 use fcs_core::v5::schema::{FieldConstraint, phase2_schema};
+use std::{fs, path::PathBuf};
+
+fn example(name: &str) -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/fcs")
+        .join(name);
+    fs::read_to_string(path).unwrap()
+}
+
+fn elaborate_source(source: &str) -> Result<(), Diagnostic> {
+    let document = parse_document(source).expect("valid source syntax");
+    elaborate(&document, phase2_schema(), CompileTimeLimits::default()).map(|_| ())
+}
+
+#[test]
+fn parses_definitions_with_global_byte_spans() {
+    let source = "#fcs 5.0.0\nformat { profile: fragment; }\ndefinitions {\n  const SPACING: length = 120px;\n  fn choose(value: length) -> length {\n    if true { let local: length = value; return local; } else { return value; }\n  }\n}";
+    let document = parse_document(source).unwrap();
+    let definitions = document.definitions.as_ref().unwrap();
+    assert_eq!(
+        definitions.span,
+        SourceSpan::new(source.find("definitions").unwrap(), source.len())
+    );
+    assert_eq!(definitions.declarations.len(), 2);
+
+    let Definition::Const(declaration) = &definitions.declarations[0] else {
+        panic!("expected const declaration");
+    };
+    assert_eq!(
+        &source[declaration.span.start..declaration.span.end],
+        "const SPACING: length = 120px;"
+    );
+    assert_eq!(
+        declaration.initializer.span(),
+        SourceSpan::new(
+            source.find("120px").unwrap(),
+            source.find("120px").unwrap() + 5
+        )
+    );
+
+    let Definition::Function(function) = &definitions.declarations[1] else {
+        panic!("expected function declaration");
+    };
+    assert_eq!(function.parameters[0].ty, Type::Length);
+    assert_eq!(function.return_type, Type::Length);
+    assert!(matches!(function.body[0], FunctionStatement::If(_)));
+    let FunctionStatement::If(statement) = &function.body[0] else {
+        unreachable!()
+    };
+    assert!(matches!(
+        statement.then_branch[0],
+        FunctionStatement::Let(_)
+    ));
+    assert!(matches!(
+        statement.then_branch[1],
+        FunctionStatement::Return(_)
+    ));
+    assert!(matches!(
+        statement.else_branch[0],
+        FunctionStatement::Return(_)
+    ));
+    assert_eq!(
+        &source[function.span.start..function.span.end],
+        "fn choose(value: length) -> length {\n    if true { let local: length = value; return local; } else { return value; }\n  }"
+    );
+}
+
+#[test]
+fn definitions_preserve_expression_comparisons_and_comment_delimiters() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const sum: int = 1 /* ; is comment text */ + 2;
+  fn smaller(value: int) -> int {
+    if value < sum { return value; } else { return sum; }
+  }
+}"#;
+    let document = parse_document(source).unwrap();
+    assert!(elaborate(&document, phase2_schema(), CompileTimeLimits::default()).is_ok());
+}
+
+#[test]
+fn elaborates_const_and_pure_function() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const SPACING: length = 120px;
+  fn twice(value: length) -> length { return value * 2; }
+}"#;
+    let document = parse_document(source).unwrap();
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
+    assert_eq!(expanded.source_version(), document.source_version);
+    assert_eq!(expanded.profile(), document.profile);
+    assert!(expanded.tempo_map().is_none());
+    assert_eq!(expanded.collections().count(), 0);
+}
+
+#[test]
+fn rejects_shadowing_in_nested_scope() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { fn f(value: int) -> int { let value: int = 1; return value; } }"#;
+    assert!(matches!(
+        elaborate_source(source),
+        Err(Diagnostic::ShadowedBinding { .. })
+    ));
+}
+
+#[test]
+fn rejects_duplicate_bindings_but_allows_sibling_branch_names() {
+    let duplicate = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: int = 1; const value: int = 2; }"#;
+    assert!(matches!(
+        elaborate_source(duplicate),
+        Err(Diagnostic::ShadowedBinding { ref name, .. }) if name == "value"
+    ));
+
+    let siblings = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  fn f(flag: bool) -> int {
+    if flag { let value: int = 1; return value; }
+    else { let value: int = 2; return value; }
+  }
+}"#;
+    assert!(elaborate_source(siblings).is_ok());
+}
+
+#[test]
+fn local_bindings_cannot_shadow_global_or_builtin_functions() {
+    let global = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  fn helper(value: int) -> int { return value; }
+  fn f(helper: int) -> int { return helper; }
+}"#;
+    assert!(matches!(
+        elaborate_source(global),
+        Err(Diagnostic::ShadowedBinding { ref name, .. }) if name == "helper"
+    ));
+
+    let builtin = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { fn f(sin: float) -> float { return sin; } }"#;
+    assert!(matches!(
+        elaborate_source(builtin),
+        Err(Diagnostic::ShadowedBinding { ref name, .. }) if name == "sin"
+    ));
+}
+
+#[test]
+fn requires_exact_declared_and_return_types() {
+    let initializer = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: float = 1; }"#;
+    assert!(matches!(
+        elaborate_source(initializer),
+        Err(Diagnostic::TypeMismatch {
+            expected: Type::Float,
+            actual: Type::Int,
+            ..
+        })
+    ));
+
+    let returned = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { fn f() -> float { return 1; } }"#;
+    assert!(matches!(
+        elaborate_source(returned),
+        Err(Diagnostic::TypeMismatch {
+            expected: Type::Float,
+            actual: Type::Int,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn rejects_unknown_and_runtime_only_names() {
+    for name in ["missing", "s", "b", "q", "d", "p"] {
+        let source = format!(
+            "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ const value: float = {name}; }}"
+        );
+        assert!(matches!(
+            elaborate_source(&source),
+            Err(Diagnostic::UnknownName { name: ref actual, .. }) if actual == name
+        ));
+    }
+}
+
+#[test]
+fn types_and_evaluates_phase2_pure_operators() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const i: int = (1 + 2) * 3 % 4;
+  const f: float = 4.0 / 2.0;
+  const len: length = 10px + 2px * 3;
+  const scaled: length = 2 * 5px;
+  const ratio: float = 10px / 2px;
+  const logic: bool = true && !false;
+  const equality: bool = "a" != "b";
+  const vector: vec2<length> = vec2(1px, 2px);
+  const component: length = vector.x;
+  const vector_equal: bool = vector == vec2(1px, 2px);
+}"#;
+    assert!(elaborate_source(source).is_ok());
+
+    let mixed = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: float = 1 + 2.0; }"#;
+    assert!(matches!(
+        elaborate_source(mixed),
+        Err(Diagnostic::TypeMismatch { .. }) | Err(Diagnostic::InvalidOperation { .. })
+    ));
+}
+
+#[test]
+fn evaluates_fixed_builtins_and_diagnoses_bad_calls() {
+    let valid = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const circle: float = pi;
+  const wave: float = sin(pi) + cos(0.0);
+  const converted: float = toFloat(2);
+  const close: bool = approxEq(wave, 1.0, 0.001);
+}"#;
+    assert!(elaborate_source(valid).is_ok());
+
+    let arity = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: float = sin(); }"#;
+    assert!(matches!(
+        elaborate_source(arity),
+        Err(Diagnostic::WrongArity { ref callee, expected: 1, actual: 0, .. }) if callee == "sin"
+    ));
+
+    let argument_type = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: float = sin(1); }"#;
+    assert!(matches!(
+        elaborate_source(argument_type),
+        Err(Diagnostic::TypeMismatch {
+            expected: Type::Float,
+            actual: Type::Int,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn supports_forward_const_and_pure_function_references() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const result: int = choose(true);
+  fn choose(flag: bool) -> int {
+    let doubled: int = twice(BASE);
+    if flag { return doubled; } else { return BASE; }
+  }
+  fn twice(value: int) -> int { return value * 2; }
+  const BASE: int = 3;
+}"#;
+    assert!(elaborate_source(source).is_ok());
+}
+
+#[test]
+fn requires_a_return_on_every_function_path() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { fn f(flag: bool) -> int { if flag { return 1; } } }"#;
+    assert!(matches!(
+        elaborate_source(source),
+        Err(Diagnostic::MissingReturn { ref function, .. }) if function == "f"
+    ));
+}
+
+#[test]
+fn detects_const_and_function_cycles_before_evaluation() {
+    let const_cycle = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const a: int = b; const b: int = a; }"#;
+    assert!(matches!(
+        elaborate_source(const_cycle),
+        Err(Diagnostic::RecursiveConst { ref chain, .. }) if chain == &vec!["a".to_owned(), "b".to_owned(), "a".to_owned()]
+    ));
+
+    let function_cycle = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  fn a(value: int) -> int { return b(value); }
+  fn b(value: int) -> int { return a(value); }
+}"#;
+    assert!(matches!(
+        elaborate_source(function_cycle),
+        Err(Diagnostic::RecursiveFunction { ref chain, .. }) if chain == &vec!["a".to_owned(), "b".to_owned(), "a".to_owned()]
+    ));
+}
 
 #[test]
 fn collection_blocks_retain_forward_compatible_items_and_spans() {
@@ -109,6 +410,166 @@ fn entity_expressions_compose_template_calls_with_with_blocks() {
         *with_expression.base,
         EntityExpression::Source(SourceExpression::Call { .. })
     ));
+}
+
+#[test]
+fn parses_typed_templates_and_collections_with_source_spans() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 180bpm; }
+templates {
+  template ghost(time: beat) -> Note {
+    return tap { gameplay.time: time; };
+  }
+}
+collections {
+  notes {
+    ghost(1beat) with { presentation.positionX: 12px; };
+  }
+}"#;
+    let document = parse_document(source).expect("template source should parse");
+    let templates = document.templates.as_ref().expect("templates block");
+    assert_eq!(templates.declarations.len(), 1);
+    assert_eq!(templates.declarations[0].name, "ghost");
+    assert_eq!(templates.declarations[0].parameters[0].ty, Type::Beat);
+    assert_eq!(templates.declarations[0].return_type, Type::Note);
+    assert!(matches!(
+        templates.declarations[0].body,
+        EntityExpression::Constructor(_)
+    ));
+    assert_eq!(document.collections.len(), 1);
+    assert_eq!(document.collections[0].collection_name, "notes");
+    assert!(matches!(
+        document.collections[0].items[0],
+        CollectionItem::Expression(EntityExpression::With(_))
+    ));
+}
+
+#[test]
+fn elaborates_templates_and_with_overrides_into_concrete_entities() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 180bpm; }
+definitions { const X: length = 12px; }
+templates {
+  template ghost(time: beat, x: length) -> Note {
+    return tap {
+      gameplay.time: time;
+      presentation.positionX: x;
+    };
+  }
+}
+collections {
+  notes { ghost(1beat, X) with { presentation.alpha: 0.5; }; }
+}"#;
+    let document = parse_document(source).unwrap();
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
+    let collection = expanded.collections().next().expect("expanded collection");
+    let entity = collection.entities().next().expect("expanded entity");
+    assert_eq!(collection.name(), "notes");
+    assert_eq!(entity.entity_type(), &Type::Note);
+    assert_eq!(entity.variant(), Some(NoteVariant::Tap));
+    assert_eq!(
+        entity.field("gameplay.time").unwrap().value(),
+        &TypedValue::Beat(Beat::new(1, 1).unwrap())
+    );
+    assert_eq!(
+        entity.field("presentation.positionX").unwrap().value(),
+        &TypedValue::Length(12.0)
+    );
+    assert_eq!(
+        entity.field("presentation.alpha").unwrap().value(),
+        &TypedValue::Float(0.5)
+    );
+}
+
+#[test]
+fn entity_elaboration_reports_schema_and_template_errors() {
+    let unknown_field = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 180bpm; }
+collections { notes { tap { gameplay.time: 1beat; presentation.unknown: 1; }; } }"#;
+    assert!(matches!(
+        elaborate_source(unknown_field),
+        Err(Diagnostic::UnknownEntityField { ref field, .. }) if field == "presentation.unknown"
+    ));
+
+    let missing_required = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 180bpm; }
+collections { notes { tap { presentation.alpha: 1.0; }; } }"#;
+    assert!(matches!(
+        elaborate_source(missing_required),
+        Err(Diagnostic::MissingRequiredField { ref field, .. }) if field == "gameplay.time"
+    ));
+
+    let recursive = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 180bpm; }
+templates {
+  template a() -> Note { return b(); }
+  template b() -> Note { return a(); }
+}
+collections { notes { a(); } }"#;
+    assert!(matches!(
+        elaborate_source(recursive),
+        Err(Diagnostic::RecursiveTemplate { ref chain, .. })
+            if chain == &vec!["a".to_owned(), "b".to_owned(), "a".to_owned()]
+    ));
+}
+
+#[test]
+fn compile_time_collection_if_selects_one_branch_and_rejects_runtime_conditions() {
+    let selected = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 180bpm; }
+collections {
+  notes {
+    if true { tap { gameplay.time: 1beat; }; }
+    else { tap { gameplay.time: 2beat; }; }
+  }
+}"#;
+    let document = parse_document(selected).unwrap();
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
+    let entity = expanded
+        .collections()
+        .next()
+        .unwrap()
+        .entities()
+        .next()
+        .unwrap();
+    assert_eq!(
+        entity.field("gameplay.time").unwrap().value(),
+        &TypedValue::Beat(Beat::new(1, 1).unwrap())
+    );
+
+    let runtime = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 180bpm; }
+collections { notes { if missing { tap { gameplay.time: 1beat; }; } } }"#;
+    assert!(matches!(
+        elaborate_source(runtime),
+        Err(Diagnostic::NonConstantStructuralCondition { .. })
+    ));
+}
+
+#[test]
+fn parses_and_elaborates_the_public_template_fixture() {
+    let document = parse_document(&example("fcs5-templates.fcs")).unwrap();
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
+    let collection = expanded.collections().next().unwrap();
+    assert_eq!(collection.name(), "notes");
+    assert_eq!(collection.entities().count(), 1);
+    assert_eq!(
+        collection
+            .entities()
+            .next()
+            .unwrap()
+            .field("presentation.alpha")
+            .unwrap()
+            .value(),
+        &TypedValue::Float(0.5)
+    );
 }
 
 #[test]

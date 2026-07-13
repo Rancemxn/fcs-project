@@ -1,18 +1,41 @@
-use crate::v5::ast::{Document, DocumentProfile};
+use crate::v5::ast::{Document, DocumentProfile, SourceSpan};
 use crate::v5::validation::validate_profile;
 
-use super::{ParseError, parse_header, tempo::parse_tempo_map};
+use super::entities::{parse_collections, parse_templates};
+use super::{ParseError, definitions::parse_definitions, parse_header, tempo::parse_tempo_map};
 
 pub fn parse_document(input: &str) -> Result<Document, ParseError> {
     let (rest, source_version) = parse_header(input)?;
-    let (format_body, trailing) = take_named_block(rest, "format")?;
-    let trailing = skip_trivia(trailing)?;
-    let (tempo_map, trailing) = if trailing.starts_with("tempoMap") {
-        let (tempo_body, trailing) = take_named_block(trailing, "tempoMap")?;
-        (Some(parse_tempo_map(tempo_body)?), trailing)
-    } else {
-        (None, trailing)
-    };
+    let (format_body, trailing, _, _) = take_named_block(rest, "format", input.len())?;
+    let mut trailing = skip_trivia(trailing)?;
+    let mut tempo_map = None;
+    let mut definitions = None;
+    let mut templates = None;
+    let mut collections = Vec::new();
+    loop {
+        if trailing.starts_with("tempoMap") && tempo_map.is_none() {
+            let (tempo_body, rest, _, _) = take_named_block(trailing, "tempoMap", input.len())?;
+            tempo_map = Some(parse_tempo_map(tempo_body)?);
+            trailing = skip_trivia(rest)?;
+        } else if trailing.starts_with("definitions") && definitions.is_none() {
+            let (body, rest, body_offset, span) =
+                take_named_block(trailing, "definitions", input.len())?;
+            definitions = Some(parse_definitions(body, body_offset, span)?);
+            trailing = skip_trivia(rest)?;
+        } else if trailing.starts_with("templates") && templates.is_none() {
+            let (body, rest, body_offset, span) =
+                take_named_block(trailing, "templates", input.len())?;
+            templates = Some(parse_templates(body, body_offset, span)?);
+            trailing = skip_trivia(rest)?;
+        } else if trailing.starts_with("collections") && collections.is_empty() {
+            let (body, rest, body_offset, span) =
+                take_named_block(trailing, "collections", input.len())?;
+            collections = parse_collections(body, body_offset, span)?.collections;
+            trailing = skip_trivia(rest)?;
+        } else {
+            break;
+        }
+    }
     if !skip_trivia(trailing)?.is_empty() {
         return Err(ParseError::InvalidSyntax("trailing document input"));
     }
@@ -38,6 +61,9 @@ pub fn parse_document(input: &str) -> Result<Document, ParseError> {
         source_version,
         profile,
         tempo_map,
+        definitions,
+        templates,
+        collections,
     })
 }
 
@@ -134,8 +160,13 @@ fn skip_trivia(mut input: &str) -> Result<&str, ParseError> {
     }
 }
 
-fn take_named_block<'a>(input: &'a str, name: &str) -> Result<(&'a str, &'a str), ParseError> {
+fn take_named_block<'a>(
+    input: &'a str,
+    name: &str,
+    source_len: usize,
+) -> Result<(&'a str, &'a str, usize, SourceSpan), ParseError> {
     let input = input.trim_start();
+    let block_start = source_len - input.len();
     let rest = input
         .strip_prefix(name)
         .ok_or(ParseError::InvalidSyntax("format block"))?
@@ -143,6 +174,7 @@ fn take_named_block<'a>(input: &'a str, name: &str) -> Result<(&'a str, &'a str)
     let rest = rest
         .strip_prefix('{')
         .ok_or(ParseError::InvalidSyntax("format block"))?;
+    let body_offset = source_len - rest.len();
 
     let mut depth = 1;
     let mut chars = rest.char_indices().peekable();
@@ -190,7 +222,14 @@ fn take_named_block<'a>(input: &'a str, name: &str) -> Result<(&'a str, &'a str)
             '}' => {
                 depth -= 1;
                 if depth == 0 {
-                    return Ok((&rest[..index], &rest[index + character.len_utf8()..]));
+                    let trailing = &rest[index + character.len_utf8()..];
+                    let block_end = source_len - trailing.len();
+                    return Ok((
+                        &rest[..index],
+                        trailing,
+                        body_offset,
+                        SourceSpan::new(block_start, block_end),
+                    ));
                 }
             }
             _ => {}

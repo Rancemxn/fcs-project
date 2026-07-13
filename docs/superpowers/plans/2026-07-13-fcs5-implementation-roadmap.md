@@ -15,7 +15,7 @@
 | Phase | Deliverable | Depends on | Status |
 |---:|---|---|---|
 | 1 | Versioned FCS 5 front-end foundation: versions, profiles, exact beat keys, tempo map, minimal document parser | approved design | Complete |
-| 2 | Compile-time language: typed values, immutable bindings, pure functions, entity templates, `generate/emit`, expansion budgets | Phase 1 | Not started |
+| 2 | Compile-time language: typed values, immutable bindings, pure functions, entity templates, `generate/emit`, expansion budgets | Phase 1 | In progress — typed kernel, schema, templates and source expansion milestone complete; generator/emit and full budgets pending |
 | 3 | Canonical chart semantics: tracks, Note gameplay/presentation, transform graph, scroll tempo/speed/distance | Phases 1–2 | Not started |
 | 4 | Expression DAG, finite piecewise values, adaptive baking, Float64 curve representation, reference evaluator | Phase 3 | Not started |
 | 5 | FCBC v2 container, section table, version triplet, Execution ABI, deterministic serialization and loader | Phase 4 | Not started |
