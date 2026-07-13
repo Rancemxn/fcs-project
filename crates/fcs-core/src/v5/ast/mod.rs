@@ -1,6 +1,11 @@
 mod time;
+mod types;
 
 pub use time::{Beat, BeatError, Bpm, InvalidBpm};
+pub use types::{
+    BinaryOperator, SourceExpression, SourceLiteral, SourceSpan, Type, TypedExpression,
+    TypedExpressionKind, TypedValue, UnaryOperator,
+};
 
 use crate::v5::version::Version;
 
