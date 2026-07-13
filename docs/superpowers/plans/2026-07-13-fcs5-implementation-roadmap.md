@@ -12,22 +12,22 @@
 
 ## Phase order
 
-| Phase | Deliverable | Depends on |
-|---:|---|---|
-| 1 | Versioned FCS 5 front-end foundation: versions, profiles, exact beat keys, tempo map, minimal document parser | approved design |
-| 2 | Compile-time language: typed values, immutable bindings, pure functions, entity templates, `generate/emit`, expansion budgets | Phase 1 |
-| 3 | Canonical chart semantics: tracks, Note gameplay/presentation, transform graph, scroll tempo/speed/distance | Phases 1–2 |
-| 4 | Expression DAG, finite piecewise values, adaptive baking, Float64 curve representation, reference evaluator | Phase 3 |
-| 5 | FCBC v2 container, section table, version triplet, Execution ABI, deterministic serialization and loader | Phase 4 |
-| 6 | Metadata, contributors/credits, resources, artwork, sync, fidelity and conversion reports | Phase 5 |
-| 7 | FCS Render Profile, retained scene graph, paths/paint/images/text, RenderSection and raster fixtures | Phases 2, 4–6 |
-| 8 | PGR/RPE/PEC importer migration into the FCS 5 canonical model | Phases 3–6 |
-| 9 | FCS 5 exporters, loss profiles, capability negotiation and round-trip conformance | Phase 8 |
-| 10 | CLI cutover, normative `fcs.md` finalization, v4 removal, full workspace and copyright-chart validation | Phases 1–9 |
+| Phase | Deliverable | Depends on | Status |
+|---:|---|---|---|
+| 1 | Versioned FCS 5 front-end foundation: versions, profiles, exact beat keys, tempo map, minimal document parser | approved design | Implemented; workspace validation gates pending |
+| 2 | Compile-time language: typed values, immutable bindings, pure functions, entity templates, `generate/emit`, expansion budgets | Phase 1 | Not started |
+| 3 | Canonical chart semantics: tracks, Note gameplay/presentation, transform graph, scroll tempo/speed/distance | Phases 1–2 | Not started |
+| 4 | Expression DAG, finite piecewise values, adaptive baking, Float64 curve representation, reference evaluator | Phase 3 | Not started |
+| 5 | FCBC v2 container, section table, version triplet, Execution ABI, deterministic serialization and loader | Phase 4 | Not started |
+| 6 | Metadata, contributors/credits, resources, artwork, sync, fidelity and conversion reports | Phase 5 | Not started |
+| 7 | FCS Render Profile, retained scene graph, paths/paint/images/text, RenderSection and raster fixtures | Phases 2, 4–6 | Not started |
+| 8 | PGR/RPE/PEC importer migration into the FCS 5 canonical model | Phases 3–6 | Not started |
+| 9 | FCS 5 exporters, loss profiles, capability negotiation and round-trip conformance | Phase 8 | Not started |
+| 10 | CLI cutover, normative `fcs.md` finalization, v4 removal, full workspace and copyright-chart validation | Phases 1–9 | Not started |
 
 ## Cross-phase rules
 
-- [ ] Every phase starts from an isolated worktree created at execution time.
+- Every phase starts from an isolated Git branch. A separate worktree is optional and should be used only when concurrent work or filesystem isolation is useful.
 - [ ] Every behavior change begins with a failing test.
 - [ ] Run `cargo clippy --workspace --all-targets -- -D warnings` before any nextest command.
 - [ ] Run `cargo nextest run --workspace` before completing each phase.

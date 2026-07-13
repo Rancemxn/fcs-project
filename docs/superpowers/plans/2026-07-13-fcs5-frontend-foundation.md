@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Status (2026-07-13):** Implementation is complete and the focused `fcs-core` verification suite passes. Phase closure remains pending workspace-wide Clippy cleanup and provisioning of the `COPYRIGHT` fixtures required by the converter integration tests.
+
 **Goal:** Add a strict, versioned FCS 5 parser foundation with independent FCS/FCBC/Execution ABI versions, document profiles, exact rational beat keys, and a validated tempo map while preserving the buildability of the existing v4 converter.
 
 **Architecture:** Add a temporary `fcs_core::v5` module with focused `version`, `ast`, `parser`, and `validation` units. Keep the existing v4 `ast`, `parser`, compiler and converter untouched during this phase; expose FCS 5 through explicit `fcs_core::v5::parse_document` and promote it during the final roadmap phase.
@@ -1045,13 +1047,19 @@ git commit -m "docs: add FCS 5 front-end fixtures"
 
 ## Phase 1 completion checklist
 
-- [ ] `fcs_core::v5` is public without changing the existing v4 parser API.
-- [ ] FCS, FCBC and Execution ABI versions are independent constants.
-- [ ] `#fcs 5.0.0` is mandatory for the new parser.
-- [ ] Beat keys retain exact rational values.
-- [ ] BPM values reject zero, negative and non-finite input.
-- [ ] Fragment and chart profiles enforce their Phase 1 invariants.
-- [ ] Tempo points start at zero and are non-decreasing; equal-beat step entries remain legal.
-- [ ] Public fixtures parse through the public FCS 5 API.
+- [x] `fcs_core::v5` is public without changing the existing v4 parser API.
+- [x] FCS, FCBC and Execution ABI versions are independent constants.
+- [x] `#fcs 5.0.0` is mandatory for the new parser.
+- [x] Beat keys retain exact rational values.
+- [x] BPM values reject zero, negative and non-finite input.
+- [x] Fragment and chart profiles enforce their Phase 1 invariants.
+- [x] Tempo points start at zero and are non-decreasing; equal-beat step entries remain legal.
+- [x] Public fixtures parse through the public FCS 5 API.
 - [ ] Existing v4 converter and tests still compile and pass.
 - [ ] Workspace Clippy, nextest and rustfmt checks pass.
+
+## Phase closure blockers
+
+- `cargo clippy --workspace --all-targets -- -D warnings` currently fails because pre-existing converter integration-test helpers are unused in some test binaries.
+- `cargo nextest run --workspace --no-fail-fast` currently reports three failing copyright tests because the required `COPYRIGHT` fixture directory is absent from this checkout.
+- `cargo fmt --all -- --check`, `cargo clippy -p fcs-core --all-targets -- -D warnings`, and `cargo nextest run -p fcs-core --no-fail-fast` pass.
