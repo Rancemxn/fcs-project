@@ -3,6 +3,9 @@ use crate::v5::ast::{BinaryOperator, SourceExpression, SourceSpan, Type, UnaryOp
 use super::ParseError;
 use super::lexer::{Symbol, Token, TokenKind, lex};
 
+/// Conservative bound for recursive syntax handled by the parser.
+const MAX_NESTING_DEPTH: usize = 128;
+
 pub fn parse_expression(input: &str) -> Result<SourceExpression, ParseError> {
     let tokens = lex(input).map_err(|()| ParseError::InvalidSyntax("expression"))?;
     let mut parser = Parser::new(tokens);
@@ -30,11 +33,16 @@ pub fn parse_type(input: &str) -> Result<Type, ParseError> {
 struct Parser {
     tokens: Vec<Token>,
     current: usize,
+    nesting_depth: usize,
 }
 
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, current: 0 }
+        Self {
+            tokens,
+            current: 0,
+            nesting_depth: 0,
+        }
     }
 
     fn parse_type_inner(&mut self) -> Result<Type, ()> {
@@ -59,7 +67,7 @@ impl Parser {
         }
 
         self.expect_symbol(Symbol::LessThan)?;
-        let element = Box::new(self.parse_type_inner()?);
+        let element = Box::new(self.with_nesting(|parser| parser.parse_type_inner())?);
         self.expect_symbol(Symbol::GreaterThan)?;
         match name.as_str() {
             "vec2" => Ok(Type::Vec2(element)),
@@ -88,39 +96,61 @@ impl Parser {
     }
 
     fn parse_equality(&mut self) -> Result<SourceExpression, ()> {
-        let mut expression = self.parse_comparison()?;
-        loop {
-            let operator = if self.consume_symbol(Symbol::EqualEqual).is_some() {
-                BinaryOperator::Equal
-            } else if self.consume_symbol(Symbol::BangEqual).is_some() {
-                BinaryOperator::NotEqual
-            } else {
-                break;
-            };
+        let left = self.parse_comparison()?;
+        let Some(operator) = self.consume_equality_operator() else {
+            return Ok(left);
+        };
+        let right = self.parse_comparison()?;
+        let mut previous = right.clone();
+        let mut expression = binary(left, operator, right);
+        while let Some(operator) = self.consume_equality_operator() {
             let right = self.parse_comparison()?;
-            expression = binary(expression, operator, right);
+            let comparison = binary(previous, operator, right.clone());
+            expression = binary(expression, BinaryOperator::And, comparison);
+            previous = right;
         }
         Ok(expression)
     }
 
     fn parse_comparison(&mut self) -> Result<SourceExpression, ()> {
-        let mut expression = self.parse_additive()?;
-        loop {
-            let operator = if self.consume_symbol(Symbol::LessThan).is_some() {
-                BinaryOperator::LessThan
-            } else if self.consume_symbol(Symbol::LessThanOrEqual).is_some() {
-                BinaryOperator::LessThanOrEqual
-            } else if self.consume_symbol(Symbol::GreaterThan).is_some() {
-                BinaryOperator::GreaterThan
-            } else if self.consume_symbol(Symbol::GreaterThanOrEqual).is_some() {
-                BinaryOperator::GreaterThanOrEqual
-            } else {
-                break;
-            };
+        let left = self.parse_additive()?;
+        let Some(operator) = self.consume_comparison_operator() else {
+            return Ok(left);
+        };
+        let right = self.parse_additive()?;
+        let mut previous = right.clone();
+        let mut expression = binary(left, operator, right);
+        while let Some(operator) = self.consume_comparison_operator() {
             let right = self.parse_additive()?;
-            expression = binary(expression, operator, right);
+            let comparison = binary(previous, operator, right.clone());
+            expression = binary(expression, BinaryOperator::And, comparison);
+            previous = right;
         }
         Ok(expression)
+    }
+
+    fn consume_equality_operator(&mut self) -> Option<BinaryOperator> {
+        if self.consume_symbol(Symbol::EqualEqual).is_some() {
+            Some(BinaryOperator::Equal)
+        } else if self.consume_symbol(Symbol::BangEqual).is_some() {
+            Some(BinaryOperator::NotEqual)
+        } else {
+            None
+        }
+    }
+
+    fn consume_comparison_operator(&mut self) -> Option<BinaryOperator> {
+        if self.consume_symbol(Symbol::LessThan).is_some() {
+            Some(BinaryOperator::LessThan)
+        } else if self.consume_symbol(Symbol::LessThanOrEqual).is_some() {
+            Some(BinaryOperator::LessThanOrEqual)
+        } else if self.consume_symbol(Symbol::GreaterThan).is_some() {
+            Some(BinaryOperator::GreaterThan)
+        } else if self.consume_symbol(Symbol::GreaterThanOrEqual).is_some() {
+            Some(BinaryOperator::GreaterThanOrEqual)
+        } else {
+            None
+        }
     }
 
     fn parse_additive(&mut self) -> Result<SourceExpression, ()> {
@@ -159,7 +189,7 @@ impl Parser {
 
     fn parse_unary(&mut self) -> Result<SourceExpression, ()> {
         if let Some(operator) = self.consume_symbol(Symbol::Minus) {
-            let operand = self.parse_unary()?;
+            let operand = self.with_nesting(|parser| parser.parse_unary())?;
             let span = SourceSpan::new(operator.span.start, operand.span().end);
             return Ok(SourceExpression::Unary {
                 operator: UnaryOperator::Negate,
@@ -168,7 +198,7 @@ impl Parser {
             });
         }
         if let Some(operator) = self.consume_symbol(Symbol::Bang) {
-            let operand = self.parse_unary()?;
+            let operand = self.with_nesting(|parser| parser.parse_unary())?;
             let span = SourceSpan::new(operator.span.start, operand.span().end);
             return Ok(SourceExpression::Unary {
                 operator: UnaryOperator::Not,
@@ -208,7 +238,7 @@ impl Parser {
         let mut arguments = Vec::new();
         if !self.check_symbol(Symbol::RightParenthesis) {
             loop {
-                arguments.push(self.parse_or()?);
+                arguments.push(self.with_nesting(|parser| parser.parse_or())?);
                 if self.consume_symbol(Symbol::Comma).is_none() {
                     break;
                 }
@@ -253,7 +283,7 @@ impl Parser {
                 span: token.span,
             }),
             TokenKind::Symbol(Symbol::LeftParenthesis) => {
-                let expression = self.parse_or()?;
+                let expression = self.with_nesting(|parser| parser.parse_or())?;
                 let close = self.expect_symbol(Symbol::RightParenthesis)?;
                 Ok(with_span(
                     expression,
@@ -315,6 +345,16 @@ impl Parser {
 
     fn is_at_end(&self) -> bool {
         self.current == self.tokens.len()
+    }
+
+    fn with_nesting<T>(&mut self, parse: impl FnOnce(&mut Self) -> Result<T, ()>) -> Result<T, ()> {
+        if self.nesting_depth == MAX_NESTING_DEPTH {
+            return Err(());
+        }
+        self.nesting_depth += 1;
+        let result = parse(self);
+        self.nesting_depth -= 1;
+        result
     }
 }
 

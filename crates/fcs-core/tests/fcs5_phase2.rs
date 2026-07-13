@@ -178,20 +178,32 @@ fn parses_nested_type_syntax() {
 }
 
 #[test]
-fn expression_spans_use_utf8_byte_offsets() {
-    let source = "变量.值";
+fn identifiers_are_ascii_but_spans_remain_utf8_byte_offsets() {
+    for source in ["变量", "ascii.值", "éclair"] {
+        assert_eq!(
+            parse_expression(source),
+            Err(ParseError::InvalidSyntax("expression")),
+            "identifier {source:?}"
+        );
+    }
+
+    let source = "\"雪\" /* 雨 */ + ascii";
     let expression = parse_expression(source).unwrap();
 
     assert_eq!(expression.span(), SourceSpan::new(0, source.len()));
     match expression {
-        SourceExpression::FieldAccess {
-            base, field, span, ..
+        SourceExpression::Binary {
+            left,
+            operator: BinaryOperator::Add,
+            right,
+            span,
         } => {
-            assert_eq!(field, "值");
-            assert_eq!(span, SourceSpan::new(0, 10));
-            assert_eq!(base.span(), SourceSpan::new(0, 6));
+            assert_eq!(left.span(), SourceSpan::new(0, "\"雪\"".len()));
+            let ascii_start = source.find("ascii").unwrap();
+            assert_eq!(right.span(), SourceSpan::new(ascii_start, source.len()));
+            assert_eq!(span, SourceSpan::new(0, source.len()));
         }
-        other => panic!("expected field access, got {other:?}"),
+        other => panic!("expected addition, got {other:?}"),
     }
 }
 
@@ -251,6 +263,96 @@ fn parses_scalar_and_unit_literals() {
                 span: SourceSpan::new(0, source.len()),
             },
             "literal {source}"
+        );
+    }
+}
+
+#[test]
+fn unit_literals_must_remain_finite_after_conversion() {
+    for source in ["1e308vw", "1e308vh"] {
+        assert_eq!(
+            parse_expression(source),
+            Err(ParseError::InvalidSyntax("expression")),
+            "literal {source}"
+        );
+    }
+
+    let expression = parse_expression("2min == 120s").unwrap();
+    let (left, right) = binary_operands(&expression, BinaryOperator::Equal);
+    assert!(matches!(
+        left,
+        SourceExpression::Literal {
+            literal: SourceLiteral::Time(120.0),
+            ..
+        }
+    ));
+    assert!(matches!(
+        right,
+        SourceExpression::Literal {
+            literal: SourceLiteral::Time(120.0),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn beat_literals_reduce_exactly_before_narrowing() {
+    let cases = [
+        ("0.1000000000000000000beat", Beat::new(1, 10).unwrap()),
+        ("0.0000000000000000000beat", Beat::new(0, 1).unwrap()),
+    ];
+    for (source, expected) in cases {
+        assert_eq!(
+            parse_expression(source).unwrap(),
+            SourceExpression::Literal {
+                literal: SourceLiteral::Beat(expected),
+                span: SourceSpan::new(0, source.len()),
+            },
+            "literal {source}"
+        );
+    }
+
+    assert_eq!(
+        parse_expression("0.0000000000000000001beat"),
+        Err(ParseError::InvalidSyntax("expression"))
+    );
+}
+
+#[test]
+fn string_escapes_match_the_documented_table() {
+    let accepted = [
+        (r#""\n""#, "\n"),
+        (r#""\t""#, "\t"),
+        (r#""\\""#, "\\"),
+        (r#""\"""#, "\""),
+        (r#""\u{0}""#, "\0"),
+        (r#""\u{10FFFF}""#, "\u{10ffff}"),
+    ];
+    for (source, expected) in accepted {
+        assert_eq!(
+            parse_expression(source).unwrap(),
+            SourceExpression::Literal {
+                literal: SourceLiteral::String(expected.into()),
+                span: SourceSpan::new(0, source.len()),
+            },
+            "escape {source:?}"
+        );
+    }
+
+    for source in [
+        r#""\r""#,
+        r#""\u{D800}""#,
+        r#""\u{110000}""#,
+        r#""\u""#,
+        r#""\u{}""#,
+        r#""\u{1234567}""#,
+        r#""\u{zz}""#,
+        r#""\u{12""#,
+    ] {
+        assert_eq!(
+            parse_expression(source),
+            Err(ParseError::InvalidSyntax("expression")),
+            "escape {source:?}"
         );
     }
 }
@@ -373,6 +475,46 @@ fn parses_every_binary_operator() {
 }
 
 #[test]
+fn comparison_chains_lower_to_adjacent_comparisons() {
+    for (source, comparison) in [
+        ("a < b < c", BinaryOperator::LessThan),
+        ("a == b == c", BinaryOperator::Equal),
+    ] {
+        let expression = parse_expression(source).unwrap();
+        assert_eq!(expression.span(), SourceSpan::new(0, source.len()));
+        let (first, second) = binary_operands(&expression, BinaryOperator::And);
+        let (first_left, first_right) = binary_operands(first, comparison);
+        let (second_left, second_right) = binary_operands(second, comparison);
+        let middle_start = source.find('b').unwrap();
+
+        assert!(matches!(
+            first_left,
+            SourceExpression::Name { name, span }
+                if name == "a" && *span == SourceSpan::new(0, 1)
+        ));
+        assert!(matches!(
+            first_right,
+            SourceExpression::Name { name, span }
+                if name == "b" && *span == SourceSpan::new(middle_start, middle_start + 1)
+        ));
+        assert!(matches!(
+            second_left,
+            SourceExpression::Name { name, span }
+                if name == "b"
+                    && *span == SourceSpan::new(middle_start, middle_start + 1)
+        ));
+        let c_start = source.rfind('c').unwrap();
+        assert!(matches!(
+            second_right,
+            SourceExpression::Name { name, span }
+                if name == "c" && *span == SourceSpan::new(c_start, c_start + 1)
+        ));
+        assert_eq!(first.span(), SourceSpan::new(0, middle_start + 1));
+        assert_eq!(second.span(), SourceSpan::new(middle_start, source.len()));
+    }
+}
+
+#[test]
 fn parser_rejects_trailing_or_incomplete_input() {
     for source in ["1 2", "vec2(1, 2) trailing", "1 +", "\"unterminated"] {
         assert_eq!(
@@ -420,6 +562,46 @@ fn parses_scalar_and_recursive_track_types() {
     assert_eq!(
         parse_type("Keyframe<TrackSegment<length>>").unwrap(),
         Type::Keyframe(Box::new(Type::TrackSegment(Box::new(Type::Length))))
+    );
+}
+
+#[test]
+fn parser_rejects_nesting_beyond_the_shared_limit() {
+    const LIMIT: usize = 128;
+
+    let nested_type = |depth: usize| format!("{}int{}", "vec2<".repeat(depth), ">".repeat(depth));
+    assert!(parse_type(&nested_type(LIMIT)).is_ok());
+    assert_eq!(
+        parse_type(&nested_type(LIMIT + 1)),
+        Err(ParseError::InvalidSyntax("type"))
+    );
+
+    let unary = |depth: usize| format!("{}value", "!".repeat(depth));
+    assert!(parse_expression(&unary(LIMIT)).is_ok());
+    assert_eq!(
+        parse_expression(&unary(LIMIT + 1)),
+        Err(ParseError::InvalidSyntax("expression"))
+    );
+
+    let grouped = |depth: usize| format!("{}value{}", "(".repeat(depth), ")".repeat(depth));
+    assert!(parse_expression(&grouped(LIMIT)).is_ok());
+    assert_eq!(
+        parse_expression(&grouped(LIMIT + 1)),
+        Err(ParseError::InvalidSyntax("expression"))
+    );
+
+    let mixed = |unary_depth: usize, group_depth: usize| {
+        format!(
+            "{}{}value{}",
+            "!".repeat(unary_depth),
+            "(".repeat(group_depth),
+            ")".repeat(group_depth)
+        )
+    };
+    assert!(parse_expression(&mixed(LIMIT / 2, LIMIT / 2)).is_ok());
+    assert_eq!(
+        parse_expression(&mixed(LIMIT / 2 + 1, LIMIT / 2)),
+        Err(ParseError::InvalidSyntax("expression"))
     );
 }
 

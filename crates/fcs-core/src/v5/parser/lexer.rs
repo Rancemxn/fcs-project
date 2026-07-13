@@ -185,7 +185,6 @@ impl Lexer<'_> {
         self.offset += escaped.len_utf8();
         match escaped {
             'n' => Ok('\n'),
-            'r' => Ok('\r'),
             't' => Ok('\t'),
             '\\' => Ok('\\'),
             '"' => Ok('"'),
@@ -276,11 +275,11 @@ impl Lexer<'_> {
 }
 
 fn is_identifier_start(character: char) -> bool {
-    character == '_' || character.is_alphabetic()
+    character == '_' || character.is_ascii_alphabetic()
 }
 
 fn is_identifier_continue(character: char) -> bool {
-    character == '_' || character.is_alphanumeric()
+    character == '_' || character.is_ascii_alphanumeric()
 }
 
 fn parse_number_literal(number: &str, unit: &str) -> Result<SourceLiteral, ()> {
@@ -299,7 +298,7 @@ fn parse_number_literal(number: &str, unit: &str) -> Result<SourceLiteral, ()> {
     }
 
     let value = parse_finite_float(number)?;
-    match unit {
+    let literal = match unit {
         "ms" => Ok(SourceLiteral::Time(value / 1_000.0)),
         "s" => Ok(SourceLiteral::Time(value)),
         "min" => Ok(SourceLiteral::Time(value * 60.0)),
@@ -308,6 +307,14 @@ fn parse_number_literal(number: &str, unit: &str) -> Result<SourceLiteral, ()> {
         "vh" => Ok(SourceLiteral::Length(value * 10.8)),
         "deg" => Ok(SourceLiteral::Angle(value.to_radians())),
         "rad" => Ok(SourceLiteral::Angle(value)),
+        _ => Err(()),
+    }?;
+    match &literal {
+        SourceLiteral::Time(value) | SourceLiteral::Length(value) | SourceLiteral::Angle(value)
+            if value.is_finite() =>
+        {
+            Ok(literal)
+        }
         _ => Err(()),
     }
 }
@@ -341,9 +348,26 @@ fn parse_beat(number: &str) -> Result<Beat, ()> {
             .checked_mul(10_i128.checked_pow(exponent.unsigned_abs()).ok_or(())?)
             .ok_or(())?;
     }
+    if numerator == 0 {
+        return Beat::new(0, 1).map_err(|_| ());
+    }
+    let divisor = i128::try_from(greatest_common_divisor(
+        numerator.unsigned_abs(),
+        denominator.unsigned_abs(),
+    ))
+    .map_err(|_| ())?;
     Beat::new(
-        i64::try_from(numerator).map_err(|_| ())?,
-        i64::try_from(denominator).map_err(|_| ())?,
+        i64::try_from(numerator / divisor).map_err(|_| ())?,
+        i64::try_from(denominator / divisor).map_err(|_| ())?,
     )
     .map_err(|_| ())
+}
+
+fn greatest_common_divisor(mut left: u128, mut right: u128) -> u128 {
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left
 }
