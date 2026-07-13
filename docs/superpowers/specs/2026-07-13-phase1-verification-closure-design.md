@@ -44,7 +44,7 @@ crates/fcs-converter/tests/common/paths.rs
 crates/fcs-converter/tests/common/roundtrip.rs
 ```
 
-`paths.rs` 只提供从 `CARGO_MANIFEST_DIR` 解析仓库相对路径的函数，并提供版权 fixture 目录解析。`FCS_COPYRIGHT_DIR` 存在且非空时优先使用它；否则回退到仓库根目录的 `examples/COPYRIGHT`。
+`paths.rs` 只提供从 `CARGO_MANIFEST_DIR` 解析仓库相对路径的函数。版权 fixture 目录解析位于唯一使用它的 `copyright_tests` target：`FCS_COPYRIGHT_DIR` 存在且非空时优先使用它；否则回退到仓库根目录的 `examples/COPYRIGHT`。
 
 `roundtrip.rs` 只保留下列实际使用的比较能力：
 

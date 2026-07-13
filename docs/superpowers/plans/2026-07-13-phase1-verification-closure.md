@@ -26,7 +26,7 @@ git switch -c codex/phase1-verification-closure
 | 文件 | 操作 | 职责 |
 |---|---|---|
 | `crates/fcs-converter/tests/common/mod.rs` | 删除 | 取消所有 integration-test 都加载的聚合模块。 |
-| `crates/fcs-converter/tests/common/paths.rs` | 新建 | 仓库相对路径与版权 fixture 路径解析。 |
+| `crates/fcs-converter/tests/common/paths.rs` | 新建 | 仓库相对路径解析。 |
 | `crates/fcs-converter/tests/common/roundtrip.rs` | 新建 | 仅供 round-trip 测试使用的事件采样比较。 |
 | `crates/fcs-converter/tests/{cross_format_tests,fcs_tests,pgr_tests,rpe_tests,pec_tests,copyright_tests}.rs` | 修改 | 通过 `#[path]` 仅导入实际需要的 helper。 |
 | `crates/fcs-converter/Cargo.toml` | 修改 | 定义 `copyright-fixtures` feature 和带 `required-features` 的 test target。 |
@@ -61,21 +61,11 @@ Expected: FAIL. `fcs-converter` integration test binary reports unused `sample_e
 Create `crates/fcs-converter/tests/common/paths.rs` with exactly:
 
 ```rust
-use std::path::PathBuf;
-
 /// Resolve a path relative to the project root from the converter crate.
 pub fn manifest_path(rel: &str) -> String {
     let dir = env!("CARGO_MANIFEST_DIR");
     let full = std::path::Path::new(dir).join("../../").join(rel);
     full.to_string_lossy().to_string()
-}
-
-/// Locate private copyright fixtures without making them part of the default test set.
-pub fn copyright_fixture_dir() -> PathBuf {
-    match std::env::var("FCS_COPYRIGHT_DIR") {
-        Ok(path) if !path.trim().is_empty() => PathBuf::from(path),
-        _ => PathBuf::from(manifest_path("examples/COPYRIGHT")),
-    }
 }
 ```
 
@@ -345,7 +335,10 @@ Delete the unused `parse_any` function. Add this helper immediately after `const
 
 ```rust
 fn copyright_dir() -> PathBuf {
-    let dir = paths::copyright_fixture_dir();
+    let dir = match std::env::var("FCS_COPYRIGHT_DIR") {
+        Ok(path) if !path.trim().is_empty() => PathBuf::from(path),
+        _ => PathBuf::from(paths::manifest_path("examples/COPYRIGHT")),
+    };
     assert!(
         dir.is_dir(),
         "COPYRIGHT fixture directory missing: {}. Set FCS_COPYRIGHT_DIR or populate examples/COPYRIGHT.",
@@ -379,13 +372,15 @@ cargo nextest list --workspace
 
 Expected: output does not contain `copyright_tests`.
 
+
 - [ ] **Step 5: Verify opt-in missing-fixture diagnostics**
 
-Run in PowerShell with no override:
+Run in PowerShell with an explicit nonexistent override:
 
 ```text
-Remove-Item Env:FCS_COPYRIGHT_DIR -ErrorAction SilentlyContinue
+$env:FCS_COPYRIGHT_DIR = (Join-Path $env:TEMP 'fcs-missing-copyright-fixtures')
 cargo nextest run -p fcs-converter --features copyright-fixtures --test copyright_tests
+Remove-Item Env:FCS_COPYRIGHT_DIR -ErrorAction SilentlyContinue
 ```
 
 Expected: FAIL in `test_copyright_files_exist` with an error containing both `FCS_COPYRIGHT_DIR` and `examples/COPYRIGHT`. The failure proves the opt-in lane does not silently skip missing private data.
