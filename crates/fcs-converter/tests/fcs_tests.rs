@@ -1,11 +1,12 @@
 //! FCS format: parse tests (FCS→FCS round-trip not yet supported as a library).
 
-mod common;
+#[path = "common/paths.rs"]
+mod paths;
 
 use fcs_core::parser::parse_document;
 
 fn load_fcs(name: &str) -> fcs_core::ast::Document {
-    let path = common::manifest_path(&format!("examples/fcs/{name}"));
+    let path = paths::manifest_path(&format!("examples/fcs/{name}"));
     let src =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {name}: {e}"));
     let (rest, doc) =

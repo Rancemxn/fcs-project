@@ -6,22 +6,23 @@
 //! don't re-parse cleanly. These tests validate the conversion pipeline
 //! without requiring reverse-parse correctness.
 
-mod common;
+#[path = "common/paths.rs"]
+mod paths;
 
 fn load_pgr(name: &str) -> fcs_converter::ir::IrChart {
-    let path = common::manifest_path(&format!("examples/pgr/{name}"));
+    let path = paths::manifest_path(&format!("examples/pgr/{name}"));
     let src = std::fs::read_to_string(&path).unwrap();
     fcs_converter::pgr::parse_pgr(&src).unwrap()
 }
 
 fn load_rpe(name: &str) -> fcs_converter::ir::IrChart {
-    let path = common::manifest_path(&format!("examples/rpe/{name}"));
+    let path = paths::manifest_path(&format!("examples/rpe/{name}"));
     let src = std::fs::read_to_string(&path).unwrap();
     fcs_converter::rpe::parse_rpe(&src).unwrap()
 }
 
 fn load_pec(name: &str) -> fcs_converter::ir::IrChart {
-    let path = common::manifest_path(&format!("examples/pec/{name}"));
+    let path = paths::manifest_path(&format!("examples/pec/{name}"));
     let src = std::fs::read_to_string(&path).unwrap();
     fcs_converter::pec::parse_pec(&src).unwrap()
 }

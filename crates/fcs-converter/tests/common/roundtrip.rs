@@ -1,27 +1,17 @@
-//! Shared test helpers for round-trip validation.
-//!
-//! Provides time-sampled event comparison (interpolating event values at
-//! evenly spaced times) and per-field note comparison.
+//! Shared round-trip event comparison helpers.
 
 use fcs_converter::ir::*;
 
 /// Linear interpolation: value at time_beat given a time-sorted event list.
-/// Uses binary search (partition_point) for O(log N) lookup.
-/// Returns None if no event covers the time.
 pub fn sample_event_value(events: &[IrEvent], time_beat: f64) -> Option<f64> {
-    // Find the last event with start_beat <= time_beat.
-    // partition_point requires a sorted/partitioned input — events must be
-    // ordered by start_beat (all format parsers and ir_to_fcs guarantee this).
     let idx = events.partition_point(|e| e.start_beat <= time_beat);
     let idx = idx.checked_sub(1)?;
     let e = &events[idx];
 
-    // Instant event at exact time (start == end seen as a step)
     if (e.start_beat - time_beat).abs() < 1e-12 && e.start_beat == e.end_beat {
         return Some(e.start_value);
     }
 
-    // Normal range coverage
     if time_beat >= e.start_beat && time_beat < e.end_beat {
         if (e.end_beat - e.start_beat).abs() < 1e-12 {
             return Some(e.start_value);
@@ -83,20 +73,7 @@ pub struct EventTolerances {
     pub speed: f64,
 }
 
-impl Default for EventTolerances {
-    fn default() -> Self {
-        Self {
-            move_x: 200.0,
-            move_y: 200.0,
-            rotate: 90.0,
-            alpha: 0.01,
-            speed: 1.0,
-        }
-    }
-}
-
 /// Compare event values by sampling at N evenly spaced times.
-/// Asserts that max diff per event type stays below its tolerance.
 pub fn compare_events_sampled(
     orig: &IrChart,
     rt: &IrChart,
@@ -177,76 +154,4 @@ pub fn compare_events_sampled(
         "speed sampled max diff {max_speed:.4} >= tolerance {}",
         tol.speed
     );
-}
-
-/// Per-field note comparison. Checks all notes across all lines
-/// for time_beat, position_x, speed, kind, above, hold_beat.
-///
-/// Notes are sorted by (time_beat, position_x, kind) before comparison
-/// to handle ordering differences introduced by flattener time-sorting.
-pub fn compare_notes_exact(orig: &IrChart, rt: &IrChart, tolerance: f64) {
-    assert_eq!(orig.lines.len(), rt.lines.len(), "line count mismatch");
-    for (i, (ol, rl)) in orig.lines.iter().zip(&rt.lines).enumerate() {
-        let mut o_notes: Vec<&IrNote> = ol.notes_above.iter().chain(&ol.notes_below).collect();
-        let mut r_notes: Vec<&IrNote> = rl.notes_above.iter().chain(&rl.notes_below).collect();
-        o_notes.sort_by(|a, b| {
-            a.time_beat
-                .partial_cmp(&b.time_beat)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| {
-                    a.position_x
-                        .partial_cmp(&b.position_x)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .then_with(|| (a.kind as u8).cmp(&(b.kind as u8)))
-        });
-        r_notes.sort_by(|a, b| {
-            a.time_beat
-                .partial_cmp(&b.time_beat)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| {
-                    a.position_x
-                        .partial_cmp(&b.position_x)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-                .then_with(|| (a.kind as u8).cmp(&(b.kind as u8)))
-        });
-        assert_eq!(o_notes.len(), r_notes.len(), "line {} total note count", i);
-        for (j, (on, rn)) in o_notes.iter().zip(&r_notes).enumerate() {
-            assert!(
-                (on.time_beat - rn.time_beat).abs() < tolerance,
-                "line {i} note {j} time_beat: {} vs {}",
-                on.time_beat,
-                rn.time_beat
-            );
-            assert!(
-                (on.position_x - rn.position_x).abs() < tolerance,
-                "line {i} note {j} position_x: {} vs {}",
-                on.position_x,
-                rn.position_x
-            );
-            assert!(
-                (on.speed - rn.speed).abs() < tolerance,
-                "line {i} note {j} speed: {} vs {}",
-                on.speed,
-                rn.speed
-            );
-            assert_eq!(on.kind, rn.kind, "line {i} note {j} kind");
-            assert_eq!(on.above, rn.above, "line {i} note {j} above");
-            assert!(
-                (on.hold_beat - rn.hold_beat).abs() < tolerance,
-                "line {i} note {j} hold_beat: {} vs {}",
-                on.hold_beat,
-                rn.hold_beat
-            );
-        }
-    }
-}
-
-/// Resolve a path relative to the project root
-/// from a crate's manifest directory (tests live in `crates/fcs-converter/`).
-pub fn manifest_path(rel: &str) -> String {
-    let dir = env!("CARGO_MANIFEST_DIR");
-    let full = std::path::Path::new(dir).join("../../").join(rel);
-    full.to_string_lossy().to_string()
 }

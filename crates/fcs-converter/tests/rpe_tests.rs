@@ -1,6 +1,9 @@
 //! RPE format: parse + round-trip tests.
 
-mod common;
+#[path = "common/paths.rs"]
+mod paths;
+#[path = "common/roundtrip.rs"]
+mod roundtrip;
 
 use fcs_converter::from_fcs::rpe_writer::fcs_to_rpe_json;
 use fcs_converter::ir::IrChart;
@@ -8,7 +11,7 @@ use fcs_converter::rpe::parse_rpe;
 use fcs_converter::to_fcs::ir_to_fcs;
 
 fn load_rpe(name: &str) -> IrChart {
-    let path = common::manifest_path(&format!("examples/rpe/{name}"));
+    let path = paths::manifest_path(&format!("examples/rpe/{name}"));
     let src =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {name}: {e}"));
     parse_rpe(&src).unwrap_or_else(|e| panic!("failed to parse {name}: {e}"))
@@ -43,11 +46,11 @@ fn test_rpe_roundtrip_simple() {
     let orig = load_rpe("simple.rpe.json");
     let rt = roundtrip_rpe(&orig);
     assert_eq!(orig.lines.len(), rt.lines.len());
-    common::compare_events_sampled(
+    roundtrip::compare_events_sampled(
         &orig,
         &rt,
         200,
-        common::EventTolerances {
+        roundtrip::EventTolerances {
             rotate: 0.001,
             move_x: 0.1,
             move_y: 0.1,
@@ -62,11 +65,11 @@ fn test_rpe_roundtrip_extremes() {
     let orig = load_rpe("extremes.rpe.json");
     let rt = roundtrip_rpe(&orig);
     assert_eq!(orig.lines.len(), rt.lines.len());
-    common::compare_events_sampled(
+    roundtrip::compare_events_sampled(
         &orig,
         &rt,
         200,
-        common::EventTolerances {
+        roundtrip::EventTolerances {
             rotate: 0.001,
             move_x: 0.1,
             move_y: 0.1,
