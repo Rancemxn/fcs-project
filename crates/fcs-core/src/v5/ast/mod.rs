@@ -1,6 +1,11 @@
+mod entity;
 mod time;
 mod types;
 
+pub use entity::{
+    CollectionBlock, EntityConstructor, EntityField, ExpandedEntity, ExpandedField, FieldPath,
+    NoteVariant, WithExpression,
+};
 pub use time::{Beat, BeatError, Bpm, InvalidBpm};
 pub use types::{
     BinaryOperator, SourceExpression, SourceLiteral, SourceSpan, Type, TypedExpression,

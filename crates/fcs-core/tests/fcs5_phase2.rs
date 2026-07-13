@@ -1,9 +1,132 @@
 use fcs_core::units::Color;
 use fcs_core::v5::ast::{
-    Beat, BinaryOperator, SourceExpression, SourceLiteral, SourceSpan, Type, TypedExpression,
-    TypedExpressionKind, TypedValue, UnaryOperator,
+    Beat, BinaryOperator, NoteVariant, SourceExpression, SourceLiteral, SourceSpan, Type,
+    TypedExpression, TypedExpressionKind, TypedValue, UnaryOperator,
 };
 use fcs_core::v5::parser::{ParseError, parse_expression, parse_type};
+use fcs_core::v5::schema::phase2_schema;
+
+#[test]
+fn phase2_schema_requires_note_time_and_types_position() {
+    let schema = phase2_schema();
+    let note = schema.entity(&Type::Note).unwrap();
+    assert_eq!(note.field("gameplay.time").unwrap().ty, Type::Beat);
+    assert_eq!(
+        note.field("presentation.positionX").unwrap().ty,
+        Type::Length
+    );
+}
+
+#[test]
+#[allow(clippy::redundant_pattern_matching)]
+fn render_node_is_not_constructible_in_phase2() {
+    assert!(matches!(phase2_schema().entity(&Type::RenderNode), None));
+}
+
+#[test]
+fn phase2_note_schema_has_exact_fields_required_flags_and_variants() {
+    let note = phase2_schema().entity(&Type::Note).unwrap();
+    let fields: Vec<_> = note
+        .fields()
+        .map(|field| (field.path.as_str(), field.ty.clone(), field.required))
+        .collect();
+
+    assert_eq!(
+        fields,
+        vec![
+            ("gameplay.endTime", Type::Beat, false),
+            ("gameplay.judgment.enabled", Type::Bool, false),
+            ("gameplay.side", Type::String, false),
+            ("gameplay.time", Type::Beat, true),
+            ("presentation.alpha", Type::Float, false),
+            ("presentation.color", Type::Color, false),
+            ("presentation.positionX", Type::Length, false),
+            ("presentation.scaleX", Type::Float, false),
+            ("presentation.scaleY", Type::Float, false),
+            ("presentation.scrollFactor", Type::Float, false),
+            ("presentation.texture", Type::String, false),
+            ("presentation.visibleFrom", Type::Beat, false),
+            ("presentation.visibleUntil", Type::Beat, false),
+            ("presentation.xOffset", Type::Length, false),
+            ("presentation.yOffset", Type::Length, false),
+            ("render.enabled", Type::Bool, false),
+        ]
+    );
+    assert_eq!(
+        note.variants(),
+        &[
+            NoteVariant::Tap,
+            NoteVariant::Hold,
+            NoteVariant::Flick,
+            NoteVariant::Drag,
+        ]
+    );
+}
+
+#[test]
+fn phase2_line_schema_has_only_identity_fields() {
+    let line = phase2_schema().entity(&Type::Line).unwrap();
+    let fields: Vec<_> = line
+        .fields()
+        .map(|field| (field.path.as_str(), field.ty.clone(), field.required))
+        .collect();
+
+    assert_eq!(
+        fields,
+        vec![("id", Type::String, true), ("zOrder", Type::Int, false),]
+    );
+    assert!(line.variants().is_empty());
+}
+
+#[test]
+fn phase2_collections_emit_their_registered_entity_types_deterministically() {
+    let schema = phase2_schema();
+    let collections: Vec<_> = schema
+        .collections()
+        .map(|collection| {
+            (
+                collection.collection_name.as_str(),
+                collection.emitted_entity_type.clone(),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        collections,
+        vec![("judgelines", Type::Line), ("notes", Type::Note)]
+    );
+    assert_eq!(
+        schema.collection("notes").unwrap().emitted_entity_type,
+        Type::Note
+    );
+    assert_eq!(
+        schema.collection("judgelines").unwrap().emitted_entity_type,
+        Type::Line
+    );
+    assert!(schema.collection("renderNodes").is_none());
+}
+
+#[test]
+fn phase2_registers_exactly_note_and_line_as_constructible_entities() {
+    let schema = phase2_schema();
+    let entity_types: Vec<_> = schema
+        .entities()
+        .map(|entity| entity.entity_type.clone())
+        .collect();
+
+    assert_eq!(entity_types, vec![Type::Note, Type::Line]);
+    assert!(schema.entity(&Type::RenderNode).is_none());
+    assert!(
+        schema
+            .entity(&Type::TrackSegment(Box::new(Type::Beat)))
+            .is_none()
+    );
+    assert!(
+        schema
+            .entity(&Type::Keyframe(Box::new(Type::Float)))
+            .is_none()
+    );
+}
 
 #[test]
 fn phase2_types_keep_units_distinct() {

@@ -44,7 +44,7 @@ impl SourceSpan {
 }
 
 /// A static type in the FCS 5 compile-time language.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Type {
     Bool,
     Int,
