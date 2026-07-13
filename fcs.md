@@ -1,5 +1,11 @@
  # FCS (Functional Chart Specification) — 谱面格式规范 v4.1.0
 
+> **FCS 5 implementation status:** The approved FCS 5 design is recorded in
+> `docs/superpowers/specs/2026-07-13-fcs5-spec-redesign-design.md`.
+> During the staged implementation, the body below still documents the current
+> v4 implementation. FCS 5 source files declare `#fcs 5.0.0`; the initial FCBC
+> container version is `2.0.0`, and the initial Execution ABI version is `1.0.0`.
+
  > FCS 是面向新一代社区谱面编辑器的声明式谱面格式。
  > 核心哲学：**一切动态属性皆为独立变量（时间或空间）的连续函数**。
 

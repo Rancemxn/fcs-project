@@ -1,0 +1,6 @@
+#fcs 5.0.0
+format { profile: chart; }
+tempoMap {
+    0beat -> 180bpm;
+    64beat -> 200bpm;
+}

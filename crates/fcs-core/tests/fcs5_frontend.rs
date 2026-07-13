@@ -3,6 +3,14 @@ use fcs_core::v5::parser::{ParseError, parse_document, parse_header};
 use fcs_core::v5::version::{
     EXECUTION_ABI_VERSION, FCBC_FORMAT_VERSION, FCS_SOURCE_VERSION, Version,
 };
+use std::{fs, path::PathBuf};
+
+fn example(name: &str) -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/fcs")
+        .join(name);
+    fs::read_to_string(path).unwrap()
+}
 
 #[test]
 fn parses_exact_fcs5_header() {
@@ -222,4 +230,13 @@ fn rejects_zero_denominator_and_invalid_bpm() {
     assert!(Bpm::new(f64::INFINITY).is_err());
     assert!(Bpm::new(f64::NEG_INFINITY).is_err());
     assert_eq!(Bpm::new(180.0).unwrap().get(), 180.0);
+}
+
+#[test]
+fn parses_public_fcs5_fixtures() {
+    let fragment = parse_document(&example("fcs5-fragment.fcs")).unwrap();
+    let chart = parse_document(&example("fcs5-chart.fcs")).unwrap();
+    assert_eq!(fragment.profile, DocumentProfile::Fragment);
+    assert_eq!(chart.profile, DocumentProfile::Chart);
+    assert_eq!(chart.tempo_map.unwrap().points.len(), 2);
 }
