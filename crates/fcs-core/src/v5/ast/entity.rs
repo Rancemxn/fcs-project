@@ -37,23 +37,60 @@ pub struct EntityConstructor {
     pub span: SourceSpan,
 }
 
+/// A source item contained directly in a collection block.
+///
+/// Task 6 may add generator, `emit`, local binding, and compile-time conditional variants.
+/// They are deliberately omitted until their semantics are defined.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub enum CollectionItem {
+    Constructor(EntityConstructor),
+}
+
+impl CollectionItem {
+    /// Returns this collection item's complete source span.
+    pub const fn span(&self) -> SourceSpan {
+        match self {
+            Self::Constructor(constructor) => constructor.span,
+        }
+    }
+}
+
+/// A source expression that evaluates to an entity value.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EntityExpression {
+    Constructor(EntityConstructor),
+    Source(SourceExpression),
+    With(WithExpression),
+}
+
+impl EntityExpression {
+    /// Returns this entity expression node's complete source span.
+    pub const fn span(&self) -> SourceSpan {
+        match self {
+            Self::Constructor(constructor) => constructor.span,
+            Self::Source(expression) => expression.span(),
+            Self::With(with_expression) => with_expression.span,
+        }
+    }
+}
+
 /// A source expression that immutably replaces fields on an entity value.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WithExpression {
-    pub base: SourceExpression,
+    pub base: Box<EntityExpression>,
     pub fields: Vec<EntityField>,
     pub span: SourceSpan,
 }
 
-/// A source collection containing direct entity constructors.
+/// A source collection containing source items.
 ///
-/// Generator, `emit`, local binding, and compile-time conditional items are deliberately
-/// absent. The collection item representation will be widened when those syntaxes are
-/// introduced; this bootstrap type does not assign them premature semantics.
+/// Task 6 may add generator, `emit`, local binding, and compile-time conditional item variants;
+/// this bootstrap representation assigns none of them premature semantics.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CollectionBlock {
     pub collection_name: String,
-    pub constructors: Vec<EntityConstructor>,
+    pub items: Vec<CollectionItem>,
     pub span: SourceSpan,
 }
 
@@ -62,16 +99,106 @@ pub struct CollectionBlock {
 /// Lowered fields own their value and source span and cannot retain a source expression.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExpandedField {
-    pub path: String,
-    pub value: TypedValue,
-    pub span: SourceSpan,
+    path: String,
+    value: TypedValue,
+    span: SourceSpan,
+}
+
+impl ExpandedField {
+    /// Returns the canonical dotted field path.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Returns the concrete value produced by elaboration.
+    pub fn value(&self) -> &TypedValue {
+        &self.value
+    }
+
+    /// Returns the source provenance span of this field value.
+    pub const fn span(&self) -> SourceSpan {
+        self.span
+    }
 }
 
 /// A concrete entity retained after successful compile-time expansion.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExpandedEntity {
-    pub entity_type: Type,
-    pub note_variant: Option<NoteVariant>,
-    pub fields: BTreeMap<String, ExpandedField>,
-    pub span: SourceSpan,
+    entity_type: Type,
+    note_variant: Option<NoteVariant>,
+    fields: BTreeMap<String, ExpandedField>,
+    span: SourceSpan,
+}
+
+impl ExpandedEntity {
+    /// Returns the concrete entity type produced by elaboration.
+    pub fn entity_type(&self) -> &Type {
+        &self.entity_type
+    }
+
+    /// Returns the Note variant, when this is a Note entity.
+    pub const fn variant(&self) -> Option<NoteVariant> {
+        self.note_variant
+    }
+
+    /// Returns the source provenance span of this entity.
+    pub const fn span(&self) -> SourceSpan {
+        self.span
+    }
+
+    /// Looks up a lowered field by its canonical dotted path.
+    pub fn field(&self, path: &str) -> Option<&ExpandedField> {
+        self.fields.get(path)
+    }
+
+    /// Iterates through lowered fields in canonical path order.
+    pub fn fields(&self) -> impl Iterator<Item = &ExpandedField> {
+        self.fields.values()
+    }
+
+    /// Reports that this representation contains only concrete typed field values.
+    pub const fn is_lowered(&self) -> bool {
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expanded_records_expose_values_in_path_order() {
+        let first_span = SourceSpan::new(1, 2);
+        let second_span = SourceSpan::new(3, 4);
+        let entity_span = SourceSpan::new(0, 5);
+        let first = ExpandedField {
+            path: "gameplay.time".into(),
+            value: TypedValue::Beat(super::super::Beat::new(1, 1).unwrap()),
+            span: first_span,
+        };
+        let second = ExpandedField {
+            path: "presentation.positionX".into(),
+            value: TypedValue::Length(12.0),
+            span: second_span,
+        };
+        let entity = ExpandedEntity {
+            entity_type: Type::Note,
+            note_variant: Some(NoteVariant::Tap),
+            fields: [(second.path.clone(), second), (first.path.clone(), first)]
+                .into_iter()
+                .collect(),
+            span: entity_span,
+        };
+
+        assert_eq!(entity.entity_type(), &Type::Note);
+        assert_eq!(entity.variant(), Some(NoteVariant::Tap));
+        assert_eq!(entity.span(), entity_span);
+        assert!(entity.is_lowered());
+        let fields: Vec<_> = entity.fields().map(ExpandedField::path).collect();
+        assert_eq!(fields, ["gameplay.time", "presentation.positionX"]);
+        let time = entity.field("gameplay.time").unwrap();
+        assert_eq!(time.path(), "gameplay.time");
+        assert_eq!(time.value().ty(), Type::Beat);
+        assert_eq!(time.span(), first_span);
+    }
 }

@@ -1,10 +1,115 @@
 use fcs_core::units::Color;
 use fcs_core::v5::ast::{
-    Beat, BinaryOperator, NoteVariant, SourceExpression, SourceLiteral, SourceSpan, Type,
-    TypedExpression, TypedExpressionKind, TypedValue, UnaryOperator,
+    Beat, BinaryOperator, CollectionBlock, CollectionItem, EntityConstructor, EntityExpression,
+    ExpandedEntity, ExpandedField, NoteVariant, SourceExpression, SourceLiteral, SourceSpan, Type,
+    TypedExpression, TypedExpressionKind, TypedValue, UnaryOperator, WithExpression,
 };
 use fcs_core::v5::parser::{ParseError, parse_expression, parse_type};
-use fcs_core::v5::schema::phase2_schema;
+use fcs_core::v5::schema::{FieldConstraint, phase2_schema};
+
+#[test]
+fn collection_blocks_retain_forward_compatible_items_and_spans() {
+    let constructor_span = SourceSpan::new(12, 28);
+    let block_span = SourceSpan::new(0, 30);
+    let block = CollectionBlock {
+        collection_name: "main".into(),
+        items: vec![CollectionItem::Constructor(EntityConstructor {
+            entity_type: Type::Note,
+            note_variant: Some(NoteVariant::Tap),
+            fields: Vec::new(),
+            span: constructor_span,
+        })],
+        span: block_span,
+    };
+
+    assert_eq!(block.span, block_span);
+    assert_eq!(block.items[0].span(), constructor_span);
+    match &block.items[0] {
+        CollectionItem::Constructor(constructor) => {
+            assert_eq!(constructor.span, constructor_span);
+        }
+        _ => panic!("expected constructor collection item"),
+    }
+}
+
+#[test]
+fn expanded_ir_exposes_only_read_accessors() {
+    fn assert_accessor_api(field: &ExpandedField, entity: &ExpandedEntity) {
+        let _: &str = field.path();
+        let _: &TypedValue = field.value();
+        let _: SourceSpan = field.span();
+        let _: &Type = entity.entity_type();
+        let _: Option<NoteVariant> = entity.variant();
+        let _: SourceSpan = entity.span();
+        let _: Option<&ExpandedField> = entity.field("gameplay.time");
+        let _: usize = entity.fields().count();
+        assert!(entity.is_lowered());
+    }
+
+    let _ = assert_accessor_api as fn(&ExpandedField, &ExpandedEntity);
+}
+
+#[test]
+fn entity_expressions_compose_constructor_with_nested_with_blocks() {
+    let constructor_span = SourceSpan::new(0, 8);
+    let first_with_span = SourceSpan::new(0, 20);
+    let second_with_span = SourceSpan::new(0, 32);
+    let constructor = EntityExpression::Constructor(EntityConstructor {
+        entity_type: Type::Note,
+        note_variant: Some(NoteVariant::Tap),
+        fields: Vec::new(),
+        span: constructor_span,
+    });
+    let first = EntityExpression::With(WithExpression {
+        base: Box::new(constructor),
+        fields: Vec::new(),
+        span: first_with_span,
+    });
+    let second = EntityExpression::With(WithExpression {
+        base: Box::new(first),
+        fields: Vec::new(),
+        span: second_with_span,
+    });
+
+    assert_eq!(second.span(), second_with_span);
+    let EntityExpression::With(second_with) = second else {
+        panic!("expected outer with expression");
+    };
+    assert_eq!(second_with.base.span(), first_with_span);
+    let EntityExpression::With(first_with) = *second_with.base else {
+        panic!("expected inner with expression");
+    };
+    assert_eq!(first_with.base.span(), constructor_span);
+}
+
+#[test]
+fn entity_expressions_compose_template_calls_with_with_blocks() {
+    let call_span = SourceSpan::new(4, 18);
+    let with_span = SourceSpan::new(4, 30);
+    let call = SourceExpression::Call {
+        callee: Box::new(SourceExpression::Name {
+            name: "ghostTap".into(),
+            span: SourceSpan::new(4, 12),
+        }),
+        arguments: Vec::new(),
+        span: call_span,
+    };
+    let expression = EntityExpression::With(WithExpression {
+        base: Box::new(EntityExpression::Source(call)),
+        fields: Vec::new(),
+        span: with_span,
+    });
+
+    assert_eq!(expression.span(), with_span);
+    let EntityExpression::With(with_expression) = expression else {
+        panic!("expected with expression");
+    };
+    assert_eq!(with_expression.base.span(), call_span);
+    assert!(matches!(
+        *with_expression.base,
+        EntityExpression::Source(SourceExpression::Call { .. })
+    ));
+}
 
 #[test]
 fn phase2_schema_requires_note_time_and_types_position() {
@@ -18,6 +123,23 @@ fn phase2_schema_requires_note_time_and_types_position() {
 }
 
 #[test]
+fn phase2_schema_exposes_only_gameplay_side_as_a_closed_string_enum() {
+    let note = phase2_schema().entity(&Type::Note).unwrap();
+    let side = note.field("gameplay.side").unwrap();
+
+    assert_eq!(side.ty, Type::String);
+    assert_eq!(
+        side.constraint(),
+        Some(&FieldConstraint::StringEnum(&["above", "below"]))
+    );
+    assert_eq!(note.field("gameplay.time").unwrap().constraint(), None);
+    assert_eq!(
+        note.field("presentation.texture").unwrap().constraint(),
+        None
+    );
+}
+
+#[test]
 #[allow(clippy::redundant_pattern_matching)]
 fn render_node_is_not_constructible_in_phase2() {
     assert!(matches!(phase2_schema().entity(&Type::RenderNode), None));
@@ -26,6 +148,12 @@ fn render_node_is_not_constructible_in_phase2() {
 #[test]
 fn phase2_note_schema_has_exact_fields_required_flags_and_variants() {
     let note = phase2_schema().entity(&Type::Note).unwrap();
+    let note_variants = [
+        NoteVariant::Tap,
+        NoteVariant::Hold,
+        NoteVariant::Flick,
+        NoteVariant::Drag,
+    ];
     let fields: Vec<_> = note
         .fields()
         .map(|field| (field.path.as_str(), field.ty.clone(), field.required))
@@ -52,15 +180,7 @@ fn phase2_note_schema_has_exact_fields_required_flags_and_variants() {
             ("render.enabled", Type::Bool, false),
         ]
     );
-    assert_eq!(
-        note.variants(),
-        &[
-            NoteVariant::Tap,
-            NoteVariant::Hold,
-            NoteVariant::Flick,
-            NoteVariant::Drag,
-        ]
-    );
+    assert_eq!(note.note_variants(), Some(note_variants.as_slice()));
 }
 
 #[test]
@@ -75,7 +195,7 @@ fn phase2_line_schema_has_only_identity_fields() {
         fields,
         vec![("id", Type::String, true), ("zOrder", Type::Int, false),]
     );
-    assert!(line.variants().is_empty());
+    assert_eq!(line.note_variants(), None);
 }
 
 #[test]

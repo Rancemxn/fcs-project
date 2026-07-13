@@ -44,6 +44,9 @@ impl SourceSpan {
 }
 
 /// A static type in the FCS 5 compile-time language.
+///
+/// The derived ordering traits exist only for host-side declaration and deterministic
+/// map ordering. Variant order never defines FCS equality or ordering semantics.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Type {
     Bool,

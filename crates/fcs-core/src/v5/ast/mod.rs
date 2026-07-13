@@ -3,8 +3,8 @@ mod time;
 mod types;
 
 pub use entity::{
-    CollectionBlock, EntityConstructor, EntityField, ExpandedEntity, ExpandedField, FieldPath,
-    NoteVariant, WithExpression,
+    CollectionBlock, CollectionItem, EntityConstructor, EntityExpression, EntityField,
+    ExpandedEntity, ExpandedField, FieldPath, NoteVariant, WithExpression,
 };
 pub use time::{Beat, BeatError, Bpm, InvalidBpm};
 pub use types::{
