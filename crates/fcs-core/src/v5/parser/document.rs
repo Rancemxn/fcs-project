@@ -1,11 +1,18 @@
 use crate::v5::ast::{Document, DocumentProfile};
 
-use super::{ParseError, parse_header};
+use super::{ParseError, parse_header, tempo::parse_tempo_map};
 
 pub fn parse_document(input: &str) -> Result<Document, ParseError> {
     let (rest, source_version) = parse_header(input)?;
     let (format_body, trailing) = take_named_block(rest, "format")?;
-    if !trailing.trim().is_empty() {
+    let trailing = skip_trivia(trailing)?;
+    let (tempo_map, trailing) = if trailing.starts_with("tempoMap") {
+        let (tempo_body, trailing) = take_named_block(trailing, "tempoMap")?;
+        (Some(parse_tempo_map(tempo_body)?), trailing)
+    } else {
+        (None, trailing)
+    };
+    if !skip_trivia(trailing)?.is_empty() {
         return Err(ParseError::InvalidSyntax("trailing document input"));
     }
 
@@ -28,7 +35,7 @@ pub fn parse_document(input: &str) -> Result<Document, ParseError> {
     Ok(Document {
         source_version,
         profile,
-        tempo_map: None,
+        tempo_map,
     })
 }
 
@@ -43,7 +50,7 @@ fn parse_profile(value: &str) -> Result<DocumentProfile, ParseError> {
     }
 }
 
-fn strip_comments(input: &str) -> Result<String, ParseError> {
+pub(super) fn strip_comments(input: &str) -> Result<String, ParseError> {
     let mut output = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
     let mut in_string = false;
@@ -104,6 +111,25 @@ fn strip_comments(input: &str) -> Result<String, ParseError> {
         return Err(ParseError::InvalidSyntax("format block"));
     }
     Ok(output)
+}
+
+fn skip_trivia(mut input: &str) -> Result<&str, ParseError> {
+    loop {
+        input = input.trim_start();
+        if let Some(rest) = input.strip_prefix("//") {
+            match rest.find('\n') {
+                Some(index) => input = &rest[index + 1..],
+                None => return Ok(""),
+            }
+        } else if let Some(rest) = input.strip_prefix("/*") {
+            let index = rest
+                .find("*/")
+                .ok_or(ParseError::InvalidSyntax("trailing document input"))?;
+            input = &rest[index + 2..];
+        } else {
+            return Ok(input);
+        }
+    }
 }
 
 fn take_named_block<'a>(input: &'a str, name: &str) -> Result<(&'a str, &'a str), ParseError> {

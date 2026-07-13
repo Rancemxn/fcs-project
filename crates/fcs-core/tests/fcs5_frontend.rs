@@ -37,6 +37,96 @@ fn parses_fragment_profile() {
 }
 
 #[test]
+fn parses_chart_tempo_map_with_exact_beats() {
+    let document = parse_document(
+        "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap {\n  0beat -> 180bpm;\n  4.5beat -> 200bpm;\n  [8,1,3]beat -> 220bpm;\n}",
+    )
+    .unwrap();
+
+    let tempo_map = document.tempo_map.unwrap();
+    assert_eq!(tempo_map.points[0].beat, Beat::new(0, 1).unwrap());
+    assert_eq!(tempo_map.points[1].beat, Beat::new(9, 2).unwrap());
+    assert_eq!(tempo_map.points[2].beat, Beat::new(25, 3).unwrap());
+}
+
+#[test]
+fn parses_negative_decimal_beats_exactly() {
+    let document =
+        parse_document("#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { -0.5beat -> 180bpm; }")
+            .unwrap();
+
+    assert_eq!(
+        document.tempo_map.unwrap().points[0].beat,
+        Beat::new(-1, 2).unwrap()
+    );
+}
+
+#[test]
+fn parses_negative_integer_beats_exactly() {
+    let document =
+        parse_document("#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { -1beat -> 120bpm; }")
+            .unwrap();
+
+    assert_eq!(
+        document.tempo_map.unwrap().points[0].beat,
+        Beat::new(-1, 1).unwrap()
+    );
+}
+
+#[test]
+fn accepts_empty_tempo_map() {
+    let document = parse_document("#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { }").unwrap();
+
+    assert!(document.tempo_map.unwrap().points.is_empty());
+}
+
+#[test]
+fn parses_tempo_map_after_line_comment() {
+    let document = parse_document(
+        "#fcs 5.0.0\nformat { profile: chart; }\n// comment\ntempoMap { 0beat -> 120bpm; }",
+    )
+    .unwrap();
+
+    assert_eq!(document.tempo_map.unwrap().points.len(), 1);
+}
+
+#[test]
+fn parses_tempo_map_after_block_comment() {
+    let document = parse_document(
+        "#fcs 5.0.0\nformat { profile: chart; }\n/* comment */ tempoMap { 0beat -> 120bpm; }",
+    )
+    .unwrap();
+
+    assert_eq!(document.tempo_map.unwrap().points.len(), 1);
+}
+
+#[test]
+fn accepts_trailing_comments_without_tempo_map() {
+    assert!(parse_document("#fcs 5.0.0\nformat { profile: chart; }\n// comment").is_ok());
+    assert!(parse_document("#fcs 5.0.0\nformat { profile: chart; }\n/* comment */").is_ok());
+}
+
+#[test]
+fn rejects_unclosed_trailing_block_comment() {
+    assert_eq!(
+        parse_document("#fcs 5.0.0\nformat { profile: chart; }\n/* comment"),
+        Err(ParseError::InvalidSyntax("trailing document input"))
+    );
+}
+
+#[test]
+fn rejects_invalid_tempo_map_fraction_and_bpm() {
+    let bad_fraction = parse_document(
+        "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { [8,1,0]beat -> 220bpm; }",
+    );
+    let bad_bpm =
+        parse_document("#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { 0beat -> 0.0bpm; }");
+
+    assert!(bad_fraction.is_err());
+    assert!(bad_bpm.is_err());
+}
+
+#[test]
 fn rejects_unknown_profile() {
     assert_eq!(
         parse_document("#fcs 5.0.0\nformat { profile: unknown; }").unwrap_err(),

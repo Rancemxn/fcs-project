@@ -1,5 +1,6 @@
 mod document;
 mod header;
+mod tempo;
 
 use crate::v5::version::Version;
 
