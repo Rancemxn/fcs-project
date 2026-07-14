@@ -1,17 +1,38 @@
 use crate::ast::{BinaryOperator, SourceExpression, SourceSpan, Type, UnaryOperator};
 
-use super::ParseError;
 use super::lexer::{Symbol, Token, TokenKind, lex};
+use super::{ParseError, ParseLimits, output_from_result};
 
-/// Conservative bound for recursive syntax handled by the parser.
-const MAX_NESTING_DEPTH: usize = 128;
+pub fn parse_expression(input: &str) -> crate::diagnostic::ParseOutput<SourceExpression> {
+    parse_expression_with_limits(input, ParseLimits::default())
+}
 
-pub fn parse_expression(input: &str) -> Result<SourceExpression, ParseError> {
+pub fn parse_expression_with_limits<L: Into<ParseLimits>>(
+    input: &str,
+    limits: L,
+) -> crate::diagnostic::ParseOutput<SourceExpression> {
+    output_from_result(input, parse_expression_inner(input, limits.into()))
+}
+
+pub(super) fn parse_expression_inner(
+    input: &str,
+    limits: ParseLimits,
+) -> Result<SourceExpression, ParseError> {
+    if input.len() > limits.max_input_bytes {
+        return Err(ParseError::InvalidSyntax("resource limit"));
+    }
     let tokens = lex(input).map_err(|()| ParseError::InvalidSyntax("expression"))?;
-    let mut parser = Parser::new(tokens);
-    let expression = parser
-        .parse_or()
-        .map_err(|()| ParseError::InvalidSyntax("expression"))?;
+    if tokens.len() > limits.max_tokens {
+        return Err(ParseError::InvalidSyntax("resource limit"));
+    }
+    let mut parser = Parser::new(tokens, limits.max_nesting_depth);
+    let expression = match parser.parse_or() {
+        Ok(expression) => expression,
+        Err(()) if parser.limit_exceeded => {
+            return Err(ParseError::InvalidSyntax("resource limit"));
+        }
+        Err(()) => return Err(ParseError::InvalidSyntax("expression")),
+    };
     if !parser.is_at_end() {
         return Err(ParseError::InvalidSyntax("expression"));
     }
@@ -22,15 +43,37 @@ pub(super) fn parse_expression_at(
     input: &str,
     byte_offset: usize,
 ) -> Result<SourceExpression, ParseError> {
-    parse_expression(input).map(|expression| shift_expression(expression, byte_offset))
+    parse_expression_inner(input, ParseLimits::default())
+        .map(|expression| shift_expression(expression, byte_offset))
 }
 
-pub fn parse_type(input: &str) -> Result<Type, ParseError> {
+pub fn parse_type(input: &str) -> crate::diagnostic::ParseOutput<Type> {
+    parse_type_with_limits(input, ParseLimits::default())
+}
+
+pub fn parse_type_with_limits<L: Into<ParseLimits>>(
+    input: &str,
+    limits: L,
+) -> crate::diagnostic::ParseOutput<Type> {
+    output_from_result(input, parse_type_inner(input, limits.into()))
+}
+
+pub(super) fn parse_type_inner(input: &str, limits: ParseLimits) -> Result<Type, ParseError> {
+    if input.len() > limits.max_input_bytes {
+        return Err(ParseError::InvalidSyntax("resource limit"));
+    }
     let tokens = lex(input).map_err(|()| ParseError::InvalidSyntax("type"))?;
-    let mut parser = Parser::new(tokens);
-    let ty = parser
-        .parse_type_inner()
-        .map_err(|()| ParseError::InvalidSyntax("type"))?;
+    if tokens.len() > limits.max_tokens {
+        return Err(ParseError::InvalidSyntax("resource limit"));
+    }
+    let mut parser = Parser::new(tokens, limits.max_nesting_depth);
+    let ty = match parser.parse_type_inner() {
+        Ok(ty) => ty,
+        Err(()) if parser.limit_exceeded => {
+            return Err(ParseError::InvalidSyntax("resource limit"));
+        }
+        Err(()) => return Err(ParseError::InvalidSyntax("type")),
+    };
     if !parser.is_at_end() {
         return Err(ParseError::InvalidSyntax("type"));
     }
@@ -41,14 +84,18 @@ struct Parser {
     tokens: Vec<Token>,
     current: usize,
     nesting_depth: usize,
+    max_nesting_depth: usize,
+    limit_exceeded: bool,
 }
 
 impl Parser {
-    fn new(tokens: Vec<Token>) -> Self {
+    fn new(tokens: Vec<Token>, max_nesting_depth: usize) -> Self {
         Self {
             tokens,
             current: 0,
             nesting_depth: 0,
+            max_nesting_depth,
+            limit_exceeded: false,
         }
     }
 
@@ -355,7 +402,8 @@ impl Parser {
     }
 
     fn with_nesting<T>(&mut self, parse: impl FnOnce(&mut Self) -> Result<T, ()>) -> Result<T, ()> {
-        if self.nesting_depth == MAX_NESTING_DEPTH {
+        if self.nesting_depth == self.max_nesting_depth {
+            self.limit_exceeded = true;
             return Err(());
         }
         self.nesting_depth += 1;

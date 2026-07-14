@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::ast::{SourceSpan, Type, TypedValue};
 
-use super::Diagnostic;
+use super::ElaboratorError as Diagnostic;
 
 #[derive(Debug, Clone)]
 pub(super) struct Binding {
@@ -34,7 +34,19 @@ impl Scope {
     }
 
     pub(super) fn declare(&mut self, name: String, binding: Binding) -> Result<(), Diagnostic> {
-        if let Some(previous_span) = self.lookup_span(&name) {
+        if let Some(previous) = self
+            .frames
+            .last()
+            .expect("a scope always has a frame")
+            .get(&name)
+        {
+            return Err(Diagnostic::DuplicateBinding {
+                name,
+                span: binding.span,
+                previous_span: previous.span,
+            });
+        }
+        if let Some(previous_span) = self.lookup_enclosing_span(&name) {
             return Err(Diagnostic::ShadowedBinding {
                 name,
                 span: binding.span,
@@ -56,9 +68,12 @@ impl Scope {
         self.reserved.insert(name, span);
     }
 
-    fn lookup_span(&self, name: &str) -> Option<SourceSpan> {
-        self.lookup(name)
-            .map(|binding| binding.span)
+    fn lookup_enclosing_span(&self, name: &str) -> Option<SourceSpan> {
+        self.frames
+            .iter()
+            .rev()
+            .skip(1)
+            .find_map(|frame| frame.get(name).map(|binding| binding.span))
             .or_else(|| self.reserved.get(name).copied())
     }
 }

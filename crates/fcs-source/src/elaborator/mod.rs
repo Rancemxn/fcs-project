@@ -1,12 +1,21 @@
 //! Type checking and pure compile-time evaluation for FCS 5 definitions.
 
+use std::collections::BTreeMap;
+
 mod cycle;
 mod entities;
 mod eval;
 mod scope;
 
-use crate::ast::{Document, ExpandedSourceDocument, SourceSpan, Type};
+use crate::ast::{
+    Definition, Document, ExpandedSourceDocument, SourceSpan, TemplateDeclaration, Type,
+};
+use crate::diagnostic::{
+    DiagnosticCode, DiagnosticLabel, DiagnosticStage, ExpansionTraceFrame, ExpansionTraceKind,
+};
 use crate::schema::ConstructionSchema;
+
+pub use crate::diagnostic::Diagnostic;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompileTimeLimits {
@@ -32,12 +41,17 @@ impl Default for CompileTimeLimits {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Diagnostic {
+enum ElaboratorError {
     FeatureUnavailable {
         feature: &'static str,
         span: SourceSpan,
     },
     ShadowedBinding {
+        name: String,
+        span: SourceSpan,
+        previous_span: SourceSpan,
+    },
+    DuplicateBinding {
         name: String,
         span: SourceSpan,
         previous_span: SourceSpan,
@@ -61,9 +75,6 @@ pub enum Diagnostic {
     },
     MissingReturn {
         function: String,
-        span: SourceSpan,
-    },
-    InvalidReturn {
         span: SourceSpan,
     },
     WrongArity {
@@ -118,6 +129,8 @@ pub enum Diagnostic {
     },
     LimitExceeded {
         limit: &'static str,
+        bound: usize,
+        observed: usize,
         span: SourceSpan,
     },
 }
@@ -126,7 +139,16 @@ pub fn elaborate(
     document: &Document,
     schema: &ConstructionSchema,
     limits: CompileTimeLimits,
-) -> Result<ExpandedSourceDocument, Diagnostic> {
+) -> Result<ExpandedSourceDocument, Vec<Diagnostic>> {
+    elaborate_inner(document, schema, limits).map_err(|error| vec![error.into_diagnostic()])
+}
+
+fn elaborate_inner(
+    document: &Document,
+    schema: &ConstructionSchema,
+    limits: CompileTimeLimits,
+) -> Result<ExpandedSourceDocument, ElaboratorError> {
+    preflight_names(document)?;
     if let Some(definitions) = &document.definitions {
         cycle::reject_cycles(definitions)?;
         eval::check_and_evaluate(definitions, limits)?;
@@ -138,4 +160,211 @@ pub fn elaborate(
         document.tempo_map.clone(),
         collections,
     ))
+}
+
+fn preflight_names(document: &Document) -> Result<(), ElaboratorError> {
+    let mut names = BTreeMap::<String, SourceSpan>::new();
+    if let Some(definitions) = &document.definitions {
+        for definition in &definitions.declarations {
+            let (name, span) = match definition {
+                Definition::Const(declaration) => (&declaration.name, declaration.name_span),
+                Definition::Function(declaration) => (&declaration.name, declaration.name_span),
+            };
+            if let Some(previous_span) = names.insert(name.clone(), span) {
+                return Err(ElaboratorError::DuplicateBinding {
+                    name: name.clone(),
+                    span,
+                    previous_span,
+                });
+            }
+        }
+    }
+    if let Some(templates) = &document.templates {
+        for declaration in &templates.declarations {
+            preflight_template_name(&mut names, declaration)?;
+        }
+    }
+    Ok(())
+}
+
+fn preflight_template_name(
+    names: &mut BTreeMap<String, SourceSpan>,
+    declaration: &TemplateDeclaration,
+) -> Result<(), ElaboratorError> {
+    if let Some(previous_span) = names.insert(declaration.name.clone(), declaration.name_span) {
+        return Err(ElaboratorError::DuplicateBinding {
+            name: declaration.name.clone(),
+            span: declaration.name_span,
+            previous_span,
+        });
+    }
+    Ok(())
+}
+
+impl ElaboratorError {
+    fn into_diagnostic(self) -> Diagnostic {
+        match self {
+            Self::FeatureUnavailable { feature, span } => Diagnostic::new(
+                DiagnosticCode::IMPLEMENTATION_FEATURE_UNAVAILABLE,
+                DiagnosticStage::Implementation,
+                format!("{feature} elaboration is not available in this implementation"),
+                span,
+            ),
+            Self::ShadowedBinding {
+                name,
+                span,
+                previous_span,
+            } => Diagnostic::new(
+                DiagnosticCode::NAME_SHADOWED,
+                DiagnosticStage::Elaborate,
+                format!("binding {name} shadows an enclosing binding"),
+                span,
+            )
+            .with_label(DiagnosticLabel::new(previous_span, "previous binding")),
+            Self::DuplicateBinding {
+                name,
+                span,
+                previous_span,
+            } => Diagnostic::new(
+                DiagnosticCode::NAME_DUPLICATE,
+                DiagnosticStage::Elaborate,
+                format!("binding {name} is declared more than once in this scope"),
+                span,
+            )
+            .with_label(DiagnosticLabel::new(previous_span, "previous binding")),
+            Self::TypeMismatch {
+                expected,
+                actual,
+                span,
+            } => Diagnostic::new(
+                DiagnosticCode::TYPE_MISMATCH,
+                DiagnosticStage::Elaborate,
+                format!("expected type {expected}, found {actual}"),
+                span,
+            ),
+            Self::UnknownName { name, span }
+            | Self::UnknownTemplate { name, span }
+            | Self::UnknownCollection { name, span } => Diagnostic::new(
+                DiagnosticCode::NAME_UNKNOWN,
+                DiagnosticStage::Elaborate,
+                format!("unknown name {name}"),
+                span,
+            ),
+            Self::RecursiveConst { chain, span } => {
+                cycle_diagnostic(ExpansionTraceKind::Const, chain, span)
+            }
+            Self::RecursiveFunction { chain, span } => {
+                cycle_diagnostic(ExpansionTraceKind::Function, chain, span)
+            }
+            Self::RecursiveTemplate { chain, span } => {
+                cycle_diagnostic(ExpansionTraceKind::Template, chain, span)
+            }
+            Self::MissingReturn { function, span } => Diagnostic::new(
+                DiagnosticCode::TYPE_MISMATCH,
+                DiagnosticStage::Elaborate,
+                format!("function {function} does not return on every path"),
+                span,
+            ),
+            Self::WrongArity {
+                callee,
+                expected,
+                actual,
+                span,
+            } => Diagnostic::new(
+                DiagnosticCode::TYPE_MISMATCH,
+                DiagnosticStage::Elaborate,
+                format!("{callee} expects {expected} arguments but received {actual}"),
+                span,
+            ),
+            Self::UnknownEntityField {
+                entity,
+                field,
+                span,
+            } => Diagnostic::new(
+                DiagnosticCode::SCHEMA_UNKNOWN_FIELD,
+                DiagnosticStage::Elaborate,
+                format!("{entity} has no field {field}"),
+                span,
+            ),
+            Self::DuplicateEntityField {
+                field,
+                span,
+                previous_span,
+            } => Diagnostic::new(
+                DiagnosticCode::SCHEMA_DUPLICATE_FIELD,
+                DiagnosticStage::Elaborate,
+                format!("field {field} is assigned more than once"),
+                span,
+            )
+            .with_label(DiagnosticLabel::new(
+                previous_span,
+                "previous field assignment",
+            )),
+            Self::MissingRequiredField {
+                entity,
+                field,
+                span,
+            } => Diagnostic::new(
+                DiagnosticCode::SCHEMA_MISSING_REQUIRED_FIELD,
+                DiagnosticStage::Elaborate,
+                format!("{entity} is missing required field {field}"),
+                span,
+            ),
+            Self::NonConstructibleEntity { entity, span } => Diagnostic::new(
+                DiagnosticCode::SCHEMA_NON_CONSTRUCTIBLE,
+                DiagnosticStage::Elaborate,
+                format!("{entity} is not constructible in this schema"),
+                span,
+            ),
+            Self::CollectionTypeMismatch {
+                collection,
+                expected,
+                actual,
+                span,
+            } => Diagnostic::new(
+                DiagnosticCode::SCHEMA_COLLECTION_TYPE_MISMATCH,
+                DiagnosticStage::Elaborate,
+                format!("collection {collection} expects {expected}, found {actual}"),
+                span,
+            ),
+            Self::NonConstantStructuralCondition { span } => Diagnostic::new(
+                DiagnosticCode::COMPILE_TIME_NON_CONSTANT_CONDITION,
+                DiagnosticStage::Elaborate,
+                "structural condition is not compile-time constant",
+                span,
+            ),
+            Self::InvalidOperation { message, span } => Diagnostic::new(
+                DiagnosticCode::TYPE_INVALID_OPERATION,
+                DiagnosticStage::Evaluate,
+                message,
+                span,
+            ),
+            Self::LimitExceeded {
+                limit,
+                bound,
+                observed,
+                span,
+            } => Diagnostic::new(
+                DiagnosticCode::COMPILE_TIME_BUDGET_EXCEEDED,
+                DiagnosticStage::Evaluate,
+                format!("compile-time budget {limit} was exceeded"),
+                span,
+            )
+            .with_budget(limit, bound, observed),
+        }
+    }
+}
+
+fn cycle_diagnostic(kind: ExpansionTraceKind, chain: Vec<String>, span: SourceSpan) -> Diagnostic {
+    let trace = chain
+        .into_iter()
+        .map(|subject| ExpansionTraceFrame::new(kind, Some(subject), None, None, Some(span)))
+        .collect();
+    Diagnostic::new(
+        DiagnosticCode::NAME_CYCLE,
+        DiagnosticStage::Elaborate,
+        "cyclic name expansion",
+        span,
+    )
+    .with_expansion_trace(trace)
 }

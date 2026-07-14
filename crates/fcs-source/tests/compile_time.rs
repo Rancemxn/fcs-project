@@ -5,8 +5,9 @@ use fcs_source::ast::{
     SourceExpression, SourceLiteral, SourceSpan, Type, TypedExpression, TypedExpressionKind,
     TypedValue, UnaryOperator, WithExpression,
 };
-use fcs_source::elaborator::{CompileTimeLimits, Diagnostic, elaborate};
-use fcs_source::parser::{ParseError, parse_document, parse_expression, parse_type};
+use fcs_source::diagnostic::{Diagnostic, DiagnosticCode};
+use fcs_source::elaborator::{CompileTimeLimits, elaborate};
+use fcs_source::parser::{parse_document, parse_expression, parse_type};
 use fcs_source::schema::{FieldConstraint, phase2_schema};
 use std::{fs, path::PathBuf};
 
@@ -17,15 +18,22 @@ fn example(name: &str) -> String {
     fs::read_to_string(path).unwrap()
 }
 
-fn elaborate_source(source: &str) -> Result<(), Diagnostic> {
-    let document = parse_document(source).expect("valid source syntax");
+fn elaborate_source(source: &str) -> Result<(), Vec<Diagnostic>> {
+    let document = parse_document(source)
+        .into_result()
+        .expect("valid source syntax");
     elaborate(&document, phase2_schema(), CompileTimeLimits::default()).map(|_| ())
+}
+
+fn assert_code(result: Result<(), Vec<Diagnostic>>, expected: DiagnosticCode) {
+    let errors = result.expect_err("source should produce a diagnostic");
+    assert_eq!(errors[0].code(), expected);
 }
 
 #[test]
 fn parses_definitions_with_global_byte_spans() {
     let source = "#fcs 5.0.0\nformat { profile: fragment; }\ndefinitions {\n  const SPACING: length = 120px;\n  fn choose(value: length) -> length {\n    if true { let local: length = value; return local; } else { return value; }\n  }\n}";
-    let document = parse_document(source).unwrap();
+    let document = parse_document(source).into_result().unwrap();
     let definitions = document.definitions.as_ref().unwrap();
     assert_eq!(
         definitions.span,
@@ -85,7 +93,7 @@ definitions {
     if value < sum { return value; } else { return sum; }
   }
 }"#;
-    let document = parse_document(source).unwrap();
+    let document = parse_document(source).into_result().unwrap();
     assert!(elaborate(&document, phase2_schema(), CompileTimeLimits::default()).is_ok());
 }
 
@@ -97,7 +105,7 @@ definitions {
   const SPACING: length = 120px;
   fn twice(value: length) -> length { return value * 2; }
 }"#;
-    let document = parse_document(source).unwrap();
+    let document = parse_document(source).into_result().unwrap();
     let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
     assert_eq!(expanded.source_version(), document.source_version);
     assert_eq!(expanded.profile(), document.profile);
@@ -110,10 +118,7 @@ fn rejects_shadowing_in_nested_scope() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }
 definitions { fn f(value: int) -> int { let value: int = 1; return value; } }"#;
-    assert!(matches!(
-        elaborate_source(source),
-        Err(Diagnostic::ShadowedBinding { .. })
-    ));
+    assert_code(elaborate_source(source), DiagnosticCode::NAME_DUPLICATE);
 }
 
 #[test]
@@ -121,10 +126,7 @@ fn rejects_duplicate_bindings_but_allows_sibling_branch_names() {
     let duplicate = r#"#fcs 5.0.0
 format { profile: fragment; }
 definitions { const value: int = 1; const value: int = 2; }"#;
-    assert!(matches!(
-        elaborate_source(duplicate),
-        Err(Diagnostic::ShadowedBinding { ref name, .. }) if name == "value"
-    ));
+    assert_code(elaborate_source(duplicate), DiagnosticCode::NAME_DUPLICATE);
 
     let siblings = r#"#fcs 5.0.0
 format { profile: fragment; }
@@ -145,18 +147,12 @@ definitions {
   fn helper(value: int) -> int { return value; }
   fn f(helper: int) -> int { return helper; }
 }"#;
-    assert!(matches!(
-        elaborate_source(global),
-        Err(Diagnostic::ShadowedBinding { ref name, .. }) if name == "helper"
-    ));
+    assert_code(elaborate_source(global), DiagnosticCode::NAME_SHADOWED);
 
     let builtin = r#"#fcs 5.0.0
 format { profile: fragment; }
 definitions { fn f(sin: float) -> float { return sin; } }"#;
-    assert!(matches!(
-        elaborate_source(builtin),
-        Err(Diagnostic::ShadowedBinding { ref name, .. }) if name == "sin"
-    ));
+    assert_code(elaborate_source(builtin), DiagnosticCode::NAME_SHADOWED);
 }
 
 #[test]
@@ -164,26 +160,12 @@ fn requires_exact_declared_and_return_types() {
     let initializer = r#"#fcs 5.0.0
 format { profile: fragment; }
 definitions { const value: float = 1; }"#;
-    assert!(matches!(
-        elaborate_source(initializer),
-        Err(Diagnostic::TypeMismatch {
-            expected: Type::Float,
-            actual: Type::Int,
-            ..
-        })
-    ));
+    assert_code(elaborate_source(initializer), DiagnosticCode::TYPE_MISMATCH);
 
     let returned = r#"#fcs 5.0.0
 format { profile: fragment; }
 definitions { fn f() -> float { return 1; } }"#;
-    assert!(matches!(
-        elaborate_source(returned),
-        Err(Diagnostic::TypeMismatch {
-            expected: Type::Float,
-            actual: Type::Int,
-            ..
-        })
-    ));
+    assert_code(elaborate_source(returned), DiagnosticCode::TYPE_MISMATCH);
 }
 
 #[test]
@@ -192,10 +174,9 @@ fn rejects_unknown_and_runtime_only_names() {
         let source = format!(
             "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ const value: float = {name}; }}"
         );
-        assert!(matches!(
-            elaborate_source(&source),
-            Err(Diagnostic::UnknownName { name: ref actual, .. }) if actual == name
-        ));
+        let errors = elaborate_source(&source).expect_err("unknown name");
+        assert_eq!(errors[0].code(), DiagnosticCode::NAME_UNKNOWN);
+        assert!(errors[0].message().contains(name));
     }
 }
 
@@ -220,9 +201,10 @@ definitions {
     let mixed = r#"#fcs 5.0.0
 format { profile: fragment; }
 definitions { const value: float = 1 + 2.0; }"#;
+    let mixed_errors = elaborate_source(mixed).expect_err("mixed types");
     assert!(matches!(
-        elaborate_source(mixed),
-        Err(Diagnostic::TypeMismatch { .. }) | Err(Diagnostic::InvalidOperation { .. })
+        mixed_errors[0].code(),
+        DiagnosticCode::TYPE_MISMATCH | DiagnosticCode::TYPE_INVALID_OPERATION
     ));
 }
 
@@ -241,22 +223,17 @@ definitions {
     let arity = r#"#fcs 5.0.0
 format { profile: fragment; }
 definitions { const value: float = sin(); }"#;
-    assert!(matches!(
-        elaborate_source(arity),
-        Err(Diagnostic::WrongArity { ref callee, expected: 1, actual: 0, .. }) if callee == "sin"
-    ));
+    let arity_errors = elaborate_source(arity).expect_err("wrong arity");
+    assert_eq!(arity_errors[0].code(), DiagnosticCode::TYPE_MISMATCH);
+    assert!(arity_errors[0].message().contains("sin"));
 
     let argument_type = r#"#fcs 5.0.0
 format { profile: fragment; }
 definitions { const value: float = sin(1); }"#;
-    assert!(matches!(
+    assert_code(
         elaborate_source(argument_type),
-        Err(Diagnostic::TypeMismatch {
-            expected: Type::Float,
-            actual: Type::Int,
-            ..
-        })
-    ));
+        DiagnosticCode::TYPE_MISMATCH,
+    );
 }
 
 #[test]
@@ -280,10 +257,9 @@ fn requires_a_return_on_every_function_path() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }
 definitions { fn f(flag: bool) -> int { if flag { return 1; } } }"#;
-    assert!(matches!(
-        elaborate_source(source),
-        Err(Diagnostic::MissingReturn { ref function, .. }) if function == "f"
-    ));
+    let errors = elaborate_source(source).expect_err("missing return");
+    assert_eq!(errors[0].code(), DiagnosticCode::TYPE_MISMATCH);
+    assert!(errors[0].message().contains("f"));
 }
 
 #[test]
@@ -291,10 +267,16 @@ fn detects_const_and_function_cycles_before_evaluation() {
     let const_cycle = r#"#fcs 5.0.0
 format { profile: fragment; }
 definitions { const a: int = b; const b: int = a; }"#;
-    assert!(matches!(
-        elaborate_source(const_cycle),
-        Err(Diagnostic::RecursiveConst { ref chain, .. }) if chain == &vec!["a".to_owned(), "b".to_owned(), "a".to_owned()]
-    ));
+    let errors = elaborate_source(const_cycle).expect_err("constant cycle");
+    assert_eq!(errors[0].code(), DiagnosticCode::NAME_CYCLE);
+    assert_eq!(
+        errors[0]
+            .expansion_trace()
+            .iter()
+            .map(|frame| frame.subject().unwrap())
+            .collect::<Vec<_>>(),
+        ["a", "b", "a"]
+    );
 
     let function_cycle = r#"#fcs 5.0.0
 format { profile: fragment; }
@@ -302,10 +284,16 @@ definitions {
   fn a(value: int) -> int { return b(value); }
   fn b(value: int) -> int { return a(value); }
 }"#;
-    assert!(matches!(
-        elaborate_source(function_cycle),
-        Err(Diagnostic::RecursiveFunction { ref chain, .. }) if chain == &vec!["a".to_owned(), "b".to_owned(), "a".to_owned()]
-    ));
+    let errors = elaborate_source(function_cycle).expect_err("function cycle");
+    assert_eq!(errors[0].code(), DiagnosticCode::NAME_CYCLE);
+    assert_eq!(
+        errors[0]
+            .expansion_trace()
+            .iter()
+            .map(|frame| frame.subject().unwrap())
+            .collect::<Vec<_>>(),
+        ["a", "b", "a"]
+    );
 }
 
 #[test]
@@ -427,7 +415,9 @@ collections {
     ghost(1beat) with { presentation.positionX: 12px; };
   }
 }"#;
-    let document = parse_document(source).expect("template source should parse");
+    let document = parse_document(source)
+        .into_result()
+        .expect("template source should parse");
     let templates = document.templates.as_ref().expect("templates block");
     assert_eq!(templates.declarations.len(), 1);
     assert_eq!(templates.declarations[0].name, "ghost");
@@ -463,7 +453,9 @@ fn generator_source(operator: &str, step: &str) -> String {
 fn parses_only_frozen_generator_range_operators() {
     for (operator, inclusive_end) in [("..<", false), ("..=", true)] {
         let source = generator_source(operator, "1beat");
-        let document = parse_document(&source).expect("Frozen generator range should parse");
+        let document = parse_document(&source)
+            .into_result()
+            .expect("Frozen generator range should parse");
         let CollectionItem::Generator(generator) = &document.collections[0].items[0] else {
             panic!("expected generator collection item");
         };
@@ -481,15 +473,20 @@ fn parses_only_frozen_generator_range_operators() {
 fn rejects_bare_generator_range_operator() {
     let source = generator_source("..", "1beat");
     assert_eq!(
-        parse_document(&source),
-        Err(ParseError::InvalidSyntax("generator range"))
+        parse_document(&source)
+            .into_result()
+            .expect_err("bare generator range")[0]
+            .code(),
+        DiagnosticCode::SYNTAX_INVALID_TOKEN
     );
 }
 
 #[test]
 fn retains_zero_generator_step_for_later_static_semantics() {
     let source = generator_source("..<", "0beat");
-    let document = parse_document(&source).expect("zero step is syntactically valid");
+    let document = parse_document(&source)
+        .into_result()
+        .expect("zero step is syntactically valid");
     let CollectionItem::Generator(generator) = &document.collections[0].items[0] else {
         panic!("expected generator collection item");
     };
@@ -515,16 +512,23 @@ fn generator_elaboration_fails_before_partial_output() {
            }\n\
          }"
     .to_string();
-    let document = parse_document(&source).expect("generator source should parse");
-    let error = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+    let document = parse_document(&source)
+        .into_result()
+        .expect("generator source should parse");
+    let errors = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
         .expect_err("I0 must not expand generators");
-    assert!(matches!(
-        error,
-        Diagnostic::FeatureUnavailable {
-            feature: "compile-time-generator",
-            span,
-        } if span.start == source.find("generate").unwrap()
-    ));
+    assert_eq!(
+        errors[0].code(),
+        DiagnosticCode::IMPLEMENTATION_FEATURE_UNAVAILABLE
+    );
+    assert_eq!(
+        errors[0].stage(),
+        fcs_source::diagnostic::DiagnosticStage::Implementation
+    );
+    assert_eq!(
+        errors[0].primary_span().start,
+        source.find("generate").unwrap()
+    );
 }
 
 #[test]
@@ -544,7 +548,7 @@ templates {
 collections {
   notes { ghost(1beat, X) with { presentation.alpha: 0.5; }; }
 }"#;
-    let document = parse_document(source).unwrap();
+    let document = parse_document(source).into_result().unwrap();
     let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
     let collection = expanded.collections().next().expect("expanded collection");
     let entity = collection.entities().next().expect("expanded entity");
@@ -571,19 +575,20 @@ fn entity_elaboration_reports_schema_and_template_errors() {
 format { profile: chart; }
 tempoMap { 0beat -> 180bpm; }
 collections { notes { tap { gameplay.time: 1beat; presentation.unknown: 1; }; } }"#;
-    assert!(matches!(
-        elaborate_source(unknown_field),
-        Err(Diagnostic::UnknownEntityField { ref field, .. }) if field == "presentation.unknown"
-    ));
+    let errors = elaborate_source(unknown_field).expect_err("unknown entity field");
+    assert_eq!(errors[0].code(), DiagnosticCode::SCHEMA_UNKNOWN_FIELD);
+    assert!(errors[0].message().contains("presentation.unknown"));
 
     let missing_required = r#"#fcs 5.0.0
 format { profile: chart; }
 tempoMap { 0beat -> 180bpm; }
 collections { notes { tap { presentation.alpha: 1.0; }; } }"#;
-    assert!(matches!(
-        elaborate_source(missing_required),
-        Err(Diagnostic::MissingRequiredField { ref field, .. }) if field == "gameplay.time"
-    ));
+    let errors = elaborate_source(missing_required).expect_err("missing required field");
+    assert_eq!(
+        errors[0].code(),
+        DiagnosticCode::SCHEMA_MISSING_REQUIRED_FIELD
+    );
+    assert!(errors[0].message().contains("gameplay.time"));
 
     let recursive = r#"#fcs 5.0.0
 format { profile: chart; }
@@ -593,11 +598,16 @@ templates {
   template b() -> Note { return a(); }
 }
 collections { notes { a(); } }"#;
-    assert!(matches!(
-        elaborate_source(recursive),
-        Err(Diagnostic::RecursiveTemplate { ref chain, .. })
-            if chain == &vec!["a".to_owned(), "b".to_owned(), "a".to_owned()]
-    ));
+    let errors = elaborate_source(recursive).expect_err("recursive template");
+    assert_eq!(errors[0].code(), DiagnosticCode::NAME_CYCLE);
+    assert_eq!(
+        errors[0]
+            .expansion_trace()
+            .iter()
+            .map(|frame| frame.subject().unwrap())
+            .collect::<Vec<_>>(),
+        ["a", "b", "a"]
+    );
 }
 
 #[test]
@@ -611,7 +621,7 @@ collections {
     else { tap { gameplay.time: 2beat; }; }
   }
 }"#;
-    let document = parse_document(selected).unwrap();
+    let document = parse_document(selected).into_result().unwrap();
     let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
     let entity = expanded
         .collections()
@@ -629,15 +639,17 @@ collections {
 format { profile: chart; }
 tempoMap { 0beat -> 180bpm; }
 collections { notes { if missing { tap { gameplay.time: 1beat; }; } } }"#;
-    assert!(matches!(
+    assert_code(
         elaborate_source(runtime),
-        Err(Diagnostic::NonConstantStructuralCondition { .. })
-    ));
+        DiagnosticCode::COMPILE_TIME_NON_CONSTANT_CONDITION,
+    );
 }
 
 #[test]
 fn parses_and_elaborates_the_public_template_fixture() {
-    let document = parse_document(&example("templates.fcs")).unwrap();
+    let document = parse_document(&example("templates.fcs"))
+        .into_result()
+        .unwrap();
     let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
     let collection = expanded.collections().next().unwrap();
     assert_eq!(collection.name(), "notes");
@@ -951,30 +963,33 @@ fn phase2_expression_nodes_keep_source_spans() {
 
 #[test]
 fn parses_typed_phase2_expression_shape() {
-    let expression = parse_expression("1beat + 2beat * 3").unwrap();
+    let expression = parse_expression("1beat + 2beat * 3").into_result().unwrap();
     assert_eq!(expression.span().start, 0);
 }
 
 #[test]
 fn parses_nested_type_syntax() {
     assert_eq!(
-        parse_type("vec2<length>").unwrap(),
+        parse_type("vec2<length>").into_result().unwrap(),
         Type::Vec2(Box::new(Type::Length))
     );
 }
 
 #[test]
 fn identifiers_are_ascii_but_spans_remain_utf8_byte_offsets() {
-    for source in ["变量", "ascii.值", "éclair"] {
+    for source in ["\u{53d8}\u{91cf}", "ascii.\u{503c}", "\u{e9}clair"] {
         assert_eq!(
-            parse_expression(source),
-            Err(ParseError::InvalidSyntax("expression")),
+            parse_expression(source)
+                .into_result()
+                .expect_err("non-ascii identifier")[0]
+                .code(),
+            DiagnosticCode::SYNTAX_INVALID_TOKEN,
             "identifier {source:?}"
         );
     }
 
-    let source = "\"雪\" /* 雨 */ + ascii";
-    let expression = parse_expression(source).unwrap();
+    let source = "\"\u{96ea}\" /* \u{96e8} */ + ascii";
+    let expression = parse_expression(source).into_result().unwrap();
 
     assert_eq!(expression.span(), SourceSpan::new(0, source.len()));
     match expression {
@@ -984,7 +999,7 @@ fn identifiers_are_ascii_but_spans_remain_utf8_byte_offsets() {
             right,
             span,
         } => {
-            assert_eq!(left.span(), SourceSpan::new(0, "\"雪\"".len()));
+            assert_eq!(left.span(), SourceSpan::new(0, "\"\u{96ea}\"".len()));
             let ascii_start = source.find("ascii").unwrap();
             assert_eq!(right.span(), SourceSpan::new(ascii_start, source.len()));
             assert_eq!(span, SourceSpan::new(0, source.len()));
@@ -995,8 +1010,8 @@ fn identifiers_are_ascii_but_spans_remain_utf8_byte_offsets() {
 
 #[test]
 fn comments_are_trivia_without_changing_literal_spans() {
-    let source = "1 /* 雪 */ + // line\n 2";
-    let expression = parse_expression(source).unwrap();
+    let source = "1 /* comment */ + // line\n 2";
+    let expression = parse_expression(source).into_result().unwrap();
 
     match expression {
         SourceExpression::Binary {
@@ -1024,7 +1039,7 @@ fn parses_scalar_and_unit_literals() {
         ("1e-3", SourceLiteral::Float(0.001)),
         (
             "\"snow \\u{96ea}\"",
-            SourceLiteral::String("snow 雪".into()),
+            SourceLiteral::String("snow \u{96ea}".into()),
         ),
         (
             "#10203040",
@@ -1043,7 +1058,7 @@ fn parses_scalar_and_unit_literals() {
 
     for (source, expected) in cases {
         assert_eq!(
-            parse_expression(source).unwrap(),
+            parse_expression(source).into_result().unwrap(),
             SourceExpression::Literal {
                 literal: expected,
                 span: SourceSpan::new(0, source.len()),
@@ -1057,13 +1072,16 @@ fn parses_scalar_and_unit_literals() {
 fn unit_literals_must_remain_finite_after_conversion() {
     for source in ["1e308vw", "1e308vh"] {
         assert_eq!(
-            parse_expression(source),
-            Err(ParseError::InvalidSyntax("expression")),
+            parse_expression(source)
+                .into_result()
+                .expect_err("non-finite unit")[0]
+                .code(),
+            DiagnosticCode::SYNTAX_INVALID_TOKEN,
             "literal {source}"
         );
     }
 
-    let expression = parse_expression("2min == 120s").unwrap();
+    let expression = parse_expression("2min == 120s").into_result().unwrap();
     let (left, right) = binary_operands(&expression, BinaryOperator::Equal);
     assert!(matches!(
         left,
@@ -1089,7 +1107,7 @@ fn beat_literals_reduce_exactly_before_narrowing() {
     ];
     for (source, expected) in cases {
         assert_eq!(
-            parse_expression(source).unwrap(),
+            parse_expression(source).into_result().unwrap(),
             SourceExpression::Literal {
                 literal: SourceLiteral::Beat(expected),
                 span: SourceSpan::new(0, source.len()),
@@ -1099,8 +1117,11 @@ fn beat_literals_reduce_exactly_before_narrowing() {
     }
 
     assert_eq!(
-        parse_expression("0.0000000000000000001beat"),
-        Err(ParseError::InvalidSyntax("expression"))
+        parse_expression("0.0000000000000000001beat")
+            .into_result()
+            .expect_err("unrepresentable beat")[0]
+            .code(),
+        DiagnosticCode::SYNTAX_INVALID_TOKEN
     );
 }
 
@@ -1116,7 +1137,7 @@ fn string_escapes_match_the_documented_table() {
     ];
     for (source, expected) in accepted {
         assert_eq!(
-            parse_expression(source).unwrap(),
+            parse_expression(source).into_result().unwrap(),
             SourceExpression::Literal {
                 literal: SourceLiteral::String(expected.into()),
                 span: SourceSpan::new(0, source.len()),
@@ -1136,8 +1157,11 @@ fn string_escapes_match_the_documented_table() {
         r#""\u{12""#,
     ] {
         assert_eq!(
-            parse_expression(source),
-            Err(ParseError::InvalidSyntax("expression")),
+            parse_expression(source)
+                .into_result()
+                .expect_err("invalid string escape")[0]
+                .code(),
+            DiagnosticCode::SYNTAX_INVALID_TOKEN,
             "escape {source:?}"
         );
     }
@@ -1145,7 +1169,9 @@ fn string_escapes_match_the_documented_table() {
 
 #[test]
 fn parses_names_calls_fields_parentheses_and_vec2_construction() {
-    let call = parse_expression("factory(1, nested.value)").unwrap();
+    let call = parse_expression("factory(1, nested.value)")
+        .into_result()
+        .unwrap();
     match call {
         SourceExpression::Call {
             callee,
@@ -1166,7 +1192,7 @@ fn parses_names_calls_fields_parentheses_and_vec2_construction() {
         other => panic!("expected call, got {other:?}"),
     }
 
-    let grouped = parse_expression("(1 + 2) * 3").unwrap();
+    let grouped = parse_expression("(1 + 2) * 3").into_result().unwrap();
     match grouped {
         SourceExpression::Binary {
             left,
@@ -1185,13 +1211,13 @@ fn parses_names_calls_fields_parentheses_and_vec2_construction() {
         other => panic!("expected multiplication, got {other:?}"),
     }
 
-    let vector = parse_expression("vec2(10px, 20px)").unwrap();
+    let vector = parse_expression("vec2(10px, 20px)").into_result().unwrap();
     assert!(matches!(vector, SourceExpression::Vec2 { .. }));
 }
 
 #[test]
 fn parses_unary_operators_before_postfix_and_binary_operators() {
-    let expression = parse_expression("!-value.field + 1").unwrap();
+    let expression = parse_expression("!-value.field + 1").into_result().unwrap();
 
     match expression {
         SourceExpression::Binary {
@@ -1219,7 +1245,9 @@ fn parses_unary_operators_before_postfix_and_binary_operators() {
 
 #[test]
 fn operator_precedence_follows_language_categories() {
-    let expression = parse_expression("1 + 2 * 3 < 8 == true && false || true").unwrap();
+    let expression = parse_expression("1 + 2 * 3 < 8 == true && false || true")
+        .into_result()
+        .unwrap();
 
     let (or_left, or_right) = binary_operands(&expression, BinaryOperator::Or);
     assert!(matches!(
@@ -1255,7 +1283,7 @@ fn parses_every_binary_operator() {
     ];
 
     for (source, expected) in cases {
-        let expression = parse_expression(source).unwrap();
+        let expression = parse_expression(source).into_result().unwrap();
         binary_operands(&expression, expected);
     }
 }
@@ -1266,7 +1294,7 @@ fn comparison_chains_lower_to_adjacent_comparisons() {
         ("a < b < c", BinaryOperator::LessThan),
         ("a == b == c", BinaryOperator::Equal),
     ] {
-        let expression = parse_expression(source).unwrap();
+        let expression = parse_expression(source).into_result().unwrap();
         assert_eq!(expression.span(), SourceSpan::new(0, source.len()));
         let (first, second) = binary_operands(&expression, BinaryOperator::And);
         let (first_left, first_right) = binary_operands(first, comparison);
@@ -1304,16 +1332,23 @@ fn comparison_chains_lower_to_adjacent_comparisons() {
 fn parser_rejects_trailing_or_incomplete_input() {
     for source in ["1 2", "vec2(1, 2) trailing", "1 +", "\"unterminated"] {
         assert_eq!(
-            parse_expression(source),
-            Err(ParseError::InvalidSyntax("expression")),
+            parse_expression(source)
+                .into_result()
+                .expect_err("invalid expression")[0]
+                .code(),
+            if source == "\"unterminated" {
+                DiagnosticCode::SYNTAX_UNCLOSED_STRING
+            } else {
+                DiagnosticCode::SYNTAX_INVALID_TOKEN
+            },
             "expression {source:?}"
         );
     }
 
     for source in ["int extra", "vec2<length>>", "Unknown", "vec2<>"] {
         assert_eq!(
-            parse_type(source),
-            Err(ParseError::InvalidSyntax("type")),
+            parse_type(source).into_result().expect_err("invalid type")[0].code(),
+            DiagnosticCode::SYNTAX_INVALID_TOKEN,
             "type {source:?}"
         );
     }
@@ -1336,17 +1371,21 @@ fn parses_scalar_and_recursive_track_types() {
         ("RenderNode", Type::RenderNode),
     ];
     for (source, expected) in scalar_cases {
-        assert_eq!(parse_type(source).unwrap(), expected);
+        assert_eq!(parse_type(source).into_result().unwrap(), expected);
     }
 
     assert_eq!(
-        parse_type("TrackSegment<Keyframe<vec2<beat>>>").unwrap(),
+        parse_type("TrackSegment<Keyframe<vec2<beat>>>")
+            .into_result()
+            .unwrap(),
         Type::TrackSegment(Box::new(Type::Keyframe(Box::new(Type::Vec2(Box::new(
             Type::Beat
         ))))))
     );
     assert_eq!(
-        parse_type("Keyframe<TrackSegment<length>>").unwrap(),
+        parse_type("Keyframe<TrackSegment<length>>")
+            .into_result()
+            .unwrap(),
         Type::Keyframe(Box::new(Type::TrackSegment(Box::new(Type::Length))))
     );
 }
@@ -1356,24 +1395,33 @@ fn parser_rejects_nesting_beyond_the_shared_limit() {
     const LIMIT: usize = 128;
 
     let nested_type = |depth: usize| format!("{}int{}", "vec2<".repeat(depth), ">".repeat(depth));
-    assert!(parse_type(&nested_type(LIMIT)).is_ok());
+    assert!(parse_type(&nested_type(LIMIT)).into_result().is_ok());
     assert_eq!(
-        parse_type(&nested_type(LIMIT + 1)),
-        Err(ParseError::InvalidSyntax("type"))
+        parse_type(&nested_type(LIMIT + 1))
+            .into_result()
+            .expect_err("type nesting limit")[0]
+            .code(),
+        DiagnosticCode::RESOURCE_LIMIT_EXCEEDED
     );
 
     let unary = |depth: usize| format!("{}value", "!".repeat(depth));
-    assert!(parse_expression(&unary(LIMIT)).is_ok());
+    assert!(parse_expression(&unary(LIMIT)).into_result().is_ok());
     assert_eq!(
-        parse_expression(&unary(LIMIT + 1)),
-        Err(ParseError::InvalidSyntax("expression"))
+        parse_expression(&unary(LIMIT + 1))
+            .into_result()
+            .expect_err("unary nesting limit")[0]
+            .code(),
+        DiagnosticCode::RESOURCE_LIMIT_EXCEEDED
     );
 
     let grouped = |depth: usize| format!("{}value{}", "(".repeat(depth), ")".repeat(depth));
-    assert!(parse_expression(&grouped(LIMIT)).is_ok());
+    assert!(parse_expression(&grouped(LIMIT)).into_result().is_ok());
     assert_eq!(
-        parse_expression(&grouped(LIMIT + 1)),
-        Err(ParseError::InvalidSyntax("expression"))
+        parse_expression(&grouped(LIMIT + 1))
+            .into_result()
+            .expect_err("group nesting limit")[0]
+            .code(),
+        DiagnosticCode::RESOURCE_LIMIT_EXCEEDED
     );
 
     let mixed = |unary_depth: usize, group_depth: usize| {
@@ -1384,10 +1432,17 @@ fn parser_rejects_nesting_beyond_the_shared_limit() {
             ")".repeat(group_depth)
         )
     };
-    assert!(parse_expression(&mixed(LIMIT / 2, LIMIT / 2)).is_ok());
+    assert!(
+        parse_expression(&mixed(LIMIT / 2, LIMIT / 2))
+            .into_result()
+            .is_ok()
+    );
     assert_eq!(
-        parse_expression(&mixed(LIMIT / 2 + 1, LIMIT / 2)),
-        Err(ParseError::InvalidSyntax("expression"))
+        parse_expression(&mixed(LIMIT / 2 + 1, LIMIT / 2))
+            .into_result()
+            .expect_err("mixed nesting limit")[0]
+            .code(),
+        DiagnosticCode::RESOURCE_LIMIT_EXCEEDED
     );
 }
 

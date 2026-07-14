@@ -5,10 +5,11 @@
 > checkbox (`- [ ]`) syntax for tracking.
 
 > **Current status (2026-07-14):** I0-A, Task 2 generator staging, Task 3 structural testing, and
-> Task 4 unique `fcs-source` crate cutover are complete. The pre-cutover worktree is preserved at
-> `archive/fcs4-pre-cutover`, `master` is the active development branch, and the original feature
-> branch remains retained. The next unfinished work is Task 5 stable diagnostics; the active
-> workspace now contains only `fcs-source` and its 90 passing source candidate tests.
+> Task 4 unique `fcs-source` crate cutover, plus Task 5 stable diagnostics, are complete. The
+> pre-cutover worktree is preserved at `archive/fcs4-pre-cutover`, `master` is the active
+> development branch, and the original feature branch remains retained. The next unfinished work
+> is Task 6 Chumsky lexer migration; the active workspace contains only `fcs-source` and its 100
+> passing tests.
 
 **Goal:** Archive the complete pre-cutover FCS 4 workspace, make `master` the sole development
 branch, replace the mixed `fcs-core`/`v5` tree with an unversioned `fcs-source` crate, establish a
@@ -615,7 +616,7 @@ git commit -m "refactor: replace the FCS 4 workspace with fcs-source"
 - Modify: `crates/fcs-source/tests/frontend.rs`
 - Modify: `crates/fcs-source/tests/compile_time.rs`
 
-- [ ] **Step 1: Write public contract tests first**
+- [x] **Step 1: Write public contract tests first**
 
 `crates/fcs-source/tests/diagnostic.rs`:
 
@@ -671,7 +672,7 @@ fn same_scope_duplicate_binding_is_distinct_from_shadowing() {
 }
 ```
 
-- [ ] **Step 2: Run the tests and verify the API is absent**
+- [x] **Step 2: Run the tests and verify the API is absent**
 
 ```powershell
 cargo nextest run -p fcs-source --test diagnostic
@@ -679,7 +680,7 @@ cargo nextest run -p fcs-source --test diagnostic
 
 Expected: compilation fails because `fcs_source::diagnostic` and `ParseOutput` do not exist.
 
-- [ ] **Step 3: Add the diagnostic data model**
+- [x] **Step 3: Add the diagnostic data model**
 
 Create `crates/fcs-source/src/diagnostic.rs` with this public shape. It includes every Frozen
 Appendix C category, even when I0 does not emit a category owned by I1–I4 yet, so later stages do
@@ -1017,7 +1018,7 @@ impl<T> ParseOutput<T> {
 
 Export `pub mod diagnostic;` from `lib.rs`.
 
-- [ ] **Step 4: Map every existing error variant explicitly**
+- [x] **Step 4: Map every existing error variant explicitly**
 
 Use this mapping; do not invent a second spelling:
 
@@ -1056,7 +1057,7 @@ are forward-compatible declarations only in I0. The current `&str` entry points 
 decoded UTF-8, so `decode.invalid-utf8` is not emitted until a byte/file entry point is introduced
 by I1 or the CLI stage.
 
-- [ ] **Step 5: Change parser and elaborator entry points**
+- [x] **Step 5: Change parser and elaborator entry points**
 
 Public parser signatures are exact and uniform:
 
@@ -1070,7 +1071,8 @@ pub fn parse_type(source: &str) -> ParseOutput<Type>;
 `parse_header` validates the first header (including an optional leading BOM) and returns only the
 version; it does not expose the remainder. It may be called on a complete document, while
 `parse_document` is the entry point that requires the complete document and rejects trailing
-non-trivia input. `parse_expression_with_limits` and `parse_document_with_limits` are public
+non-trivia input. `parse_expression_with_limits`, `parse_type_with_limits`, and
+`parse_document_with_limits` are public
 bounded variants; `parse_header` always uses the default source limit because it only validates the
 header prefix. Internally `parse_header_tokens` consumes exactly the header and its required line
 boundary, then returns the parser cursor to `parse_document_tokens`; it must not call `end()` and
@@ -1114,7 +1116,7 @@ definitions namespace before `cycle::reject_cycles`/`eval::check_and_evaluate`; 
 overwrite is not an acceptable duplicate check, and const/function/template names share the one
 Frozen definitions namespace.
 
-- [ ] **Step 6: Rewrite tests to assert code/span instead of private variants**
+- [x] **Step 6: Rewrite tests to assert code/span instead of private variants**
 
 Add shared helpers inside each integration test file:
 
@@ -1138,7 +1140,7 @@ In particular, migrate every old `let (rest, version) = parse_header(...)` asser
 and `parse_expression(...).unwrap()` to `into_result().expect(...)` (or the shared helper) so all
 four public parser functions exercise the same `ParseOutput` contract.
 
-- [ ] **Step 7: Run diagnostics and full tests**
+- [x] **Step 7: Run diagnostics and full tests**
 
 ```powershell
 cargo clippy --workspace --all-targets -- -D warnings
@@ -1150,7 +1152,7 @@ git diff --check
 Expected: all commands exit 0; public tests no longer import `ParseError` or match elaborator enum
 variants.
 
-- [ ] **Step 8: Commit the diagnostic boundary**
+- [x] **Step 8: Commit the diagnostic boundary**
 
 ```powershell
 git add crates/fcs-source

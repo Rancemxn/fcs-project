@@ -8,7 +8,7 @@ use crate::ast::{
 use crate::schema::{ConstructionSchema, EntitySchema, FieldConstraint};
 
 use super::eval::evaluate_with_bindings;
-use super::{CompileTimeLimits, Diagnostic};
+use super::{CompileTimeLimits, ElaboratorError as Diagnostic};
 
 pub(super) fn expand_collections(
     document: &Document,
@@ -167,6 +167,8 @@ impl<'a> ExpansionContext<'a> {
         if depth > self.limits.max_expansion_depth {
             return Err(Diagnostic::LimitExceeded {
                 limit: "max_expansion_depth",
+                bound: self.limits.max_expansion_depth,
+                observed: depth,
                 span: expression.span(),
             });
         }
@@ -289,6 +291,8 @@ impl<'a> ExpansionContext<'a> {
         if self.template_instances > self.limits.max_template_instances {
             return Err(Diagnostic::LimitExceeded {
                 limit: "max_template_instances",
+                bound: self.limits.max_template_instances,
+                observed: self.template_instances,
                 span,
             });
         }

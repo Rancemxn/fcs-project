@@ -4,7 +4,7 @@ use crate::ast::{
     TemplateDeclaration, TemplateParameter, TemplatesBlock, Type, WithExpression,
 };
 
-use super::{ParseError, expression::parse_expression_at, expression::parse_type};
+use super::{ParseError, expression::parse_expression_at};
 
 pub(super) fn parse_templates(
     input: &str,
@@ -27,7 +27,10 @@ pub(super) fn parse_templates(
                 cursor.char(':')?;
                 let type_start = cursor.position();
                 let type_text = cursor.until_top_level(&[',', ')'])?;
-                let ty = parse_type(type_text.trim())?;
+                let ty = super::expression::parse_type_inner(
+                    type_text.trim(),
+                    super::ParseLimits::default(),
+                )?;
                 let type_end = type_start + type_text.len();
                 parameters.push(TemplateParameter {
                     name: parameter_name,
@@ -48,7 +51,8 @@ pub(super) fn parse_templates(
         cursor.char('>')?;
         let return_start = cursor.position();
         let return_text = cursor.until_top_level(&['{'])?;
-        let return_type = parse_type(return_text.trim())?;
+        let return_type =
+            super::expression::parse_type_inner(return_text.trim(), super::ParseLimits::default())?;
         cursor.char('{')?;
         cursor.keyword("return")?;
         let body = parse_entity_expression(&mut cursor)?;
@@ -142,7 +146,8 @@ fn parse_generator(cursor: &mut Cursor<'_>, start: usize) -> Result<Generator, P
     let (variable, variable_span) = cursor.identifier()?;
     cursor.char(':')?;
     let type_text = cursor.until_keyword_or(&["in"])?;
-    let variable_type = parse_type(type_text.trim())?;
+    let variable_type =
+        super::expression::parse_type_inner(type_text.trim(), super::ParseLimits::default())?;
     cursor.keyword("in")?;
 
     let range_start_text = cursor.until_range_operator()?;

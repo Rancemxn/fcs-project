@@ -9,7 +9,7 @@ use crate::ast::{
 };
 
 use super::scope::{Binding, Scope};
-use super::{CompileTimeLimits, Diagnostic};
+use super::{CompileTimeLimits, ElaboratorError as Diagnostic};
 
 pub(super) fn check_and_evaluate(
     definitions: &DefinitionsBlock,
@@ -1104,6 +1104,8 @@ impl Budget {
         if self.expression_nodes > self.limits.max_expression_nodes {
             Err(Diagnostic::LimitExceeded {
                 limit: "max_expression_nodes",
+                bound: self.limits.max_expression_nodes,
+                observed: self.expression_nodes,
                 span,
             })
         } else {
@@ -1116,6 +1118,8 @@ impl Budget {
         if self.operations > self.limits.max_compile_time_operations {
             Err(Diagnostic::LimitExceeded {
                 limit: "max_compile_time_operations",
+                bound: self.limits.max_compile_time_operations,
+                observed: self.operations,
                 span,
             })
         } else {

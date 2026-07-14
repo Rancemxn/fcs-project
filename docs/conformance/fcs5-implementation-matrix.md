@@ -5,15 +5,15 @@
 本矩阵记录 Frozen 规范与参考实现之间的可审计关系。它不定义格式语义；发生冲突时以
 `fcs.md`、`fcbc.md`、`fcs-render.md`、`fcs-conversion.md` 和绑定 conformance corpus 为准。
 
-I0-A（快照、归档和 `master` 分支切换）以及 I0-B（结构测试和唯一 `fcs-source` crate
-切换）已完成；I0-C 及后续 source implementation 尚未执行。下表中的实现路径现在已经是
+I0-A（快照、归档和 `master` 分支切换）、I0-B（结构测试和唯一 `fcs-source` crate
+切换）以及 I0.4 稳定诊断边界已完成；I0.5 及后续 source implementation 尚未执行。下表中的实现路径现在已经是
 活动 workspace 的实际路径；“现状”继续描述 candidate source 的条款偏差，不因为 crate
 cutover 或测试通过而自动变成完整规范实现。
 
 当前进度证据：`archive/fcs4-pre-cutover` 指向
 `148936d17b671bb34968c88969ab748c818f9fc0`，`master` 已从该快照 fast-forward，原 feature
-branch 保留。I0.3 cutover commit 为 `16e7db3`，workspace quality gate 为 90/90 tests passed；
-下一项实现工作是 I0.4 稳定诊断。在后续诊断、parser 和 conformance gate 完成前，其他 source
+branch 保留。I0.3 cutover commit 为 `16e7db3`，I0.4 quality gate 为 100/100 tests passed；
+下一项实现工作是 I0.5 Chumsky lexer。在后续 parser 和 conformance gate 完成前，其他 source
 rows 仍按下表的实际偏差记录。
 
 允许的状态只有：`implemented`、`partial`、`not-started` 和 `blocked-by-I<n>`。
@@ -48,7 +48,7 @@ rows 仍按下表的实际偏差记录。
 | `fcs.md` 13.1–13.4 | Runtime expression、环境和 lazy choose | source expression subset | 未来 `fcs-runtime` | `source.valid.runtime-choose` | environment/cycle tests | blocked-by-I1 | I1/I4 | choose source node和 runtime DAG 均未实现 |
 | `fcs.md` 14.1–14.3 | binary64、baking、Core easing | 无 | 未来 `fcs-runtime` | `expected/numeric-vectors.toml` | error-budget tests | blocked-by-I4 | I4 | 未开始 |
 | `fcs.md` 15.1–15.3 | Extension、fidelity、repair | 无 | 未来 `fcs-model` | future extension fixtures | repair/provenance fixtures | blocked-by-I5 | I5 | 未开始 |
-| `fcs.md` 16 | 稳定 diagnostic categories | `diagnostic::{Diagnostic, DiagnosticCode}` | `crates/fcs-source/src/diagnostic.rs` | `tests/diagnostic.rs` | all invalid fixtures | partial | I0-C | 当前 parser/elaborator 暴露不稳定 Rust enum variants |
+| `fcs.md` 16 | 稳定 diagnostic categories | `diagnostic::{Diagnostic, DiagnosticCode}` | `crates/fcs-source/src/diagnostic.rs` | `tests/diagnostic.rs` | all invalid fixtures | implemented | I0.5 | I0.4 建立当前手写 parser/elaborator 的稳定边界；完整 lexer/grammar invalid corpus 随后接入 |
 | `fcs.md` 17 | Expanded source 与 canonical lowering 边界 | `ast::ExpandedSourceDocument` | `crates/fcs-source/src/ast/entity.rs`，未来 `fcs-model` | expanded invariant tests | forbidden compile-time-node tests | partial | I2/I3 | Expanded candidate 存在；完整 invariant 与 canonical lowering 未完成 |
 | `fcs.md` 18 | Source/static/canonical/runtime conformance runner | manifest integrity test | `crates/fcs-source/tests/conformance_manifest.rs` | 22-entry manifest | malformed manifest unit cases | not-started | I0-G/I1–I4 | I0 只建立强类型 manifest 完整性门 |
 | `fcbc.md` 全部 | FCBC 2 与 Execution ABI | 无 | 未来 `fcs-fcbc` | 804-byte golden | 8 mutation vectors | blocked-by-I7 | I7 | 旧 FCBC 实现将在 I0 从活动主线删除 |

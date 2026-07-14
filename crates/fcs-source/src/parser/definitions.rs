@@ -3,8 +3,8 @@ use crate::ast::{
     FunctionStatement, IfStatement, LetStatement, ReturnStatement, SourceSpan,
 };
 
+use super::ParseError;
 use super::expression::parse_expression_at;
-use super::{ParseError, parse_type};
 
 pub(super) fn parse_definitions(
     body: &str,
@@ -185,7 +185,7 @@ impl<'a> DefinitionParser<'a> {
 
     fn type_until(&mut self, delimiters: &[char]) -> Result<crate::ast::Type, ParseError> {
         let (text, _) = self.text_until(delimiters, true)?;
-        parse_type(text.trim())
+        super::expression::parse_type_inner(text.trim(), super::ParseLimits::default())
     }
 
     fn expression_until(

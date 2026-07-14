@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{Definition, DefinitionsBlock, FunctionStatement, SourceExpression, SourceSpan};
 
-use super::Diagnostic;
+use super::ElaboratorError as Diagnostic;
 
 pub(super) fn reject_cycles(definitions: &DefinitionsBlock) -> Result<(), Diagnostic> {
     let const_names: BTreeSet<_> = definitions

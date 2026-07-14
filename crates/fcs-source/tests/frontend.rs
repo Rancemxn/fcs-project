@@ -1,5 +1,6 @@
 use fcs_source::ast::{Beat, Bpm, DocumentProfile};
-use fcs_source::parser::{ParseError, parse_document, parse_header};
+use fcs_source::diagnostic::DiagnosticCode;
+use fcs_source::parser::{parse_document, parse_header};
 use fcs_source::version::{
     EXECUTION_ABI_VERSION, FCBC_FORMAT_VERSION, FCS_SOURCE_VERSION, Version,
 };
@@ -14,30 +15,37 @@ fn example(name: &str) -> String {
 
 #[test]
 fn parses_exact_fcs5_header() {
-    let (rest, version) = parse_header("#fcs 5.0.0\nformat { profile: fragment; }").unwrap();
+    let version = parse_header("#fcs 5.0.0\nformat { profile: fragment; }")
+        .into_result()
+        .expect("valid header");
     assert_eq!(version, FCS_SOURCE_VERSION);
-    assert_eq!(rest, "format { profile: fragment; }");
 }
 
 #[test]
 fn rejects_missing_or_wrong_major_header() {
     assert_eq!(
-        parse_header("format { profile: fragment; }"),
-        Err(ParseError::MissingHeader)
+        parse_header("format { profile: fragment; }")
+            .into_result()
+            .expect_err("missing header")[0]
+            .code(),
+        DiagnosticCode::VERSION_MISSING_HEADER
     );
-    assert_eq!(
-        parse_header("#fcs 4.1.0\n"),
-        Err(ParseError::UnsupportedSourceVersion(Version::new(4, 1, 0)))
-    );
-    assert_eq!(
-        parse_header("#fcs 5.1.0\n"),
-        Err(ParseError::UnsupportedSourceVersion(Version::new(5, 1, 0)))
-    );
+    for source in ["#fcs 4.1.0\n", "#fcs 5.1.0\n"] {
+        assert_eq!(
+            parse_header(source)
+                .into_result()
+                .expect_err("unsupported version")[0]
+                .code(),
+            DiagnosticCode::VERSION_UNSUPPORTED
+        );
+    }
 }
 
 #[test]
 fn parses_fragment_profile() {
-    let document = parse_document("#fcs 5.0.0\nformat { profile: fragment; }").unwrap();
+    let document = parse_document("#fcs 5.0.0\nformat { profile: fragment; }")
+        .into_result()
+        .expect("valid document");
 
     assert_eq!(document.profile, DocumentProfile::Fragment);
     assert_eq!(document.source_version, FCS_SOURCE_VERSION);
@@ -49,7 +57,8 @@ fn parses_chart_tempo_map_with_exact_beats() {
     let document = parse_document(
         "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap {\n  0beat -> 180bpm;\n  4.5beat -> 200bpm;\n  [8,1,3]beat -> 220bpm;\n}",
     )
-    .unwrap();
+    .into_result()
+    .expect("valid chart");
 
     let tempo_map = document.tempo_map.unwrap();
     assert_eq!(tempo_map.points[0].beat, Beat::new(0, 1).unwrap());
@@ -65,18 +74,15 @@ fn rejects_tempo_maps_without_zero_start() {
         "#fcs 5.0.0\nformat { profile: fragment; }\ntempoMap { -1beat -> 120bpm; }";
     let empty = "#fcs 5.0.0\nformat { profile: fragment; }\ntempoMap { }";
 
-    assert_eq!(
-        parse_document(negative_decimal),
-        Err(ParseError::InvalidTempoMap("first beat must be zero"))
-    );
-    assert_eq!(
-        parse_document(negative_integer),
-        Err(ParseError::InvalidTempoMap("first beat must be zero"))
-    );
-    assert_eq!(
-        parse_document(empty),
-        Err(ParseError::InvalidTempoMap("first beat must be zero"))
-    );
+    for source in [negative_decimal, negative_integer, empty] {
+        assert_eq!(
+            parse_document(source)
+                .into_result()
+                .expect_err("invalid tempo start")[0]
+                .code(),
+            DiagnosticCode::TEMPO_INVALID
+        );
+    }
 }
 
 #[test]
@@ -84,7 +90,8 @@ fn parses_tempo_map_after_line_comment() {
     let document = parse_document(
         "#fcs 5.0.0\nformat { profile: chart; }\n// comment\ntempoMap { 0beat -> 120bpm; }",
     )
-    .unwrap();
+    .into_result()
+    .expect("valid chart");
 
     assert_eq!(document.tempo_map.unwrap().points.len(), 1);
 }
@@ -94,45 +101,66 @@ fn parses_tempo_map_after_block_comment() {
     let document = parse_document(
         "#fcs 5.0.0\nformat { profile: chart; }\n/* comment */ tempoMap { 0beat -> 120bpm; }",
     )
-    .unwrap();
+    .into_result()
+    .expect("valid chart");
 
     assert_eq!(document.tempo_map.unwrap().points.len(), 1);
 }
 
 #[test]
 fn accepts_trailing_comments_without_tempo_map() {
-    assert!(parse_document("#fcs 5.0.0\nformat { profile: fragment; }\n// comment").is_ok());
-    assert!(parse_document("#fcs 5.0.0\nformat { profile: fragment; }\n/* comment */").is_ok());
+    assert!(
+        parse_document("#fcs 5.0.0\nformat { profile: fragment; }\n// comment")
+            .into_result()
+            .is_ok()
+    );
+    assert!(
+        parse_document("#fcs 5.0.0\nformat { profile: fragment; }\n/* comment */")
+            .into_result()
+            .is_ok()
+    );
 }
 
 #[test]
 fn chart_profile_requires_tempo_starting_at_zero() {
     let missing = "#fcs 5.0.0\nformat { profile: chart; }";
     let non_zero = "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { 1beat -> 120bpm; }";
-    assert!(matches!(
-        parse_document(missing),
-        Err(ParseError::MissingRequiredBlock("tempoMap"))
-    ));
-    assert!(matches!(
-        parse_document(non_zero),
-        Err(ParseError::InvalidTempoMap("first beat must be zero"))
-    ));
+    assert_eq!(
+        parse_document(missing)
+            .into_result()
+            .expect_err("tempoMap is required")[0]
+            .code(),
+        DiagnosticCode::PROFILE_REQUIREMENT_MISSING
+    );
+    assert_eq!(
+        parse_document(non_zero)
+            .into_result()
+            .expect_err("tempoMap must start at zero")[0]
+            .code(),
+        DiagnosticCode::TEMPO_INVALID
+    );
 }
 
 #[test]
 fn tempo_points_must_be_non_decreasing() {
     let source = "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { 0beat -> 120bpm; 4beat -> 180bpm; 3beat -> 200bpm; }";
-    assert!(matches!(
-        parse_document(source),
-        Err(ParseError::InvalidTempoMap("beats must be non-decreasing"))
-    ));
+    assert_eq!(
+        parse_document(source)
+            .into_result()
+            .expect_err("tempo points must be ordered")[0]
+            .code(),
+        DiagnosticCode::TEMPO_NON_MONOTONIC
+    );
 }
 
 #[test]
 fn rejects_unclosed_trailing_block_comment() {
     assert_eq!(
-        parse_document("#fcs 5.0.0\nformat { profile: chart; }\n/* comment"),
-        Err(ParseError::InvalidSyntax("trailing document input"))
+        parse_document("#fcs 5.0.0\nformat { profile: chart; }\n/* comment")
+            .into_result()
+            .expect_err("unclosed comment")[0]
+            .code(),
+        DiagnosticCode::SYNTAX_UNCLOSED_COMMENT
     );
 }
 
@@ -144,23 +172,29 @@ fn rejects_invalid_tempo_map_fraction_and_bpm() {
     let bad_bpm =
         parse_document("#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { 0beat -> 0.0bpm; }");
 
-    assert!(bad_fraction.is_err());
-    assert!(bad_bpm.is_err());
+    assert!(bad_fraction.into_result().is_err());
+    assert!(bad_bpm.into_result().is_err());
 }
 
 #[test]
 fn rejects_unknown_profile() {
     assert_eq!(
-        parse_document("#fcs 5.0.0\nformat { profile: unknown; }").unwrap_err(),
-        ParseError::InvalidSyntax("document profile")
+        parse_document("#fcs 5.0.0\nformat { profile: unknown; }")
+            .into_result()
+            .expect_err("unknown profile")[0]
+            .code(),
+        DiagnosticCode::SYNTAX_INVALID_TOKEN
     );
 }
 
 #[test]
 fn rejects_profile_without_statement_terminator() {
     assert_eq!(
-        parse_document("#fcs 5.0.0\nformat { profile: fragment }").unwrap_err(),
-        ParseError::InvalidSyntax("document profile")
+        parse_document("#fcs 5.0.0\nformat { profile: fragment }")
+            .into_result()
+            .expect_err("missing profile terminator")[0]
+            .code(),
+        DiagnosticCode::SYNTAX_INVALID_TOKEN
     );
 }
 
@@ -169,7 +203,8 @@ fn parses_profile_with_line_and_block_comments() {
     let document = parse_document(
         "#fcs 5.0.0\nformat {\n // leading }\n /* block { } */\n profile: fragment; /* trailing } */\n}",
     )
-    .unwrap();
+    .into_result()
+    .expect("valid commented format");
 
     assert_eq!(document.profile, DocumentProfile::Fragment);
 }
@@ -177,8 +212,11 @@ fn parses_profile_with_line_and_block_comments() {
 #[test]
 fn ignores_braces_in_unclosed_format_string() {
     assert_eq!(
-        parse_document("#fcs 5.0.0\nformat { profile: fragment; \"}\"").unwrap_err(),
-        ParseError::InvalidSyntax("format block")
+        parse_document("#fcs 5.0.0\nformat { profile: fragment; \"}\"")
+            .into_result()
+            .expect_err("unclosed format string")[0]
+            .code(),
+        DiagnosticCode::SYNTAX_INVALID_TOKEN
     );
 }
 
@@ -234,8 +272,12 @@ fn rejects_zero_denominator_and_invalid_bpm() {
 
 #[test]
 fn parses_public_fcs5_fixtures() {
-    let fragment = parse_document(&example("fragment.fcs")).unwrap();
-    let chart = parse_document(&example("chart.fcs")).unwrap();
+    let fragment = parse_document(&example("fragment.fcs"))
+        .into_result()
+        .expect("fragment fixture");
+    let chart = parse_document(&example("chart.fcs"))
+        .into_result()
+        .expect("chart fixture");
     assert_eq!(fragment.profile, DocumentProfile::Fragment);
     assert_eq!(chart.profile, DocumentProfile::Chart);
     assert_eq!(chart.tempo_map.unwrap().points.len(), 2);
