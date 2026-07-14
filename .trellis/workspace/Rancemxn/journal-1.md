@@ -40,3 +40,37 @@ Created the exact pre-cutover snapshot, preserved generator/specification/confor
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Close FCS 5 generator staging boundary
+
+**Date**: 2026-07-14
+**Task**: Close FCS 5 generator staging boundary
+**Package**: fcs-core
+**Branch**: `master`
+
+### Summary
+
+Applied Frozen generator staging: accept only ..</ and ..=, reject bare .., retain zero-step syntax for I2, and return compile-time-generator FeatureUnavailable before any expansion. Added focused parser/elaborator tests; Clippy passed and cargo nextest passed 227/227. Archived task 07-14-fcs5-generator-staging.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `eef7fbf` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
