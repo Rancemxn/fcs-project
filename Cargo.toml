@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/fcs-core", "crates/fcs-cli", "crates/fcs-converter"]
+members = ["crates/fcs-source"]
 
 [workspace.package]
 version = "0.2.0"

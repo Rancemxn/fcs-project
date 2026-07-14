@@ -1,4 +1,0 @@
-#fcs v4.0.0
-meta { name: "Empty"; artists: ["Author"]; charters: ["Charter"]; offset: 0ms; version: "4.0.0"; }
-masterTimeline { 0.0b -> 120.0; }
-judgelines { }

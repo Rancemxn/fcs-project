@@ -1,0 +1,8 @@
+[package]
+name = "fcs-source"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FCS source parser and compile-time elaborator"
+
+[dependencies]

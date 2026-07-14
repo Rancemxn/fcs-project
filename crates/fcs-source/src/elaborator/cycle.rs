@@ -2,9 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ast::{
-    Definition, DefinitionsBlock, FunctionStatement, SourceExpression, SourceSpan,
-};
+use crate::ast::{Definition, DefinitionsBlock, FunctionStatement, SourceExpression, SourceSpan};
 
 use super::Diagnostic;
 
