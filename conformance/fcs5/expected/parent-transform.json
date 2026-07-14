@@ -1,0 +1,8 @@
+{
+  "chartTime": 0.0,
+  "parentWorldOrigin": [100.0, 0.0],
+  "parentWorldRotationRadians": 1.5707963267948966,
+  "childWorldOrigin": [100.0, 10.0],
+  "childWorldRotationRadians": 1.5707963267948966,
+  "childWorldScale": [1.0, 1.0]
+}

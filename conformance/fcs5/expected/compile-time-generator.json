@@ -1,0 +1,14 @@
+{
+  "collection": "notes",
+  "entityType": "Note",
+  "count": 4,
+  "times": [
+    { "beatNumerator": 0, "beatDenominator": 1 },
+    { "beatNumerator": 1, "beatDenominator": 1 },
+    { "beatNumerator": 2, "beatDenominator": 1 },
+    { "beatNumerator": 3, "beatDenominator": 1 }
+  ],
+  "forbiddenExpandedNodes": [
+    "const", "let", "fn", "template", "with", "if", "generate", "emit", "range", "index"
+  ]
+}

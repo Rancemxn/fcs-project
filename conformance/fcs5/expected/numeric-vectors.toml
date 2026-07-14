@@ -1,0 +1,68 @@
+schema_version = 1
+rounding = "binary64-roundTiesToEven"
+
+[[constant]]
+name = "pi"
+hex_bits = "400921fb54442d18"
+
+[[constant]]
+name = "tau"
+hex_bits = "401921fb54442d18"
+
+[[operation]]
+expression = "sqrt(4.0)"
+hex_bits = "4000000000000000"
+
+[[operation]]
+expression = "sin(0.0)"
+hex_bits = "0000000000000000"
+
+[[operation]]
+expression = "cos(0.0)"
+hex_bits = "3ff0000000000000"
+
+[[operation]]
+expression = "exp(0.0)"
+hex_bits = "3ff0000000000000"
+
+[[operation]]
+expression = "ln(1.0)"
+hex_bits = "0000000000000000"
+
+[[operation]]
+expression = "false && (1.0 / 0.0 > 0.0)"
+type = "bool"
+value = false
+note = "rhs is not evaluated"
+
+[[operation]]
+expression = "true || (1.0 / 0.0 > 0.0)"
+type = "bool"
+value = true
+note = "rhs is not evaluated"
+
+[[easing]]
+name = "linear"
+x_hex_bits = "3fe0000000000000"
+y_hex_bits = "3fe0000000000000"
+
+[[easing]]
+name = "easeInQuad"
+x_hex_bits = "3fe0000000000000"
+y_hex_bits = "3fd0000000000000"
+
+[[easing]]
+name = "easeOutQuad"
+x_hex_bits = "3fe0000000000000"
+y_hex_bits = "3fe8000000000000"
+
+[[tempo]]
+bpm = 120.0
+beat = "2/1"
+chart_time_seconds_hex_bits = "3ff0000000000000"
+
+[[scroll]]
+scroll_bpm = 120.0
+chart_time_seconds = 1.0
+q_hex_bits = "4000000000000000"
+distance_at_speed_one_hex_bits = "4000000000000000"

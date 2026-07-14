@@ -1,0 +1,23 @@
+{
+  "queries": [
+    {
+      "chartTime": 0.0,
+      "chartBeat": 0.0,
+      "lineScrollCoordinate": 0.0,
+      "lineScrollDistance": 0.0,
+      "noteId": "n",
+      "noteJudgmentTime": 1.0,
+      "noteDistancePx": 240.0,
+      "noteLocalYPx": 240.0
+    },
+    {
+      "chartTime": 1.0,
+      "chartBeat": 2.0,
+      "lineScrollCoordinate": 2.0,
+      "lineScrollDistance": 2.0,
+      "noteId": "n",
+      "noteDistancePx": 0.0,
+      "noteLocalYPx": 0.0
+    }
+  ]
+}

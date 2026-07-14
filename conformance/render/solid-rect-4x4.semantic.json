@@ -1,0 +1,7 @@
+{
+  "drawOrder": ["main/full"],
+  "nodeKind": "Rect",
+  "worldBounds": [-2.0, -2.0, 2.0, 2.0],
+  "fillLinearRgba": [1.0, 0.0, 0.0, 1.0],
+  "composite": "sourceOver"
+}

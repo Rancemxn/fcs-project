@@ -4,12 +4,25 @@
 
 ## 仓库结构与权威资料
 
-- `Cargo.toml` 是 workspace 根配置，当前包含三个 crate：
-  - `crates/fcs-core`：FCS 解析器、AST、编译器、字节码和 VM。
-  - `crates/fcs-converter`：PGR/RPE/PEC 与 FCS 之间的 IR 和格式转换器。
-  - `crates/fcs-cli`：编译、检查和格式转换的命令行入口。
-- `fcs.md` 是 FCS 语法、单位系统、运行时语义和字节码格式的主要规范。涉及格式行为的改动先对照它，再检查现有解析器、编译器和转换器实现。
-- `examples/` 保存各格式的输入样例；`crates/fcs-converter/tests/` 保存跨格式、往返转换和版权样例测试。
+- 当前工作树仍处于 I0 切换前状态，包含 `fcs-core`、旧 `fcs-converter` 和旧 `fcs-cli`。
+  已确认的 I0 目标由 `docs/decisions/0006-unversioned-source-cutover.md` 定义，逐步执行见
+  `docs/plans/i0-source-cutover.md`：
+  - 先用 `archive/fcs4-pre-cutover` 保存完整旧工作树；
+  - 活动 `master` 删除 FCS 4、旧 converter 和旧 CLI；
+  - `crates/fcs-core/src/v5` 提升为唯一、无版本前缀的 `crates/fcs-source`；
+  - 后续 canonical/runtime/FCBC/converter/render/CLI crate 到对应路线阶段按需创建。
+- I0 不保留 `fcs_core`、`v5` module、feature flag 或兼容 re-export。`refer/chumsky` 只用于
+  审阅 Chumsky 源码；Cargo 不得使用指向 `refer/` 的 path dependency。
+- `fcs.md` 是 FCS 5 Core source、canonical model 和运行时语义的权威规范。
+- `fcbc.md` 是 FCBC 2 容器与 Execution ABI 的权威规范；`fcs-render.md` 和
+  `fcs-conversion.md` 分别定义 Render Profile 与转换/保真行为。
+- `docs/specification-governance.md` 定义规范状态和变更流程，
+  `docs/plans/fcs5-roadmap.md` 是唯一总实施路线图；当前阶段详细计划为
+  `docs/plans/i0-source-cutover.md`。`docs/decisions/` 只记录设计理由，不得覆盖四份权威规范。
+- 涉及格式行为的改动先对照对应权威规范，再检查 parser、compiler、runtime、converter 和
+  conformance fixture；实现现状不能静默成为新规范。
+- `examples/` 保存各格式输入样例；I0 删除活动 FCS 4 examples，但保留 PGR/RPE/PEC 与版权
+  输入，供未来 converter 重建时复用。旧 converter 测试由归档分支保存，不迁移到 source crate。
 - `CLAUDE.md` 中的项目级约定同样适用；本文件对搜索工具和 Context7 的规则作明确补充。
 
 ## 搜索与代码理解
@@ -37,7 +50,9 @@
   sg run -l rust -p 'fn $NAME($$$ARGS) $$$BODY' crates
   ```
 
-先用 `fd` 定位范围，再用 `rg` 或 `sg` 缩小目标。阅读实现时同时查看调用方、对应测试和相关规范，避免只根据单个匹配结果推断行为。
+先用 `fd` 定位范围，再用 `rg` 或 `sg` 缩小目标。阅读实现时同时查看调用方、对应测试和
+相关规范，避免只根据单个匹配结果推断行为。目标项目检查默认排除 `refer/`；只有明确研究
+参考实现时才进入该目录，并先检查参考仓库自己的规则和版本。
 
 ## Rust 开发与验证
 
@@ -51,7 +66,9 @@
   ```
 
 - 任务结束时运行 `cargo fmt --all` 统一 Rust 代码格式。若只需检查格式，可使用 `cargo fmt --all -- --check`。
-- 修改解析、编译、VM 或转换逻辑时，优先补充覆盖行为变化的测试；跨格式语义变化应检查相应 round-trip 测试和 `examples/` 样例。
+- 修改 source parser 或 elaborator 时先补充失败测试；I0 后 converter、VM 和旧 bytecode 不在
+  活动 workspace。未来跨格式语义变化必须针对 canonical model、ConversionReport、round-trip
+  fixture 和 `examples/` 验证，converter 不得直接消费 source AST。
 - 使用校验脚本或外部模拟器验证解析逻辑时，先确认校验脚本与模拟器的代码逻辑一致，不能用有问题的校验脚本得出结论。
 - 遇到规范未定义的谱面解析边界时，先记录假设并按通用语义继续推进；完成后在交付说明中明确告知用户这些假设和潜在影响。
 
@@ -67,3 +84,24 @@
 使用 Context7 时，以其提供的当前文档和示例为依据，再结合本仓库的 Rust edition、workspace 结构和现有依赖作出结论。不要仅凭记忆推荐版本、API 或配置方式。
 
 如果 Context7 出现问题，要在回复中提醒用户；通常继续使用已有仓库信息、官方资料或其他可靠来源完成对话，不必因此中断，除非用户明确要求必须依赖 Context7 或要求停止。
+<!-- TRELLIS:START -->
+# Trellis Instructions
+
+These instructions are for AI assistants working in this project.
+
+This project is managed by Trellis. The working knowledge you need lives under `.trellis/`:
+
+- `.trellis/workflow.md` — development phases, when to create tasks, skill routing
+- `.trellis/spec/` — package- and layer-scoped coding guidelines (read before writing code in a given layer)
+- `.trellis/workspace/` — per-developer journals and session traces
+- `.trellis/tasks/` — active and archived tasks (PRDs, research, jsonl context)
+
+If a Trellis command is available on your platform (e.g. `/trellis:finish-work`, `/trellis:continue`), prefer it over manual steps. Not every platform exposes every command.
+
+If you're using Codex or another agent-capable tool, additional project-scoped helpers may live in:
+- `.agents/skills/` — reusable Trellis skills
+- `.codex/agents/` — optional custom subagents
+
+Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
+
+<!-- TRELLIS:END -->

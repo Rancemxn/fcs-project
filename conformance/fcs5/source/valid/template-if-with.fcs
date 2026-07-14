@@ -1,0 +1,28 @@
+#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+    template Note styledTap(at: beat, whichLine: Line, ghost: bool) {
+        if ghost {
+            return tap {
+                line: whichLine;
+                gameplay.time: at;
+                gameplay.judgment.enabled: false;
+            };
+        } else {
+            return tap {
+                line: whichLine;
+                gameplay.time: at;
+                gameplay.judgment.enabled: true;
+            };
+        }
+    }
+}
+lines { line main {} }
+collections {
+    notes {
+        styledTap(1beat, @main, true) with {
+            presentation.alpha: 0.5;
+        };
+    }
+}

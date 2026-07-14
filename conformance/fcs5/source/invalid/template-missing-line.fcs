@@ -1,0 +1,9 @@
+#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+    template Note invalid(at: beat) {
+        return tap {
+            gameplay.time: at;
+        };
+    }
+}

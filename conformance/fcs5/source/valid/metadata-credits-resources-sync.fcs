@@ -1,0 +1,33 @@
+#fcs 5.0.0
+format { profile: chart; }
+meta {
+    title: "Conformance";
+    chartVersion: "1";
+    documentId: "org.fcs.conformance";
+    revision: 1;
+    custom: { "suite": "fcs5", "stable": true };
+}
+contributors {
+    person alice {
+        name: "Alice";
+        aliases: ["A"];
+    }
+}
+credits {
+    credit {
+        role: charter;
+        label: "谱面";
+        contributors: [@alice];
+    }
+}
+resources {
+    binary empty {
+        source: "data:application/octet-stream;base64,";
+        hash: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        mediaType: "application/octet-stream";
+    }
+}
+sync {
+    audioOffset: 100ms;
+}
+tempoMap { 0beat -> 120bpm; }

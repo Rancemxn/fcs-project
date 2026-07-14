@@ -1,0 +1,23 @@
+#fcs 5.0.0
+format { profile: chart; }
+tempoMap {
+    0beat -> 120bpm;
+}
+lines {
+    line main {
+        alpha: 1.0;
+        tracks {
+            track fade -> alpha: float {
+                blend: replace;
+                priority: 0;
+                fill: base;
+                extrapolateBefore: base;
+                extrapolateAfter: holdAfter;
+                segments {
+                    [0s, 1s): 1.0 -> 0.5 using linear;
+                    point 1s: 0.5;
+                }
+            }
+        }
+    }
+}

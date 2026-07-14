@@ -1,0 +1,5 @@
+#fcs 5.0.0
+format { profile: fragment; }
+meta {
+    custom: { "same": 1, "same": 2 };
+}

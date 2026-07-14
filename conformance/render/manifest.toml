@@ -1,0 +1,14 @@
+schema_version = 1
+render_profile_version = "1.0.0"
+
+[[fixture]]
+id = "render.solid-rect-4x4"
+source = "solid-rect-4x4.fcs"
+chart_time_seconds = 0.0
+semantic_expected = "solid-rect-4x4.semantic.json"
+raster_expected = "solid-rect-4x4.rgba8.hex"
+width = 4
+height = 4
+color_space = "srgb"
+pixel_format = "rgba8"
+clauses = ["3", "5", "6", "8", "9", "15"]

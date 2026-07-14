@@ -1,0 +1,39 @@
+schema_version = 1
+freeze_baseline = "2026-07-14"
+
+[[suite]]
+id = "fcs-core-source"
+specification = "FCS Core Source Specification"
+version = "5.0.0"
+manifest = "fcs5/manifest.toml"
+
+[[suite]]
+id = "fcs-core-numeric"
+specification = "FCS Core Source Specification"
+version = "5.0.0"
+manifest = "fcs5/expected/numeric-vectors.toml"
+
+[[suite]]
+id = "fcbc-container"
+specification = "FCBC Container Format"
+version = "2.0.0"
+manifest = "fcbc/minimal-runtime.toml"
+mutations = "fcbc/mutations.toml"
+
+[[suite]]
+id = "execution-abi"
+specification = "FCS Execution ABI"
+version = "1.0.0"
+manifest = "fcs5/expected/numeric-vectors.toml"
+
+[[suite]]
+id = "render-profile"
+specification = "FCS Render Profile"
+version = "1.0.0"
+manifest = "render/manifest.toml"
+
+[[suite]]
+id = "conversion"
+specification = "FCS Conversion Specification"
+version = "1.0.0"
+manifest = "conversion/mapping-vectors.toml"

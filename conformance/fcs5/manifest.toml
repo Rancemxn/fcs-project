@@ -1,0 +1,176 @@
+schema_version = 1
+fcs_version = "5.0.0"
+
+[[fixture]]
+id = "source.valid.minimal-fragment"
+path = "source/valid/minimal-fragment.fcs"
+stage = "parse"
+expect = "success"
+clauses = ["2.2", "5.2"]
+
+[[fixture]]
+id = "source.valid.minimal-chart"
+path = "source/valid/minimal-chart.fcs"
+stage = "canonical"
+expect = "success"
+clauses = ["5.2", "8.2"]
+
+[[fixture]]
+id = "source.valid.compile-time-generator"
+path = "source/valid/compile-time-generator.fcs"
+stage = "elaborate"
+expect = "success"
+expected = "expected/compile-time-generator.json"
+clauses = ["6.1", "6.3", "6.6", "6.7", "6.8"]
+
+[[fixture]]
+id = "source.valid.track-boundaries"
+path = "source/valid/track-boundaries.fcs"
+stage = "canonical"
+expect = "success"
+clauses = ["9.1", "9.3", "9.5"]
+
+[[fixture]]
+id = "source.valid.time-scroll-note"
+path = "source/valid/time-scroll-note.fcs"
+stage = "evaluate"
+expect = "success"
+expected = "expected/time-scroll-note.json"
+clauses = ["8.2", "8.3", "10.1", "10.2", "12.4"]
+
+[[fixture]]
+id = "source.valid.runtime-choose"
+path = "source/valid/runtime-choose.fcs"
+stage = "canonical"
+expect = "success"
+clauses = ["13.1", "13.3"]
+
+[[fixture]]
+id = "source.valid.template-if-with"
+path = "source/valid/template-if-with.fcs"
+stage = "elaborate"
+expect = "success"
+expected = "expected/template-if-with.json"
+clauses = ["6.3", "6.4", "6.5"]
+
+[[fixture]]
+id = "source.valid.int-range-descending"
+path = "source/valid/int-range-descending.fcs"
+stage = "elaborate"
+expect = "success"
+expected = "expected/int-range-descending.json"
+clauses = ["6.6", "6.7"]
+
+[[fixture]]
+id = "source.valid.parent-transform"
+path = "source/valid/parent-transform.fcs"
+stage = "evaluate"
+expect = "success"
+expected = "expected/parent-transform.json"
+clauses = ["11.3", "11.4"]
+
+[[fixture]]
+id = "source.valid.metadata-credits-resources-sync"
+path = "source/valid/metadata-credits-resources-sync.fcs"
+stage = "canonical"
+expect = "success"
+expected = "expected/metadata-credits-resources-sync.json"
+clauses = ["7.1", "7.2", "7.3", "7.4", "7.5"]
+
+[[fixture]]
+id = "source.invalid.missing-header"
+path = "source/invalid/missing-header.fcs"
+stage = "parse"
+expect = "error"
+diagnostic = "version.missing-header"
+clauses = ["2.2"]
+
+[[fixture]]
+id = "source.invalid.bare-range"
+path = "source/invalid/bare-range.fcs"
+stage = "parse"
+expect = "error"
+diagnostic = "syntax.invalid-token"
+clauses = ["6.6", "Appendix B"]
+
+[[fixture]]
+id = "source.invalid.generator-zero-step"
+path = "source/invalid/generator-zero-step.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "compile-time.zero-step"
+clauses = ["6.6"]
+
+[[fixture]]
+id = "source.invalid.shadowing"
+path = "source/invalid/shadowing.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "name.shadowed"
+clauses = ["6.1"]
+
+[[fixture]]
+id = "source.invalid.template-missing-line"
+path = "source/invalid/template-missing-line.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "schema.missing-required-field"
+clauses = ["6.3", "12.2"]
+
+[[fixture]]
+id = "source.invalid.hold-end"
+path = "source/invalid/hold-end.fcs"
+stage = "canonical"
+expect = "error"
+diagnostic = "note.invalid-hold"
+clauses = ["12.2"]
+
+[[fixture]]
+id = "source.invalid.track-overlap"
+path = "source/invalid/track-overlap.fcs"
+stage = "canonical"
+expect = "error"
+diagnostic = "track.overlap"
+clauses = ["9.3"]
+
+[[fixture]]
+id = "source.invalid.parent-cycle"
+path = "source/invalid/parent-cycle.fcs"
+stage = "canonical"
+expect = "error"
+diagnostic = "graph.cycle"
+clauses = ["11.4"]
+
+[[fixture]]
+id = "source.invalid.runtime-gameplay"
+path = "source/invalid/runtime-gameplay.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "schema.dynamic-field-forbidden"
+clauses = ["4.5", "12.2"]
+
+[[fixture]]
+id = "source.invalid.unknown-resource"
+path = "source/invalid/unknown-resource.fcs"
+stage = "canonical"
+expect = "error"
+diagnostic = "resource.unknown-reference"
+clauses = ["7.3"]
+
+[[fixture]]
+id = "source.invalid.generator-budget"
+path = "source/valid/compile-time-generator.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "compile-time.budget-exceeded"
+limits = { maxGeneratorIterations = 2 }
+trace_contains = ["collection=notes", "index=2", "emit=Note"]
+clauses = ["6.8"]
+
+[[fixture]]
+id = "source.invalid.custom-duplicate-key"
+path = "source/invalid/custom-duplicate-key.fcs"
+stage = "canonical"
+expect = "error"
+diagnostic = "schema.duplicate-field"
+clauses = ["7.5"]

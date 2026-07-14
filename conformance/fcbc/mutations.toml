@@ -1,0 +1,50 @@
+schema_version = 1
+base = "minimal-runtime.hex"
+
+[[mutation]]
+id = "bad-magic"
+offset = 0
+replace_hex = "00"
+diagnostic = "fcbc.bad-magic"
+
+[[mutation]]
+id = "unsupported-container-major"
+offset = 14
+replace_hex = "0300"
+diagnostic = "fcbc.unsupported-container-version"
+
+[[mutation]]
+id = "unsupported-abi-major"
+offset = 20
+replace_hex = "0200"
+diagnostic = "fcbc.unsupported-abi-version"
+
+[[mutation]]
+id = "file-length-mismatch"
+offset = 48
+replace_hex = "2503000000000000"
+diagnostic = "fcbc.file-length-mismatch"
+
+[[mutation]]
+id = "first-section-misaligned"
+offset = 144
+replace_hex = "8902000000000000"
+diagnostic = "fcbc.section-alignment"
+
+[[mutation]]
+id = "first-section-checksum"
+offset = 160
+replace_hex = "00000000"
+diagnostic = "fcbc.section-checksum"
+
+[[mutation]]
+id = "unknown-required-section"
+offset = 128
+replace_hex = "ff000000"
+diagnostic = "fcbc.unknown-required-section"
+
+[[mutation]]
+id = "section-overlap"
+offset = 184
+replace_hex = "8802000000000000"
+diagnostic = "fcbc.section-overlap"

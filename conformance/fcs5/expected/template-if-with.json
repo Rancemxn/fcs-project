@@ -1,0 +1,6 @@
+{
+  "noteCount": 1,
+  "judgmentEnabled": false,
+  "alpha": 0.5,
+  "forbiddenExpandedNodes": ["template", "if", "with"]
+}

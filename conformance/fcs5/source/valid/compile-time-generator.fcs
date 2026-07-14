@@ -1,0 +1,25 @@
+#fcs 5.0.0
+format { profile: chart; }
+tempoMap {
+    0beat -> 120bpm;
+}
+definitions {
+    const STEP: beat = 1beat;
+    template Note generatedTap(at: beat, whichLine: Line) {
+        return tap {
+            line: whichLine;
+            gameplay.time: at;
+            presentation.positionX: 0px;
+        };
+    }
+}
+lines {
+    line main {}
+}
+collections {
+    notes {
+        generate at: beat in 0beat..<4beat step STEP {
+            emit generatedTap(at, @main);
+        }
+    }
+}

@@ -1,0 +1,9 @@
+#fcs 5.0.0
+format { profile: fragment; }
+collections {
+    notes {
+        generate at: beat in 0beat..<4beat step 0beat {
+            emit tap { gameplay.time: at; };
+        }
+    }
+}

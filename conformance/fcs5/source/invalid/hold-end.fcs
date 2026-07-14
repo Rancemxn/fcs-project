@@ -1,0 +1,13 @@
+#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+    notes {
+        hold {
+            line: @main;
+            gameplay.time: 2beat;
+            gameplay.endTime: 2beat;
+        };
+    }
+}

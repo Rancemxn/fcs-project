@@ -1,0 +1,84 @@
+schema_version = 1
+conversion_specification_version = "1.0.0"
+
+[[vector]]
+rule_id = "pgr.time.t32"
+source = 32.0
+expected = 1.0
+unit = "beat"
+
+[[vector]]
+rule_id = "pgr.note-x.unit108"
+source = 1.0
+expected = 108.0
+unit = "px"
+
+[[vector]]
+rule_id = "pgr.line-x.normalized"
+source = 0.75
+expected = 480.0
+unit = "px"
+
+[[vector]]
+rule_id = "pgr.line-y.normalized"
+source = 0.25
+expected = -270.0
+unit = "px"
+
+[[vector]]
+rule_id = "rpe.beat.abc"
+source = [4, 1, 2]
+expected = "9/2"
+unit = "beat"
+
+[[vector]]
+rule_id = "rpe.x.canvas1350"
+source = 675.0
+expected = 960.0
+unit = "px"
+
+[[vector]]
+rule_id = "rpe.y.canvas900"
+source = -450.0
+expected = -540.0
+unit = "px"
+
+[[vector]]
+rule_id = "rpe.speed.scale4_5"
+source = 4.5
+expected = 1.0
+unit = "float"
+
+[[vector]]
+rule_id = "pec.time.tick2048"
+source = 1024.0
+expected = "1/2"
+unit = "beat"
+
+[[vector]]
+rule_id = "pec.x.canvas2048"
+source = 2048.0
+expected = 960.0
+unit = "px"
+
+[[vector]]
+rule_id = "pec.y.canvas1400"
+source = 0.0
+expected = -540.0
+unit = "px"
+
+[[vector]]
+rule_id = "pec.offset.bias150ms"
+source = 250.0
+expected = 0.1
+unit = "s"
+
+[[invalid]]
+rule_id = "rpe.beat.abc"
+source = [1, 1, 0]
+diagnostic = "numeric.divide-by-zero"
+
+[[invalid]]
+rule_id = "pgr.floor-scale"
+reason = "engine capability profile missing floorScalePx"
+status = "preserved-only"

@@ -1,0 +1,13 @@
+#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line parent {
+        position: vec2(100px, 0px);
+        rotation: 90deg;
+    }
+    line child {
+        parent: @parent;
+        position: vec2(10px, 0px);
+    }
+}

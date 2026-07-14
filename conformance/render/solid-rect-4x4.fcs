@@ -1,0 +1,22 @@
+#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport {
+        width: 4px;
+        height: 4px;
+        colorSpace: linear-srgb;
+    }
+    layer main {
+        pass: overlay;
+        zOrder: 0;
+        space: screen;
+        children {
+            rect full {
+                origin: vec2(-2px, -2px);
+                size: vec2(4px, 4px);
+                fill: solid(#FF0000FF);
+            }
+        }
+    }
+}

@@ -1,0 +1,19 @@
+{
+  "title": "Conformance",
+  "documentId": "org.fcs.conformance",
+  "revision": 1,
+  "contributors": ["alice"],
+  "creditRoles": ["charter"],
+  "resources": [
+    {
+      "id": "empty",
+      "kind": "binary",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "audioOffsetSeconds": 0.1,
+  "offsetEquationAtChartTime1": {
+    "chartTime": 1.0,
+    "audioTime": 1.1
+  }
+}
