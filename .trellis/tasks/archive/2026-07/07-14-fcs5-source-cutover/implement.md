@@ -5,7 +5,7 @@
 - [x] Obtain user consent to create a Trellis task and enter planning.
 - [x] Create `.trellis/tasks/07-14-fcs5-source-cutover`.
 - [x] Record requirements, design, acceptance criteria, and rollback constraints.
-- [ ] Review this plan and activate the task with `task.py start` before mutating the repository.
+- [x] Review this plan and activate the task with `task.py start` before mutating the repository.
 
 ## Phase 1 — read-only preflight
 
@@ -28,7 +28,7 @@ Expected starting state:
 - archive branch is absent;
 - all dirty paths match the known inventory in `prd.md`.
 
-If the archive branch exists or an unknown dirty path appears, stop and ask for direction.
+The archive branch was absent and the dirty paths matched the known inventory; execution proceeded.
 
 ## Phase 2 — commit the exact pre-cutover work
 
@@ -59,8 +59,8 @@ If the archive branch exists or an unknown dirty path appears, stop and ask for 
    git commit -m "chore: preserve project workflow for source cutover"
    ```
 
-   If this path group contains a file not present in the preflight inventory, stop rather than
-   silently including it.
+   The staged path group matched the preflight inventory. Two generated Trellis Markdown hard-break
+   spaces were intentionally retained; source/specification staged diffs passed `git diff --check`.
 
 ## Phase 3 — create and verify the archive branch
 
@@ -86,8 +86,8 @@ git rev-parse archive/fcs4-pre-cutover
 git branch --list master archive/fcs4-pre-cutover codex/fcs5-phase2-compile-time-language
 ```
 
-Expected: current branch is `master`; `HEAD` and archive have the same SHA; all three branches
-exist; no merge commit is created.
+Expected and observed: current branch is `master`; `HEAD` and archive have the same SHA; all three
+branches exist; no merge commit is created.
 
 Update the Trellis task branch metadata to `master` if required by the task script, then capture
 the resulting status. Do not delete the former feature branch.
@@ -103,9 +103,8 @@ git merge-base --is-ancestor archive/fcs4-pre-cutover master
 git ls-tree -r --name-only archive/fcs4-pre-cutover -- crates/fcs-core/src/ast crates/fcs-core/src/parser crates/fcs-core/src/compiler crates/fcs-core/src/bytecode crates/fcs-core/src/vm crates/fcs-cli crates/fcs-converter
 ```
 
-Confirm that any remaining dirty files are only expected post-start task metadata or explicitly
-identified workflow bookkeeping. Do not run parser implementation, crate renames, source deletion,
-or broad Rust quality checks as part of this cutover-only task.
+Observed: the controlled worktree is clean. Do not run parser implementation, crate renames, source
+deletion, or broad Rust quality checks as part of this cutover-only task.
 
 ## Stop conditions
 

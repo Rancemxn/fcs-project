@@ -69,17 +69,31 @@ verified.
 
 ## Acceptance criteria
 
-- [ ] The complete pre-operation `git status --short` inventory is recorded in the task/journal
+- [x] The complete pre-operation `git status --short` inventory is recorded in the task/journal
       evidence, and every in-scope path is preserved.
-- [ ] The generator work and frozen FCS 5 planning state are committed in auditable logical commits.
-- [ ] `archive/fcs4-pre-cutover` exists, points to the exact pre-cutover snapshot, and was never
+- [x] The generator work and frozen FCS 5 planning state are committed in auditable logical commits.
+- [x] `archive/fcs4-pre-cutover` exists, points to the exact pre-cutover snapshot, and was never
       overwritten.
-- [ ] The archive contains the old FCS 4 core, CLI, and converter paths.
-- [ ] `master` is the current branch and fast-forwards to the exact archive commit.
-- [ ] `codex/fcs5-phase2-compile-time-language` still exists.
-- [ ] No source crate migration or parser implementation has been performed as part of this task.
-- [ ] Final status and branch verification commands are captured; any expected post-start task
+- [x] The archive contains the old FCS 4 core, CLI, and converter paths.
+- [x] `master` is the current branch and fast-forwards to the exact archive commit.
+- [x] `codex/fcs5-phase2-compile-time-language` still exists.
+- [x] No source crate migration or parser implementation has been performed as part of this task.
+- [x] Final status and branch verification commands are captured; any expected post-start task
       metadata change is explicitly identified.
+
+## Execution evidence
+
+- Preflight branch: `codex/fcs5-phase2-compile-time-language`.
+- Preflight archive guard: `archive/fcs4-pre-cutover` absent.
+- Source preservation commit: `967e952` (`wip(source): preserve pre-cutover generator parser`).
+- Specification/conformance commit: `0ff9cec` (`docs: freeze specifications and plan the source cutover`).
+- Workflow/task preservation commit: `148936d` (`chore: preserve project workflow for source cutover`).
+- Archive branch: `archive/fcs4-pre-cutover` at `148936d17b671bb34968c88969ab748c818f9fc0`.
+- Active branch after cutover: `master` at the same SHA; `git merge --ff-only` succeeded.
+- Retained branch: `codex/fcs5-phase2-compile-time-language`.
+- Final controlled worktree status: clean.
+- Archived legacy path verification: 65 paths under old `fcs-core` AST/parser/compiler/bytecode/VM,
+  `fcs-cli`, and `fcs-converter` locations.
 
 ## Out of scope
 
