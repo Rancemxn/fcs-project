@@ -1,7 +1,7 @@
 use crate::v5::ast::{
     CollectionBlock, CollectionItem, CollectionsBlock, EntityConstructor, EntityExpression,
-    EntityField, FieldPath, NoteVariant, SourceSpan, TemplateDeclaration, TemplateParameter,
-    TemplatesBlock, Type, WithExpression,
+    EntityField, FieldPath, Generator, GeneratorItem, NoteVariant, SourceExpression, SourceRange,
+    SourceSpan, TemplateDeclaration, TemplateParameter, TemplatesBlock, Type, WithExpression,
 };
 
 use super::{ParseError, expression::parse_expression_at, expression::parse_type};
@@ -95,7 +95,10 @@ fn parse_collection_items_until(
 ) -> Result<Vec<CollectionItem>, ParseError> {
     let mut items = Vec::new();
     while !cursor.peek_is(terminator) {
-        if cursor.take_keyword("if") {
+        if cursor.take_keyword("generate") {
+            let start = cursor.position().saturating_sub("generate".len());
+            items.push(CollectionItem::Generator(parse_generator(cursor, start)?));
+        } else if cursor.take_keyword("if") {
             let start = cursor.position().saturating_sub(2);
             let condition_text = cursor.until_top_level(&['{'])?;
             let condition_offset = condition_text.len() - condition_text.trim_start().len();
@@ -133,6 +136,124 @@ fn parse_collection_items_until(
         }
     }
     Ok(items)
+}
+
+fn parse_generator(cursor: &mut Cursor<'_>, start: usize) -> Result<Generator, ParseError> {
+    let (variable, variable_span) = cursor.identifier()?;
+    cursor.char(':')?;
+    let type_text = cursor.until_keyword_or(&["in"])?;
+    let variable_type = parse_type(type_text.trim())?;
+    cursor.keyword("in")?;
+
+    let range_start_text = cursor.until_range_operator()?;
+    let range_start_offset = range_start_text.len() - range_start_text.trim_start().len();
+    let range_start = parse_expression_at(
+        range_start_text.trim(),
+        cursor.position_before(range_start_text) + range_start_offset,
+    )?;
+    let inclusive_end = if cursor.take_text("..=") {
+        true
+    } else if cursor.take_text("..") {
+        // `..<` is retained as a compatibility spelling for the documented half-open form.
+        let _ = cursor.take_char('<');
+        false
+    } else {
+        return Err(ParseError::InvalidSyntax("generator range"));
+    };
+
+    let range_end_text = cursor.until_keyword_or(&["step"])?;
+    let range_end_offset = range_end_text.len() - range_end_text.trim_start().len();
+    let range_end = parse_expression_at(
+        range_end_text.trim(),
+        cursor.position_before(range_end_text) + range_end_offset,
+    )?;
+    cursor.keyword("step")?;
+
+    let range_step_text = cursor.until_top_level(&['{'])?;
+    let range_step_offset = range_step_text.len() - range_step_text.trim_start().len();
+    let range_step = parse_expression_at(
+        range_step_text.trim(),
+        cursor.position_before(range_step_text) + range_step_offset,
+    )?;
+    if is_literal_zero(&range_step) {
+        return Err(ParseError::InvalidSyntax("generator step"));
+    }
+    cursor.char('{')?;
+    let body = parse_generator_items_until(cursor, '}')?;
+    cursor.char('}')?;
+
+    let range = SourceRange {
+        span: SourceSpan::new(range_start.span().start, range_step.span().end),
+        start: range_start,
+        end: range_end,
+        step: range_step,
+        inclusive_end,
+    };
+    Ok(Generator {
+        variable,
+        variable_span,
+        variable_type,
+        range,
+        body,
+        span: SourceSpan::new(start, cursor.position()),
+    })
+}
+
+fn parse_generator_items_until(
+    cursor: &mut Cursor<'_>,
+    terminator: char,
+) -> Result<Vec<GeneratorItem>, ParseError> {
+    let mut items = Vec::new();
+    while !cursor.peek_is(terminator) {
+        if cursor.take_keyword("if") {
+            let start = cursor.position().saturating_sub(2);
+            let condition_text = cursor.until_top_level(&['{'])?;
+            let condition_offset = condition_text.len() - condition_text.trim_start().len();
+            let condition = parse_expression_at(
+                condition_text.trim(),
+                cursor.position_before(condition_text) + condition_offset,
+            )?;
+            cursor.char('{')?;
+            let then_items = parse_generator_items_until(cursor, '}')?;
+            cursor.char('}')?;
+            cursor.skip();
+            let else_items = if cursor.take_keyword("else") {
+                cursor.char('{')?;
+                let items = parse_generator_items_until(cursor, '}')?;
+                cursor.char('}')?;
+                items
+            } else {
+                Vec::new()
+            };
+            items.push(GeneratorItem::Conditional {
+                condition,
+                then_items,
+                else_items,
+                span: SourceSpan::new(start, cursor.position()),
+            });
+        } else if cursor.take_keyword("emit") {
+            let expression = parse_entity_expression(cursor)?;
+            cursor.char(';')?;
+            items.push(GeneratorItem::Emit(expression));
+        } else {
+            return Err(ParseError::InvalidSyntax("generator item"));
+        }
+    }
+    Ok(items)
+}
+
+fn is_literal_zero(expression: &SourceExpression) -> bool {
+    match expression {
+        SourceExpression::Literal {
+            literal: crate::v5::ast::SourceLiteral::Int(value),
+            ..
+        } => *value == 0,
+        SourceExpression::Literal {
+            literal: crate::v5::ast::SourceLiteral::Beat(value),
+            ..
+        } => value.numerator() == 0,
+        _ => false,
+    }
 }
 
 fn parse_entity_expression(cursor: &mut Cursor<'_>) -> Result<EntityExpression, ParseError> {
@@ -331,6 +452,16 @@ impl<'a> Cursor<'a> {
         false
     }
 
+    fn take_text(&mut self, expected: &str) -> bool {
+        self.skip();
+        if self.remaining().starts_with(expected) {
+            self.offset += expected.len();
+            true
+        } else {
+            false
+        }
+    }
+
     fn char(&mut self, expected: char) -> Result<(), ParseError> {
         self.take_char(expected)
             .then_some(())
@@ -440,6 +571,37 @@ impl<'a> Cursor<'a> {
             }
         }
         Err(ParseError::InvalidSyntax("entity expression"))
+    }
+
+    fn until_range_operator(&mut self) -> Result<&'a str, ParseError> {
+        self.skip();
+        let start = self.offset;
+        let mut parentheses = 0usize;
+        let mut string = false;
+        let mut escaped = false;
+        for (index, character) in self.remaining().char_indices() {
+            if string {
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == '"' {
+                    string = false;
+                }
+                continue;
+            }
+            match character {
+                '"' => string = true,
+                '(' => parentheses += 1,
+                ')' if parentheses > 0 => parentheses -= 1,
+                '.' if parentheses == 0 && self.input[start + index..].starts_with("..") => {
+                    self.offset = start + index;
+                    return Ok(&self.input[start..self.offset]);
+                }
+                _ => {}
+            }
+        }
+        Err(ParseError::InvalidSyntax("generator range"))
     }
 
     fn until_keyword_or(&mut self, keywords: &[&str]) -> Result<&'a str, ParseError> {

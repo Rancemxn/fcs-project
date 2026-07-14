@@ -6,7 +6,8 @@ mod types;
 pub use entity::{
     CollectionBlock, CollectionItem, CollectionsBlock, EntityConstructor, EntityExpression,
     EntityField, ExpandedCollection, ExpandedEntity, ExpandedField, ExpandedSourceDocument,
-    FieldPath, NoteVariant, TemplateDeclaration, TemplateParameter, TemplatesBlock, WithExpression,
+    FieldPath, Generator, GeneratorItem, NoteVariant, SourceRange, TemplateDeclaration,
+    TemplateParameter, TemplatesBlock, WithExpression,
 };
 pub use time::{Beat, BeatError, Bpm, InvalidBpm};
 pub use types::{

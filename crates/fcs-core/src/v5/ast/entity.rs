@@ -128,15 +128,46 @@ pub struct TemplatesBlock {
     pub span: SourceSpan,
 }
 
+/// A source range used by a compile-time generator.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceRange {
+    pub start: SourceExpression,
+    pub end: SourceExpression,
+    pub step: SourceExpression,
+    pub inclusive_end: bool,
+    pub span: SourceSpan,
+}
+
+/// A compile-time generator contained in a collection block.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Generator {
+    pub variable: String,
+    pub variable_span: SourceSpan,
+    pub variable_type: Type,
+    pub range: SourceRange,
+    pub body: Vec<GeneratorItem>,
+    pub span: SourceSpan,
+}
+
+/// A source item emitted by a compile-time generator.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GeneratorItem {
+    Emit(EntityExpression),
+    Conditional {
+        condition: SourceExpression,
+        then_items: Vec<GeneratorItem>,
+        else_items: Vec<GeneratorItem>,
+        span: SourceSpan,
+    },
+}
+
 /// A source item contained directly in a collection block.
-///
-/// Task 6 may add generator, `emit`, local binding, and compile-time conditional variants.
-/// They are deliberately omitted until their semantics are defined.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum CollectionItem {
     Constructor(EntityConstructor),
     Expression(EntityExpression),
+    Generator(Generator),
     Conditional {
         condition: SourceExpression,
         then_items: Vec<CollectionItem>,
@@ -151,6 +182,7 @@ impl CollectionItem {
         match self {
             Self::Constructor(constructor) => constructor.span,
             Self::Expression(expression) => expression.span(),
+            Self::Generator(generator) => generator.span,
             Self::Conditional { span, .. } => *span,
         }
     }
@@ -184,9 +216,6 @@ pub struct WithExpression {
 }
 
 /// A source collection containing source items.
-///
-/// Task 6 may add generator, `emit`, local binding, and compile-time conditional item variants;
-/// this bootstrap representation assigns none of them premature semantics.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CollectionBlock {
     pub collection_name: String,

@@ -446,6 +446,32 @@ collections {
 }
 
 #[test]
+fn parses_exact_generator_range_and_emit_source_nodes() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections {
+  notes {
+    generate at: beat in 0beat..4beat step 1beat {
+      emit tap { gameplay.time: at; };
+    }
+  }
+}"#;
+
+    let document = parse_document(source).expect("generator source should parse");
+    let CollectionItem::Generator(generator) = &document.collections[0].items[0] else {
+        panic!("expected generator collection item");
+    };
+    assert_eq!(generator.variable, "at");
+    assert_eq!(generator.variable_type, Type::Beat);
+    assert!(!generator.range.inclusive_end);
+    assert_eq!(generator.body.len(), 1);
+    assert_eq!(
+        generator.span,
+        SourceSpan::new(source.find("generate").unwrap(), source.len() - 2)
+    );
+}
+
+#[test]
 fn elaborates_templates_and_with_overrides_into_concrete_entities() {
     let source = r#"#fcs 5.0.0
 format { profile: chart; }
