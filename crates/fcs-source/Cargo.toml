@@ -6,3 +6,4 @@ license.workspace = true
 description = "FCS source parser and compile-time elaborator"
 
 [dependencies]
+chumsky = { version = "=0.11.1", default-features = false, features = ["std"] }

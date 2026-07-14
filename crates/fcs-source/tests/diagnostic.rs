@@ -26,7 +26,7 @@ fn parser_resource_limits_use_the_stable_resource_code() {
     let result = parse_expression_with_limits(
         "1",
         ParseLimits {
-            max_input_bytes: 0,
+            max_source_bytes: 0,
             ..ParseLimits::default()
         },
     );

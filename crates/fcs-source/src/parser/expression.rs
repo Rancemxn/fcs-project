@@ -1,6 +1,8 @@
 use crate::ast::{BinaryOperator, SourceExpression, SourceSpan, Type, UnaryOperator};
 
-use super::lexer::{Symbol, Token, TokenKind, lex};
+use super::input::source_span;
+use super::lexer::lex;
+use super::token::{Keyword, Punctuation as Symbol, Token as TokenKind};
 use super::{ParseError, ParseLimits, output_from_result};
 
 pub fn parse_expression(input: &str) -> crate::diagnostic::ParseOutput<SourceExpression> {
@@ -18,13 +20,12 @@ pub(super) fn parse_expression_inner(
     input: &str,
     limits: ParseLimits,
 ) -> Result<SourceExpression, ParseError> {
-    if input.len() > limits.max_input_bytes {
+    if input.len() > limits.max_source_bytes {
         return Err(ParseError::InvalidSyntax("resource limit"));
     }
-    let tokens = lex(input).map_err(|()| ParseError::InvalidSyntax("expression"))?;
-    if tokens.len() > limits.max_tokens {
-        return Err(ParseError::InvalidSyntax("resource limit"));
-    }
+    let tokens = lex(input, limits)
+        .map_err(|mut diagnostics| ParseError::Diagnostic(diagnostics.remove(0)))?;
+    let tokens = tokens.into_iter().map(Token::from).collect();
     let mut parser = Parser::new(tokens, limits.max_nesting_depth);
     let expression = match parser.parse_or() {
         Ok(expression) => expression,
@@ -59,13 +60,12 @@ pub fn parse_type_with_limits<L: Into<ParseLimits>>(
 }
 
 pub(super) fn parse_type_inner(input: &str, limits: ParseLimits) -> Result<Type, ParseError> {
-    if input.len() > limits.max_input_bytes {
+    if input.len() > limits.max_source_bytes {
         return Err(ParseError::InvalidSyntax("resource limit"));
     }
-    let tokens = lex(input).map_err(|()| ParseError::InvalidSyntax("type"))?;
-    if tokens.len() > limits.max_tokens {
-        return Err(ParseError::InvalidSyntax("resource limit"));
-    }
+    let tokens = lex(input, limits)
+        .map_err(|mut diagnostics| ParseError::Diagnostic(diagnostics.remove(0)))?;
+    let tokens = tokens.into_iter().map(Token::from).collect();
     let mut parser = Parser::new(tokens, limits.max_nesting_depth);
     let ty = match parser.parse_type_inner() {
         Ok(ty) => ty,
@@ -88,6 +88,21 @@ struct Parser {
     limit_exceeded: bool,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct Token {
+    kind: TokenKind,
+    span: SourceSpan,
+}
+
+impl From<super::input::SpannedToken> for Token {
+    fn from((kind, span): super::input::SpannedToken) -> Self {
+        Self {
+            kind,
+            span: source_span(span),
+        }
+    }
+}
+
 impl Parser {
     fn new(tokens: Vec<Token>, max_nesting_depth: usize) -> Self {
         Self {
@@ -100,7 +115,7 @@ impl Parser {
     }
 
     fn parse_type_inner(&mut self) -> Result<Type, ()> {
-        let name = self.consume_identifier().ok_or(())?;
+        let name = self.consume_type_name().ok_or(())?;
         let scalar = match name.as_str() {
             "bool" => Some(Type::Bool),
             "int" => Some(Type::Int),
@@ -336,7 +351,13 @@ impl Parser {
                 name,
                 span: token.span,
             }),
-            TokenKind::Symbol(Symbol::LeftParenthesis) => {
+            TokenKind::Keyword(Keyword::Vec2) if self.check_symbol(Symbol::LeftParenthesis) => {
+                Ok(SourceExpression::Name {
+                    name: "vec2".to_owned(),
+                    span: token.span,
+                })
+            }
+            TokenKind::Punctuation(Symbol::LeftParenthesis) => {
                 let expression = self.with_nesting(|parser| parser.parse_or())?;
                 let close = self.expect_symbol(Symbol::RightParenthesis)?;
                 Ok(with_span(
@@ -344,12 +365,19 @@ impl Parser {
                     SourceSpan::new(token.span.start, close.span.end),
                 ))
             }
-            TokenKind::Symbol(_) => Err(()),
+            TokenKind::Punctuation(_) | TokenKind::Keyword(_) => Err(()),
         }
     }
 
-    fn consume_identifier(&mut self) -> Option<String> {
-        self.consume_identifier_with_span().map(|(name, _)| name)
+    fn consume_type_name(&mut self) -> Option<String> {
+        let token = self.peek()?.clone();
+        let name = match token.kind {
+            TokenKind::Identifier(name) => name,
+            TokenKind::Keyword(keyword) => type_keyword_name(keyword)?.to_owned(),
+            TokenKind::Literal(_) | TokenKind::Punctuation(_) => return None,
+        };
+        self.current += 1;
+        Some(name)
     }
 
     fn consume_identifier_with_span(&mut self) -> Option<(String, SourceSpan)> {
@@ -381,7 +409,7 @@ impl Parser {
         matches!(
             self.peek(),
             Some(Token {
-                kind: TokenKind::Symbol(actual),
+                kind: TokenKind::Punctuation(actual),
                 ..
             }) if *actual == symbol
         )
@@ -411,6 +439,27 @@ impl Parser {
         self.nesting_depth -= 1;
         result
     }
+}
+
+fn type_keyword_name(keyword: Keyword) -> Option<&'static str> {
+    Some(match keyword {
+        Keyword::Bool => "bool",
+        Keyword::Int => "int",
+        Keyword::Float => "float",
+        Keyword::String => "string",
+        Keyword::Time => "time",
+        Keyword::Beat => "beat",
+        Keyword::Length => "length",
+        Keyword::Angle => "angle",
+        Keyword::Color => "color",
+        Keyword::Vec2 => "vec2",
+        Keyword::Note => "Note",
+        Keyword::LineType => "Line",
+        Keyword::RenderNode => "RenderNode",
+        Keyword::TrackSegment => "TrackSegment",
+        Keyword::KeyframeType => "Keyframe",
+        _ => return None,
+    })
 }
 
 fn binary(

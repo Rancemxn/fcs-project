@@ -16,7 +16,7 @@ pub fn parse_document_with_limits<L: Into<ParseLimits>>(
     limits: L,
 ) -> crate::diagnostic::ParseOutput<Document> {
     let limits = limits.into();
-    if input.len() > limits.max_input_bytes {
+    if input.len() > limits.max_source_bytes {
         return output_from_result(input, Err(ParseError::InvalidSyntax("resource limit")));
     }
     if count_document_tokens(input) > limits.max_tokens

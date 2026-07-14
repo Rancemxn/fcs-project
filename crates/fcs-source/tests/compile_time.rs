@@ -7,7 +7,10 @@ use fcs_source::ast::{
 };
 use fcs_source::diagnostic::{Diagnostic, DiagnosticCode};
 use fcs_source::elaborator::{CompileTimeLimits, elaborate};
-use fcs_source::parser::{parse_document, parse_expression, parse_type};
+use fcs_source::parser::{
+    ParseLimits, parse_document, parse_expression, parse_expression_with_limits, parse_type,
+    parse_type_with_limits,
+};
 use fcs_source::schema::{FieldConstraint, phase2_schema};
 use std::{fs, path::PathBuf};
 
@@ -241,8 +244,8 @@ fn supports_forward_const_and_pure_function_references() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }
 definitions {
-  const result: int = choose(true);
-  fn choose(flag: bool) -> int {
+  const result: int = select_flag(true);
+  fn select_flag(flag: bool) -> int {
     let doubled: int = twice(BASE);
     if flag { return doubled; } else { return BASE; }
   }
@@ -406,8 +409,8 @@ fn parses_typed_templates_and_collections_with_source_spans() {
 format { profile: chart; }
 tempoMap { 0beat -> 180bpm; }
 templates {
-  template ghost(time: beat) -> Note {
-    return tap { gameplay.time: time; };
+  template ghost(at: beat) -> Note {
+    return tap { gameplay.time: at; };
   }
 }
 collections {
@@ -538,9 +541,9 @@ format { profile: chart; }
 tempoMap { 0beat -> 180bpm; }
 definitions { const X: length = 12px; }
 templates {
-  template ghost(time: beat, x: length) -> Note {
+  template ghost(at: beat, x: length) -> Note {
     return tap {
-      gameplay.time: time;
+      gameplay.time: at;
       presentation.positionX: x;
     };
   }
@@ -1049,8 +1052,6 @@ fn parses_scalar_and_unit_literals() {
         ("2s", SourceLiteral::Time(2.0)),
         ("2min", SourceLiteral::Time(120.0)),
         ("2px", SourceLiteral::Length(2.0)),
-        ("2vw", SourceLiteral::Length(38.4)),
-        ("2vh", SourceLiteral::Length(21.6)),
         ("180deg", SourceLiteral::Angle(std::f64::consts::PI)),
         ("0.5rad", SourceLiteral::Angle(0.5)),
         ("1.25beat", SourceLiteral::Beat(Beat::new(5, 4).unwrap())),
@@ -1070,13 +1071,13 @@ fn parses_scalar_and_unit_literals() {
 
 #[test]
 fn unit_literals_must_remain_finite_after_conversion() {
-    for source in ["1e308vw", "1e308vh"] {
+    for source in ["1e309s", "1e309px"] {
         assert_eq!(
             parse_expression(source)
                 .into_result()
                 .expect_err("non-finite unit")[0]
                 .code(),
-            DiagnosticCode::SYNTAX_INVALID_TOKEN,
+            DiagnosticCode::NUMERIC_NON_FINITE,
             "literal {source}"
         );
     }
@@ -1129,6 +1130,7 @@ fn beat_literals_reduce_exactly_before_narrowing() {
 fn string_escapes_match_the_documented_table() {
     let accepted = [
         (r#""\n""#, "\n"),
+        (r#""\r""#, "\r"),
         (r#""\t""#, "\t"),
         (r#""\\""#, "\\"),
         (r#""\"""#, "\""),
@@ -1147,7 +1149,6 @@ fn string_escapes_match_the_documented_table() {
     }
 
     for source in [
-        r#""\r""#,
         r#""\u{D800}""#,
         r#""\u{110000}""#,
         r#""\u""#,
@@ -1395,9 +1396,17 @@ fn parser_rejects_nesting_beyond_the_shared_limit() {
     const LIMIT: usize = 128;
 
     let nested_type = |depth: usize| format!("{}int{}", "vec2<".repeat(depth), ">".repeat(depth));
-    assert!(parse_type(&nested_type(LIMIT)).into_result().is_ok());
+    let limits = ParseLimits {
+        max_nesting_depth: LIMIT,
+        ..ParseLimits::default()
+    };
+    assert!(
+        parse_type_with_limits(&nested_type(LIMIT), limits)
+            .into_result()
+            .is_ok()
+    );
     assert_eq!(
-        parse_type(&nested_type(LIMIT + 1))
+        parse_type_with_limits(&nested_type(LIMIT + 1), limits)
             .into_result()
             .expect_err("type nesting limit")[0]
             .code(),
@@ -1405,9 +1414,13 @@ fn parser_rejects_nesting_beyond_the_shared_limit() {
     );
 
     let unary = |depth: usize| format!("{}value", "!".repeat(depth));
-    assert!(parse_expression(&unary(LIMIT)).into_result().is_ok());
+    assert!(
+        parse_expression_with_limits(&unary(LIMIT), limits)
+            .into_result()
+            .is_ok()
+    );
     assert_eq!(
-        parse_expression(&unary(LIMIT + 1))
+        parse_expression_with_limits(&unary(LIMIT + 1), limits)
             .into_result()
             .expect_err("unary nesting limit")[0]
             .code(),
@@ -1415,9 +1428,13 @@ fn parser_rejects_nesting_beyond_the_shared_limit() {
     );
 
     let grouped = |depth: usize| format!("{}value{}", "(".repeat(depth), ")".repeat(depth));
-    assert!(parse_expression(&grouped(LIMIT)).into_result().is_ok());
+    assert!(
+        parse_expression_with_limits(&grouped(LIMIT), limits)
+            .into_result()
+            .is_ok()
+    );
     assert_eq!(
-        parse_expression(&grouped(LIMIT + 1))
+        parse_expression_with_limits(&grouped(LIMIT + 1), limits)
             .into_result()
             .expect_err("group nesting limit")[0]
             .code(),
@@ -1433,12 +1450,12 @@ fn parser_rejects_nesting_beyond_the_shared_limit() {
         )
     };
     assert!(
-        parse_expression(&mixed(LIMIT / 2, LIMIT / 2))
+        parse_expression_with_limits(&mixed(LIMIT / 2, LIMIT / 2), limits)
             .into_result()
             .is_ok()
     );
     assert_eq!(
-        parse_expression(&mixed(LIMIT / 2 + 1, LIMIT / 2))
+        parse_expression_with_limits(&mixed(LIMIT / 2 + 1, LIMIT / 2), limits)
             .into_result()
             .expect_err("mixed nesting limit")[0]
             .code(),

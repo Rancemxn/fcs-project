@@ -9,9 +9,9 @@ definitions {
 }
 
 templates {
-    template ghost(time: beat, x: length) -> Note {
+    template ghost(at: beat, x: length) -> Note {
         return tap {
-            gameplay.time: time;
+            gameplay.time: at;
             presentation.positionX: x;
         };
     }

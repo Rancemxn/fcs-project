@@ -3,8 +3,10 @@ mod document;
 mod entities;
 mod expression;
 mod header;
+mod input;
 mod lexer;
 mod tempo;
+mod token;
 
 use crate::ast::SourceSpan;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticStage, ParseOutput};
@@ -27,25 +29,29 @@ pub(crate) enum ParseError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParseLimits {
-    pub max_input_bytes: usize,
+    pub max_source_bytes: usize,
     pub max_tokens: usize,
     pub max_nesting_depth: usize,
+    pub max_comment_depth: usize,
+    pub max_literal_bytes: usize,
 }
 
 impl Default for ParseLimits {
     fn default() -> Self {
         Self {
-            max_input_bytes: usize::MAX,
-            max_tokens: usize::MAX,
-            max_nesting_depth: 128,
+            max_source_bytes: 16 * 1024 * 1024,
+            max_tokens: 1_000_000,
+            max_nesting_depth: 512,
+            max_comment_depth: 256,
+            max_literal_bytes: 1024 * 1024,
         }
     }
 }
 
 impl From<usize> for ParseLimits {
-    fn from(max_input_bytes: usize) -> Self {
+    fn from(max_source_bytes: usize) -> Self {
         Self {
-            max_input_bytes,
+            max_source_bytes,
             ..Self::default()
         }
     }
