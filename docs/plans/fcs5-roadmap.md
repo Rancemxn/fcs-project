@@ -156,9 +156,10 @@ RenderSection、semantic conformance 和 reference raster conformance。
 
 ### I0：健康基线与规范对账
 
-当前进度：I0-A（快照、归档和 `master` 分支切换）已完成；I0-B 及后续源码迁移、parser
-重建和 conformance gate 尚未开始。活动树仍处于 `fcs-core`/`src/v5` 候选实现状态，不能
-将归档完成误记为 source implementation 已完成。
+当前进度：I0-A（快照、归档和 `master` 分支切换）以及 I0.2 generator staging 已完成；
+I0.3 唯一 crate 切换、诊断边界、parser 重建和 conformance gate 尚未开始。活动树仍处于
+`fcs-core`/`src/v5` 候选实现状态，generator 也尚未展开；不能将局部 staging 完成误记为
+完整 source implementation 已完成。
 
 - 提交完整切换前快照并建立永久 `archive/fcs4-pre-cutover`；
 - fast-forward `master`，删除活动主线中的 FCS 4、旧 converter 和旧 CLI；
@@ -267,8 +268,10 @@ RenderSection、semantic conformance 和 reference raster conformance。
   workflow 工作；创建指向精确切换前提交 `148936d17b671bb34968c88969ab748c818f9fc0` 的
   `archive/fcs4-pre-cutover`，然后 fast-forward `master`。后续 Trellis bookkeeping commits
   不移动归档指针。
-- **I0.2 Generator staging**：只接受 `..<`/`..=`，拒绝裸 `..`；在 I2 完成展开前返回结构化
-  `implementation.feature-unavailable`，不得留下 non-exhaustive match 或部分输出。
+- **I0.2 Generator staging（已完成）**：只接受 `..<`/`..=`，拒绝裸 `..`；在 I2 完成展开前
+  返回临时 `FeatureUnavailable { feature: "compile-time-generator", .. }`；已消除
+  non-exhaustive match 和部分输出路径。稳定 `implementation.feature-unavailable` 公共
+  diagnostic code 仍属于后续诊断边界任务。
 - **I0.3 唯一 crate 切换**：删除活动 FCS 4 core、旧 CLI、旧 converter 和第二 IR；将候选
   source front end 提升为 `crates/fcs-source`，不提供兼容 re-export。
 - **I0.4 诊断边界**：建立稳定 `DiagnosticCode`、UTF-8 byte span、labels、确定性多诊断
@@ -478,7 +481,8 @@ git diff --check
 - S1–S12：完成；逐章审查和首批机器可读 conformance fixture 已落地；
 - S13：完成；FCS 5.0.0、FCBC 2.0.0、ABI 1.0.0、Render 1.0.0、Conversion 1.0.0
   已于 2026-07-14 Frozen；
-- I0-A 快照与归档已完成；I0-B 及后续任务尚未执行；
+- I0-A 快照与归档、I0.2 generator staging 已完成；I0.3 及后续任务尚未执行；
 - 已有 Phase 1/2 source candidate：仍等待提升为唯一 `fcs-source` 并按 S1–S4 对账；
-- 当前 generator AST/parser：接受裸 `..` 且未接入 elaborator，I0 必须先关闭该偏差；
+- 当前 generator AST/parser：已拒绝裸 `..`，zero-step 语法保留给 I2；elaborator 在 I0
+  暂不展开 generator 并返回临时 feature-unavailable 诊断；稳定诊断 API 仍待 I0.4；
 - I3–I10：未开始。

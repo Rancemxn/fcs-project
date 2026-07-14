@@ -11,8 +11,8 @@ I0-A（快照、归档和 `master` 分支切换）已完成；I0-B 及后续 sou
 
 当前进度证据：`archive/fcs4-pre-cutover` 指向
 `148936d17b671bb34968c88969ab748c818f9fc0`，`master` 已从该快照 fast-forward，原 feature
-branch 保留。下一项实现工作是 I0-B / generator staging boundary；在它完成前，generator
-range、elaboration 和其他 source rows 仍按下表的实际偏差记录。
+branch 保留。generator staging 已完成；下一项实现工作是 I0.3 唯一 crate 切换。在后续
+诊断、parser 和 source crate 任务完成前，其他 source rows 仍按下表的实际偏差记录。
 
 允许的状态只有：`implemented`、`partial`、`not-started` 和 `blocked-by-I<n>`。
 
@@ -34,7 +34,7 @@ range、elaboration 和其他 source rows 仍按下表的实际偏差记录。
 | `fcs.md` 6.1 | 绑定、作用域和禁止 shadowing | `elaborator::elaborate` | `crates/fcs-source/src/elaborator/scope.rs` | binding tests | `source.invalid.shadowing` | partial | I2 | 已有局部检查，完整跨种类 scope graph 未完成 |
 | `fcs.md` 6.2 | 纯函数、return、调用图 | `elaborator::elaborate` | `crates/fcs-source/src/elaborator/eval.rs` | function evaluation tests | cycle/missing return tests | partial | I2 | 诊断 trace 和完整路径分析未完成 |
 | `fcs.md` 6.3–6.5 | typed template、constructor、with、if | `elaborator::elaborate` | `crates/fcs-source/src/elaborator/entities.rs` | `source.valid.template-if-with` | `source.invalid.template-missing-line` | partial | I2 | 现有展开需迁移 definitions 归属并统一 budget context |
-| `fcs.md` 6.6 | `..<`/`..=` range 与 zero step | `ast::Generator` | `crates/fcs-source/src/parser/entities.rs` | generator range parser tests | `source.invalid.bare-range`, `source.invalid.generator-zero-step` | partial | I0-G/I2 | 当前 parser 接受裸 `..`，zero step 语义尚未展开求值 |
+| `fcs.md` 6.6 | `..<`/`..=` range 与 zero step | `ast::Generator` | `crates/fcs-source/src/parser/entities.rs` | generator range parser tests | `source.invalid.bare-range`, `source.invalid.generator-zero-step` | partial | I0-G/I2 | I0.2 已拒绝裸 `..` 并保留 zero-step 语法；elaborator 暂返回临时 `FeatureUnavailable`，zero-step 语义尚未展开求值 |
 | `fcs.md` 6.7 | generator body 与 typed emit | `ast::GeneratorItem` | `crates/fcs-source/src/ast/entity.rs` | `source.valid.compile-time-generator` | nested/misplaced generator tests | blocked-by-I2 | I2 | I0 只解析并返回明确 implementation diagnostic，不输出部分结果 |
 | `fcs.md` 6.8 | 六类共享 elaboration budget 与 trace | `elaborator::CompileTimeLimits` | `crates/fcs-source/src/elaborator/mod.rs` | budget unit tests | `source.invalid.generator-budget` | partial | I2 | limits 已有字段但未共享完整 context，也没有结构化 expansion trace |
 | `fcs.md` 7.1–7.5 | Metadata、credits、resources、sync、custom | 无 | 未来 `crates/fcs-source/src/ast/metadata.rs` 与 `fcs-model` | `source.valid.metadata-credits-resources-sync` | `source.invalid.unknown-resource`, `source.invalid.custom-duplicate-key` | blocked-by-I1 | I1/I3 | source AST 与 canonical validation 均未实现 |

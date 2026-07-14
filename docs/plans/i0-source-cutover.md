@@ -4,11 +4,11 @@
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
 
-> **Current status (2026-07-14):** I0-A is complete. The pre-cutover worktree is preserved at
-> `archive/fcs4-pre-cutover`, `master` is the active development branch, and the original feature
-> branch remains retained. I0-B / Task 2 (generator staging boundary) is the next unfinished task;
-> the active tree still contains `fcs-core`, `fcs-cli`, `fcs-converter`, and `src/v5` until the
-> later structural cutover tasks execute.
+> **Current status (2026-07-14):** I0-A and Task 2 generator staging are complete. The pre-cutover
+> worktree is preserved at `archive/fcs4-pre-cutover`, `master` is the active development branch,
+> and the original feature branch remains retained. Task 3 (structural test) and Task 4 (unique
+> `fcs-source` crate cutover) are the next unfinished work; the active tree still contains
+> `fcs-core`, `fcs-cli`, `fcs-converter`, and `src/v5` until those structural tasks execute.
 
 **Goal:** Archive the complete pre-cutover FCS 4 workspace, make `master` the sole development
 branch, replace the mixed `fcs-core`/`v5` tree with an unversioned `fcs-source` crate, establish a
@@ -224,19 +224,19 @@ decision.
 **I0-A evidence:** source preservation commit `967e952`, specification/conformance commit
 `0ff9cec`, workflow preservation/archive snapshot `148936d`, archive branch
 `archive/fcs4-pre-cutover`, active branch `master`, and retained branch
-`codex/fcs5-phase2-compile-time-language`. Task 2 is the next unfinished task.
+`codex/fcs5-phase2-compile-time-language`. I0-A is complete; Task 2 is now complete as the first
+generator staging implementation step.
 
-### Task 2: Close the generator staging boundary before moving files
+### Task 2: Close the generator staging boundary before moving files — completed
 
 **Files:**
 
-- Modify: `crates/fcs-core/src/v5/ast/entity.rs`
 - Modify: `crates/fcs-core/src/v5/parser/entities.rs`
 - Modify: `crates/fcs-core/src/v5/elaborator/entities.rs`
 - Modify: `crates/fcs-core/src/v5/elaborator/mod.rs`
 - Modify: `crates/fcs-core/tests/fcs5_phase2.rs`
 
-- [ ] **Step 1: Replace the draft range test with Frozen operator tests**
+- [x] **Step 1: Replace the draft range test with Frozen operator tests**
 
 Add these cases to `crates/fcs-core/tests/fcs5_phase2.rs`:
 
@@ -277,7 +277,7 @@ fn rejects_bare_generator_range_operator() {
 }
 ```
 
-- [ ] **Step 2: Add a failing elaborator test for explicit staging**
+- [x] **Step 2: Add a failing elaborator test for explicit staging**
 
 ```rust
 #[test]
@@ -301,7 +301,7 @@ fn generator_elaboration_fails_before_partial_output() {
 }
 ```
 
-- [ ] **Step 3: Run the tests and observe the intended failures**
+- [x] **Step 3: Run the tests and observe the intended failures**
 
 Run:
 
@@ -309,10 +309,11 @@ Run:
 cargo nextest run -p fcs-core --test fcs5_phase2
 ```
 
-Expected: bare-range and elaboration tests fail because the parser accepts bare `..` and the
-elaborator has no generator arm.
+Observed: the pre-change build failed on the non-exhaustive `CollectionItem::Generator` match;
+after the test was corrected and the boundary implementation was applied, the targeted suite passed
+58/58.
 
-- [ ] **Step 4: Make range tokenization strict in the existing parser**
+- [x] **Step 4: Make range tokenization strict in the existing parser**
 
 Replace the operator branch in `parse_generator` with:
 
@@ -328,7 +329,7 @@ let inclusive_end = if cursor.take_text("..<") {
 
 Delete `is_literal_zero`; zero-step validity belongs to elaboration.
 
-- [ ] **Step 5: Add the explicit temporary elaborator error**
+- [x] **Step 5: Add the explicit temporary elaborator error**
 
 Add to the existing diagnostic enum:
 
@@ -350,7 +351,7 @@ CollectionItem::Generator(generator) => {
 }
 ```
 
-- [ ] **Step 6: Run targeted and full gates**
+- [x] **Step 6: Run targeted and full gates**
 
 Run in order:
 
@@ -361,9 +362,13 @@ cargo fmt --all -- --check
 git diff --check
 ```
 
-Expected: all commands exit 0; the previous non-exhaustive `Generator` error is absent.
+Observed: Clippy passed with `-D warnings`; workspace nextest passed 227/227; rustfmt check and
+diff check passed; the previous non-exhaustive `Generator` error is absent.
 
-- [ ] **Step 7: Commit the staging boundary**
+- [x] **Step 7: Commit the staging boundary**
+
+Commit: `eef7fbf` (`fix(source): make generator staging explicit`). The temporary task archive and
+session journal commits are bookkeeping only; no source files outside this task were changed.
 
 ```powershell
 git add crates/fcs-core/src/v5 crates/fcs-core/tests/fcs5_phase2.rs
