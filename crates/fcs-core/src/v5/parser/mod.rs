@@ -6,7 +6,7 @@ mod header;
 mod lexer;
 mod tempo;
 
-use crate::v5::version::Version;
+use crate::version::Version;
 
 pub use document::parse_document;
 pub use expression::{parse_expression, parse_type};

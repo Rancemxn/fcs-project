@@ -1,4 +1,4 @@
-use crate::v5::ast::{Beat, DocumentProfile, TempoMap};
+use crate::ast::{Beat, DocumentProfile, TempoMap};
 
 use super::parser::ParseError;
 

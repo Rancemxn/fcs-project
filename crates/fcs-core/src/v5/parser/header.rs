@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::v5::version::{FCS_SOURCE_VERSION, Version};
+use crate::version::{FCS_SOURCE_VERSION, Version};
 
 use super::ParseError;
 

@@ -1,13 +1,13 @@
-use fcs_core::units::Color;
-use fcs_core::v5::ast::{
+use fcs_source::ast::Color;
+use fcs_source::ast::{
     Beat, BinaryOperator, CollectionBlock, CollectionItem, Definition, EntityConstructor,
     EntityExpression, ExpandedEntity, ExpandedField, FunctionStatement, NoteVariant,
     SourceExpression, SourceLiteral, SourceSpan, Type, TypedExpression, TypedExpressionKind,
     TypedValue, UnaryOperator, WithExpression,
 };
-use fcs_core::v5::elaborator::{CompileTimeLimits, Diagnostic, elaborate};
-use fcs_core::v5::parser::{ParseError, parse_document, parse_expression, parse_type};
-use fcs_core::v5::schema::{FieldConstraint, phase2_schema};
+use fcs_source::elaborator::{CompileTimeLimits, Diagnostic, elaborate};
+use fcs_source::parser::{ParseError, parse_document, parse_expression, parse_type};
+use fcs_source::schema::{FieldConstraint, phase2_schema};
 use std::{fs, path::PathBuf};
 
 fn example(name: &str) -> String {
@@ -637,7 +637,7 @@ collections { notes { if missing { tap { gameplay.time: 1beat; }; } } }"#;
 
 #[test]
 fn parses_and_elaborates_the_public_template_fixture() {
-    let document = parse_document(&example("fcs5-templates.fcs")).unwrap();
+    let document = parse_document(&example("templates.fcs")).unwrap();
     let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
     let collection = expanded.collections().next().unwrap();
     assert_eq!(collection.name(), "notes");

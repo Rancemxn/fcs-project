@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::v5::ast::{SourceSpan, Type, TypedValue};
+use crate::ast::{SourceSpan, Type, TypedValue};
 
 use super::Diagnostic;
 

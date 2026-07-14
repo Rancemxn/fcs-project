@@ -1,4 +1,4 @@
-use crate::v5::ast::{Beat, Bpm, TempoMap, TempoPoint};
+use crate::ast::{Beat, Bpm, TempoMap, TempoPoint};
 
 use super::{ParseError, document::strip_comments};
 

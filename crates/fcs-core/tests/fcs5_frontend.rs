@@ -1,6 +1,6 @@
-use fcs_core::v5::ast::{Beat, Bpm, DocumentProfile};
-use fcs_core::v5::parser::{ParseError, parse_document, parse_header};
-use fcs_core::v5::version::{
+use fcs_source::ast::{Beat, Bpm, DocumentProfile};
+use fcs_source::parser::{ParseError, parse_document, parse_header};
+use fcs_source::version::{
     EXECUTION_ABI_VERSION, FCBC_FORMAT_VERSION, FCS_SOURCE_VERSION, Version,
 };
 use std::{fs, path::PathBuf};
@@ -234,8 +234,8 @@ fn rejects_zero_denominator_and_invalid_bpm() {
 
 #[test]
 fn parses_public_fcs5_fixtures() {
-    let fragment = parse_document(&example("fcs5-fragment.fcs")).unwrap();
-    let chart = parse_document(&example("fcs5-chart.fcs")).unwrap();
+    let fragment = parse_document(&example("fragment.fcs")).unwrap();
+    let chart = parse_document(&example("chart.fcs")).unwrap();
     assert_eq!(fragment.profile, DocumentProfile::Fragment);
     assert_eq!(chart.profile, DocumentProfile::Chart);
     assert_eq!(chart.tempo_map.unwrap().points.len(), 2);

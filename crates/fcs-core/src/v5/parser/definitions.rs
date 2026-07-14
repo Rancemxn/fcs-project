@@ -1,4 +1,4 @@
-use crate::v5::ast::{
+use crate::ast::{
     ConstDeclaration, Definition, DefinitionsBlock, FunctionDeclaration, FunctionParameter,
     FunctionStatement, IfStatement, LetStatement, ReturnStatement, SourceSpan,
 };
@@ -183,7 +183,7 @@ impl<'a> DefinitionParser<'a> {
         })
     }
 
-    fn type_until(&mut self, delimiters: &[char]) -> Result<crate::v5::ast::Type, ParseError> {
+    fn type_until(&mut self, delimiters: &[char]) -> Result<crate::ast::Type, ParseError> {
         let (text, _) = self.text_until(delimiters, true)?;
         parse_type(text.trim())
     }
@@ -191,7 +191,7 @@ impl<'a> DefinitionParser<'a> {
     fn expression_until(
         &mut self,
         delimiter: char,
-    ) -> Result<crate::v5::ast::SourceExpression, ParseError> {
+    ) -> Result<crate::ast::SourceExpression, ParseError> {
         let (text, start) = self.text_until(&[delimiter], false)?;
         let leading = text.len() - text.trim_start().len();
         parse_expression_at(text.trim(), self.base + start + leading)

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::v5::ast::{
+use crate::ast::{
     Beat, BinaryOperator, ConstDeclaration, Definition, DefinitionsBlock, FunctionDeclaration,
     FunctionStatement, SourceExpression, SourceLiteral, SourceSpan, Type, TypedValue,
     UnaryOperator,

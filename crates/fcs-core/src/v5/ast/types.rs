@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use crate::units::Color;
+use super::Color;
 
 use super::Beat;
 

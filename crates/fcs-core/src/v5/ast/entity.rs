@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use super::{DocumentProfile, TempoMap};
 use super::{SourceExpression, SourceSpan, Type, TypedValue};
-use crate::v5::version::Version;
+use crate::version::Version;
 
 /// A concrete named collection produced by compile-time expansion.
 #[derive(Debug, Clone, PartialEq)]

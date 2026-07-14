@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::v5::ast::{
+use crate::ast::{
     CollectionBlock, CollectionItem, Document, EntityConstructor, EntityExpression,
     ExpandedCollection, ExpandedEntity, ExpandedField, SourceExpression, SourceSpan,
     TemplateDeclaration, TemplatesBlock, Type, TypedValue, WithExpression,
 };
-use crate::v5::schema::{ConstructionSchema, EntitySchema, FieldConstraint};
+use crate::schema::{ConstructionSchema, EntitySchema, FieldConstraint};
 
 use super::eval::evaluate_with_bindings;
 use super::{CompileTimeLimits, Diagnostic};
@@ -370,7 +370,7 @@ impl<'a> ExpansionContext<'a> {
 
     fn evaluate_fields(
         &self,
-        fields: &[crate::v5::ast::EntityField],
+        fields: &[crate::ast::EntityField],
         schema: &EntitySchema,
         bindings: &BTreeMap<String, TypedValue>,
     ) -> Result<BTreeMap<String, ExpandedField>, Diagnostic> {
@@ -444,7 +444,7 @@ impl<'a> ExpansionContext<'a> {
 }
 
 fn validate_field_type(
-    field: &crate::v5::schema::FieldSchema,
+    field: &crate::schema::FieldSchema,
     value: &TypedValue,
     span: SourceSpan,
 ) -> Result<(), Diagnostic> {

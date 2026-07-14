@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::v5::ast::{
+use crate::ast::{
     Definition, DefinitionsBlock, FunctionStatement, SourceExpression, SourceSpan,
 };
 

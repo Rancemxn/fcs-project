@@ -1,5 +1,5 @@
-use crate::v5::ast::{Document, DocumentProfile, SourceSpan};
-use crate::v5::validation::validate_profile;
+use crate::ast::{Document, DocumentProfile, SourceSpan};
+use crate::validation::validate_profile;
 
 use super::entities::{parse_collections, parse_templates};
 use super::{ParseError, definitions::parse_definitions, parse_header, tempo::parse_tempo_map};

@@ -5,8 +5,8 @@ mod entities;
 mod eval;
 mod scope;
 
-use crate::v5::ast::{Document, ExpandedSourceDocument, SourceSpan, Type};
-use crate::v5::schema::ConstructionSchema;
+use crate::ast::{Document, ExpandedSourceDocument, SourceSpan, Type};
+use crate::schema::ConstructionSchema;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompileTimeLimits {

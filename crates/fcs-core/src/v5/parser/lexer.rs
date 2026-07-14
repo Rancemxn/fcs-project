@@ -1,5 +1,5 @@
-use crate::units::Color;
-use crate::v5::ast::{Beat, SourceLiteral, SourceSpan};
+use crate::ast::Color;
+use crate::ast::{Beat, SourceLiteral, SourceSpan};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Token {

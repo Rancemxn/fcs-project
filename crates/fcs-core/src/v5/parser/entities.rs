@@ -1,4 +1,4 @@
-use crate::v5::ast::{
+use crate::ast::{
     CollectionBlock, CollectionItem, CollectionsBlock, EntityConstructor, EntityExpression,
     EntityField, FieldPath, Generator, GeneratorItem, NoteVariant, SourceRange, SourceSpan,
     TemplateDeclaration, TemplateParameter, TemplatesBlock, Type, WithExpression,

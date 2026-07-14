@@ -1,8 +1,10 @@
+mod color;
 mod definitions;
 mod entity;
 mod time;
 mod types;
 
+pub use color::Color;
 pub use entity::{
     CollectionBlock, CollectionItem, CollectionsBlock, EntityConstructor, EntityExpression,
     EntityField, ExpandedCollection, ExpandedEntity, ExpandedField, ExpandedSourceDocument,
@@ -15,7 +17,7 @@ pub use types::{
     TypedExpressionKind, TypedValue, UnaryOperator,
 };
 
-use crate::v5::version::Version;
+use crate::version::Version;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocumentProfile {

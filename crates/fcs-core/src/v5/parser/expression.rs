@@ -1,4 +1,4 @@
-use crate::v5::ast::{BinaryOperator, SourceExpression, SourceSpan, Type, UnaryOperator};
+use crate::ast::{BinaryOperator, SourceExpression, SourceSpan, Type, UnaryOperator};
 
 use super::ParseError;
 use super::lexer::{Symbol, Token, TokenKind, lex};
