@@ -4,16 +4,22 @@
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
 
+> **Current status (2026-07-14):** I0-A is complete. The pre-cutover worktree is preserved at
+> `archive/fcs4-pre-cutover`, `master` is the active development branch, and the original feature
+> branch remains retained. I0-B / Task 2 (generator staging boundary) is the next unfinished task;
+> the active tree still contains `fcs-core`, `fcs-cli`, `fcs-converter`, and `src/v5` until the
+> later structural cutover tasks execute.
+
 **Goal:** Archive the complete pre-cutover FCS 4 workspace, make `master` the sole development
 branch, replace the mixed `fcs-core`/`v5` tree with an unversioned `fcs-source` crate, establish a
 Chumsky-based parser and stable diagnostic boundary, and finish I0 with a green, auditable
 workspace.
 
-**Architecture:** `fcs-source` owns source AST, lexing/parsing, static semantics, compile-time
-elaboration, construction schema, source versions, and structured diagnostics. FCS 4, the old CLI,
-and the old converter remain only on `archive/fcs4-pre-cutover`; future canonical/runtime/FCBC/
-converter/render/CLI crates are created in their own roadmap stages and cannot use source AST as a
-canonical model.
+**Architecture after Task 4:** `fcs-source` owns source AST, lexing/parsing, static semantics,
+compile-time elaboration, construction schema, source versions, and structured diagnostics. FCS 4,
+the old CLI, and the old converter remain only on `archive/fcs4-pre-cutover`; future
+canonical/runtime/FCBC/converter/render/CLI crates are created in their own roadmap stages and
+cannot use source AST as a canonical model.
 
 **Tech Stack:** Rust 2024, Chumsky 0.11.1 stable APIs, Serde 1 for test manifest structs, TOML
 1.1.2 for conformance manifest parsing, cargo-nextest, Clippy, rustfmt, fd, rg, and ast-grep.
@@ -109,14 +115,14 @@ docs/conformance/fcs5-implementation-matrix.md
 The active workspace no longer contains `crates/fcs-core`, `crates/fcs-cli`, or
 `crates/fcs-converter`.
 
-### Task 1: Commit the exact pre-cutover state and create the archive branch
+### Task 1: Commit the exact pre-cutover state and create the archive branch — completed
 
 **Files:**
 
 - Preserve: all current tracked and untracked work shown by `git status --short`
 - Record in handoff: archive commit SHA and branch names
 
-- [ ] **Step 1: Confirm the expected starting branch and linear history**
+- [x] **Step 1: Confirm the expected starting branch and linear history**
 
 Run:
 
@@ -138,7 +144,7 @@ Expected:
 If `archive/fcs4-pre-cutover` already exists, stop and compare its SHA with the intended snapshot;
 never move or overwrite an existing archive pointer.
 
-- [ ] **Step 2: Commit the pre-cutover generator work without changing it**
+- [x] **Step 2: Commit the pre-cutover generator work without changing it**
 
 Run:
 
@@ -151,7 +157,7 @@ git commit -m "wip(source): preserve pre-cutover generator parser"
 Expected: one commit containing only the four generator-related files. The known non-exhaustive
 elaborator state is allowed in this archival commit and is fixed in Task 2.
 
-- [ ] **Step 3: Commit the Frozen specification and I0 planning state**
+- [x] **Step 3: Commit the Frozen specification and I0 planning state**
 
 Run:
 
@@ -166,7 +172,11 @@ Expected: the commit contains the Frozen specifications, governance, roadmap, co
 review, decisions, I0 plan, implementation matrix, AGENTS changes, and deletion of obsolete dated
 plans. `git status --short` prints nothing.
 
-- [ ] **Step 4: Create and verify the immutable archive pointer**
+The untracked project workflow and Trellis/Codex scaffolding were committed separately as
+`148936d` (`chore: preserve project workflow for source cutover`) so the archive preserves the
+complete inspected worktree without mixing workflow files into the specification commit.
+
+- [x] **Step 4: Create and verify the immutable archive pointer**
 
 Run:
 
@@ -179,11 +189,12 @@ git show -s --format='%H %s' archive/fcs4-pre-cutover
 git ls-tree -r --name-only archive/fcs4-pre-cutover -- crates/fcs-core/src/ast crates/fcs-core/src/parser crates/fcs-core/src/compiler crates/fcs-core/src/bytecode crates/fcs-core/src/vm crates/fcs-cli crates/fcs-converter
 ```
 
-Expected: both SHA outputs equal `$snapshot`; the archive commit subject is
-`docs: freeze specifications and plan the source cutover`; the final command lists the old V4 core,
+Expected and observed: both SHA outputs equal `$snapshot`; the archive snapshot is
+`148936d17b671bb34968c88969ab748c818f9fc0` with subject
+`chore: preserve project workflow for source cutover`; the final command lists the old FCS 4 core,
 CLI, and converter paths preserved by the archive.
 
-- [ ] **Step 5: Fast-forward `master` and make it the active development branch**
+- [x] **Step 5: Fast-forward `master` and make it the active development branch**
 
 Run:
 
@@ -195,9 +206,11 @@ git rev-parse HEAD
 git rev-parse archive/fcs4-pre-cutover
 ```
 
-Expected: current branch is `master`; both SHA outputs are equal; no merge commit is created.
+Expected and observed at cutover time: current branch is `master`; both SHA outputs are equal; no
+merge commit is created. Trellis subsequently added task-archive and session-journal bookkeeping
+commits on `master`; the archive pointer remains unchanged and is an ancestor of current `master`.
 
-- [ ] **Step 6: Do not delete the former feature branch**
+- [x] **Step 6: Do not delete the former feature branch**
 
 Run:
 
@@ -207,6 +220,11 @@ git branch --list master archive/fcs4-pre-cutover codex/fcs5-phase2-compile-time
 
 Expected: all three branches exist. Branch cleanup is outside I0 and requires a separate explicit
 decision.
+
+**I0-A evidence:** source preservation commit `967e952`, specification/conformance commit
+`0ff9cec`, workflow preservation/archive snapshot `148936d`, archive branch
+`archive/fcs4-pre-cutover`, active branch `master`, and retained branch
+`codex/fcs5-phase2-compile-time-language`. Task 2 is the next unfinished task.
 
 ### Task 2: Close the generator staging boundary before moving files
 

@@ -15,7 +15,7 @@ Render Profile 与 CLI 的同一条确定性工具链。
   `template`、`generate` 或 `emit`。
 - 运行时只有一个物理主时钟；判定时间与滚动坐标分离，但不建立 line-local 物理时钟。
 - 不静默修复非法谱面；可选 repair 必须生成机器可读记录。
-- I0 开始前用 `archive/fcs4-pre-cutover` 保存完整旧工具链；活动 `master` 只保留一套
+- I0-A 用 `archive/fcs4-pre-cutover` 保存完整旧工具链；I0 完成后活动 `master` 只保留一套
   无版本实现前缀的 FCS source API，不建立 FCS 4 兼容层。
 - 每个实施阶段结束前依次运行 Clippy、nextest、rustfmt check 和 diff check。
 - 当前未提交 generator 工作在编译期语言规范冻结后重新审计，不以现状反向定义语法。
@@ -156,6 +156,10 @@ RenderSection、semantic conformance 和 reference raster conformance。
 
 ### I0：健康基线与规范对账
 
+当前进度：I0-A（快照、归档和 `master` 分支切换）已完成；I0-B 及后续源码迁移、parser
+重建和 conformance gate 尚未开始。活动树仍处于 `fcs-core`/`src/v5` 候选实现状态，不能
+将归档完成误记为 source implementation 已完成。
+
 - 提交完整切换前快照并建立永久 `archive/fcs4-pre-cutover`；
 - fast-forward `master`，删除活动主线中的 FCS 4、旧 converter 和旧 CLI；
 - 将 `fcs-core/src/v5` 提升为无版本前缀的独立 `fcs-source` crate；
@@ -259,8 +263,10 @@ RenderSection、semantic conformance 和 reference raster conformance。
 
 ### I0：健康基线与规范对账
 
-- **I0.1 快照与归档**：提交当前 generator、Frozen 文档和 conformance 工作；创建指向精确
-  切换前提交的 `archive/fcs4-pre-cutover`，然后 fast-forward `master`。
+- **I0.1 快照与归档（已完成）**：提交当前 generator、Frozen 文档、conformance 和项目
+  workflow 工作；创建指向精确切换前提交 `148936d17b671bb34968c88969ab748c818f9fc0` 的
+  `archive/fcs4-pre-cutover`，然后 fast-forward `master`。后续 Trellis bookkeeping commits
+  不移动归档指针。
 - **I0.2 Generator staging**：只接受 `..<`/`..=`，拒绝裸 `..`；在 I2 完成展开前返回结构化
   `implementation.feature-unavailable`，不得留下 non-exhaustive match 或部分输出。
 - **I0.3 唯一 crate 切换**：删除活动 FCS 4 core、旧 CLI、旧 converter 和第二 IR；将候选
@@ -472,7 +478,7 @@ git diff --check
 - S1–S12：完成；逐章审查和首批机器可读 conformance fixture 已落地；
 - S13：完成；FCS 5.0.0、FCBC 2.0.0、ABI 1.0.0、Render 1.0.0、Conversion 1.0.0
   已于 2026-07-14 Frozen；
-- I0 设计与逐步计划已确认，尚未执行；执行前先建立 `archive/fcs4-pre-cutover`；
-- 已有 Phase 1/2 source candidate：等待提升为唯一 `fcs-source` 并按 S1–S4 对账；
+- I0-A 快照与归档已完成；I0-B 及后续任务尚未执行；
+- 已有 Phase 1/2 source candidate：仍等待提升为唯一 `fcs-source` 并按 S1–S4 对账；
 - 当前 generator AST/parser：接受裸 `..` 且未接入 elaborator，I0 必须先关闭该偏差；
 - I3–I10：未开始。

@@ -4,11 +4,12 @@
 
 ## 仓库结构与权威资料
 
-- 当前工作树仍处于 I0 切换前状态，包含 `fcs-core`、旧 `fcs-converter` 和旧 `fcs-cli`。
-  已确认的 I0 目标由 `docs/decisions/0006-unversioned-source-cutover.md` 定义，逐步执行见
+- 当前工作树已完成 I0-A 快照与分支切换：`master` 是活动开发分支，
+  `archive/fcs4-pre-cutover` 保存完整切换前工作树；活动树暂时仍包含 `fcs-core`、旧
+  `fcs-converter` 和旧 `fcs-cli`，因为 I0-B 的唯一 source crate 切换尚未开始。已确认的
+  I0 目标由 `docs/decisions/0006-unversioned-source-cutover.md` 定义，逐步执行见
   `docs/plans/i0-source-cutover.md`：
-  - 先用 `archive/fcs4-pre-cutover` 保存完整旧工作树；
-  - 活动 `master` 删除 FCS 4、旧 converter 和旧 CLI；
+  - I0-B 删除活动 FCS 4、旧 converter 和旧 CLI；
   - `crates/fcs-core/src/v5` 提升为唯一、无版本前缀的 `crates/fcs-source`；
   - 后续 canonical/runtime/FCBC/converter/render/CLI crate 到对应路线阶段按需创建。
 - I0 不保留 `fcs_core`、`v5` module、feature flag 或兼容 re-export。`refer/chumsky` 只用于
@@ -66,9 +67,9 @@
   ```
 
 - 任务结束时运行 `cargo fmt --all` 统一 Rust 代码格式。若只需检查格式，可使用 `cargo fmt --all -- --check`。
-- 修改 source parser 或 elaborator 时先补充失败测试；I0 后 converter、VM 和旧 bytecode 不在
-  活动 workspace。未来跨格式语义变化必须针对 canonical model、ConversionReport、round-trip
-  fixture 和 `examples/` 验证，converter 不得直接消费 source AST。
+- 修改 source parser 或 elaborator 时先补充失败测试；完成 I0-B 后 converter、VM 和旧 bytecode
+  才不在活动 workspace。未来跨格式语义变化必须针对 canonical model、ConversionReport、
+  round-trip fixture 和 `examples/` 验证，converter 不得直接消费 source AST。
 - 使用校验脚本或外部模拟器验证解析逻辑时，先确认校验脚本与模拟器的代码逻辑一致，不能用有问题的校验脚本得出结论。
 - 遇到规范未定义的谱面解析边界时，先记录假设并按通用语义继续推进；完成后在交付说明中明确告知用户这些假设和潜在影响。
 
