@@ -445,30 +445,86 @@ collections {
     ));
 }
 
-#[test]
-fn parses_exact_generator_range_and_emit_source_nodes() {
-    let source = r#"#fcs 5.0.0
-format { profile: fragment; }
-collections {
-  notes {
-    generate at: beat in 0beat..4beat step 1beat {
-      emit tap { gameplay.time: at; };
-    }
-  }
-}"#;
+fn generator_source(operator: &str, step: &str) -> String {
+    format!(
+        "#fcs 5.0.0\n\
+         format {{ profile: fragment; }}\n\
+         collections {{\n\
+           notes {{\n\
+             generate at: beat in 0beat{operator}4beat step {step} {{\n\
+               emit tap {{ gameplay.time: at; }};\n\
+             }}\n\
+           }}\n\
+         }}"
+    )
+}
 
-    let document = parse_document(source).expect("generator source should parse");
+#[test]
+fn parses_only_frozen_generator_range_operators() {
+    for (operator, inclusive_end) in [("..<", false), ("..=", true)] {
+        let source = generator_source(operator, "1beat");
+        let document = parse_document(&source).expect("Frozen generator range should parse");
+        let CollectionItem::Generator(generator) = &document.collections[0].items[0] else {
+            panic!("expected generator collection item");
+        };
+        assert_eq!(generator.variable, "at");
+        assert_eq!(generator.variable_type, Type::Beat);
+        assert_eq!(generator.range.inclusive_end, inclusive_end);
+        assert_eq!(generator.body.len(), 1);
+        assert_eq!(generator.span.start, source.find("generate").unwrap());
+        assert!(generator.span.end > generator.span.start);
+        assert!(generator.span.end <= source.len());
+    }
+}
+
+#[test]
+fn rejects_bare_generator_range_operator() {
+    let source = generator_source("..", "1beat");
+    assert_eq!(
+        parse_document(&source),
+        Err(ParseError::InvalidSyntax("generator range"))
+    );
+}
+
+#[test]
+fn retains_zero_generator_step_for_later_static_semantics() {
+    let source = generator_source("..<", "0beat");
+    let document = parse_document(&source).expect("zero step is syntactically valid");
     let CollectionItem::Generator(generator) = &document.collections[0].items[0] else {
         panic!("expected generator collection item");
     };
-    assert_eq!(generator.variable, "at");
-    assert_eq!(generator.variable_type, Type::Beat);
-    assert!(!generator.range.inclusive_end);
-    assert_eq!(generator.body.len(), 1);
-    assert_eq!(
-        generator.span,
-        SourceSpan::new(source.find("generate").unwrap(), source.len() - 2)
-    );
+    assert!(matches!(
+        generator.range.step,
+        SourceExpression::Literal {
+            literal: SourceLiteral::Beat(value),
+            ..
+        } if value == Beat::new(0, 1).unwrap()
+    ));
+}
+
+#[test]
+fn generator_elaboration_fails_before_partial_output() {
+    let source = "#fcs 5.0.0\n\
+         format { profile: fragment; }\n\
+         collections {\n\
+           notes {\n\
+             tap { gameplay.time: 0beat; };\n\
+             generate at: beat in 1beat..<3beat step 1beat {\n\
+               emit tap { gameplay.time: at; };\n\
+             }\n\
+           }\n\
+         }"
+    .to_string();
+    let document = parse_document(&source).expect("generator source should parse");
+    let error = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect_err("I0 must not expand generators");
+    assert!(matches!(
+        error,
+        Diagnostic::FeatureUnavailable {
+            feature: "compile-time-generator",
+            span,
+        } if span.start == source.find("generate").unwrap()
+    ));
 }
 
 #[test]

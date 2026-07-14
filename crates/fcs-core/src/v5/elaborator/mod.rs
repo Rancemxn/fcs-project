@@ -33,6 +33,10 @@ impl Default for CompileTimeLimits {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Diagnostic {
+    FeatureUnavailable {
+        feature: &'static str,
+        span: SourceSpan,
+    },
     ShadowedBinding {
         name: String,
         span: SourceSpan,

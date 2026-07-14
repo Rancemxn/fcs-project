@@ -1,7 +1,7 @@
 use crate::v5::ast::{
     CollectionBlock, CollectionItem, CollectionsBlock, EntityConstructor, EntityExpression,
-    EntityField, FieldPath, Generator, GeneratorItem, NoteVariant, SourceExpression, SourceRange,
-    SourceSpan, TemplateDeclaration, TemplateParameter, TemplatesBlock, Type, WithExpression,
+    EntityField, FieldPath, Generator, GeneratorItem, NoteVariant, SourceRange, SourceSpan,
+    TemplateDeclaration, TemplateParameter, TemplatesBlock, Type, WithExpression,
 };
 
 use super::{ParseError, expression::parse_expression_at, expression::parse_type};
@@ -151,12 +151,10 @@ fn parse_generator(cursor: &mut Cursor<'_>, start: usize) -> Result<Generator, P
         range_start_text.trim(),
         cursor.position_before(range_start_text) + range_start_offset,
     )?;
-    let inclusive_end = if cursor.take_text("..=") {
-        true
-    } else if cursor.take_text("..") {
-        // `..<` is retained as a compatibility spelling for the documented half-open form.
-        let _ = cursor.take_char('<');
+    let inclusive_end = if cursor.take_text("..<") {
         false
+    } else if cursor.take_text("..=") {
+        true
     } else {
         return Err(ParseError::InvalidSyntax("generator range"));
     };
@@ -175,9 +173,6 @@ fn parse_generator(cursor: &mut Cursor<'_>, start: usize) -> Result<Generator, P
         range_step_text.trim(),
         cursor.position_before(range_step_text) + range_step_offset,
     )?;
-    if is_literal_zero(&range_step) {
-        return Err(ParseError::InvalidSyntax("generator step"));
-    }
     cursor.char('{')?;
     let body = parse_generator_items_until(cursor, '}')?;
     cursor.char('}')?;
@@ -240,20 +235,6 @@ fn parse_generator_items_until(
         }
     }
     Ok(items)
-}
-
-fn is_literal_zero(expression: &SourceExpression) -> bool {
-    match expression {
-        SourceExpression::Literal {
-            literal: crate::v5::ast::SourceLiteral::Int(value),
-            ..
-        } => *value == 0,
-        SourceExpression::Literal {
-            literal: crate::v5::ast::SourceLiteral::Beat(value),
-            ..
-        } => value.numerator() == 0,
-        _ => false,
-    }
 }
 
 fn parse_entity_expression(cursor: &mut Cursor<'_>) -> Result<EntityExpression, ParseError> {

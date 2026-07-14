@@ -127,6 +127,12 @@ impl<'a> ExpansionContext<'a> {
                 )?;
                 self.push_collection_entity(entity, expected_type, collection_name, output)?;
             }
+            CollectionItem::Generator(generator) => {
+                return Err(Diagnostic::FeatureUnavailable {
+                    feature: "compile-time-generator",
+                    span: generator.span,
+                });
+            }
         }
         Ok(())
     }
