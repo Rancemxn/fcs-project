@@ -4,11 +4,11 @@
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
 
-> **Current status (2026-07-14):** I0-A and Task 2 generator staging are complete. The pre-cutover
-> worktree is preserved at `archive/fcs4-pre-cutover`, `master` is the active development branch,
-> and the original feature branch remains retained. Task 3 (structural test) and Task 4 (unique
-> `fcs-source` crate cutover) are the next unfinished work; the active tree still contains
-> `fcs-core`, `fcs-cli`, `fcs-converter`, and `src/v5` until those structural tasks execute.
+> **Current status (2026-07-14):** I0-A, Task 2 generator staging, Task 3 structural testing, and
+> Task 4 unique `fcs-source` crate cutover are complete. The pre-cutover worktree is preserved at
+> `archive/fcs4-pre-cutover`, `master` is the active development branch, and the original feature
+> branch remains retained. The next unfinished work is Task 5 stable diagnostics; the active
+> workspace now contains only `fcs-source` and its 90 passing source candidate tests.
 
 **Goal:** Archive the complete pre-cutover FCS 4 workspace, make `master` the sole development
 branch, replace the mixed `fcs-core`/`v5` tree with an unversioned `fcs-source` crate, establish a

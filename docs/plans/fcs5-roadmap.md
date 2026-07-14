@@ -156,10 +156,10 @@ RenderSection、semantic conformance 和 reference raster conformance。
 
 ### I0：健康基线与规范对账
 
-当前进度：I0-A（快照、归档和 `master` 分支切换）以及 I0.2 generator staging 已完成；
-I0.3 唯一 crate 切换、诊断边界、parser 重建和 conformance gate 尚未开始。活动树仍处于
-`fcs-core`/`src/v5` 候选实现状态，generator 也尚未展开；不能将局部 staging 完成误记为
-完整 source implementation 已完成。
+当前进度：I0-A（快照、归档和 `master` 分支切换）、I0.2 generator staging 以及 I0.3 唯一
+crate 切换已完成；I0.4 诊断边界、I0.5 parser 重建和 conformance gate 尚未开始。活动树现已
+只有 `fcs-source`；generator 仍按 I0 边界不展开，不能将局部 source candidate 测试通过误记
+为完整 source implementation 已完成。
 
 - 提交完整切换前快照并建立永久 `archive/fcs4-pre-cutover`；
 - fast-forward `master`，删除活动主线中的 FCS 4、旧 converter 和旧 CLI；
@@ -481,8 +481,9 @@ git diff --check
 - S1–S12：完成；逐章审查和首批机器可读 conformance fixture 已落地；
 - S13：完成；FCS 5.0.0、FCBC 2.0.0、ABI 1.0.0、Render 1.0.0、Conversion 1.0.0
   已于 2026-07-14 Frozen；
-- I0-A 快照与归档、I0.2 generator staging 已完成；I0.3 及后续任务尚未执行；
-- 已有 Phase 1/2 source candidate：仍等待提升为唯一 `fcs-source` 并按 S1–S4 对账；
+- I0-A 快照与归档、I0.2 generator staging、I0.3 唯一 crate 切换已完成；90 个 candidate
+  tests 通过；I0.4 及后续任务尚未执行；
+- 已有 Phase 1/2 source candidate：已提升为唯一 `fcs-source`，仍需按 S1–S4 对账；
 - 当前 generator AST/parser：已拒绝裸 `..`，zero-step 语法保留给 I2；elaborator 在 I0
   暂不展开 generator 并返回临时 feature-unavailable 诊断；稳定诊断 API 仍待 I0.4；
 - I3–I10：未开始。

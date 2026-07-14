@@ -5,14 +5,16 @@
 本矩阵记录 Frozen 规范与参考实现之间的可审计关系。它不定义格式语义；发生冲突时以
 `fcs.md`、`fcbc.md`、`fcs-render.md`、`fcs-conversion.md` 和绑定 conformance corpus 为准。
 
-I0-A（快照、归档和 `master` 分支切换）已完成；I0-B 及后续 source implementation 尚未
-执行。下表中的实现路径仍使用 I0 完成后的目标路径，避免 crate cutover 后立即失效；“现状”
-继续描述当前活动树中的候选实现，并不因为归档分支建立而变成已实现。
+I0-A（快照、归档和 `master` 分支切换）以及 I0-B（结构测试和唯一 `fcs-source` crate
+切换）已完成；I0-C 及后续 source implementation 尚未执行。下表中的实现路径现在已经是
+活动 workspace 的实际路径；“现状”继续描述 candidate source 的条款偏差，不因为 crate
+cutover 或测试通过而自动变成完整规范实现。
 
 当前进度证据：`archive/fcs4-pre-cutover` 指向
 `148936d17b671bb34968c88969ab748c818f9fc0`，`master` 已从该快照 fast-forward，原 feature
-branch 保留。generator staging 已完成；下一项实现工作是 I0.3 唯一 crate 切换。在后续
-诊断、parser 和 source crate 任务完成前，其他 source rows 仍按下表的实际偏差记录。
+branch 保留。I0.3 cutover commit 为 `16e7db3`，workspace quality gate 为 90/90 tests passed；
+下一项实现工作是 I0.4 稳定诊断。在后续诊断、parser 和 conformance gate 完成前，其他 source
+rows 仍按下表的实际偏差记录。
 
 允许的状态只有：`implemented`、`partial`、`not-started` 和 `blocked-by-I<n>`。
 
