@@ -74,3 +74,37 @@ Applied Frozen generator staging: accept only ..</ and ..=, reject bare .., reta
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Record generator staging progress
+
+**Date**: 2026-07-14
+**Task**: Record generator staging progress
+**Package**: fcs-core
+**Branch**: `master`
+
+### Summary
+
+Synchronized the main I0 plan, roadmap, and implementation matrix after generator staging completed. Marked Task 2/I0.2 complete, documented the eef7fbf implementation evidence, and set I0.3 unique crate cutover as the next step.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2b1f168` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
