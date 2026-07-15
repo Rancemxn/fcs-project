@@ -24,7 +24,7 @@
   conformance fixture；实现现状不能静默成为新规范。
 - `examples/` 保存各格式输入样例；I0 删除活动 FCS 4 examples，但保留 PGR/RPE/PEC 与版权
   输入，供未来 converter 重建时复用。旧 converter 测试由归档分支保存，不迁移到 source crate。
-- `CLAUDE.md` 中的项目级约定同样适用；本文件对搜索工具和 Context7 的规则作明确补充。
+- https://sub.wessvan.com/本文件对搜索工具和 Context7 的规则作明确补充。
 
 ## 搜索与代码理解
 
