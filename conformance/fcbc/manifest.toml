@@ -11,3 +11,8 @@ mutations = "mutations.toml"
 id = "embedded-resource"
 manifest = "embedded-resource.toml"
 mutations = "embedded-resource-mutations.toml"
+
+[[fixture]]
+id = "nonempty-execution"
+manifest = "nonempty-execution.toml"
+mutations = "nonempty-execution-mutations.toml"

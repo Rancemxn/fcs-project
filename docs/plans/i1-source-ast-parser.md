@@ -4,11 +4,11 @@
 > tests, implementation, review, and task gate pass. No specific agent skill or orchestration
 > framework is required.
 
-> **Current status (2026-07-15):** Revised against the S14 Source grammar closure and blocked until
-> S15 completes the FCS/FCBC/Render/Conversion cross-spec changes, all five candidate version domains
-> pass joint and independent re-review, return to Frozen, and the user confirms this plan again. Do not
-> begin Rust
-> implementation before that gate. I0 remains the accepted infrastructure baseline;
+> **Current status (2026-07-16):** Revised against the S14 Source grammar closure and blocked until
+> all five S15 version domains are Frozen, independent review has no open Critical/Important finding,
+> this plan matches the final specifications, and the I0/prerequisite quality gate passes. Enter I1
+> automatically when all four conditions hold; no further user confirmation is required. Do not begin
+> Rust implementation before that gate. I0 remains the accepted infrastructure baseline;
 > `e25352991d626fc8b1187d7a757e251038ea1f4f` is its historical
 > verification commit, not the required implementation-start HEAD.
 
@@ -71,8 +71,9 @@ no undefined nonterminal, every Core source example follows the same grammar, th
 grammar baseline remains bound, and the current 39-entry FCS manifest is internally valid. It must
 additionally confirm that the S15 ADR 0007–0009 changes do not leave a Core/FCBC/ABI/Render/Conversion
 boundary unresolved, and record the current Frozen hashes for all five version domains. If
-that gate changes source syntax or diagnostic ownership, update this plan and obtain user
-confirmation again. Planning text cannot fill any remaining normative gap.
+that gate changes source syntax or diagnostic ownership, update this plan and independently verify
+that it matches the final clauses; keep the gate closed while any Critical/Important finding remains.
+Planning text cannot fill any remaining normative gap, but no additional user confirmation is required.
 
 ## Baseline and preserved invariants
 
@@ -535,5 +536,6 @@ The I1 handoff must report:
   normative conformance inputs/expected files, and `archive/fcs4-pre-cutover` were not changed during
   I1 implementation.
 
-Do not begin I2 in the same implementation task. I2 starts only after I1 final review is accepted
-and a separate I2 plan is created and confirmed.
+Do not begin I2 in the same implementation task. Start I2 automatically in a separate implementation
+task only after its related specifications are Frozen, independent review has no open
+Critical/Important finding, the I2 plan matches the final clauses, and the I1 quality gate passes.

@@ -3,8 +3,11 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use crc::{CRC_32_ISO_HDLC, Crc};
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
+
+const FCBC_SECTION_CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -62,12 +65,29 @@ struct FcbcGoldenManifest {
     chart_count: u32,
     resource_count: usize,
     exact_descriptors_only: bool,
+    expect: FixtureExpectation,
     path: String,
     decoded_length: u64,
     sha256: String,
+    execution: Option<FcbcExecutionExpectation>,
     #[serde(default)]
     resource: Vec<FcbcResourceEntry>,
     section: Vec<FcbcSectionEntry>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FcbcExecutionExpectation {
+    vector: String,
+    constant_count: usize,
+    descriptor_count: usize,
+    expression_node_count: usize,
+    distance_count: usize,
+    line_count: usize,
+    note_count: usize,
+    descriptor_kinds: Vec<String>,
+    distance_classifications: Vec<String>,
+    lazy_opcodes: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -633,7 +653,7 @@ fn typed_manifests_load_with_bound_counts() {
     assert_eq!(conversion.schema_version, 2);
     assert_eq!(root.suite.len(), 6);
     assert_eq!(fcs.fixture.len(), 39);
-    assert_eq!(fcbc.fixture.len(), 2);
+    assert_eq!(fcbc.fixture.len(), 3);
     assert_eq!(render.fixture.len(), 1);
     assert_eq!(render.source_fixture.len(), 3);
     assert_eq!(render.binding_fixture.len(), 1);
@@ -690,6 +710,19 @@ fn manifests_preserve_integrity_invariants() {
             );
         }
     }
+
+    let execution_suite = root
+        .suite
+        .iter()
+        .find(|suite| suite.id == "execution-abi")
+        .expect("root manifest must bind the Execution ABI suite");
+    assert_eq!(execution_suite.manifest, "fcbc/manifest.toml");
+    let numeric_suite = root
+        .suite
+        .iter()
+        .find(|suite| suite.id == "fcs-core-numeric")
+        .expect("root manifest must bind the Core numeric suite");
+    assert_eq!(numeric_suite.manifest, "fcs5/expected/numeric-vectors.toml");
 
     let mut fixture_ids = HashSet::new();
     for fixture in &fcs.fixture {
@@ -792,6 +825,7 @@ fn manifests_preserve_integrity_invariants() {
     assert_eq!(fcbc.execution_abi_version, "1.0.0");
     let expected_section_types: Vec<u32> = (1..=13).chain(std::iter::once(20)).collect();
     let mut fcbc_fixture_ids = HashSet::new();
+    let mut execution_fixture_count = 0;
     for fixture in &fcbc.fixture {
         assert!(
             fcbc_fixture_ids.insert(&fixture.id),
@@ -817,12 +851,62 @@ fn manifests_preserve_integrity_invariants() {
         assert_eq!(golden.fcbc_version, fcbc.fcbc_version);
         assert_eq!(golden.execution_abi_version, fcbc.execution_abi_version);
         assert_eq!(golden.source_fcs_version, "5.0.0");
-        assert_eq!(golden.container_profile, "runtime");
-        assert_eq!(golden.document_profile, "fragment");
         assert_eq!(golden.chart_count, 1);
         assert!(golden.exact_descriptors_only);
+        assert_eq!(golden.expect, FixtureExpectation::Success);
         assert_eq!(golden.resource_count, golden.resource.len());
         assert!(is_lower_hex(&golden.sha256, 64));
+        if let Some(execution) = &golden.execution {
+            execution_fixture_count += 1;
+            assert_eq!(fixture.id, "nonempty-execution");
+            assert_eq!(golden.container_profile, "strict-runtime");
+            assert_eq!(golden.document_profile, "chart");
+            assert_regular_file_below(
+                &fcbc_base,
+                &execution.vector,
+                &canonical_conformance,
+                &format!("FCBC fixture {} execution vector", fixture.id),
+            );
+            for (name, count) in [
+                ("constants", execution.constant_count),
+                ("descriptors", execution.descriptor_count),
+                ("expression nodes", execution.expression_node_count),
+                ("distances", execution.distance_count),
+                ("lines", execution.line_count),
+                ("notes", execution.note_count),
+            ] {
+                assert!(count > 0, "FCBC fixture {} has no {name}", fixture.id);
+            }
+            for (name, values) in [
+                ("descriptor kinds", &execution.descriptor_kinds),
+                (
+                    "distance classifications",
+                    &execution.distance_classifications,
+                ),
+                ("lazy opcodes", &execution.lazy_opcodes),
+            ] {
+                assert!(
+                    !values.is_empty() && values.iter().all(|value| !value.is_empty()),
+                    "FCBC fixture {} has empty {name}",
+                    fixture.id
+                );
+                let unique: HashSet<_> = values.iter().collect();
+                assert_eq!(
+                    unique.len(),
+                    values.len(),
+                    "FCBC fixture {} repeats a value in {name}",
+                    fixture.id
+                );
+            }
+        } else {
+            assert!(
+                matches!(fixture.id.as_str(), "minimal-runtime" | "embedded-resource"),
+                "FCBC fixture {} needs an [execution] table",
+                fixture.id
+            );
+            assert_eq!(golden.container_profile, "runtime");
+            assert_eq!(golden.document_profile, "fragment");
+        }
         assert_eq!(
             golden
                 .section
@@ -840,6 +924,12 @@ fn manifests_preserve_integrity_invariants() {
         );
         let bytes = decode_hex_file(&fcbc_base.join(&golden.path));
         assert_eq!(bytes.len() as u64, golden.decoded_length);
+        assert_eq!(
+            sha256_lower(&bytes),
+            golden.sha256,
+            "FCBC fixture {} decoded SHA-256 mismatch",
+            fixture.id
+        );
         assert_eq!(&bytes[0..4], b"FCSB");
         assert_eq!(read_u16_le(&bytes, 4), 128);
         assert_eq!(read_u32_le(&bytes, 36), golden.section.len() as u32);
@@ -869,9 +959,17 @@ fn manifests_preserve_integrity_invariants() {
             assert_eq!(bytes[entry + 12], 3);
             assert_eq!(read_u64_le(&bytes, entry + 16), section.offset);
             assert_eq!(read_u64_le(&bytes, entry + 24), section.length);
+            let expected_crc =
+                u32::from_str_radix(&section.crc32, 16).expect("validated section CRC hex");
+            assert_eq!(read_u32_le(&bytes, entry + 32), expected_crc);
             assert_eq!(
-                read_u32_le(&bytes, entry + 32),
-                u32::from_str_radix(&section.crc32, 16).expect("validated section CRC hex")
+                FCBC_SECTION_CRC.checksum(
+                    &bytes[section.offset as usize..(section.offset + section.length) as usize]
+                ),
+                expected_crc,
+                "FCBC fixture {} section {} CRC-32/ISO-HDLC mismatch",
+                fixture.id,
+                section.name
             );
             covered_end = section.offset + section.length;
         }
@@ -899,7 +997,15 @@ fn manifests_preserve_integrity_invariants() {
             );
             let start = (resource_data.offset + resource.data_offset) as usize;
             let end = start + payload.len();
-            assert_eq!(&bytes[start..end], payload);
+            let actual_payload = &bytes[start..end];
+            assert_eq!(actual_payload, payload);
+            assert_eq!(
+                sha256_lower(actual_payload),
+                resource.sha256,
+                "FCBC fixture {} resource {} SHA-256 mismatch",
+                fixture.id,
+                resource.canonical_textual_id
+            );
             resource_cursor += resource.data_length;
         }
         assert_eq!(resource_cursor, resource_data.length);
@@ -935,6 +1041,7 @@ fn manifests_preserve_integrity_invariants() {
             );
         }
     }
+    assert_eq!(execution_fixture_count, 1);
 
     assert_eq!(render.render_profile_version, "1.0.0");
     let mut render_ids = HashSet::new();

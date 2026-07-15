@@ -18,19 +18,24 @@
 - `docs/specification-governance.md` 是规范候选版本、当前状态、变更流程和冻结条件的唯一当前
   入口；不要在本文件复制容易过期的完整状态表。旧 freeze/review 文件只保存其发生时的审计
   事实，不覆盖治理文件中的当前状态。
-- S15 五个版本域完成联合审计与独立复审、重新 Frozen，且用户再次确认 I1 计划前，不得开始
-  I1 Rust 实现。Source grammar closure 的已审范围和历史证据见
+- I1 Rust 实现使用客观阶段门：S15 五个相关版本域均为 Frozen、独立复审没有未关闭的
+  Critical/Important finding、I1 阶段计划与最终规范一致，且 I0/前置阶段质量门通过。四项条件
+  全部满足后自动进入 I1，无需再次取得用户确认；I1–I10 的阶段衔接同理。Source grammar closure
+  的已审范围和历史证据见
   `docs/reviews/2026-07-15-fcs5-source-grammar-closure-review.md`；当前 authoring/canonical
   closure 的 delta 与跨规范 gate 见
   `docs/reviews/2026-07-15-fcs5-authoring-canonical-closure-review.md`；FCBC 2/Execution ABI 1 的
   ResourceData、exact-only 与 schema 2 golden delta 见
-  `docs/reviews/2026-07-15-fcbc2-execution-abi-closure-review.md`；Render stable-resource binding、
+  `docs/reviews/2026-07-15-fcbc2-execution-abi-closure-review.md`；非空 ABI writer→static
+  bytes→independent loader/evaluator、bits/trace/direct-seek 与 mutation 的闭合和独立复审见
+  `docs/reviews/2026-07-16-fcbc2-execution-abi-nonempty-review.md`；Render stable-resource binding、
   exact descriptor 与 no-source-text delta 见
   `docs/reviews/2026-07-15-render1-resource-binding-closure-review.md`；Conversion parser/profile/Repair
   分层、12-profile registry、mapping/selection vector 与 no-source-snapshot projection 见
-  `docs/reviews/2026-07-15-conversion1-semantic-profile-closure-review.md`。四规范联合候选自检、当前
-  hash/test evidence、仍开放的 ABI/Render/Conversion/Core fixture blocker 与独立复审要求统一见
-  `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md`；该文件不表示重新 Frozen。
+  `docs/reviews/2026-07-15-conversion1-semantic-profile-closure-review.md`。四规范联合候选自检及其
+  dated amendment、当前 hash/test evidence、仍开放的 Render/Conversion/Core fixture blocker 与最终
+  联合独立复审要求统一见 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md`；该文件及
+  ABI blocker 的单域关闭都不表示重新 Frozen。
 - `docs/plans/fcs5-roadmap.md` 是唯一总实施路线图；最近完成阶段的详细记录为
   `docs/plans/i0-source-cutover.md`。I1 的独立阶段计划草案为
   `docs/plans/i1-source-ast-parser.md`。计划只能安排工作，不能创造格式语义。

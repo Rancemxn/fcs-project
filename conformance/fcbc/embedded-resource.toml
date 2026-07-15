@@ -8,6 +8,7 @@ document_profile = "fragment"
 chart_count = 1
 resource_count = 1
 exact_descriptors_only = true
+expect = "success"
 path = "embedded-resource.hex"
 decoded_length = 1021
 sha256 = "a0056fdbd19c05918d8999e89f86c6f59f749ba8d9e52ba00ace5a63a27eccde"

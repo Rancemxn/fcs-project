@@ -9,6 +9,7 @@ description = "FCS source parser and compile-time elaborator"
 chumsky.workspace = true
 
 [dev-dependencies]
+crc.workspace = true
 proptest.workspace = true
 serde.workspace = true
 sha2.workspace = true

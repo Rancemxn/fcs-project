@@ -23,7 +23,7 @@ manifest = "fcbc/manifest.toml"
 id = "execution-abi"
 specification = "FCS Execution ABI"
 version = "1.0.0"
-manifest = "fcs5/expected/numeric-vectors.toml"
+manifest = "fcbc/manifest.toml"
 
 [[suite]]
 id = "render-profile"

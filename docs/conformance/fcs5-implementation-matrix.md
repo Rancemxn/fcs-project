@@ -1,6 +1,6 @@
 # FCS 5 规范—实现—测试矩阵
 
-状态日期：2026-07-15
+状态日期：2026-07-16
 
 本矩阵记录权威规范与参考实现之间的可审计关系。它不定义格式语义；发生冲突时以
 `fcs.md`、`fcbc.md`、`fcs-render.md`、`fcs-conversion.md` 和绑定 conformance corpus 为准。
@@ -19,6 +19,11 @@ S15 联合候选自检、当前 root/suite/tree hash 和未关闭 blocker 见
 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md`。该 review 明确没有 canonical/FCBC/ABI/
 converter/Render 实现证据，不得用其 135 个 I0 tests 提升下表实现状态。
 
+2026-07-16 新增的非空 FCBC/Execution ABI artifact 由固定 test-only writer、checked-in static bytes、
+独立 test-only loader/evaluator、bits/trace/direct-seek vector 与 mutation corpus 构成，并通过独立复审，
+见 `docs/reviews/2026-07-16-fcbc2-execution-abi-nonempty-review.md`。它关闭 S15 ABI fixture blocker，
+但不是 I7 产品 writer/loader/runtime，所以下表 FCBC 产品能力仍保持 `blocked-by-I7`。
+
 FCS authoring/canonical closure 又新增 7 项 canonical/error fixture，当前 manifest 为 39 entries。
 这些条目只建立未来 runner 的规范绑定；除 manifest/path integrity 外，I0 没有实现 workspace
 resource resolution、Note policy normalization、CanonicalCompilation 或 exact DAG lowering。
@@ -31,8 +36,9 @@ workspace 没有外部格式 parser、profile selector、canonical converter 或
 
 I0.1–I0.9 已完成：活动 `master` 只有无版本前缀的 `crates/fcs-source`，source subset 使用
 Chumsky 0.11.2 的单一 spanned-token 数据流，并具备稳定诊断、严格 byte decode、固定配置
-Proptest robustness 和强类型 manifest 完整性门。当前 workspace 有 135 个通过的测试；这只
-证明 I0 retained subset 和治理门，不表示全部 FCS 5 source/canonical/runtime conformance 已完成。
+Proptest robustness 和强类型 manifest 完整性门。当前 workspace 有 141 个通过的测试，其中 6 个
+属于上述 test-only ABI closure；这只证明 I0 retained subset、治理门与该 fixture blocker，不表示
+全部 FCS 5 source/canonical/runtime conformance 或 I7 产品能力已完成。
 
 当前进度证据：`archive/fcs4-pre-cutover` 固定在
 `148936d17b671bb34968c88969ab748c818f9fc0`；唯一 crate cutover 为 `16e7db3`，稳定诊断为
@@ -76,7 +82,7 @@ generator parser 边界为 `9d88a6a`，raw lexer prepass 清理为 `475e137`。I
 | `fcs.md` 16 | 稳定 diagnostic categories | `diagnostic::{Diagnostic, DiagnosticCode}` | `diagnostic.rs` | `diagnostic::diagnostics_are_sorted_by_span_then_code` | `diagnostic::missing_header_has_the_frozen_code_and_byte_span`, `diagnostic::parser_resource_limits_use_the_stable_resource_code` | implemented | I1–I9 | S14 正式绑定既有 `resource.limit-exceeded` 及其 parser/compiler limit 边界；后续阶段只在实现对应语义时激活其他已声明 category |
 | `fcs.md` 17 | Expanded source、CanonicalCompilation 与 FCBC handoff | `ast::ExpandedSourceDocument` | `ast/entity.rs`, `elaborator/entities.rs`, 未来 `fcs-model` | `compile_time::expanded_ir_exposes_only_read_accessors`, canonical-equivalent pair（manifest only） | `compile_time::generator_elaboration_fails_before_partial_output` | partial | I2/I3/I5 | I0 retained subset 输出 concrete typed fields；完整 authoring消除、CanonicalChart/ResourceBundle/DistributionMetadata 和 exact descriptor lowering 缺失 |
 | `fcs.md` 18 | Source/static/canonical/runtime conformance runner | manifest integrity API（test only） | `tests/conformance_manifest.rs` | `conformance_manifest::typed_manifests_load_with_bound_counts` | `conformance_manifest::manifests_preserve_integrity_invariants` | partial | I1–I5 | Root/FCS/FCBC/Render/Conversion manifest schema 已强类型加载；39-entry FCS corpus 与新增 7 项尚未由 parser/elaborator/canonical runner 执行 |
-| `fcbc.md` 全部 | FCBC 2 与 Execution ABI | manifest/hex integrity test only | 未来 `fcs-fcbc` | 864-byte empty + 1021-byte embedded-resource golden（manifest only） | 13 mutation vectors（manifest only） | blocked-by-I7 | I7 | S15 已把 corpus 升为 FCBC schema 2：one-chart、14 required sections、ResourceData 原始 bytes/hash/coverage 与 exact-only profile 已绑定；活动 workspace 仍无 writer/loader/ABI evaluator，当前测试不执行 loader diagnostic 或 runtime semantics |
+| `fcbc.md` 全部 | FCBC 2 与 Execution ABI | test-only fixture writer/loader/evaluator；无产品 API | `tests/fcbc_execution_abi.rs`, `tests/support/fcbc_reference_*.rs`；未来 `fcs-fcbc` | 864-byte empty + 1021-byte embedded-resource + 3432-byte nonempty execution golden；10 descriptor/7 distance queries | 17 mutation vectors；其中 4 项实际执行稳定 loader category | blocked-by-I7 | I7 | S15 corpus 已绑定 one-chart、14 required sections、ResourceData 原始 bytes/hash/coverage、exact-only profile、非空 descriptor/DAG/Distance、lazy trace 与 direct seek；该 test-only reference chain 已独立复审关闭 fixture blocker，但活动 workspace 仍无通用 canonical writer、产品 loader 或 runtime，不能据此提升 I7 状态 |
 | `fcs-conversion.md` 全部 | Parser/profile/Repair 分层、PGR/RPE/PEC conversion 与 report | manifest integrity API（test only） | `tests/conformance_manifest.rs`，未来 `fcs-converter` 依赖 `fcs-model` | 12-profile/7-dialect/56-rule/32-category registry、38 exact mapping 与 10 selection vectors（manifest only） | 5 invalid mapping、ambiguity/target-profile vectors（manifest only） | blocked-by-I6 | I5/I6/I8 | Registry/path/hash/cross-reference 已验证；活动 workspace 无 source parser、selector、converter、canonical golden 或 target reparse，旧 converter/IR 只在归档分支且不作为 canonical model |
 | `fcs-render.md` 全部 | Render source/canonical/section/raster/resource binding | Core balanced envelope 尚未实现；manifest integrity only | 未来 `fcs-source` envelope 与 `fcs-render` | `render.source.valid.solid-rect`, semantic/raster fixture、`render.binding.embedded-image-resource`（manifest only） | `render.source.invalid.missing-viewport`, `render.source.invalid.unknown-node-kind`（manifest only） | blocked-by-I9 | I1/I9 | S14 已闭合 Render source EBNF；S15 绑定 stable resource ID→FCBC Resources 6/ResourceData 20、exact descriptor only 和 no source text/cluster/external fallback；opaque binding fixture不执行 codec decode，Render-aware parser/canonical scene/FCBC section/raster harness 均属 I9 |
 

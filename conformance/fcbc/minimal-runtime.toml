@@ -8,6 +8,7 @@ document_profile = "fragment"
 chart_count = 1
 resource_count = 0
 exact_descriptors_only = true
+expect = "success"
 path = "minimal-runtime.hex"
 decoded_length = 864
 sha256 = "504fbdb039b386854f7551dd5ea3edf6f324cadbaaabdb141594efe4ecc7fb19"

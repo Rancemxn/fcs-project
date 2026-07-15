@@ -18,8 +18,10 @@ Render Profile 与 CLI 的同一条确定性工具链。
 - I0-A 用 `archive/fcs4-pre-cutover` 保存完整旧工具链；I0 完成后活动 `master` 只保留一套
   无版本实现前缀的 FCS source API，不建立 FCS 4 兼容层。
 - 每个实施阶段结束前依次运行 Clippy、nextest、rustfmt check 和 diff check。
-- generator 实现持续以权威编译期语言为准；S15 五个版本域完成联合与独立复审并重新 Frozen 前
-  不开始 I1，I0 的 parser/feature-unavailable 边界不反向定义语法。
+- generator 实现持续以权威编译期语言为准；I0 的 parser/feature-unavailable 边界不反向定义语法。
+- I1–I10 使用统一的客观阶段门：相关规范均为 Frozen、独立复审无未关闭的 Critical/Important
+  finding、阶段计划与最终规范一致，且前置阶段质量门通过。四项条件全部满足后自动进入下一阶段，
+  无需逐阶段取得用户确认。
 
 ## 3. 版本基线
 
@@ -206,9 +208,12 @@ Core、FCBC/ABI、Render 与 Conversion 的候选 delta 已依序写入；阶段
 `docs/reviews/2026-07-15-render1-resource-binding-closure-review.md` 和
 `docs/reviews/2026-07-15-conversion1-semantic-profile-closure-review.md`。Conversion corpus 当前绑定
 12 个 profile、7 个 parser dialect、56 个 mapping rule、32 个 diagnostic/report category、38 个
-exact vector、5 个 invalid vector 与 10 个 selection vector。下一 gate 是统一 hash/术语/交叉引用与
-完整测试审计，再进行独立复审；五个
-版本域重新 Frozen 且用户重新确认 I1 计划前，不开始 I1 Rust 实现。
+exact vector、5 个 invalid vector 与 10 个 selection vector。非空 Execution ABI
+writer→static bytes→independent loader/evaluator、bits/trace/direct-seek 与 mutation corpus 已完成并
+通过独立复审，见 `docs/reviews/2026-07-16-fcbc2-execution-abi-nonempty-review.md`。下一工作单元是
+RenderSection binary/decoder/shaping/raster；之后仍需 Conversion 真实 round-trip、Core fixture
+independent validation 和最终联合复审。只有五个版本域均为 Frozen、独立复审无未关闭的
+Critical/Important finding、I1 计划与最终规范一致，且 I0 质量门通过后，才自动开始 I1 Rust 实现。
 
 ## 5. Part B：参考实现
 
@@ -381,8 +386,8 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 
 交付：完整、带 span 的 Core source AST，Appendix B parser、parse-stage conformance runner、
 production coverage ledger、独立 fuzz lane 和 I1 条款矩阵证据。逐步执行草案见
-`docs/plans/i1-source-ast-parser.md`；S14 独立复审和重新冻结完成后还必须再次确认该计划，才能
-开始 Rust 实现。
+`docs/plans/i1-source-ast-parser.md`；I1 只有在相关规范均为 Frozen、独立复审无未关闭的
+Critical/Important finding、该计划与最终规范一致，且 I0 质量门通过后才自动开始 Rust 实现。
 
 ### I2：Static semantics 与编译期展开
 
@@ -580,14 +585,17 @@ git diff --check
   conformance baseline，其 Reviewed hash 作为该范围的历史审计证据保留；后续 ADR 0007–0009
   又使五个版本域进入 Draft/联合重审，不能把 S14 hash 当作当前完整规范 hash；
 - S15：FCS Core、FCBC/ABI、Render 与 Conversion 候选 delta 已依依赖顺序写入；FCS manifest 为
-  39 项，FCBC 有两个 schema 2 golden/13 个 mutation，Render 有 embedded-resource binding，
+  39 项，FCBC 有三个 schema 2 golden/17 个 mutation，Render 有 embedded-resource binding，
   Conversion 有 12-profile/7-dialect/56-rule/32-category/38-valid/5-invalid/10-selection registry。统一
-  cross-spec/hash/test 候选自检已完成，见 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md`；
-  真实 Conversion round-trip、非空 ABI/Render byte vector、Core fixture validation 与独立复审仍是
-  blocker，全部版本域保持 Draft；
-- I0.1–I0.9 已完成，135 个 workspace tests、结构/依赖/归档拓扑和独立复审 gate 全部通过；
-- I1 独立实施计划已按 S14 修订；S15 五版本域完成联合与独立复审、重新 Frozen 并由用户再次确认
-  计划前，Rust 实现不得开始；
+  cross-spec/hash/test 候选自检见 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md`；非空 ABI
+  artifact 已由 `docs/reviews/2026-07-16-fcbc2-execution-abi-nonempty-review.md` 独立复审关闭。
+  真实 Conversion round-trip、RenderSection binary/raster、Core fixture validation 与最终联合独立复审
+  仍是 blocker，全部版本域保持 Draft；
+- I0.1–I0.9 已完成；当前 workspace 的 I0 baseline 加 test-only ABI closure 共 141 个 tests 通过，
+  结构/依赖/归档拓扑和既有 I0 独立复审 gate 不回退；
+- I1 独立实施计划已按 S14 修订；当前等待 S15 五版本域均为 Frozen、独立复审无未关闭的
+  Critical/Important finding、计划与最终规范一致，以及 I0 质量门通过；四项条件满足后自动开始
+  Rust 实现，无需再次取得用户确认；
 - retained source subset 已提升为唯一 `fcs-source`，完整 Source AST/grammar 仍按 I1 推进；
 - 当前 generator AST/parser 只接受 `int|beat`、`..<|..=` 和 `let|if|emit`，拒绝裸 `..`、
   `return` 与 nested generator；zero-step 语法保留给 I2，elaborator 在 I0 不展开并返回稳定

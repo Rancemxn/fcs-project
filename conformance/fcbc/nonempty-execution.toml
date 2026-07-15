@@ -1,0 +1,124 @@
+schema_version = 2
+id = "nonempty-execution"
+fcbc_version = "2.0.0"
+execution_abi_version = "1.0.0"
+source_fcs_version = "5.0.0"
+container_profile = "strict-runtime"
+document_profile = "chart"
+chart_count = 1
+resource_count = 0
+exact_descriptors_only = true
+expect = "success"
+path = "nonempty-execution.hex"
+decoded_length = 3432
+sha256 = "ffcd8f24bd792c406a584fea26c753b62fafaa7d8f91ff0886b697c67dbfea61"
+
+[execution]
+vector = "nonempty-execution-vector.toml"
+constant_count = 14
+descriptor_count = 14
+expression_node_count = 40
+distance_count = 2
+line_count = 2
+note_count = 2
+descriptor_kinds = ["constant", "segment-track", "piecewise", "expression"]
+distance_classifications = ["portable-evaluable", "portable-analytic"]
+lazy_opcodes = ["and", "or", "choose"]
+
+[[section]]
+type = 1
+name = "StringTable"
+offset = 688
+length = 32
+crc32 = "6d4e92fa"
+
+[[section]]
+type = 2
+name = "ConstantPool"
+offset = 720
+length = 300
+crc32 = "3e38eac6"
+
+[[section]]
+type = 3
+name = "Meta"
+offset = 1024
+length = 40
+crc32 = "e31c05b5"
+
+[[section]]
+type = 4
+name = "Contributors"
+offset = 1064
+length = 4
+crc32 = "2144df1c"
+
+[[section]]
+type = 5
+name = "Credits"
+offset = 1072
+length = 4
+crc32 = "2144df1c"
+
+[[section]]
+type = 6
+name = "Resources"
+offset = 1080
+length = 4
+crc32 = "2144df1c"
+
+[[section]]
+type = 7
+name = "Sync"
+offset = 1088
+length = 48
+crc32 = "6ea5c831"
+
+[[section]]
+type = 8
+name = "TempoMap"
+offset = 1136
+length = 44
+crc32 = "06376fc0"
+
+[[section]]
+type = 9
+name = "Lines"
+offset = 1184
+length = 236
+crc32 = "e249a0aa"
+
+[[section]]
+type = 10
+name = "Notes"
+offset = 1424
+length = 332
+crc32 = "ea954ed2"
+
+[[section]]
+type = 11
+name = "Tracks"
+offset = 1760
+length = 668
+crc32 = "964b15a5"
+
+[[section]]
+type = 12
+name = "Expressions"
+offset = 2432
+length = 804
+crc32 = "363aa343"
+
+[[section]]
+type = 13
+name = "Distance"
+offset = 3240
+length = 188
+crc32 = "5d120888"
+
+[[section]]
+type = 20
+name = "ResourceData"
+offset = 3432
+length = 0
+crc32 = "00000000"

@@ -1,0 +1,46 @@
+schema_version = 2
+base = "nonempty-execution.hex"
+
+[[mutation]]
+id = "forbidden-descriptor-kind"
+diagnostic = "fcbc.forbidden-descriptor"
+
+[[mutation.patch]]
+offset = 1773
+replace_hex = "05"
+
+[[mutation.patch]]
+offset = 560
+replace_hex = "7f9a4f08"
+
+[[mutation]]
+id = "unknown-expression-opcode"
+diagnostic = "fcbc.invalid-expression"
+
+[[mutation.patch]]
+offset = 2436
+replace_hex = "e703"
+
+[[mutation.patch]]
+offset = 600
+replace_hex = "c84de44d"
+
+[[mutation]]
+id = "forbidden-distance-classification"
+diagnostic = "fcbc.invalid-distance"
+
+[[mutation.patch]]
+offset = 3320
+replace_hex = "03"
+
+[[mutation.patch]]
+offset = 640
+replace_hex = "30c8589b"
+
+[[mutation]]
+id = "raw-string-table-corruption"
+diagnostic = "fcbc.section-checksum"
+
+[[mutation.patch]]
+offset = 688
+replace_hex = "03"
