@@ -16,8 +16,9 @@
 - `fcbc.md` 是 FCBC 2 容器与 Execution ABI 的权威规范；`fcs-render.md` 和
   `fcs-conversion.md` 分别定义 Render Profile 与转换/保真行为。
 - `docs/specification-governance.md` 定义规范状态和变更流程，
-  `docs/plans/fcs5-roadmap.md` 是唯一总实施路线图；当前阶段详细计划为
-  `docs/plans/i0-source-cutover.md`。`docs/decisions/` 只记录设计理由，不得覆盖四份权威规范。
+  `docs/plans/fcs5-roadmap.md` 是唯一总实施路线图；最近完成阶段的详细记录为
+  `docs/plans/i0-source-cutover.md`。开始 I1 前必须先建立并确认独立的阶段计划。
+  `docs/decisions/` 只记录设计理由，不得覆盖四份权威规范。
 - 涉及格式行为的改动先对照对应权威规范，再检查 parser、compiler、runtime、converter 和
   conformance fixture；实现现状不能静默成为新规范。
 - `examples/` 保存各格式输入样例；I0 删除活动 FCS 4 examples，但保留 PGR/RPE/PEC 与版权

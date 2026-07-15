@@ -204,3 +204,38 @@ ebc374dd128e7272d06eb4491564770f8b7b218ff0e58df39f627abd73d72222
 本次同步只修改实施路线、协作指南、状态矩阵、审查附录和 decision 中的 Chumsky 参考仓库
 路径，并删除已被正式决策与计划取代的旧设计/计划副本。四份权威规范、规范治理文件、
 conformance corpus 和全部 Frozen 版本均未修改。
+
+### 2026-07-15 I0 最终验证与独立复审
+
+I0.9 在 parser 修复提交 `475e137` 上完成最终 gate：
+
+- 活动 workspace 只有 `fcs-source`，无 V4、`v5`、旧 crate 或 `implementation.*`
+  conformance expectation；
+- normal dependency 只有 Chumsky `0.11.2` 的 `std`/`stacker`；Proptest、Serde、TOML 和
+  Winnow 保持 dev/test 边界，后续阶段 catalog dependency 未激活；
+- lexer 删除 raw-text prepass，header、literal、comment 和 recursive comment-depth limit
+  统一由 Chumsky parser 与 rollback state 处理；
+- Clippy `-D warnings`、rustfmt check 和 diff check 通过，nextest 为 135/135；
+- `archive/fcs4-pre-cutover` 仍固定在
+  `148936d17b671bb34968c88969ab748c818f9fc0` 并且是 `master` 的祖先；归档后的提交只包含
+  I0 implementation/governance 和已记录的 workflow/Trellis bookkeeping，无无关产品功能；
+- 仓库没有 remote，因此未修改托管远端或默认分支设置。
+
+第一轮独立审查发现 raw lexer prepass 与拓扑验收文案两个 Important。实现删除 prepass，并将
+拓扑条件与 Tasks 1–2 已记录的 bookkeeping 对齐，禁止为隐藏可审计历史而重写 master。第二轮
+独立复审确认两个 Important 均关闭，结论为无 Critical、Important 或 Minor，I0 review accepted。
+
+上一版 I0 实施证据同步后的 roadmap SHA-256 保留为：
+
+```text
+8ea7db4a25fc06808d114cd247e9d83c087a1c8bcd450cdee8b1d2ea920de374
+```
+
+本次 I0 最终验证后的 roadmap SHA-256 为：
+
+```text
+b0a1d453c16a0c1e55a0ad1fefbaf9ccf39883f51d7305ea031cb6d7d5f0cee7
+```
+
+四份权威规范、规范治理文件、conformance corpus 和全部 Frozen 版本仍未修改。I1 必须作为
+后续独立实施阶段启动，不能把 matrix 中的 `partial` 或 blocked 行计入 I0 完成范围。

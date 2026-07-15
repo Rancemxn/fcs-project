@@ -5,15 +5,16 @@
 本矩阵记录 Frozen 规范与参考实现之间的可审计关系。它不定义格式语义；发生冲突时以
 `fcs.md`、`fcbc.md`、`fcs-render.md`、`fcs-conversion.md` 和绑定 conformance corpus 为准。
 
-I0.1–I0.8 已完成：活动 `master` 只有无版本前缀的 `crates/fcs-source`，source subset 使用
+I0.1–I0.9 已完成：活动 `master` 只有无版本前缀的 `crates/fcs-source`，source subset 使用
 Chumsky 0.11.2 的单一 spanned-token 数据流，并具备稳定诊断、严格 byte decode、固定配置
-Proptest robustness 和强类型 manifest 完整性门。当前 workspace 有 134 个通过的测试；这只
+Proptest robustness 和强类型 manifest 完整性门。当前 workspace 有 135 个通过的测试；这只
 证明 I0 retained subset 和治理门，不表示全部 FCS 5 source/canonical/runtime conformance 已完成。
 
 当前进度证据：`archive/fcs4-pre-cutover` 固定在
 `148936d17b671bb34968c88969ab748c818f9fc0`；唯一 crate cutover 为 `16e7db3`，稳定诊断为
 `0185d8e`，Chumsky lexer/expression/document 迁移为 `7442210`、`cc8d94f`、`0b17e56f`，Frozen
-generator parser 边界为 `9d88a6a`。I0.9 最终结构、依赖、质量和独立审查 gate 尚待执行。
+generator parser 边界为 `9d88a6a`，raw lexer prepass 清理为 `475e137`。I0.9 最终结构、
+依赖、质量、归档拓扑和独立复审 gate 已通过。
 
 允许的状态只有：`implemented`、`partial`、`not-started` 和 `blocked-by-I<n>`。`implemented`
 表示该行所列 I0 能力已有实际测试证据；`partial` 必须在“已知偏差”列写明缺失行为和接续阶段。
@@ -22,7 +23,7 @@ generator parser 边界为 `9d88a6a`。I0.9 最终结构、依赖、质量和独
 |---|---|---|---|---|---|---|---|---|
 | `fcs.md` 2.1 | UTF-8、BOM、换行 | `parser::parse_document_bytes` | `parser/document.rs`, `parser/lexer.rs` | `robustness::byte_entry_decodes_once_and_preserves_utf8_error_spans` | `robustness::arbitrary_bytes_never_escape_decode_or_parse_boundaries` | implemented | I1 | 严格 UTF-8 decode、BOM/CRLF byte span 和 bounded arbitrary bytes 已覆盖；I1 只扩展到新增 grammar production |
 | `fcs.md` 2.2 | 精确 source header 与版本拒绝 | `parser::parse_header` | `parser/header.rs`, `parser/lexer.rs`, `version.rs` | `frontend::parses_exact_fcs5_header`, `source.valid.minimal-fragment` | `frontend::rejects_missing_or_wrong_major_header`, `source.invalid.missing-header` | implemented | I1 | `5.0.x` 兼容规则、missing/invalid/unsupported 稳定 code 已覆盖；未来版本策略不在 I0 扩展 |
-| `fcs.md` 2.3 | 空白、行注释、nested block comment | `parser::parse_document` | `parser/lexer.rs` | `lexer::nested_comments_and_string_escapes_are_deterministic` | `frontend::rejects_unclosed_trailing_block_comment` | implemented | I1 | retained subset 的 trivia 与 nested-comment contract 已完成；I1 复用同一 lexer 接入完整 grammar |
+| `fcs.md` 2.3 | 空白、行注释、nested block comment | `parser::parse_document` | `parser/lexer.rs` | `lexer::nested_comments_and_string_escapes_are_deterministic`, `workspace_structure::lexer_has_no_raw_text_preparser` | `frontend::rejects_unclosed_trailing_block_comment` | implemented | I1 | retained subset 的 trivia 与 nested-comment contract 已完成；I1 复用同一 lexer 接入完整 grammar |
 | `fcs.md` 2.4 | ASCII identifier 与保留词 | `parser::parse_expression`, `parser::parse_document` | `parser/token.rs`, `parser/lexer.rs` | `compile_time::identifiers_are_ascii_but_spans_remain_utf8_byte_offsets` | `expression::token_parser_rejects_reserved_names_and_trailing_input` | implemented | I1 | I0 token 表和 ASCII 约束已覆盖；I1 新增 source node 时不得把保留词降级为 identifier |
 | `fcs.md` 2.5–2.7 | Int/Float/String/Color 与单位 literal | `parser::parse_expression` | `parser/lexer.rs`, `ast/types.rs`, `ast/color.rs` | `compile_time::parses_scalar_and_unit_literals`, `compile_time::string_escapes_match_the_documented_table` | `compile_time::unit_literals_must_remain_finite_after_conversion` | implemented | I1 | I0 literal 表、escape、精确 Beat 与 non-finite 拒绝已覆盖；I1 仅补新增 grammar 上下文 |
 | `fcs.md` 2.8–2.9 | 分隔符、array/object/reference/interval | `parser::parse_expression` | 未来扩展 `parser/expression.rs`, `ast/types.rs` | `source.valid.track-boundaries`（manifest only） | I1 grammar fixtures | blocked-by-I1 | I1 | token 已保留部分分隔符；array/object/reference/interval AST 与 parser 尚未实现 |

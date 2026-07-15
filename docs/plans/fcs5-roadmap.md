@@ -156,10 +156,11 @@ RenderSection、semantic conformance 和 reference raster conformance。
 
 ### I0：健康基线与规范对账
 
-当前进度：I0.1–I0.8 已完成；活动树只有 `fcs-source`，Chumsky token parser、稳定诊断、
+当前进度：I0.1–I0.9 已完成；活动树只有 `fcs-source`，Chumsky token parser、稳定诊断、
 byte/property robustness、精确 generator parser 边界和强类型 manifest gate 已落地。
 generator 仍按 I0 边界不展开，不能将 retained source subset 的测试通过误记为完整 source
-implementation 已完成。I0.9 最终结构、依赖、质量和独立审查 gate 是当前剩余工作。
+implementation 已完成。最终结构、依赖、质量、归档拓扑和独立复审 gate 以 135 个通过的
+workspace tests 完成；I1 尚未开始。
 
 - 提交完整切换前快照并建立永久 `archive/fcs4-pre-cutover`；
 - fast-forward `master`，删除活动主线中的 FCS 4、旧 converter 和旧 CLI；
@@ -288,7 +289,7 @@ implementation 已完成。I0.9 最终结构、依赖、质量和独立审查 ga
   stage、expect、diagnostic、clauses 与 `implementation.*` 禁止规则。
 - **I0.8 条款矩阵（已完成）**：维护 `docs/conformance/fcs5-implementation-matrix.md`，每行含规范章节、
   public API、实现文件、valid/invalid fixture、状态、下一阶段和已知偏差。
-- **I0.9 基线 gate（当前）**：workspace 只有 `fcs-source`；结构搜索、依赖/feature 审计、Clippy、
+- **I0.9 基线 gate（已完成）**：workspace 只有 `fcs-source`；结构搜索、依赖/feature 审计、Clippy、
   nextest、fmt、diff 和
   独立 review 全绿，记录准确 test count 与 archive/master SHA。
 
@@ -496,8 +497,7 @@ git diff --check
 - S1–S12：完成；逐章审查和首批机器可读 conformance fixture 已落地；
 - S13：完成；FCS 5.0.0、FCBC 2.0.0、ABI 1.0.0、Render 1.0.0、Conversion 1.0.0
   已于 2026-07-14 Frozen；
-- I0.1–I0.8 已完成，134 个 workspace tests 通过；I0.9 最终结构、依赖、质量和独立审查
-  gate 正在执行；
+- I0.1–I0.9 已完成，135 个 workspace tests、结构/依赖/归档拓扑和独立复审 gate 全部通过；
 - retained source subset 已提升为唯一 `fcs-source`，完整 Source AST/grammar 仍按 I1 推进；
 - 当前 generator AST/parser 只接受 `int|beat`、`..<|..=` 和 `let|if|emit`，拒绝裸 `..`、
   `return` 与 nested generator；zero-step 语法保留给 I2，elaborator 在 I0 不展开并返回稳定

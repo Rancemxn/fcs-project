@@ -4,12 +4,12 @@
 > its step is completed. No specific agent skill or orchestration framework is required.
 
 > **Current status (2026-07-15):** I0-A through the unique `fcs-source` cutover and stable
-> diagnostics are complete. Tasks 8-12 are complete: document, definition, template, and collection
+> diagnostics are complete. Tasks 8-13 are complete: document, definition, template, and collection
 > parsing consume one spanned token stream; the Frozen generator grammar is exact at the I0
 > implementation boundary; and byte/property robustness plus typed conformance-manifest gates are
 > active. Governance guidance, roadmap, implementation matrix, and freeze-review evidence now match
-> the post-cutover workspace. The workspace contains only `fcs-source` and has 134 passing tests.
-> Task 13 final structure, dependency, quality, topology, and independent-review gates remain.
+> the post-cutover workspace. The workspace contains only `fcs-source` and has 135 passing tests.
+> Final structure, dependency, quality, topology, and independent-review gates are accepted.
 
 **Goal:** Archive the complete pre-cutover FCS 4 workspace, make `master` the sole development
 branch, replace the mixed `fcs-core`/`v5` tree with an unversioned `fcs-source` crate, establish a
@@ -2314,7 +2314,7 @@ git commit -m "docs: record the completed I0 source cutover"
 - Verify: `archive/fcs4-pre-cutover`
 - Verify: current `master`
 
-- [ ] **Step 1: Run the structure searches**
+- [x] **Step 1: Run the structure searches**
 
 ```powershell
 fd --hidden --exclude .git --exclude target --type d '^(v4|v5)$' crates
@@ -2324,7 +2324,7 @@ rg -n --hidden -g '!/.git' -g '!target/**' -g '!refer/**' 'implementation\.' con
 
 Expected: all three commands produce no matches.
 
-- [ ] **Step 2: Verify Cargo topology and dependency policy**
+- [x] **Step 2: Verify Cargo topology and dependency policy**
 
 ```powershell
 cargo metadata --no-deps --format-version 1
@@ -2344,7 +2344,7 @@ Expected:
   root but absent from the `fcs-source` normal and dev trees until their owning stages activate them;
 - all resolved crates use registry sources and no dependency points into `refer/`.
 
-- [ ] **Step 3: Run quality gates in repository order**
+- [x] **Step 3: Run quality gates in repository order**
 
 ```powershell
 cargo fmt --all
@@ -2357,7 +2357,7 @@ git diff --check
 Expected: every command exits 0. Record the exact nextest pass count in the final handoff; do not
 reuse the pre-cutover count.
 
-- [ ] **Step 4: Verify archive and branch topology**
+- [x] **Step 4: Verify archive and branch topology**
 
 ```powershell
 git branch --show-current
@@ -2366,10 +2366,13 @@ git merge-base --is-ancestor archive/fcs4-pre-cutover master
 git log --oneline --decorate archive/fcs4-pre-cutover..master
 ```
 
-Expected: current branch is `master`; archive is an ancestor of master; the range lists only I0
-implementation/governance commits.
+Expected: current branch is `master`; archive is an ancestor of master; the range is limited to I0
+implementation/governance commits and the workflow/Trellis bookkeeping already recorded by Tasks
+1–2. The immutable archive pointer must not be moved and master history must not be rewritten merely
+to hide those audited bookkeeping commits; the range must contain no unrelated product-feature
+implementation.
 
-- [ ] **Step 5: Request independent review**
+- [x] **Step 5: Request independent review**
 
 Review scope:
 
@@ -2384,7 +2387,7 @@ Review scope:
 
 Critical or Important findings must be fixed and re-reviewed before marking I0 complete.
 
-- [ ] **Step 6: Confirm clean final state**
+- [x] **Step 6: Confirm clean final state**
 
 ```powershell
 git status --short --branch
