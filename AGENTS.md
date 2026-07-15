@@ -30,8 +30,10 @@
   bytes→independent loader/evaluator、bits/trace/direct-seek 与 mutation 的闭合和独立复审见
   `docs/reviews/2026-07-16-fcbc2-execution-abi-nonempty-review.md`；Render stable-resource binding、
   exact descriptor 与 no-source-text delta 见
-  `docs/reviews/2026-07-15-render1-resource-binding-closure-review.md`；Conversion parser/profile/Repair
-  分层、12-profile registry、mapping/selection vector 与 no-source-snapshot projection 见
+  `docs/reviews/2026-07-15-render1-resource-binding-closure-review.md`，RenderSection layout、decoder/
+  shaping、semantic/raster 与 diagnostic 规范文字的独立闭合见
+  `docs/reviews/2026-07-16-render1-binary-raster-closure-review.md`；Conversion parser/profile/Repair 分层、
+  12-profile registry、mapping/selection vector 与 no-source-snapshot projection 见
   `docs/reviews/2026-07-15-conversion1-semantic-profile-closure-review.md`。四规范联合候选自检及其
   dated amendment、当前 hash/test evidence、仍开放的 Render/Conversion/Core fixture blocker 与最终
   联合独立复审要求统一见 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md`；该文件及

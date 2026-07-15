@@ -279,3 +279,29 @@ mutation category，finding ledger 为 Critical 0、Important 0、Minor 0。
 因此第 7.2 项关闭；第 7.1 Conversion、第 7.3 Render 和第 7.4 Core 仍开放。FCBC Container 2.0.0、
 Execution ABI 1.0.0 以及其他三个版本域继续保持 Draft，直到剩余 blocker 全部关闭并完成最终联合
 独立复审。该 test-only harness 不构成 I7 产品实现。
+
+## 11. 2026-07-16 dated amendment：Render normative closure
+
+本 amendment 只记录第 7.3 项的规范文字前置 gate，不静默改写 2026-07-15 的历史 hash、test count
+或当时结论。Render binary/raster 初始只读审计发现 1 个 Critical、6 个 Important 规范空白：viewport
+未编码、typed Record layout不完整、stable ID/order/ownership不唯一、descriptor direct root不完整、
+image/resource decode与sampling不唯一、font/shaping不唯一，以及 semantic/raster/diagnostic precedence
+不唯一。
+
+`docs/reviews/2026-07-16-render1-binary-raster-closure-review.md` 记录了 `REN-C01`、`REN-I02–I07`
+的逐项 closure。最终固定规范快照为：
+
+| 文件 | SHA-256 |
+|---|---|
+| `fcs-render.md` | `95685f44fae88c26126e4dc34a13793499fd65b6eb61b021ca1f56156470cad1` |
+| `fcbc.md` | `fc1bc9b8032d7ac88d16068e08cb3d8907a25b83fc752db85a7679e1ebed1c33` |
+
+未参与修改的 reviewer 在首尾 hash 一致的只读复审中复核 RenderSection 与全部 nested Record长度、
+root-only attachment、isolate、ownership/collision、descriptor roots、PNG/WebP/font、shaping、sampling、
+viewport/output、RadialGradient退化和 stable diagnostics，finding ledger 为 Critical 0、Important 0、
+Minor 0。
+
+这只证明第 7.3 项不再要求未来实现填补 prose 选择；它没有生成或验证 static FCBC、independent
+loader/evaluator、decoder/shaper、semantic/raster expected 或 mutation corpus。因此第 7.3 项仍开放，
+Render Profile 1.0.0 和其他四个版本域仍为 Draft。下一 Render gate 是在上述固定规范上实现并独立
+复审 executable binary/decoder/shaping/raster artifact。

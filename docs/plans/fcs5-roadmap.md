@@ -210,8 +210,10 @@ Core、FCBC/ABI、Render 与 Conversion 的候选 delta 已依序写入；阶段
 12 个 profile、7 个 parser dialect、56 个 mapping rule、32 个 diagnostic/report category、38 个
 exact vector、5 个 invalid vector 与 10 个 selection vector。非空 Execution ABI
 writer→static bytes→independent loader/evaluator、bits/trace/direct-seek 与 mutation corpus 已完成并
-通过独立复审，见 `docs/reviews/2026-07-16-fcbc2-execution-abi-nonempty-review.md`。下一工作单元是
-RenderSection binary/decoder/shaping/raster；之后仍需 Conversion 真实 round-trip、Core fixture
+通过独立复审，见 `docs/reviews/2026-07-16-fcbc2-execution-abi-nonempty-review.md`。RenderSection
+layout、decoder/shaping、semantic/raster 和 diagnostic 规范文字也已独立复审闭合，见
+`docs/reviews/2026-07-16-render1-binary-raster-closure-review.md`；下一工作单元是在该固定规范上实现
+RenderSection binary/decoder/shaping/raster executable artifact。之后仍需 Conversion 真实 round-trip、Core fixture
 independent validation 和最终联合复审。只有五个版本域均为 Frozen、独立复审无未关闭的
 Critical/Important finding、I1 计划与最终规范一致，且 I0 质量门通过后，才自动开始 I1 Rust 实现。
 
@@ -588,9 +590,10 @@ git diff --check
   39 项，FCBC 有三个 schema 2 golden/17 个 mutation，Render 有 embedded-resource binding，
   Conversion 有 12-profile/7-dialect/56-rule/32-category/38-valid/5-invalid/10-selection registry。统一
   cross-spec/hash/test 候选自检见 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md`；非空 ABI
-  artifact 已由 `docs/reviews/2026-07-16-fcbc2-execution-abi-nonempty-review.md` 独立复审关闭。
-  真实 Conversion round-trip、RenderSection binary/raster、Core fixture validation 与最终联合独立复审
-  仍是 blocker，全部版本域保持 Draft；
+  artifact 已由 `docs/reviews/2026-07-16-fcbc2-execution-abi-nonempty-review.md` 独立复审关闭；Render
+  binary/raster 规范文字已由 `docs/reviews/2026-07-16-render1-binary-raster-closure-review.md` 独立复审
+  闭合。真实 Conversion round-trip、RenderSection executable binary/raster artifact、Core fixture
+  validation 与最终联合独立复审仍是 blocker，全部版本域保持 Draft；
 - I0.1–I0.9 已完成；当前 workspace 的 I0 baseline 加 test-only ABI closure 共 141 个 tests 通过，
   结构/依赖/归档拓扑和既有 I0 独立复审 gate 不回退；
 - I1 独立实施计划已按 S14 修订；当前等待 S15 五版本域均为 Frozen、独立复审无未关闭的
