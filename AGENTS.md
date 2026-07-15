@@ -12,8 +12,7 @@
   - I0-B 删除活动 FCS 4、旧 converter 和旧 CLI；
   - `crates/fcs-core/src/v5` 提升为唯一、无版本前缀的 `crates/fcs-source`；
   - 后续 canonical/runtime/FCBC/converter/render/CLI crate 到对应路线阶段按需创建。
-- I0 不保留 `fcs_core`、`v5` module、feature flag 或兼容 re-export。`refer/chumsky` 只用于
-  审阅 Chumsky 源码；Cargo 不得使用指向 `refer/` 的 path dependency。
+- I0 不保留 `fcs_core`、`v5` module、feature flag 或兼容 re-export。Cargo 不得使用指向 `refer/` 的 path dependency。
 - `fcs.md` 是 FCS 5 Core source、canonical model 和运行时语义的权威规范。
 - `fcbc.md` 是 FCBC 2 容器与 Execution ABI 的权威规范；`fcs-render.md` 和
   `fcs-conversion.md` 分别定义 Render Profile 与转换/保真行为。
@@ -24,7 +23,8 @@
   conformance fixture；实现现状不能静默成为新规范。
 - `examples/` 保存各格式输入样例；I0 删除活动 FCS 4 examples，但保留 PGR/RPE/PEC 与版权
   输入，供未来 converter 重建时复用。旧 converter 测试由归档分支保存，不迁移到 source crate。
-- https://sub.wessvan.com/本文件对搜索工具和 Context7 的规则作明确补充。
+- `refer/`下的项目是外部项目。仅供参考。chart是Phigros社区里的项目。dependencies是本项目使用的依赖的源代码。**如果dependencies下已经有依赖的源代码，请不要查阅Context7，直接阅读dependencies。**
+- 本文件对搜索工具和 Context7 的规则作明确补充。
 
 ## 搜索与代码理解
 
