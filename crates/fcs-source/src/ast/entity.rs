@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{DocumentProfile, TempoMap};
+use super::{DocumentProfile, LetStatement, TempoMap};
 use super::{SourceExpression, SourceSpan, Type, TypedValue};
 use crate::version::Version;
 
@@ -125,6 +125,7 @@ pub struct Generator {
 /// A source item emitted by a compile-time generator.
 #[derive(Debug, Clone, PartialEq)]
 pub enum GeneratorItem {
+    Let(LetStatement),
     Emit(EntityExpression),
     Conditional {
         condition: SourceExpression,
@@ -132,6 +133,17 @@ pub enum GeneratorItem {
         else_items: Vec<GeneratorItem>,
         span: SourceSpan,
     },
+}
+
+impl GeneratorItem {
+    /// Returns this generator statement's complete source span.
+    pub const fn span(&self) -> SourceSpan {
+        match self {
+            Self::Let(statement) => statement.span,
+            Self::Conditional { span, .. } => *span,
+            Self::Emit(expression) => expression.span(),
+        }
+    }
 }
 
 /// A source item contained directly in a collection block.

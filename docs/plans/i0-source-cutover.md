@@ -5,12 +5,12 @@
 > checkbox (`- [ ]`) syntax for tracking.
 
 > **Current status (2026-07-15):** I0-A through the unique `fcs-source` cutover and stable
-> diagnostics are complete. The Chumsky lexer/expression boundary and Frozen generator staging are
-> active, and Tasks 10-11 now provide byte/property robustness and typed conformance-manifest
-> gates. The active workspace contains only `fcs-source` and has 130 passing tests. Task 8 is
-> complete: document, definition, template, and collection parsing consume one spanned token stream,
-> raw-text scanners are gone, and deep expressions use bounded execution without token cloning or
-> the former fixed 64 MiB fallback thread.
+> diagnostics are complete. Tasks 8-11 are complete: document, definition, template, and collection
+> parsing consume one spanned token stream; the Frozen generator grammar is exact at the I0
+> implementation boundary; and byte/property robustness plus typed conformance-manifest gates are
+> active. The workspace contains only `fcs-source` and has 134 passing tests. Raw-text scanners are
+> gone, and deep expressions use bounded execution without token cloning or the former fixed 64 MiB
+> fallback thread.
 
 **Goal:** Archive the complete pre-cutover FCS 4 workspace, make `master` the sole development
 branch, replace the mixed `fcs-core`/`v5` tree with an unversioned `fcs-source` crate, establish a
@@ -1878,7 +1878,7 @@ git commit -m "refactor(parser): compose FCS document grammar with Chumsky"
 - Read: `conformance/fcs5/source/invalid/bare-range.fcs`
 - Read: `conformance/fcs5/source/invalid/generator-zero-step.fcs`
 
-- [ ] **Step 1: Add final public diagnostic tests**
+- [x] **Step 1: Add final public diagnostic tests**
 
 ```rust
 #[test]
@@ -1912,7 +1912,7 @@ fn valid_generator_is_rejected_only_at_the_implementation_boundary() {
 }
 ```
 
-- [ ] **Step 2: Run and observe any remaining mismatch**
+- [x] **Step 2: Run and observe any remaining mismatch**
 
 ```powershell
 cargo nextest run -p fcs-source --test compile_time
@@ -1921,7 +1921,7 @@ cargo nextest run -p fcs-source --test compile_time
 Expected: any failure points to range token mapping or the temporary diagnostic conversion, not a
 non-exhaustive match.
 
-- [ ] **Step 3: Enforce exact generator grammar**
+- [x] **Step 3: Enforce exact generator grammar**
 
 The parser accepts only:
 
@@ -1981,13 +1981,13 @@ evaluating any generator item. Add an explicit assertion that a valid generator 
 zero-step literal parses successfully and is rejected at the same implementation boundary; this
 prevents the parser from reintroducing the old literal-only zero-step check.
 
-- [ ] **Step 4: Keep zero-step validation out of parse**
+- [x] **Step 4: Keep zero-step validation out of parse**
 
 Verify a literal zero step parses into AST. Until I2 implements range evaluation, elaboration hits
 the feature-unavailable boundary before range output. Do not emit `compile-time.zero-step` without
 evaluating the typed step expression.
 
-- [ ] **Step 5: Run full gates and commit**
+- [x] **Step 5: Run full gates and commit**
 
 ```powershell
 cargo clippy --workspace --all-targets -- -D warnings

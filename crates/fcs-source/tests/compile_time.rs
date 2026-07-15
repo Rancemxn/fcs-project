@@ -1,7 +1,7 @@
 use fcs_source::ast::Color;
 use fcs_source::ast::{
     Beat, BinaryOperator, CollectionBlock, CollectionItem, Definition, EntityConstructor,
-    EntityExpression, ExpandedEntity, ExpandedField, FunctionStatement, NoteVariant,
+    EntityExpression, ExpandedEntity, ExpandedField, FunctionStatement, GeneratorItem, NoteVariant,
     SourceExpression, SourceLiteral, SourceSpan, Type, TypedExpression, TypedExpressionKind,
     TypedValue, UnaryOperator, WithExpression,
 };
@@ -494,6 +494,102 @@ fn parses_only_frozen_generator_range_operators() {
 }
 
 #[test]
+fn generator_body_retains_typed_let_and_nested_statement_spans() {
+    let source = "#fcs 5.0.0\n\
+         format { profile: fragment; }\n\
+         collections { notes {\n\
+           generate i: int in 0..=1 step 1 {\n\
+             let t: int = i;\n\
+             if true {\n\
+               emit tap { gameplay.time: 0beat; };\n\
+             }\n\
+           }\n\
+         } }";
+    let document = parse_document(source)
+        .into_result()
+        .expect("typed generator statements should parse");
+    let CollectionItem::Generator(generator) = &document.collections[0].items[0] else {
+        panic!("expected generator collection item");
+    };
+
+    let GeneratorItem::Let(statement) = &generator.body[0] else {
+        panic!("expected typed local binding");
+    };
+    let initializer_start = source.find("= i;").unwrap() + 2;
+    assert_eq!(
+        statement.initializer.span(),
+        SourceSpan::new(initializer_start, initializer_start + 1)
+    );
+    assert_eq!(generator.body[0].span(), statement.span);
+
+    let GeneratorItem::Conditional { then_items, .. } = &generator.body[1] else {
+        panic!("expected generator conditional");
+    };
+    assert_eq!(then_items.len(), 1);
+    assert!(matches!(then_items[0], GeneratorItem::Emit(_)));
+    assert_eq!(then_items[0].span().start, source.find("tap {").unwrap());
+}
+
+#[test]
+fn rejects_generator_variable_types_outside_int_and_beat() {
+    for variable_type in ["bool", "float", "length", "vec2<length>", "Note"] {
+        let source = format!(
+            "#fcs 5.0.0\n\
+             format {{ profile: fragment; }}\n\
+             collections {{ notes {{\n\
+               generate i: {variable_type} in 0..=1 step 1 {{\n\
+                 emit tap {{ gameplay.time: 0beat; }};\n\
+               }}\n\
+             }} }}"
+        );
+        let errors = parse_document(&source)
+            .into_result()
+            .expect_err("generator range type must be int or beat");
+        assert_eq!(
+            errors[0].code(),
+            DiagnosticCode::SYNTAX_INVALID_TOKEN,
+            "generator variable type {variable_type}"
+        );
+    }
+}
+
+#[test]
+fn rejects_return_and_nested_generate_in_generator_body() {
+    for (statement, description) in [
+        ("return i;", "return"),
+        (
+            "generate j: int in 0..=1 step 1 { emit tap { gameplay.time: 0beat; }; }",
+            "nested generator",
+        ),
+    ] {
+        let source = format!(
+            "#fcs 5.0.0\n\
+             format {{ profile: fragment; }}\n\
+             collections {{ notes {{\n\
+               generate i: int in 0..=1 step 1 {{ {statement} }}\n\
+             }} }}"
+        );
+        let errors = parse_document(&source)
+            .into_result()
+            .expect_err("unsupported generator body statement must be rejected");
+        assert_eq!(
+            errors[0].code(),
+            DiagnosticCode::SYNTAX_INVALID_TOKEN,
+            "{description}"
+        );
+    }
+}
+
+#[test]
+fn bare_range_uses_the_frozen_syntax_category() {
+    let output = parse_document(include_str!(
+        "../../../conformance/fcs5/source/invalid/bare-range.fcs"
+    ));
+    let errors = output.into_result().expect_err("bare range must fail");
+    assert_eq!(errors[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
+}
+
+#[test]
 fn rejects_bare_generator_range_operator() {
     let source = generator_source("..", "1beat");
     assert_eq!(
@@ -521,6 +617,13 @@ fn retains_zero_generator_step_for_later_static_semantics() {
             ..
         } if value == Beat::new(0, 1).unwrap()
     ));
+
+    let errors = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect_err("zero step remains behind the I0 implementation boundary");
+    assert_eq!(
+        errors[0].code(),
+        DiagnosticCode::IMPLEMENTATION_FEATURE_UNAVAILABLE
+    );
 }
 
 #[test]

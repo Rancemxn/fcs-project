@@ -7,8 +7,8 @@ use crate::ast::{
 };
 
 use super::{
-    definitions::identifier_with_span,
-    expression::{expression_parser, type_parser},
+    definitions::{identifier_with_span, let_statement_parser},
+    expression::expression_parser,
     input::{ChumskySpan, ParserExtra, source_span},
     token::{Keyword, Punctuation, Token},
 };
@@ -99,7 +99,10 @@ where
     just(Token::Keyword(Keyword::Generate))
         .ignore_then(identifier_with_span())
         .then_ignore(just(colon()))
-        .then(type_parser())
+        .then(choice((
+            just(Token::Keyword(Keyword::Int)).to(Type::Int),
+            just(Token::Keyword(Keyword::Beat)).to(Type::Beat),
+        )))
         .then_ignore(just(Token::Keyword(Keyword::In)))
         .then(expression_parser())
         .then(choice((
@@ -168,6 +171,7 @@ where
                 },
             );
         choice((
+            let_statement_parser().map(GeneratorItem::Let),
             just(Token::Keyword(Keyword::Emit))
                 .ignore_then(entity_expression_parser())
                 .then_ignore(just(semicolon()))
