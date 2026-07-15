@@ -1,8 +1,7 @@
 # I0 Source Cutover Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
-> (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
-> checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Implement this plan task-by-task and update each checkbox (`- [ ]`) as
+> its step is completed. No specific agent skill or orchestration framework is required.
 
 > **Current status (2026-07-15):** I0-A through the unique `fcs-source` cutover and stable
 > diagnostics are complete. Tasks 8-11 are complete: document, definition, template, and collection
