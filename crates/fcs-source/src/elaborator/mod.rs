@@ -7,9 +7,7 @@ mod entities;
 mod eval;
 mod scope;
 
-use crate::ast::{
-    Definition, Document, ExpandedSourceDocument, SourceSpan, TemplateDeclaration, Type,
-};
+use crate::ast::{Definition, Document, ExpandedSourceDocument, SourceSpan, Type};
 use crate::diagnostic::{
     DiagnosticCode, DiagnosticLabel, DiagnosticStage, ExpansionTraceFrame, ExpansionTraceKind,
 };
@@ -169,6 +167,7 @@ fn preflight_names(document: &Document) -> Result<(), ElaboratorError> {
             let (name, span) = match definition {
                 Definition::Const(declaration) => (&declaration.name, declaration.name_span),
                 Definition::Function(declaration) => (&declaration.name, declaration.name_span),
+                Definition::Template(declaration) => (&declaration.name, declaration.name_span),
             };
             if let Some(previous_span) = names.insert(name.clone(), span) {
                 return Err(ElaboratorError::DuplicateBinding {
@@ -178,25 +177,6 @@ fn preflight_names(document: &Document) -> Result<(), ElaboratorError> {
                 });
             }
         }
-    }
-    if let Some(templates) = &document.templates {
-        for declaration in &templates.declarations {
-            preflight_template_name(&mut names, declaration)?;
-        }
-    }
-    Ok(())
-}
-
-fn preflight_template_name(
-    names: &mut BTreeMap<String, SourceSpan>,
-    declaration: &TemplateDeclaration,
-) -> Result<(), ElaboratorError> {
-    if let Some(previous_span) = names.insert(declaration.name.clone(), declaration.name_span) {
-        return Err(ElaboratorError::DuplicateBinding {
-            name: declaration.name.clone(),
-            span: declaration.name_span,
-            previous_span,
-        });
     }
     Ok(())
 }

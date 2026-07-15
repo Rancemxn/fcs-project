@@ -1,7 +1,12 @@
-use crate::ast::SourceLiteral;
+use crate::{
+    ast::{Bpm, SourceLiteral},
+    version::Version,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Token {
+    Header(Version),
+    TempoBpm(Bpm),
     Literal(SourceLiteral),
     Identifier(String),
     Keyword(Keyword),

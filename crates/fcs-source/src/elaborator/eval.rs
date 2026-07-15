@@ -29,6 +29,7 @@ pub(super) fn check_and_evaluate(
         let (name, span) = match definition {
             Definition::Const(declaration) => (&declaration.name, declaration.name_span),
             Definition::Function(declaration) => (&declaration.name, declaration.name_span),
+            Definition::Template(declaration) => (&declaration.name, declaration.name_span),
         };
         if let Some(previous_span) = global_names.insert(name.clone(), span) {
             return Err(Diagnostic::ShadowedBinding {
@@ -44,6 +45,7 @@ pub(super) fn check_and_evaluate(
             Definition::Function(declaration) => {
                 functions.insert(declaration.name.clone(), declaration);
             }
+            Definition::Template(_) => {}
         }
     }
 
@@ -128,6 +130,7 @@ pub(super) fn evaluate_with_bindings(
                 Definition::Function(declaration) => {
                     functions.insert(declaration.name.clone(), declaration);
                 }
+                Definition::Template(_) => {}
             }
         }
         for declaration in functions.values() {

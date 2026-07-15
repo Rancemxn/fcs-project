@@ -6,10 +6,7 @@ tempoMap {
 
 definitions {
     const DEFAULT_X: length = 12px;
-}
-
-templates {
-    template ghost(at: beat, x: length) -> Note {
+    template Note ghost(at: beat, x: length) {
         return tap {
             gameplay.time: at;
             presentation.positionX: x;

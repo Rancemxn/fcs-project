@@ -146,3 +146,30 @@ f501ad13ea81c643a92be5b38cbfc54b42106e60cc0079c8b867558df9c85b0e
 ```
 
 复核时六份规范/治理文件和 39-file conformance tree 均保持冻结记录中的 bytes 与哈希。
+
+### 2026-07-15 I0 依赖基线修订
+
+用户确认可以修改 I0 计划并引入经审计的依赖。该修订只替换上一节的 parser/dependency
+实施基线，不改变 source、canonical、execution、FCBC、Render 或 Conversion 语义：
+
+- Chumsky 从 0.11.1 升级到稳定补丁 0.11.2，并启用 `std`/`stacker`；
+- I0 新增严格 UTF-8 byte entry 和固定 seed/case 的 Proptest robustness gate；
+- Serde/TOML 仍只用于 test manifest，接受 TOML `parse` feature 的 Winnow 传递依赖；
+- 根 workspace 预登记 `serde_json`、`nalgebra`、`sha2`、`crc`、`image`、`clap`、`zip`，但仅由
+  I3-I10 的 owning crate 在对应阶段激活；
+- `fcs-source` 的 direct normal dependency 仍只有 Chumsky，未来阶段候选不进入其依赖树。
+
+上一版冻结后实施路线 SHA-256 保留为：
+
+```text
+f501ad13ea81c643a92be5b38cbfc54b42106e60cc0079c8b867558df9c85b0e
+```
+
+本次依赖基线修订后的 roadmap SHA-256 为：
+
+```text
+ebc374dd128e7272d06eb4491564770f8b7b218ff0e58df39f627abd73d72222
+```
+
+四份权威规范、规范治理文件和 conformance tree 未修改，因此冻结版本与原始哈希记录保持
+不变。

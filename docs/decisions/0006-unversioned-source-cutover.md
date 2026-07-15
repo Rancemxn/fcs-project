@@ -4,6 +4,8 @@
 
 日期：2026-07-14
 
+依赖基线修订：2026-07-15
+
 ## 1. 背景
 
 FCS 尚未对外发布，没有已发布 API、格式或下游使用者需要迁移。当前 workspace 同时包含：
@@ -158,34 +160,28 @@ fcs-cli         组合上述 crate 的命令行入口
 
 ## 5. Parser 技术选择
 
-I0 使用 crates.io 的 Chumsky `0.11.1` 重写 source lexer/parser。`refer/chumsky` 只作为只读
-参考资料，不作为 path dependency。参考仓库当前 `main` 是未发布的 0.13 开发线；实现只参考
-其 `0.11` tag 中与 crates.io `0.11.1` 对应的稳定 API。
+I0 使用 crates.io 的 Chumsky `0.11.2` 重写 source lexer/parser。`refer/chumsky` 只作为只读
+参考资料，不作为 path dependency。实现只使用 0.11.x stable API，不跟随 1.0 alpha API。
 
 依赖声明为：
 
 ```toml
 [dependencies]
-chumsky = {
-    version = "0.11.1",
-    default-features = false,
-    features = ["std"],
-}
+chumsky.workspace = true
 
 [dev-dependencies]
-serde = { version = "1", features = ["derive"] }
-toml = {
-    version = "1.1.2",
-    default-features = false,
-    features = ["parse", "serde"],
-}
+proptest.workspace = true
+serde.workspace = true
+toml.workspace = true
 ```
 
-不引入 Logos：Chumsky 自身完成字符输入到 spanned token stream 的 lexer。不引入 Winnow：
-它不能同时替代当前需要的 labelled error 和 recovery。不引入 Ariadne：终端渲染属于未来 CLI。
-不在 I0 引入 Proptest：属性生成留给数值、Track 和 evaluator 阶段按需评估。
+版本与 feature 由根 `[workspace.dependencies]` 统一审计。I0 不直接引入 Logos 或 Winnow：
+Chumsky 自身完成字符输入到 spanned token stream 的 lexer；TOML `parse` feature 传递引入的
+Winnow 只属于 dev/test manifest 路径，不能用于 FCS parser。不引入 Ariadne：终端渲染属于
+未来 CLI。I0 引入 defaults-disabled Proptest，以固定 seed/case 覆盖 byte decode、span、limits、
+determinism 和 no-panic contract；失败最小样例转成普通回归测试。
 
-Chumsky `0.11.1` 的 `pratt` feature 依赖其 `unstable` feature，因此 I0 禁止启用。表达式按稳定
+Chumsky `0.11.2` 的 `pratt` feature 依赖其 `unstable` feature，因此 I0 禁止启用。表达式按稳定
 combinator 分层：
 
 ```text
@@ -205,15 +201,18 @@ logical-or
 cursor，因此 `SimpleSpan<usize>` 是 UTF-8 byte span。实现仍必须保留 Unicode span 回归测试，
 防止依赖升级改变该契约。
 
-禁用默认 `stacker`。FCS parser 必须使用显式 source byte、token count、literal length 和 nesting
-budget 拒绝资源滥用，不能依靠动态扩栈接受无界递归。
+显式启用 Chumsky `stacker`，用其按需 stack growth 替代 token clone、固定 64 MiB parser thread。
+FCS parser 仍必须在递归或分配前使用显式 source byte、token count、literal length 和 nesting
+budget 拒绝资源滥用；`stacker` 在不支持的平台可以是 no-op，不能成为语义资源边界。
 
 ## 6. Parser 数据流与恢复边界
 
 Parser 使用两阶段数据流：
 
 ```text
-UTF-8 &str
+input &[u8]
+  -> strict UTF-8 decode (`decode.invalid-utf8` on failure)
+  -> UTF-8 &str
   -> Chumsky lexer
   -> Vec<(Token, SourceSpan)>
   -> Chumsky token parser
@@ -439,7 +438,8 @@ I0 只有同时满足以下条件才完成：
 - `src/` 不存在 `v4`、`v5` 或其他实现版本目录；
 - Rust import 不存在 `fcs_core::v5` 或 `crate::v5`；
 - 普通 examples 不含 `#fcs v4`；
-- Chumsky 只使用 `0.11.1` 稳定 API，不启用 `pratt`/`unstable`；
+- Chumsky 只使用 `0.11.2` 稳定 API，启用 `std`/`stacker`，不启用 `pratt`/`unstable`；
+- Proptest/Serde/TOML 只作为 dev dependency，Winnow 只允许通过 TOML test path 传递出现；
 - parser diagnostics 使用 UTF-8 byte span 与稳定 code；
 - generator 不接受裸 `..`，未实现展开时明确失败且无部分输出；
 - manifest 完整性 gate 通过，且不包含 `implementation.*` expectation；

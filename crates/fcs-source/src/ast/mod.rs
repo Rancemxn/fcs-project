@@ -8,8 +8,7 @@ pub use color::Color;
 pub use entity::{
     CollectionBlock, CollectionItem, CollectionsBlock, EntityConstructor, EntityExpression,
     EntityField, ExpandedCollection, ExpandedEntity, ExpandedField, ExpandedSourceDocument,
-    FieldPath, Generator, GeneratorItem, NoteVariant, SourceRange, TemplateDeclaration,
-    TemplateParameter, TemplatesBlock, WithExpression,
+    FieldPath, Generator, GeneratorItem, NoteVariant, SourceRange, WithExpression,
 };
 pub use time::{Beat, BeatError, Bpm, InvalidBpm};
 pub use types::{
@@ -34,7 +33,6 @@ pub struct Document {
     pub profile: DocumentProfile,
     pub tempo_map: Option<TempoMap>,
     pub definitions: Option<DefinitionsBlock>,
-    pub templates: Option<TemplatesBlock>,
     pub collections: Vec<CollectionBlock>,
 }
 
@@ -50,5 +48,6 @@ pub struct TempoPoint {
 }
 pub use definitions::{
     ConstDeclaration, Definition, DefinitionsBlock, FunctionDeclaration, FunctionParameter,
-    FunctionStatement, IfStatement, LetStatement, ReturnStatement,
+    FunctionStatement, IfStatement, LetStatement, ReturnEntityStatement, ReturnStatement,
+    TemplateDeclaration, TemplateIfStatement, TemplateParameter, TemplateStatement,
 };

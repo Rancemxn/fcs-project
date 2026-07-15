@@ -2,7 +2,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ast::{Definition, DefinitionsBlock, FunctionStatement, SourceExpression, SourceSpan};
+use crate::ast::{
+    Definition, DefinitionsBlock, EntityExpression, FunctionStatement, SourceExpression,
+    SourceSpan, TemplateStatement,
+};
 
 use super::ElaboratorError as Diagnostic;
 
@@ -12,7 +15,7 @@ pub(super) fn reject_cycles(definitions: &DefinitionsBlock) -> Result<(), Diagno
         .iter()
         .filter_map(|definition| match definition {
             Definition::Const(declaration) => Some(declaration.name.clone()),
-            Definition::Function(_) => None,
+            Definition::Function(_) | Definition::Template(_) => None,
         })
         .collect();
     let function_names: BTreeSet<_> = definitions
@@ -20,7 +23,15 @@ pub(super) fn reject_cycles(definitions: &DefinitionsBlock) -> Result<(), Diagno
         .iter()
         .filter_map(|definition| match definition {
             Definition::Function(declaration) => Some(declaration.name.clone()),
-            Definition::Const(_) => None,
+            Definition::Const(_) | Definition::Template(_) => None,
+        })
+        .collect();
+    let template_names: BTreeSet<_> = definitions
+        .declarations
+        .iter()
+        .filter_map(|definition| match definition {
+            Definition::Template(declaration) => Some(declaration.name.clone()),
+            Definition::Const(_) | Definition::Function(_) => None,
         })
         .collect();
 
@@ -28,6 +39,8 @@ pub(super) fn reject_cycles(definitions: &DefinitionsBlock) -> Result<(), Diagno
     let mut const_spans = BTreeMap::new();
     let mut function_graph = BTreeMap::new();
     let mut function_spans = BTreeMap::new();
+    let mut template_graph = BTreeMap::new();
+    let mut template_spans = BTreeMap::new();
     for definition in &definitions.declarations {
         match definition {
             Definition::Const(declaration) => {
@@ -46,6 +59,16 @@ pub(super) fn reject_cycles(definitions: &DefinitionsBlock) -> Result<(), Diagno
                 function_graph.insert(declaration.name.clone(), dependencies);
                 function_spans.insert(declaration.name.clone(), declaration.name_span);
             }
+            Definition::Template(declaration) => {
+                let mut dependencies = BTreeSet::new();
+                collect_template_calls_in_block(
+                    &declaration.body,
+                    &template_names,
+                    &mut dependencies,
+                );
+                template_graph.insert(declaration.name.clone(), dependencies);
+                template_spans.insert(declaration.name.clone(), declaration.name_span);
+            }
         }
     }
 
@@ -61,7 +84,91 @@ pub(super) fn reject_cycles(definitions: &DefinitionsBlock) -> Result<(), Diagno
             chain,
         });
     }
+    if let Some(chain) = find_cycle(&template_graph) {
+        return Err(Diagnostic::RecursiveTemplate {
+            span: template_spans[&chain[0]],
+            chain,
+        });
+    }
     Ok(())
+}
+
+fn collect_template_calls_in_block(
+    statements: &[TemplateStatement],
+    names: &BTreeSet<String>,
+    output: &mut BTreeSet<String>,
+) {
+    for statement in statements {
+        match statement {
+            TemplateStatement::Let(statement) => {
+                collect_template_calls(&statement.initializer, names, output);
+            }
+            TemplateStatement::If(statement) => {
+                collect_template_calls(&statement.condition, names, output);
+                collect_template_calls_in_block(&statement.then_branch, names, output);
+                collect_template_calls_in_block(&statement.else_branch, names, output);
+            }
+            TemplateStatement::Return(statement) => {
+                collect_template_calls_in_entity(&statement.value, names, output);
+            }
+        }
+    }
+}
+
+fn collect_template_calls_in_entity(
+    expression: &EntityExpression,
+    names: &BTreeSet<String>,
+    output: &mut BTreeSet<String>,
+) {
+    match expression {
+        EntityExpression::Constructor(constructor) => {
+            for field in &constructor.fields {
+                collect_template_calls(&field.value, names, output);
+            }
+        }
+        EntityExpression::Source(expression) => collect_template_calls(expression, names, output),
+        EntityExpression::With(expression) => {
+            collect_template_calls_in_entity(&expression.base, names, output);
+            for field in &expression.fields {
+                collect_template_calls(&field.value, names, output);
+            }
+        }
+    }
+}
+
+fn collect_template_calls(
+    expression: &SourceExpression,
+    names: &BTreeSet<String>,
+    output: &mut BTreeSet<String>,
+) {
+    match expression {
+        SourceExpression::Call {
+            callee, arguments, ..
+        } => {
+            if let SourceExpression::Name { name, .. } = callee.as_ref()
+                && names.contains(name)
+            {
+                output.insert(name.clone());
+            } else {
+                collect_template_calls(callee, names, output);
+            }
+            for argument in arguments {
+                collect_template_calls(argument, names, output);
+            }
+        }
+        SourceExpression::Unary { operand, .. }
+        | SourceExpression::FieldAccess { base: operand, .. } => {
+            collect_template_calls(operand, names, output);
+        }
+        SourceExpression::Binary { left, right, .. }
+        | SourceExpression::Vec2 {
+            x: left, y: right, ..
+        } => {
+            collect_template_calls(left, names, output);
+            collect_template_calls(right, names, output);
+        }
+        SourceExpression::Literal { .. } | SourceExpression::Name { .. } => {}
+    }
 }
 
 fn find_cycle(graph: &BTreeMap<String, BTreeSet<String>>) -> Option<Vec<String>> {

@@ -1,8 +1,9 @@
 use chumsky::error::RichReason;
 use chumsky::prelude::*;
 
-use crate::ast::{Beat, Color, SourceLiteral, SourceSpan};
+use crate::ast::{Beat, Bpm, Color, SourceLiteral, SourceSpan};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticStage};
+use crate::version::{FCS_SOURCE_VERSION, Version};
 
 use super::ParseLimits;
 use super::input::{ChumskySpan, SpannedToken, source_span};
@@ -10,19 +11,39 @@ use super::token::{Keyword, Punctuation, Token};
 
 type LexerExtra<'source> = extra::Err<Rich<'source, char, ChumskySpan>>;
 
+struct HeaderPrefix<'source> {
+    header: Option<(Version, ChumskySpan)>,
+    body: &'source str,
+    offset: usize,
+}
+
 pub(super) fn lex(source: &str, limits: ParseLimits) -> Result<Vec<SpannedToken>, Vec<Diagnostic>> {
     if source.len() > limits.max_source_bytes {
         return Err(vec![resource_limit(SourceSpan::new(0, source.len()))]);
     }
-    if let Some(diagnostic) = validate_trivia(source, limits) {
-        return Err(vec![diagnostic]);
+    let HeaderPrefix {
+        header,
+        body,
+        offset,
+    } = header_prefix(source)?;
+    if let Some(diagnostic) = validate_trivia(body, limits) {
+        return Err(vec![shift_diagnostic(diagnostic, offset)]);
     }
-
-    let (tokens, errors) = lexer(limits).parse(source).into_output_errors();
+    let (tokens, errors) = lexer(limits).parse(body).into_output_errors();
     if !errors.is_empty() {
-        return Err(errors.into_iter().map(rich_diagnostic).collect());
+        return Err(errors
+            .into_iter()
+            .map(rich_diagnostic)
+            .map(|diagnostic| shift_diagnostic(diagnostic, offset))
+            .collect());
     }
-    let tokens = tokens.expect("a complete lexer produces tokens when it has no errors");
+    let mut tokens = tokens.expect("a complete lexer produces tokens when it has no errors");
+    for (_, span) in &mut tokens {
+        *span = ChumskySpan::new((), span.start + offset..span.end + offset);
+    }
+    if let Some((version, span)) = header {
+        tokens.insert(0, (Token::Header(version), span));
+    }
     if tokens.len() > limits.max_tokens {
         return Err(vec![resource_limit(SourceSpan::new(0, source.len()))]);
     }
@@ -72,9 +93,7 @@ fn lexer<'source>(
         .then(unit)
         .to_slice()
         .try_map(|text: &str, span| {
-            parse_number_literal(text)
-                .map(Token::Literal)
-                .map_err(|message| Rich::custom(span, message))
+            parse_number_token(text).map_err(|message| Rich::custom(span, message))
         });
 
     let escape = just('\\').ignore_then(choice((
@@ -200,15 +219,15 @@ fn lexer<'source>(
     ))
     .repeated();
 
-    choice((string, color, number, identifier, punctuation))
-        .map_with(|token, extra| (token, extra.span()))
-        .padded_by(trivia)
-        .repeated()
-        .collect()
+    let token = choice((string, color, number, identifier, punctuation))
+        .map_with(|token, extra| (token, extra.span()));
+    trivia
+        .clone()
+        .ignore_then(token.then_ignore(trivia).repeated().collect())
         .then_ignore(end())
 }
 
-fn parse_number_literal(text: &str) -> Result<SourceLiteral, &'static str> {
+fn parse_number_token(text: &str) -> Result<Token, &'static str> {
     const UNITS: [&str; 10] = [
         "beat", "turn", "min", "rad", "deg", "bpm", "ns", "us", "ms", "px",
     ];
@@ -227,17 +246,27 @@ fn parse_number_literal(text: &str) -> Result<SourceLiteral, &'static str> {
     }
     if unit.is_empty() {
         if number.contains(['.', 'e', 'E']) {
-            return finite_float(number).map(SourceLiteral::Float);
+            return finite_float(number)
+                .map(SourceLiteral::Float)
+                .map(Token::Literal);
         }
         return number
             .parse::<i64>()
             .map(SourceLiteral::Int)
+            .map(Token::Literal)
             .map_err(|_| "invalid integer literal");
     }
     if unit == "beat" {
-        return parse_beat(number).map(SourceLiteral::Beat);
+        return parse_beat(number)
+            .map(SourceLiteral::Beat)
+            .map(Token::Literal);
     }
     let value = finite_float(number)?;
+    if unit == "bpm" {
+        return Bpm::new(value)
+            .map(Token::TempoBpm)
+            .map_err(|_| "invalid bpm literal");
+    }
     let literal = match unit {
         "ns" => SourceLiteral::Time(value / 1_000_000_000.0),
         "us" => SourceLiteral::Time(value / 1_000_000.0),
@@ -248,11 +277,63 @@ fn parse_number_literal(text: &str) -> Result<SourceLiteral, &'static str> {
         "deg" => SourceLiteral::Angle(value.to_radians()),
         "rad" => SourceLiteral::Angle(value),
         "turn" => SourceLiteral::Angle(value * std::f64::consts::TAU),
-        "bpm" => return Err("tempo literals are only valid in a tempo map"),
         _ => return Err("unknown numeric unit"),
     };
     matches!(literal, SourceLiteral::Time(value) | SourceLiteral::Length(value) | SourceLiteral::Angle(value) if value.is_finite())
-        .then_some(literal).ok_or("non-finite numeric literal")
+        .then_some(literal).map(Token::Literal).ok_or("non-finite numeric literal")
+}
+
+fn header_prefix(source: &str) -> Result<HeaderPrefix<'_>, Vec<Diagnostic>> {
+    let bom_len = source
+        .strip_prefix('\u{feff}')
+        .map_or(0, |_| '\u{feff}'.len_utf8());
+    let source_without_bom = &source[bom_len..];
+    if !source_without_bom.starts_with("#fcs ") {
+        return Ok(HeaderPrefix {
+            header: None,
+            body: source,
+            offset: 0,
+        });
+    }
+    let Some(line_end) = source_without_bom.find('\n') else {
+        return Err(vec![version_diagnostic(
+            DiagnosticCode::VERSION_INVALID,
+            SourceSpan::new(0, source.len()),
+        )]);
+    };
+    let line = source_without_bom[..line_end].trim_end_matches('\r');
+    let version = line[5..].parse::<Version>().map_err(|_| {
+        vec![version_diagnostic(
+            DiagnosticCode::VERSION_INVALID,
+            SourceSpan::new(bom_len, bom_len + line.len()),
+        )]
+    })?;
+    if !FCS_SOURCE_VERSION.supports_source(version) {
+        return Err(vec![version_diagnostic(
+            DiagnosticCode::VERSION_UNSUPPORTED,
+            SourceSpan::new(bom_len, bom_len + line.len()),
+        )]);
+    }
+    let offset = bom_len + line_end + 1;
+    Ok(HeaderPrefix {
+        header: Some((version, ChumskySpan::new((), bom_len..offset))),
+        body: &source[offset..],
+        offset,
+    })
+}
+
+fn version_diagnostic(code: DiagnosticCode, span: SourceSpan) -> Diagnostic {
+    Diagnostic::new(code, DiagnosticStage::Parse, "invalid source version", span)
+}
+
+fn shift_diagnostic(diagnostic: Diagnostic, offset: usize) -> Diagnostic {
+    let span = diagnostic.primary_span();
+    Diagnostic::new(
+        diagnostic.code(),
+        diagnostic.stage(),
+        diagnostic.message(),
+        SourceSpan::new(span.start + offset, span.end + offset),
+    )
 }
 
 fn finite_float(number: &str) -> Result<f64, &'static str> {
@@ -532,7 +613,20 @@ mod tests {
         assert!(matches!(tokens[0].0, Token::Literal(_)));
     }
     #[test]
+    fn trivia_only_input_produces_an_empty_token_stream() {
+        assert!(tokens(" \t\r\n/* comment */ // trailing").is_empty());
+    }
+    #[test]
     fn lexer_contract_diagnostics_and_limits_are_stable() {
+        assert!(lex("format { profile: fragment; }", ParseLimits::default()).is_ok());
+        let HeaderPrefix { body, .. } = header_prefix("#fcs 5.0.0\nformat { profile: fragment; }")
+            .expect("valid header prefix");
+        assert_eq!(body, "format { profile: fragment; }");
+        lex(
+            "#fcs 5.0.0\nformat { profile: fragment; }",
+            ParseLimits::default(),
+        )
+        .expect("document header and body should lex");
         for source in ["\u{feff}1", "1\r\n2"] {
             assert!(lex(source, ParseLimits::default()).is_ok());
         }

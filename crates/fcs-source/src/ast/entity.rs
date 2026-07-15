@@ -101,33 +101,6 @@ pub struct EntityConstructor {
     pub span: SourceSpan,
 }
 
-/// A typed parameter accepted by a compile-time entity template.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TemplateParameter {
-    pub name: String,
-    pub name_span: SourceSpan,
-    pub ty: Type,
-    pub span: SourceSpan,
-}
-
-/// A compile-time entity template declaration.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TemplateDeclaration {
-    pub name: String,
-    pub name_span: SourceSpan,
-    pub parameters: Vec<TemplateParameter>,
-    pub return_type: Type,
-    pub body: EntityExpression,
-    pub span: SourceSpan,
-}
-
-/// The source-level template registry.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TemplatesBlock {
-    pub declarations: Vec<TemplateDeclaration>,
-    pub span: SourceSpan,
-}
-
 /// A source range used by a compile-time generator.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceRange {

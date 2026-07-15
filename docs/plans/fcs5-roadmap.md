@@ -164,7 +164,9 @@ crate 切换和 I0.4 诊断边界已完成；I0.5 parser 重建和 conformance g
 - 提交完整切换前快照并建立永久 `archive/fcs4-pre-cutover`；
 - fast-forward `master`，删除活动主线中的 FCS 4、旧 converter 和旧 CLI；
 - 将 `fcs-core/src/v5` 提升为无版本前缀的独立 `fcs-source` crate；
-- 用 Chumsky 0.11.1 建立 token/span/parser 和结构化诊断基线；
+- 用 Chumsky 0.11.2 + `stacker` 建立 token/span/parser 和结构化诊断基线；
+- 建立 byte decode API 和固定 seed/case 的 Proptest parser robustness gate；
+- 在 workspace catalog 预登记后续阶段依赖，但只允许当前 owning crate 激活；
 - 保存并审计 generator 工作，严格拒绝裸 `..`，未展开时返回明确阶段诊断；
 - 建立“条款—实现—测试”矩阵和强类型 conformance manifest gate。
 
@@ -276,13 +278,18 @@ crate 切换和 I0.4 诊断边界已完成；I0.5 parser 重建和 conformance g
   source front end 提升为 `crates/fcs-source`，不提供兼容 re-export。
 - **I0.4 诊断边界**：建立稳定 `DiagnosticCode`、UTF-8 byte span、labels、确定性多诊断
   `ParseOutput<T>`；Chumsky error 不泄漏为 public API。
-- **I0.5 Chumsky parser 基线**：使用 0.11.1 稳定 token/span/recovery API，禁用 alpha、Pratt
-  和 unstable feature；迁移当前 Frozen-conforming expression/document subset。
-- **I0.6 Manifest gate**：Serde/TOML 强类型加载根 manifest 和 22 个 FCS fixture，验证路径、
+- **I0.5 Chumsky parser 基线**：使用 0.11.2 稳定 token/span/recovery API 和 `stacker`，禁用
+  alpha、Pratt 和 unstable feature；迁移当前 Frozen-conforming expression/document subset，
+  删除 raw-text Cursor、token clone 和固定 64 MiB parser thread。
+- **I0.6 Decode/robustness gate**：新增 `parse_document_bytes`、`decode.invalid-utf8` 和固定
+  seed/case 的 Proptest gate；验证任意 bounded bytes/string 不 panic、span 有界、结果确定且 limits
+  在递归/分配前生效。
+- **I0.7 Manifest gate**：Serde/TOML 强类型加载根 manifest 和 22 个 FCS fixture，验证路径、
   stage、expect、diagnostic、clauses 与 `implementation.*` 禁止规则。
-- **I0.7 条款矩阵**：维护 `docs/conformance/fcs5-implementation-matrix.md`，每行含规范章节、
+- **I0.8 条款矩阵**：维护 `docs/conformance/fcs5-implementation-matrix.md`，每行含规范章节、
   public API、实现文件、valid/invalid fixture、状态、下一阶段和已知偏差。
-- **I0.8 基线 gate**：workspace 只有 `fcs-source`；结构搜索、Clippy、nextest、fmt、diff 和
+- **I0.9 基线 gate**：workspace 只有 `fcs-source`；结构搜索、依赖/feature 审计、Clippy、
+  nextest、fmt、diff 和
   独立 review 全绿，记录准确 test count 与 archive/master SHA。
 
 交付：精确旧工具链归档、绿色 `master`、唯一 `fcs-source`、条款矩阵、偏差清单和强类型
@@ -304,8 +311,8 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
   schema 合法性留给 static phase。
 - **I1.7 Diagnostic**：所有 parser error 映射附录 C category，保留 primary/related span；不得
   panic 或接受 trailing garbage。
-- **I1.8 Robustness**：nesting/token/string/input limits；property/fuzz test invalid UTF-8、comment、
-  delimiter 和 expression precedence。
+- **I1.8 Robustness 扩展**：在 I0 byte/property gate 上覆盖全部 grammar production、comment、
+  delimiter、expression precedence 和长合法输入，并增加独立 fuzz lane。
 
 测试：每个 EBNF production 至少一个 valid/invalid fixture；所有 `fcs.md` source example parse。
 
@@ -350,7 +357,8 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 - **I3.7 Scroll model**：global/line scroll tempo、speed multiplier、reverse capability、floorScale、
   integration origin 和 initial distance。
 - **I3.8 Canonical API**：Phase 4+ 只能依赖 immutable CanonicalChart；禁止引用 parser/template AST。
-- **I3.9 Snapshot**：human-readable canonical snapshot serializer仅用于测试，排序与 stable ID 固定。
+- **I3.9 Snapshot**：用 cataloged `serde_json` 建立仅测试使用的 human-readable canonical snapshot
+  serializer，排序与 stable ID 固定；不能让 JSON representation 成为 canonical API。
 
 测试：tempo/Track/graph/Note 每个边界，source declaration reorder 的语义不变性和 snapshot golden。
 
@@ -359,7 +367,9 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 - **I4.1 Easing**：附录公式和 31 ID 的端点、中点、overshoot test vector；binary64 finite check。
 - **I4.2 Track evaluator**：constant/step/linear/easing/Bezier、point boundary、fill/extrapolation、
   layered blend 和 exact selected descriptor。
-- **I4.3 Transform evaluator**：column-vector matrix、pivot、parent inherit 和 world transform vectors。
+- **I4.3 Transform evaluator**：column-vector matrix、pivot、parent inherit 和 world transform vectors；
+  可在 production 私有实现激活 cataloged `nalgebra` 的 `f64` fixed-size types，但 independent
+  reference path 不得复用该实现或暴露 nalgebra public type。
 - **I4.4 Scroll evaluator**：q、velocity、analytic/piecewise integral、distance continuity、negative/zero
   speed 和 direct seek。
 - **I4.5 Expression DAG**：typed acyclic nodes、`s/b/q/d/p` availability、lazy choose、invalid math 和
@@ -376,7 +386,8 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 
 - **I5.1 Profile validator**：fragment/chart/playable/renderable/publishable + features 正交约束。
 - **I5.2 Contributors/credits**：标准/custom role、display order、identifier 和 typed reference。
-- **I5.3 Resource manifest**：kind、URI policy、SHA-256、media/color/alpha/sampling/font validation。
+- **I5.3 Resource manifest**：激活 cataloged `sha2`，实现 kind、URI policy、SHA-256、
+  media/color/alpha/sampling/font validation。
 - **I5.4 Sync**：唯一 offset 公式、preview audio domain 和 player/converter shared test vector。
 - **I5.5 Typed custom**：ordered object、duplicate key、depth/count/string/byte limits和 FCBC-compatible
   value restrictions。
@@ -386,8 +397,9 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 
 ### I6：PGR/RPE/PEC importer
 
-- **I6.1 Shared import IR boundary**：source parser输出版本化、未经 FCS 猜测的 source semantic IR；
-  lowering 才产生 CanonicalChart/provenance/report。
+- **I6.1 Shared import IR boundary**：激活 cataloged `serde`/`serde_json`，source parser输出版本化、
+  未经 FCS 猜测的 source semantic IR；lowering 才产生 CanonicalChart/provenance/report。只有明确
+  纳入 package input surface 后才为 owning converter crate 激活 defaults-disabled `zip`。
 - **I6.2 PGR v1/v3**：line BPM/time、event、coordinate、speed/floor validation、Note/fake/side/Hold。
 - **I6.3 RPE**：BPMList/exact Beat、bpmfactor、multi-layer blend、father/rotateWithFather、Bezier、
   controls、visibleTime、resource/metadata。
@@ -402,9 +414,10 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 
 ### I7：FCBC writer、loader 与 ABI
 
-- **I7.1 Primitive codec**：little-endian、Value、Record、StringTable、ConstantPool 和 canonical zero。
-- **I7.2 Container writer**：128-byte header、40-byte entries、alignment/padding、CRC、source hash 和
-  deterministic sections。
+- **I7.1 Primitive codec**：使用标准库 `to_le_bytes`/`from_le_bytes` 实现 little-endian、Value、
+  Record、StringTable、ConstantPool 和 canonical zero；不引入 `byteorder`。
+- **I7.2 Container writer**：激活 cataloged `crc` 的 CRC-32/ISO-HDLC 与 `sha2`，实现 128-byte
+  header、40-byte entries、alignment/padding、checksum、source hash 和 deterministic sections。
 - **I7.3 Core sections**：Meta through Distance 的 record writer/reader 和 version dispatch。
 - **I7.4 Descriptor ABI**：PropertyDescriptor、Segment/Piecewise/Baked、Expression topological nodes、
   environment/type validation。
@@ -439,16 +452,17 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 - **I9.3 Canonical scene**：stable forest、pass/sort、attachment dependency、dynamic property descriptor。
 - **I9.4 RenderSection codec**：全部 table/enum/reference 与 FCBC version/feature validation。
 - **I9.5 Semantic evaluator**：transform/opacity/active/visibility/clip/attachment/composite draw list。
-- **I9.6 Reference rasterizer**：fixed resources、path coverage、linear compositing、image sampling、glyph
-  run 和 RGBA8 output。
+- **I9.6 Reference rasterizer**：为 render crate 激活 defaults-disabled `image`，只开启规范/fixture
+  需要的 codec并设置 dimension/allocation limits；实现 fixed resources、path coverage、linear
+  compositing、image sampling、glyph run 和 RGBA8 output，不能让 image crate behavior 定义规范。
 - **I9.7 Raster fixtures**：每种 node/paint/clip/composite、line/note attachment、dynamic boundary 和
   malformed resource；比较规范容差。
 - **I9.8 Backend interface**：GPU/realtime backend只消费 canonical display data，不能反向影响 chart。
 
 ### I10：CLI、发行组合与 Conformance Release Candidate
 
-- **I10.1 CLI surface**：`check`、`format`、`compile`、`inspect`、`convert`、`report`，输出稳定 exit
-  category 和可选 JSON diagnostic/report。
+- **I10.1 CLI surface**：在 CLI crate 激活 cataloged `clap`，提供 `check`、`format`、`compile`、
+  `inspect`、`convert`、`report`，输出稳定 exit category 和可选 JSON diagnostic/report。
 - **I10.2 Profile/resource options**：FCBC profile、strict/repair、resolver root、target capability 和
   bake budget显式参数。
 - **I10.3 Public API assembly**：只组合无版本前缀的领域 crate，不建立第二默认 AST 或兼容 facade。

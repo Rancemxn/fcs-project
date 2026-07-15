@@ -1,6 +1,6 @@
 //! Source declarations for the FCS 5 compile-time language.
 
-use super::{SourceExpression, SourceSpan, Type};
+use super::{EntityExpression, SourceExpression, SourceSpan, Type};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DefinitionsBlock {
@@ -12,6 +12,7 @@ pub struct DefinitionsBlock {
 pub enum Definition {
     Const(ConstDeclaration),
     Function(FunctionDeclaration),
+    Template(TemplateDeclaration),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,5 +79,56 @@ pub struct IfStatement {
     pub condition: SourceExpression,
     pub then_branch: Vec<FunctionStatement>,
     pub else_branch: Vec<FunctionStatement>,
+    pub span: SourceSpan,
+}
+
+/// A typed parameter accepted by a compile-time entity template.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemplateParameter {
+    pub name: String,
+    pub name_span: SourceSpan,
+    pub ty: Type,
+    pub span: SourceSpan,
+}
+
+/// A compile-time entity template declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemplateDeclaration {
+    pub return_type: Type,
+    pub name: String,
+    pub name_span: SourceSpan,
+    pub parameters: Vec<TemplateParameter>,
+    pub body: Vec<TemplateStatement>,
+    pub span: SourceSpan,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TemplateStatement {
+    Let(LetStatement),
+    If(TemplateIfStatement),
+    Return(ReturnEntityStatement),
+}
+
+impl TemplateStatement {
+    pub const fn span(&self) -> SourceSpan {
+        match self {
+            Self::Let(statement) => statement.span,
+            Self::If(statement) => statement.span,
+            Self::Return(statement) => statement.span,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemplateIfStatement {
+    pub condition: SourceExpression,
+    pub then_branch: Vec<TemplateStatement>,
+    pub else_branch: Vec<TemplateStatement>,
+    pub span: SourceSpan,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReturnEntityStatement {
+    pub value: EntityExpression,
     pub span: SourceSpan,
 }

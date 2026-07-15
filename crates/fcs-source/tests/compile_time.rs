@@ -101,6 +101,34 @@ definitions {
 }
 
 #[test]
+fn token_document_parser_does_not_split_on_delimiters_inside_literals_or_comments() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const TEXT: string = "with;:";
+  const VALUE: int = 1 /* with ; : */ + 2;
+}"#;
+    let document = parse_document(source).into_result().unwrap();
+    assert_eq!(document.definitions.as_ref().unwrap().declarations.len(), 2);
+}
+
+#[test]
+fn template_declaration_does_not_consume_following_definitions() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  template Note make() { return tap { gameplay.time: 0beat; }; }
+  const VALUE: int = 1;
+  fn identity(value: int) -> int { return value; }
+}"#;
+    let document = parse_document(source).into_result().unwrap();
+    let declarations = &document.definitions.as_ref().unwrap().declarations;
+    assert!(matches!(declarations[0], Definition::Template(_)));
+    assert!(matches!(declarations[1], Definition::Const(_)));
+    assert!(matches!(declarations[2], Definition::Function(_)));
+}
+
+#[test]
 fn elaborates_const_and_pure_function() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }
@@ -408,8 +436,8 @@ fn parses_typed_templates_and_collections_with_source_spans() {
     let source = r#"#fcs 5.0.0
 format { profile: chart; }
 tempoMap { 0beat -> 180bpm; }
-templates {
-  template ghost(at: beat) -> Note {
+definitions {
+  template Note ghost(at: beat) {
     return tap { gameplay.time: at; };
   }
 }
@@ -421,15 +449,8 @@ collections {
     let document = parse_document(source)
         .into_result()
         .expect("template source should parse");
-    let templates = document.templates.as_ref().expect("templates block");
-    assert_eq!(templates.declarations.len(), 1);
-    assert_eq!(templates.declarations[0].name, "ghost");
-    assert_eq!(templates.declarations[0].parameters[0].ty, Type::Beat);
-    assert_eq!(templates.declarations[0].return_type, Type::Note);
-    assert!(matches!(
-        templates.declarations[0].body,
-        EntityExpression::Constructor(_)
-    ));
+    let definitions = document.definitions.as_ref().expect("definitions block");
+    assert_eq!(definitions.declarations.len(), 1);
     assert_eq!(document.collections.len(), 1);
     assert_eq!(document.collections[0].collection_name, "notes");
     assert!(matches!(
@@ -539,15 +560,16 @@ fn elaborates_templates_and_with_overrides_into_concrete_entities() {
     let source = r#"#fcs 5.0.0
 format { profile: chart; }
 tempoMap { 0beat -> 180bpm; }
-definitions { const X: length = 12px; }
-templates {
-  template ghost(at: beat, x: length) -> Note {
+definitions {
+  const X: length = 12px;
+  template Note ghost(at: beat, x: length) {
     return tap {
       gameplay.time: at;
       presentation.positionX: x;
     };
   }
 }
+
 collections {
   notes { ghost(1beat, X) with { presentation.alpha: 0.5; }; }
 }"#;
@@ -570,6 +592,92 @@ collections {
         entity.field("presentation.alpha").unwrap().value(),
         &TypedValue::Float(0.5)
     );
+}
+
+#[test]
+fn template_statements_bind_locals_and_select_compile_time_branches() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 180bpm; }
+definitions {
+  template Note selected(at: beat) {
+    let offset: beat = 1beat;
+    if true { return tap { gameplay.time: at + offset; }; }
+    else { return tap { gameplay.time: 99beat; }; }
+  }
+}
+collections { notes { selected(2beat); } }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
+    let entity = expanded
+        .collections()
+        .next()
+        .unwrap()
+        .entities()
+        .next()
+        .unwrap();
+    assert_eq!(
+        entity.field("gameplay.time").unwrap().value(),
+        &TypedValue::Beat(Beat::new(3, 1).unwrap())
+    );
+}
+
+#[test]
+fn template_cycle_detection_scans_template_bodies_before_expansion() {
+    let cases = [
+        (
+            "let initializer",
+            "let unused: Note = b(); return tap { gameplay.time: 1beat; };",
+        ),
+        (
+            "if condition",
+            "if b() { return tap { gameplay.time: 1beat; }; } else { return tap { gameplay.time: 2beat; }; }",
+        ),
+        (
+            "if then branch",
+            "if false { return b(); } else { return tap { gameplay.time: 1beat; }; }",
+        ),
+        (
+            "if else branch",
+            "if true { return tap { gameplay.time: 1beat; }; } else { return b(); }",
+        ),
+        ("constructor field", "return tap { gameplay.time: b(); };"),
+        ("source return", "return b();"),
+        ("with base", "return b() with { gameplay.time: 1beat; };"),
+        (
+            "with field",
+            "return tap { gameplay.time: 1beat; } with { gameplay.time: b(); };",
+        ),
+    ];
+
+    for (location, body) in cases {
+        let source = format!(
+            "#fcs 5.0.0\nformat {{ profile: chart; }}\ntempoMap {{ 0beat -> 180bpm; }}\ndefinitions {{\n  template Note a() {{ {body} }}\n  template Note b() {{ return a(); }}\n}}\ncollections {{ notes {{ a(); }} }}"
+        );
+        let document = parse_document(&source)
+            .into_result()
+            .unwrap_or_else(|diagnostics| panic!("{location} should parse: {diagnostics:?}"));
+        let errors = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+            .expect_err("template body should form a dependency cycle");
+        let diagnostic = &errors[0];
+
+        assert_eq!(diagnostic.code(), DiagnosticCode::NAME_CYCLE, "{location}");
+        assert_eq!(
+            diagnostic
+                .expansion_trace()
+                .iter()
+                .map(|frame| frame.subject().unwrap())
+                .collect::<Vec<_>>(),
+            ["a", "b", "a"],
+            "{location}"
+        );
+        let name_start = source.find("template Note a").unwrap() + "template Note ".len();
+        assert_eq!(
+            diagnostic.primary_span(),
+            SourceSpan::new(name_start, name_start + 1),
+            "{location}"
+        );
+    }
 }
 
 #[test]
@@ -596,9 +704,9 @@ collections { notes { tap { presentation.alpha: 1.0; }; } }"#;
     let recursive = r#"#fcs 5.0.0
 format { profile: chart; }
 tempoMap { 0beat -> 180bpm; }
-templates {
-  template a() -> Note { return b(); }
-  template b() -> Note { return a(); }
+definitions {
+  template Note a() { return b(); }
+  template Note b() { return a(); }
 }
 collections { notes { a(); } }"#;
     let errors = elaborate_source(recursive).expect_err("recursive template");

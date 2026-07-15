@@ -1,36 +1,48 @@
-use std::str::FromStr;
+use chumsky::{input::ValueInput, prelude::*};
 
-use crate::version::{FCS_SOURCE_VERSION, Version};
+use crate::{
+    diagnostic::{Diagnostic, DiagnosticCode, DiagnosticStage, ParseOutput},
+    version::Version,
+};
 
-use super::{ParseError, output_from_result};
+use super::{
+    ParseLimits,
+    input::{ChumskySpan, ParserExtra, SpannedToken},
+    lexer::lex,
+    token::Token,
+};
 
-pub fn parse_header(input: &str) -> crate::diagnostic::ParseOutput<Version> {
-    output_from_result(input, parse_header_inner(input).map(|(_, version)| version))
+pub fn parse_header(input: &str) -> ParseOutput<Version> {
+    match lex(input, ParseLimits::default()) {
+        Ok(tokens) => parse_header_tokens(&tokens),
+        Err(diagnostics) => ParseOutput::new(None, diagnostics),
+    }
 }
 
-pub(super) fn parse_header_inner(input: &str) -> Result<(&str, Version), ParseError> {
-    let bom_len = input
-        .strip_prefix('\u{feff}')
-        .map_or(0, |without_bom| input.len() - without_bom.len());
-    let header = &input[bom_len..];
-    let (line, rest_start) = match header.find('\n') {
-        Some(index) => {
-            let line = header[..index]
-                .strip_suffix('\r')
-                .unwrap_or(&header[..index]);
-            (line, bom_len + index + 1)
-        }
-        None => (header, input.len()),
-    };
+pub(super) fn header_parser<'tokens, I>()
+-> impl Parser<'tokens, I, Version, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    select! { Token::Header(version) => version }.labelled("FCS source header")
+}
 
-    let version_text = line
-        .strip_prefix("#fcs ")
-        .ok_or(ParseError::MissingHeader)?;
-    let version = Version::from_str(version_text).map_err(|_| ParseError::InvalidVersion)?;
-
-    if !FCS_SOURCE_VERSION.supports_source(version) {
-        return Err(ParseError::UnsupportedSourceVersion(version));
+pub(super) fn parse_header_tokens(tokens: &[SpannedToken]) -> ParseOutput<Version> {
+    match tokens.first() {
+        Some((Token::Header(version), _)) => ParseOutput::new(Some(*version), Vec::new()),
+        Some(_) => missing_header(crate::ast::SourceSpan::new(0, 0)),
+        None => missing_header(crate::ast::SourceSpan::new(0, 0)),
     }
+}
 
-    Ok((&input[rest_start..], version))
+fn missing_header(span: crate::ast::SourceSpan) -> ParseOutput<Version> {
+    ParseOutput::new(
+        None,
+        vec![Diagnostic::new(
+            DiagnosticCode::VERSION_MISSING_HEADER,
+            DiagnosticStage::Parse,
+            "source is missing an #fcs header",
+            span,
+        )],
+    )
 }

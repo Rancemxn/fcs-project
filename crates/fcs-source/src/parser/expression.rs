@@ -10,13 +10,11 @@ use crate::{
 };
 
 use super::{
-    ParseError, ParseLimits,
-    input::{ChumskySpan, SpannedToken, source_span},
+    ParseLimits,
+    input::{ChumskySpan, ParserExtra, SpannedToken, source_span},
     lexer::lex,
     token::{Keyword, Punctuation, Token},
 };
-
-type ParserExtra<'tokens> = extra::Err<Rich<'tokens, Token, ChumskySpan>>;
 
 /// Parses one complete compile-time expression.
 pub fn parse_expression(input: &str) -> ParseOutput<SourceExpression> {
@@ -59,36 +57,32 @@ pub fn parse_type_with_limits<L: Into<ParseLimits>>(input: &str, limits: L) -> P
     }
 }
 
-/// Compatibility boundary for the handwritten document parser. Task 8 will pass its original
-/// token stream to [`parse_expression_tokens`] instead of lexing a substring here.
-pub(super) fn parse_expression_at(
-    input: &str,
-    byte_offset: usize,
-) -> Result<SourceExpression, ParseError> {
-    parse_expression_inner(input, ParseLimits::default())
-        .map(|expression| shift_expression(expression, byte_offset))
-}
-
-pub(super) fn parse_expression_inner(
-    input: &str,
-    limits: ParseLimits,
-) -> Result<SourceExpression, ParseError> {
-    into_parse_error(parse_expression_with_limits(input, limits))
-}
-
-pub(super) fn parse_type_inner(input: &str, limits: ParseLimits) -> Result<Type, ParseError> {
-    into_parse_error(parse_type_with_limits(input, limits))
-}
-
 pub(super) fn parse_expression_tokens(
     source: &str,
     tokens: &[SpannedToken],
 ) -> ParseOutput<SourceExpression> {
-    if expression_limit_span(tokens, 64).is_some() {
-        parse_with_large_stack(source.len(), tokens, parse_expression_tokens_inline)
-    } else {
-        parse_expression_tokens_inline(source.len(), tokens)
+    let pressure = expression_stack_pressure(tokens);
+    if pressure <= 32 {
+        return parse_expression_tokens_inline(source.len(), tokens);
     }
+    let stack_size = 2usize
+        .saturating_mul(1024 * 1024)
+        .saturating_add(pressure.saturating_mul(128 * 1024))
+        .min(32 * 1024 * 1024);
+    std::thread::scope(|scope| {
+        let parser = std::thread::Builder::new()
+            .name("fcs-source-expression-parser".to_owned())
+            .stack_size(stack_size)
+            .spawn_scoped(scope, || {
+                parse_expression_tokens_inline(source.len(), tokens)
+            });
+        match parser {
+            Ok(parser) => parser
+                .join()
+                .unwrap_or_else(|_| resource_limit_output(SourceSpan::new(0, source.len()))),
+            Err(_) => resource_limit_output(SourceSpan::new(0, source.len())),
+        }
+    })
 }
 
 fn parse_expression_tokens_inline(
@@ -105,11 +99,7 @@ fn parse_expression_tokens_inline(
 }
 
 pub(super) fn parse_type_tokens(source: &str, tokens: &[SpannedToken]) -> ParseOutput<Type> {
-    if type_limit_span(tokens, 64).is_some() {
-        parse_with_large_stack(source.len(), tokens, parse_type_tokens_inline)
-    } else {
-        parse_type_tokens_inline(source.len(), tokens)
-    }
+    parse_type_tokens_inline(source.len(), tokens)
 }
 
 fn parse_type_tokens_inline(source_len: usize, tokens: &[SpannedToken]) -> ParseOutput<Type> {
@@ -120,40 +110,6 @@ fn parse_type_tokens_inline(source_len: usize, tokens: &[SpannedToken]) -> Parse
         .parse(input)
         .into_output_errors();
     parse_output(output, errors)
-}
-
-fn parse_with_large_stack<T: Send + 'static>(
-    source_len: usize,
-    tokens: &[SpannedToken],
-    parse: fn(usize, &[SpannedToken]) -> ParseOutput<T>,
-) -> ParseOutput<T> {
-    let tokens = tokens.to_vec();
-    match std::thread::Builder::new()
-        .name("fcs-source-parser".to_owned())
-        .stack_size(64 * 1024 * 1024)
-        .spawn(move || parse(source_len, &tokens))
-        .and_then(|thread| {
-            thread
-                .join()
-                .map_err(|_| std::io::Error::other("parser panicked"))
-        }) {
-        Ok(output) => output,
-        Err(_) => ParseOutput::new(
-            None,
-            vec![Diagnostic::new(
-                DiagnosticCode::RESOURCE_LIMIT_EXCEEDED,
-                DiagnosticStage::Parse,
-                "parser exhausted its execution stack",
-                SourceSpan::new(0, source_len),
-            )],
-        ),
-    }
-}
-
-fn into_parse_error<T>(output: ParseOutput<T>) -> Result<T, ParseError> {
-    output
-        .into_result()
-        .map_err(|mut diagnostics| ParseError::Diagnostic(diagnostics.remove(0)))
 }
 
 fn parse_output<T>(output: Option<T>, errors: Vec<Rich<'_, Token, ChumskySpan>>) -> ParseOutput<T> {
@@ -181,7 +137,7 @@ fn resource_limit_output<T>(span: SourceSpan) -> ParseOutput<T> {
     )
 }
 
-fn expression_parser<'tokens, I>()
+pub(super) fn expression_parser<'tokens, I>()
 -> impl Parser<'tokens, I, SourceExpression, ParserExtra<'tokens>> + Clone
 where
     I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
@@ -245,8 +201,8 @@ where
             .ignore_then(select! { Token::Identifier(identifier) => identifier })
             .map_with(|field, extra| Postfix::Field(field, source_span(extra.span())))
             .labelled("field access");
-        let postfix =
-            primary.foldl_with(call.or(field).repeated(), |base, suffix, _| match suffix {
+        let postfix = primary
+            .foldl_with(call.or(field).repeated(), |base, suffix, _| match suffix {
                 Postfix::Call(arguments, suffix_span) => SourceExpression::Call {
                     span: SourceSpan::new(base.span().start, suffix_span.end),
                     callee: Box::new(base),
@@ -257,55 +213,78 @@ where
                     base: Box::new(base),
                     field,
                 },
-            });
-
-        let unary = recursive(|unary| {
-            choice((
-                just(Token::Punctuation(Punctuation::Minus)).to(UnaryOperator::Negate),
-                just(Token::Punctuation(Punctuation::Bang)).to(UnaryOperator::Not),
-            ))
-            .then(unary)
-            .map_with(|(operator, operand), extra| SourceExpression::Unary {
-                operator,
-                span: source_span(extra.span()),
-                operand: Box::new(operand),
             })
-            .or(postfix.clone())
-        });
+            .boxed();
 
-        let power = recursive(|power| {
-            unary
-                .clone()
-                .then(
-                    just(Token::Punctuation(Punctuation::Power))
-                        .ignore_then(power)
-                        .or_not(),
-                )
-                .map(|(left, right)| match right {
-                    Some(right) => binary(left, BinaryOperator::Power, right),
-                    None => left,
-                })
-        });
+        let unary_operator = choice((
+            just(Token::Punctuation(Punctuation::Minus)).to(UnaryOperator::Negate),
+            just(Token::Punctuation(Punctuation::Bang)).to(UnaryOperator::Not),
+        ))
+        .map_with(|operator, extra| (operator, source_span(extra.span())));
+        let unary = unary_operator
+            .repeated()
+            .collect::<Vec<_>>()
+            .then(postfix)
+            .map(|(operators, operand)| {
+                operators
+                    .into_iter()
+                    .rev()
+                    .fold(operand, |operand, (operator, operator_span)| {
+                        let span = SourceSpan::new(operator_span.start, operand.span().end);
+                        SourceExpression::Unary {
+                            operator,
+                            operand: Box::new(operand),
+                            span,
+                        }
+                    })
+            })
+            .boxed();
 
-        let product = power.clone().foldl_with(
-            choice((
-                just(Token::Punctuation(Punctuation::Star)).to(BinaryOperator::Multiply),
-                just(Token::Punctuation(Punctuation::Slash)).to(BinaryOperator::Divide),
-                just(Token::Punctuation(Punctuation::Percent)).to(BinaryOperator::Remainder),
-            ))
-            .then(power)
-            .repeated(),
-            |left, (operator, right), _| binary(left, operator, right),
-        );
-        let sum = product.clone().foldl_with(
-            choice((
-                just(Token::Punctuation(Punctuation::Plus)).to(BinaryOperator::Add),
-                just(Token::Punctuation(Punctuation::Minus)).to(BinaryOperator::Subtract),
-            ))
-            .then(product)
-            .repeated(),
-            |left, (operator, right), _| binary(left, operator, right),
-        );
+        let power = unary
+            .clone()
+            .then(
+                just(Token::Punctuation(Punctuation::Power))
+                    .ignore_then(unary)
+                    .repeated()
+                    .collect::<Vec<_>>(),
+            )
+            .map(|(first, mut remaining)| {
+                if remaining.is_empty() {
+                    return first;
+                }
+                let mut right = remaining.pop().expect("checked non-empty");
+                while let Some(left) = remaining.pop() {
+                    right = binary(left, BinaryOperator::Power, right);
+                }
+                binary(first, BinaryOperator::Power, right)
+            })
+            .boxed();
+
+        let product = power
+            .clone()
+            .foldl_with(
+                choice((
+                    just(Token::Punctuation(Punctuation::Star)).to(BinaryOperator::Multiply),
+                    just(Token::Punctuation(Punctuation::Slash)).to(BinaryOperator::Divide),
+                    just(Token::Punctuation(Punctuation::Percent)).to(BinaryOperator::Remainder),
+                ))
+                .then(power)
+                .repeated(),
+                |left, (operator, right), _| binary(left, operator, right),
+            )
+            .boxed();
+        let sum = product
+            .clone()
+            .foldl_with(
+                choice((
+                    just(Token::Punctuation(Punctuation::Plus)).to(BinaryOperator::Add),
+                    just(Token::Punctuation(Punctuation::Minus)).to(BinaryOperator::Subtract),
+                ))
+                .then(product)
+                .repeated(),
+                |left, (operator, right), _| binary(left, operator, right),
+            )
+            .boxed();
 
         let ordering = comparison_chain(
             sum.clone(),
@@ -317,23 +296,30 @@ where
                 just(Token::Punctuation(Punctuation::GreaterThanOrEqual))
                     .to(BinaryOperator::GreaterThanOrEqual),
             )),
-        );
-        let equality = ordering.clone().foldl_with(
-            choice((
-                just(Token::Punctuation(Punctuation::EqualEqual)).to(BinaryOperator::Equal),
-                just(Token::Punctuation(Punctuation::BangEqual)).to(BinaryOperator::NotEqual),
-            ))
-            .then(ordering)
-            .repeated(),
-            |left, (operator, right), _| binary(left, operator, right),
-        );
-        let logical_and = equality.clone().foldl_with(
-            just(Token::Punctuation(Punctuation::AndAnd))
-                .to(BinaryOperator::And)
-                .then(equality)
+        )
+        .boxed();
+        let equality = ordering
+            .clone()
+            .foldl_with(
+                choice((
+                    just(Token::Punctuation(Punctuation::EqualEqual)).to(BinaryOperator::Equal),
+                    just(Token::Punctuation(Punctuation::BangEqual)).to(BinaryOperator::NotEqual),
+                ))
+                .then(ordering)
                 .repeated(),
-            |left, (operator, right), _| binary(left, operator, right),
-        );
+                |left, (operator, right), _| binary(left, operator, right),
+            )
+            .boxed();
+        let logical_and = equality
+            .clone()
+            .foldl_with(
+                just(Token::Punctuation(Punctuation::AndAnd))
+                    .to(BinaryOperator::And)
+                    .then(equality)
+                    .repeated(),
+                |left, (operator, right), _| binary(left, operator, right),
+            )
+            .boxed();
         logical_and
             .clone()
             .foldl_with(
@@ -377,40 +363,55 @@ where
         })
 }
 
-fn type_parser<'tokens, I>() -> impl Parser<'tokens, I, Type, ParserExtra<'tokens>> + Clone
+pub(super) fn type_parser<'tokens, I>()
+-> impl Parser<'tokens, I, Type, ParserExtra<'tokens>> + Clone
 where
     I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
 {
-    recursive(|ty| {
-        let scalar = select! {
-            Token::Keyword(Keyword::Bool) => Type::Bool,
-            Token::Keyword(Keyword::Int) => Type::Int,
-            Token::Keyword(Keyword::Float) => Type::Float,
-            Token::Keyword(Keyword::String) => Type::String,
-            Token::Keyword(Keyword::Time) => Type::Time,
-            Token::Keyword(Keyword::Beat) => Type::Beat,
-            Token::Keyword(Keyword::Length) => Type::Length,
-            Token::Keyword(Keyword::Angle) => Type::Angle,
-            Token::Keyword(Keyword::Color) => Type::Color,
-            Token::Keyword(Keyword::Note) => Type::Note,
-            Token::Keyword(Keyword::LineType) => Type::Line,
-            Token::Keyword(Keyword::RenderNode) => Type::RenderNode,
-        };
-        let generic = choice((
-            just(Token::Keyword(Keyword::Vec2)).to(TypeConstructor::Vec2),
-            just(Token::Keyword(Keyword::TrackSegment)).to(TypeConstructor::TrackSegment),
-            just(Token::Keyword(Keyword::KeyframeType)).to(TypeConstructor::Keyframe),
-        ))
-        .then_ignore(just(Token::Punctuation(Punctuation::LessThan)))
-        .then(ty)
-        .then_ignore(just(Token::Punctuation(Punctuation::GreaterThan)))
-        .map(|(constructor, element)| match constructor {
-            TypeConstructor::Vec2 => Type::Vec2(Box::new(element)),
-            TypeConstructor::TrackSegment => Type::TrackSegment(Box::new(element)),
-            TypeConstructor::Keyframe => Type::Keyframe(Box::new(element)),
-        });
-        scalar.or(generic).labelled("type").as_context()
-    })
+    let constructor = choice((
+        just(Token::Keyword(Keyword::Vec2)).to(TypeConstructor::Vec2),
+        just(Token::Keyword(Keyword::TrackSegment)).to(TypeConstructor::TrackSegment),
+        just(Token::Keyword(Keyword::KeyframeType)).to(TypeConstructor::Keyframe),
+    ))
+    .then_ignore(just(Token::Punctuation(Punctuation::LessThan)));
+    let scalar = select! {
+        Token::Keyword(Keyword::Bool) => Type::Bool,
+        Token::Keyword(Keyword::Int) => Type::Int,
+        Token::Keyword(Keyword::Float) => Type::Float,
+        Token::Keyword(Keyword::String) => Type::String,
+        Token::Keyword(Keyword::Time) => Type::Time,
+        Token::Keyword(Keyword::Beat) => Type::Beat,
+        Token::Keyword(Keyword::Length) => Type::Length,
+        Token::Keyword(Keyword::Angle) => Type::Angle,
+        Token::Keyword(Keyword::Color) => Type::Color,
+        Token::Keyword(Keyword::Note) => Type::Note,
+        Token::Keyword(Keyword::LineType) => Type::Line,
+        Token::Keyword(Keyword::RenderNode) => Type::RenderNode,
+    };
+    constructor
+        .repeated()
+        .collect::<Vec<_>>()
+        .then(scalar)
+        .then(
+            just(Token::Punctuation(Punctuation::GreaterThan))
+                .repeated()
+                .count(),
+        )
+        .try_map(|((constructors, scalar), closing_count), span| {
+            if constructors.len() != closing_count {
+                return Err(Rich::custom(span, "unbalanced generic type"));
+            }
+            Ok(constructors.into_iter().rev().fold(
+                scalar,
+                |element, constructor| match constructor {
+                    TypeConstructor::Vec2 => Type::Vec2(Box::new(element)),
+                    TypeConstructor::TrackSegment => Type::TrackSegment(Box::new(element)),
+                    TypeConstructor::Keyframe => Type::Keyframe(Box::new(element)),
+                },
+            ))
+        })
+        .labelled("type")
+        .as_context()
 }
 
 #[derive(Debug)]
@@ -515,6 +516,40 @@ fn expression_limit_span(tokens: &[SpannedToken], maximum: usize) -> Option<Sour
     None
 }
 
+fn expression_stack_pressure(tokens: &[SpannedToken]) -> usize {
+    let mut unary_run = 0usize;
+    let mut group_depth = 0usize;
+    let mut power_depth = 0usize;
+    let mut maximum = 0usize;
+    for (token, _) in tokens {
+        match token {
+            Token::Punctuation(Punctuation::Minus | Punctuation::Bang) => unary_run += 1,
+            Token::Punctuation(Punctuation::LeftParenthesis) => group_depth += 1,
+            Token::Punctuation(Punctuation::RightParenthesis) => {
+                group_depth = group_depth.saturating_sub(1);
+            }
+            Token::Punctuation(Punctuation::Power) => {
+                power_depth += 1;
+                unary_run = 0;
+            }
+            Token::Literal(_) | Token::Identifier(_) | Token::Keyword(Keyword::Vec2) => {
+                unary_run = 0;
+            }
+            Token::Punctuation(_) => {
+                unary_run = 0;
+                power_depth = 0;
+            }
+            _ => unary_run = 0,
+        }
+        maximum = maximum.max(
+            group_depth
+                .saturating_add(unary_run)
+                .saturating_add(power_depth),
+        );
+    }
+    maximum
+}
+
 fn type_limit_span(tokens: &[SpannedToken], maximum: usize) -> Option<SourceSpan> {
     let mut depth = 0usize;
     for (token, span) in tokens {
@@ -530,60 +565,4 @@ fn type_limit_span(tokens: &[SpannedToken], maximum: usize) -> Option<SourceSpan
         }
     }
     None
-}
-
-fn shift_expression(expression: SourceExpression, offset: usize) -> SourceExpression {
-    let shift = |span: SourceSpan| SourceSpan::new(span.start + offset, span.end + offset);
-    match expression {
-        SourceExpression::Literal { literal, span } => SourceExpression::Literal {
-            literal,
-            span: shift(span),
-        },
-        SourceExpression::Name { name, span } => SourceExpression::Name {
-            name,
-            span: shift(span),
-        },
-        SourceExpression::Unary {
-            operator,
-            operand,
-            span,
-        } => SourceExpression::Unary {
-            operator,
-            operand: Box::new(shift_expression(*operand, offset)),
-            span: shift(span),
-        },
-        SourceExpression::Binary {
-            left,
-            operator,
-            right,
-            span,
-        } => SourceExpression::Binary {
-            left: Box::new(shift_expression(*left, offset)),
-            operator,
-            right: Box::new(shift_expression(*right, offset)),
-            span: shift(span),
-        },
-        SourceExpression::Call {
-            callee,
-            arguments,
-            span,
-        } => SourceExpression::Call {
-            callee: Box::new(shift_expression(*callee, offset)),
-            arguments: arguments
-                .into_iter()
-                .map(|argument| shift_expression(argument, offset))
-                .collect(),
-            span: shift(span),
-        },
-        SourceExpression::FieldAccess { base, field, span } => SourceExpression::FieldAccess {
-            base: Box::new(shift_expression(*base, offset)),
-            field,
-            span: shift(span),
-        },
-        SourceExpression::Vec2 { x, y, span } => SourceExpression::Vec2 {
-            x: Box::new(shift_expression(*x, offset)),
-            y: Box::new(shift_expression(*y, offset)),
-            span: shift(span),
-        },
-    }
 }

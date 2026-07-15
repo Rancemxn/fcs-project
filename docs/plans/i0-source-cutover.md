@@ -4,12 +4,13 @@
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
 
-> **Current status (2026-07-14):** I0-A, Task 2 generator staging, Task 3 structural testing, and
-> Task 4 unique `fcs-source` crate cutover, plus Task 5 stable diagnostics, are complete. The
-> pre-cutover worktree is preserved at `archive/fcs4-pre-cutover`, `master` is the active
-> development branch, and the original feature branch remains retained. The next unfinished work
-> is Task 6 Chumsky lexer migration; the active workspace contains only `fcs-source` and its 100
-> passing tests.
+> **Current status (2026-07-15):** I0-A through the unique `fcs-source` cutover and stable
+> diagnostics are complete. The Chumsky lexer/expression boundary and Frozen generator staging are
+> active, and Tasks 10-11 now provide byte/property robustness and typed conformance-manifest
+> gates. The active workspace contains only `fcs-source` and has 130 passing tests. Task 8 is
+> complete: document, definition, template, and collection parsing consume one spanned token stream,
+> raw-text scanners are gone, and deep expressions use bounded execution without token cloning or
+> the former fixed 64 MiB fallback thread.
 
 **Goal:** Archive the complete pre-cutover FCS 4 workspace, make `master` the sole development
 branch, replace the mixed `fcs-core`/`v5` tree with an unversioned `fcs-source` crate, establish a
@@ -22,8 +23,28 @@ the old CLI, and the old converter remain only on `archive/fcs4-pre-cutover`; fu
 canonical/runtime/FCBC/converter/render/CLI crates are created in their own roadmap stages and
 cannot use source AST as a canonical model.
 
-**Tech Stack:** Rust 2024, Chumsky 0.11.1 stable APIs, Serde 1 for test manifest structs, TOML
-1.1.2 for conformance manifest parsing, cargo-nextest, Clippy, rustfmt, fd, rg, and ast-grep.
+**Tech Stack:** Rust 2024, Chumsky 0.11.2 stable APIs with its `stacker` feature, Proptest 1.11 for
+parser robustness, Serde 1.0.228 for test manifest structs, TOML 1.1.3 for conformance manifest
+parsing, cargo-nextest, Clippy, rustfmt, fd, rg, and ast-grep.
+
+**Dependency activation policy:** `Cargo.toml` owns one audited workspace dependency catalog. I0
+activates only Chumsky for `fcs-source` runtime code and Proptest/Serde/TOML for its tests. The
+remaining entries are approved candidates with a first owning stage; a catalog entry alone must not
+be added to `fcs-source`, resolved into its dependency tree, or treated as implemented behavior.
+Each owner rechecks the current API, features, MSRV, license, and transitive tree before activation.
+
+| Dependency | First owning stage | Activation rule |
+|---|---|---|
+| `chumsky` 0.11.2 + `stacker` | I0 | active in `fcs-source`; alpha, Pratt, and unstable remain disabled |
+| `proptest` 1.11.0 | I0 | active only as a `fcs-source` dev dependency |
+| `serde` 1.0.228 / `toml` 1.1.3 | I0 | active only for typed conformance manifest tests |
+| `serde_json` 1.0.150 | I3/I6 | test snapshots first; importer/report serialization when converter exists |
+| `nalgebra` 0.35.0 | I4 | private `f64` production transform backend; independent reference path remains separate |
+| `sha2` 0.11.0 | I5/I7 | resource, stable ID, source, and golden SHA-256 hashing |
+| `crc` 3.4.0 | I7 | FCBC CRC-32/ISO-HDLC only |
+| `image` 0.25.10 | I9 | defaults disabled; render crate enables only specified codecs and decode limits |
+| `clap` 4.6.1 | I10 | CLI crate only |
+| `zip` 8.6.0 | I6/I10 | defaults disabled; activate only for an explicit package-input surface |
 
 ---
 
@@ -1052,10 +1073,9 @@ trace required by FCS Appendix C.
 
 All diagnostics emitted by I0 have `severity = Error`; no I0 path creates a warning. Cycle and
 budget diagnostics must append ordered `ExpansionTraceFrame` values rather than flattening the
-trace into the human message. The public code constants for canonical/evaluate/decode categories
-are forward-compatible declarations only in I0. The current `&str` entry points accept already
-decoded UTF-8, so `decode.invalid-utf8` is not emitted until a byte/file entry point is introduced
-by I1 or the CLI stage.
+trace into the human message. The public code constants for canonical/evaluate categories are
+forward-compatible declarations only in I0. Task 10 adds the byte entry point that emits
+`decode.invalid-utf8`; the existing `&str` entry points continue to accept already-decoded UTF-8.
 
 - [x] **Step 5: Change parser and elaborator entry points**
 
@@ -1163,6 +1183,7 @@ git commit -m "refactor(source): stabilize diagnostic output"
 
 **Files:**
 
+- Modify: `Cargo.toml`
 - Modify: `crates/fcs-source/Cargo.toml`
 - Create: `crates/fcs-source/src/parser/token.rs`
 - Create: `crates/fcs-source/src/parser/input.rs`
@@ -1240,21 +1261,38 @@ cargo nextest run -p fcs-source --lib
 Expected: compilation fails because token/input modules, `ParseLimits`, and the new lexer boundary
 do not exist.
 
-- [ ] **Step 3: Add the exact dependency declaration**
+- [ ] **Step 3: Add the audited workspace catalog and activate Chumsky**
 
-`crates/fcs-source/Cargo.toml`:
+Root `Cargo.toml`:
+
+```toml
+[workspace.dependencies]
+chumsky = { version = "=0.11.2", default-features = false, features = ["std", "stacker"] }
+clap = { version = "4.6.1", features = ["derive"] }
+crc = "3.4.0"
+image = { version = "0.25.10", default-features = false }
+nalgebra = { version = "0.35.0", default-features = false, features = ["std"] }
+proptest = { version = "1.11.0", default-features = false, features = ["std", "handle-panics"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+sha2 = { version = "0.11.0", default-features = false }
+toml = { version = "1.1.3", default-features = false, features = ["parse", "serde"] }
+zip = { version = "8.6.0", default-features = false }
+```
+
+`crates/fcs-source/Cargo.toml` at this task activates only the parser dependency:
 
 ```toml
 [dependencies]
-chumsky = {
-    version = "0.11.1",
-    default-features = false,
-    features = ["std"],
-}
+chumsky.workspace = true
 ```
 
-Run `cargo update -p chumsky --precise 0.11.1` after the first dependency resolution and verify
-`Cargo.lock` records `0.11.1`, not an alpha release.
+Run `cargo update -p chumsky --precise 0.11.2` after the first dependency resolution and verify
+`Cargo.lock` records `0.11.2`, not an alpha release. The `stacker` feature may add `stacker`, `psm`,
+`cc`, and platform support crates transitively. Explicit source/nesting limits remain the semantic
+resource boundary because stack growth can be a no-op on unsupported targets. If WebAssembly is
+added to the supported target matrix, it needs a target-specific parser-stack decision and compile
+gate before support is claimed.
 
 - [ ] **Step 4: Define owned tokens and punctuation**
 
@@ -1440,13 +1478,15 @@ cargo fmt --all -- --check
 git diff --check
 ```
 
-Expected: all tests pass; tree contains Chumsky `0.11.1`; it does not contain Logos, Ariadne,
-Winnow, or Chumsky `1.0.0-alpha.*`.
+Expected: all tests pass; the normal tree contains Chumsky `0.11.2` and its reviewed stack-growth
+dependencies. It contains no Chumsky `1.0.0-alpha.*` and has no direct Logos, Ariadne, Winnow,
+`nom`, `bytemuck`, or `thiserror` dependency. Future-stage workspace catalog entries remain absent
+from the `fcs-source` tree until an owning crate activates them.
 
 - [ ] **Step 10: Commit the lexer migration**
 
 ```powershell
-git add crates/fcs-source Cargo.lock
+git add Cargo.toml crates/fcs-source Cargo.lock
 git commit -m "refactor(parser): tokenize FCS source with Chumsky"
 ```
 
@@ -1564,6 +1604,11 @@ Tokens for Appendix B constructs not represented by the I0 AST must fail with
 `syntax.invalid-token` at the first unsupported token; they must not be skipped or converted into a
 different expression.
 
+Chumsky's reviewed `stacker` feature owns recursive stack growth. Do not clone the token stream,
+spawn a parser thread, or reserve a fixed 64 MiB stack. Reject inputs beyond `ParseLimits` before
+recursive grammar and let an ordinary parser panic remain a test failure rather than converting an
+arbitrary panic into a resource-limit diagnostic.
+
 Preserve the Frozen comparison-chain meaning for the retained order-operator subset: parse
 `a < b <= c` as the equivalent `a < b && b <= c` tree, with the complete source span on the
 generated logical node and the middle operand retained in both comparison nodes. Do not silently
@@ -1615,7 +1660,7 @@ git commit -m "refactor(parser): parse expressions from spanned tokens"
 - Modify: `crates/fcs-source/tests/compile_time.rs`
 - Modify: `examples/fcs/templates.fcs`
 
-- [ ] **Step 1: Add characterization tests for every migrated block**
+- [x] **Step 1: Add characterization tests for every migrated block**
 
 Add one valid and one invalid test for:
 
@@ -1647,7 +1692,7 @@ Duplicate `format`, `tempoMap`, `definitions`, or `collections` blocks use
 misplaced block uses `syntax.misplaced-block` at its keyword. This distinction must survive parser
 recovery and be asserted in the characterization tests.
 
-- [ ] **Step 2: Run the new cases and capture draft divergences**
+- [x] **Step 2: Run the new cases and capture draft divergences**
 
 ```powershell
 cargo nextest run -p fcs-source --test frontend --test compile_time
@@ -1657,7 +1702,7 @@ Expected: failures identify old raw-text parsers, top-level `templates`, draft r
 non-token-aware scanning. Record only these expected failures in the task review; investigate any
 unrelated failure before continuing.
 
-- [ ] **Step 3: Move template declarations into definitions AST**
+- [x] **Step 3: Move template declarations into definitions AST**
 
 `DefinitionsBlock` owns `Vec<Definition>`, and `Definition` gains a template variant:
 
@@ -1744,7 +1789,7 @@ never append a partially constructed entity. `FunctionStatement` and `TemplateSt
 distinct enums because a function return is a value expression while a template return is an
 entity expression.
 
-- [ ] **Step 4: Compose document parsers from token parsers**
+- [x] **Step 4: Compose document parsers from token parsers**
 
 Each module exposes one crate-private parser function; `document.rs` composes them and consumes
 `end()`. Block parsers must use delimited token combinators and structured recovery boundaries, not
@@ -1770,7 +1815,7 @@ pub fn parse_document_with_limits(
 
 `parse_document_tokens` is crate-private and must reject non-trivia input after the document parser.
 
-- [ ] **Step 5: Restrict I0 to the declared source subset**
+- [x] **Step 5: Restrict I0 to the declared source subset**
 
 Recognize unknown reserved top-level block starts so the diagnostic is `syntax.misplaced-block` at
 the block keyword. Also recognize the legacy plural identifier `templates` explicitly and report
@@ -1779,7 +1824,7 @@ ordinary unknown identifier would make the migration failure nondeterministic. D
 AST placeholders for metadata, Track, render, extension, or preserve blocks; I1 adds those source
 nodes with their fixtures.
 
-- [ ] **Step 6: Remove the old scanning implementation completely**
+- [x] **Step 6: Remove the old scanning implementation completely**
 
 After token parser tests pass, delete every old cursor/string scanning helper, including functions
 matching:
@@ -1802,7 +1847,7 @@ rg -n 'struct Cursor|until_top_level|until_keyword_or|until_range_operator|posit
 
 Expected: no matches.
 
-- [ ] **Step 7: Run all parser and elaborator tests**
+- [x] **Step 7: Run all parser and elaborator tests**
 
 ```powershell
 cargo clippy --workspace --all-targets -- -D warnings
@@ -1813,7 +1858,7 @@ git diff --check
 
 Expected: all commands exit 0; no parser module parses nested grammar by substring scanning.
 
-- [ ] **Step 8: Commit document grammar migration**
+- [x] **Step 8: Complete the document grammar migration implementation**
 
 ```powershell
 git add crates/fcs-source examples/fcs/templates.fcs
@@ -1953,7 +1998,96 @@ git add crates/fcs-source
 git commit -m "fix(source): enforce Frozen generator syntax"
 ```
 
-### Task 10: Add the typed conformance manifest integrity gate
+### Task 10: Add byte decoding and the property robustness gate
+
+**Files:**
+
+- Modify: `crates/fcs-source/Cargo.toml`
+- Modify: `crates/fcs-source/src/parser/document.rs`
+- Modify: `crates/fcs-source/src/parser/mod.rs`
+- Create: `crates/fcs-source/tests/robustness.rs`
+- Modify: `Cargo.lock`
+
+- [x] **Step 1: Add failing byte-entry contract tests**
+
+Add ordinary regression tests for valid UTF-8, a malformed byte in the middle of otherwise valid
+source, and an incomplete UTF-8 sequence at EOF. Invalid input must produce exactly
+`decode.invalid-utf8` at `DiagnosticStage::Decode`; its primary span begins at
+`Utf8Error::valid_up_to()` and ends after `error_len()` bytes, or at input length for an incomplete
+sequence. It must not lex a valid prefix or return a partial document.
+
+- [x] **Step 2: Activate the bounded Proptest configuration**
+
+`crates/fcs-source/Cargo.toml`:
+
+```toml
+[dev-dependencies]
+proptest.workspace = true
+```
+
+Use this checked-in configuration:
+
+```rust
+use proptest::{
+    prelude::ProptestConfig,
+    test_runner::{RngAlgorithm, RngSeed},
+};
+
+ProptestConfig {
+    cases: 512,
+    failure_persistence: None,
+    rng_algorithm: RngAlgorithm::ChaCha,
+    rng_seed: RngSeed::Fixed(0xF0C5_0001),
+    ..ProptestConfig::default()
+}
+```
+
+The baseline nextest lane must be reproducible and must not write `proptest-regressions` into the
+worktree. Convert each minimized failure into an ordinary named regression test; randomized/fuzz
+expansion remains available to later dedicated lanes.
+
+- [x] **Step 3: Add the byte API without a second parser**
+
+Add public bounded and default entry points:
+
+```rust
+pub fn parse_document_bytes(source: &[u8]) -> ParseOutput<Document>;
+pub fn parse_document_bytes_with_limits<L: Into<ParseLimits>>(
+    source: &[u8],
+    limits: L,
+) -> ParseOutput<Document>;
+```
+
+Decode once with `std::str::from_utf8`, then delegate to the same token/document parser used by the
+`&str` API. Do not add a lossy decoder, encoding detector, byte lexer, or new dependency.
+
+- [x] **Step 4: Add parser invariants as properties**
+
+Generate bounded arbitrary byte vectors and UTF-8 strings containing delimiters, comments,
+escapes, numeric fragments, and non-ASCII scalars. Assert for every case:
+
+- parsing never panics or aborts;
+- every diagnostic span is ordered and bounded by the original byte length;
+- spans over valid UTF-8 begin and end on UTF-8 boundaries;
+- the same input and limits produce identical output and ordered diagnostics;
+- diagnostics imply `output().is_none()`;
+- source, token, nesting, comment, and literal limits fail with `resource.limit-exceeded` before
+  unbounded recursion or allocation;
+- invalid UTF-8 fails only at decode and never reaches syntax diagnostics.
+
+- [x] **Step 5: Run robustness and full gates**
+
+```powershell
+cargo clippy --workspace --all-targets -- -D warnings
+cargo nextest run -p fcs-source --test robustness
+cargo nextest run --workspace
+cargo fmt --all -- --check
+git diff --check
+git add crates/fcs-source/Cargo.toml crates/fcs-source/src/parser crates/fcs-source/tests/robustness.rs Cargo.lock
+git commit -m "test(source): harden byte parsing properties"
+```
+
+### Task 11: Add the typed conformance manifest integrity gate
 
 **Files:**
 
@@ -1961,7 +2095,7 @@ git commit -m "fix(source): enforce Frozen generator syntax"
 - Create: `crates/fcs-source/tests/conformance_manifest.rs`
 - Modify: `Cargo.lock`
 
-- [ ] **Step 1: Add a failing manifest loader test**
+- [x] **Step 1: Add a typed manifest loader test**
 
 Define these strongly typed test-only structs (all with `#[serde(deny_unknown_fields)]`) for root
 suites and FCS fixtures; do not deserialize into `toml::Value` and inspect keys ad hoc:
@@ -2032,27 +2166,27 @@ Resolve the repository root from `Path::new(env!("CARGO_MANIFEST_DIR")).join("..
 `conformance/manifest.toml` and `conformance/fcs5/manifest.toml` as UTF-8, and never use the
 process current directory as the base for fixture paths.
 
-- [ ] **Step 2: Run it before adding test dependencies**
+- [x] **Step 2: Confirm the cataloged test dependencies are active**
 
 ```powershell
 cargo nextest run -p fcs-source --test conformance_manifest
 ```
 
-Expected: compilation fails because Serde derive and TOML are absent.
+Serde derive and TOML were already activated when the approved I0 dependency catalog was applied,
+so this historical red step was superseded by the dependency update.
 
-- [ ] **Step 3: Add exact dev-dependencies**
+- [x] **Step 3: Activate the cataloged manifest dev-dependencies**
 
 ```toml
 [dev-dependencies]
-serde = { version = "1", features = ["derive"] }
-toml = {
-    version = "1.1.2",
-    default-features = false,
-    features = ["parse", "serde"],
-}
+serde.workspace = true
+toml.workspace = true
 ```
 
-- [ ] **Step 4: Validate manifest invariants**
+TOML's `parse` feature transitively uses Winnow. This is an approved test-only implementation
+detail, not permission to add Winnow as a direct dependency or build a second FCS parser with it.
+
+- [x] **Step 4: Validate manifest invariants**
 
 Tests must assert:
 
@@ -2073,7 +2207,7 @@ Tests must assert:
 
 Do not execute canonical/evaluate fixtures in I0.
 
-- [ ] **Step 5: Run manifest and full gates**
+- [x] **Step 5: Run manifest and full gates**
 
 ```powershell
 cargo clippy --workspace --all-targets -- -D warnings
@@ -2084,14 +2218,14 @@ git diff --check
 
 Expected: all commands exit 0; manifest tests report 6 root suites and 22 FCS fixtures.
 
-- [ ] **Step 6: Commit the manifest gate**
+- [x] **Step 6: Complete the manifest gate implementation**
 
 ```powershell
 git add crates/fcs-source/Cargo.toml crates/fcs-source/tests/conformance_manifest.rs Cargo.lock
 git commit -m "test(conformance): validate the Frozen source manifest"
 ```
 
-### Task 11: Complete the implementation matrix and governance updates
+### Task 12: Complete the implementation matrix and governance updates
 
 **Files:**
 
@@ -2141,7 +2275,7 @@ if ($stale) { throw "stale active-version claim found:`n$stale" }
 
 Expected: no stale active-version or compatibility claim. Bare mentions of `fcs-core`, `fcs-cli`,
 or `fcs-converter` are not searched here because archive/path explanations and future roadmap
-crate names are legitimate; the structural absence gate in Task 12 checks the active tree.
+crate names are legitimate; the structural absence gate in Task 13 checks the active tree.
 
 - [ ] **Step 3: Recompute the revised roadmap hash without overwriting history**
 
@@ -2172,7 +2306,7 @@ git add AGENTS.md docs/conformance/fcs5-implementation-matrix.md docs/plans/fcs5
 git commit -m "docs: record the completed I0 source cutover"
 ```
 
-### Task 12: Run final structure, quality, and review gates
+### Task 13: Run final structure, quality, and review gates
 
 **Files:**
 
@@ -2194,15 +2328,21 @@ Expected: all three commands produce no matches.
 
 ```powershell
 cargo metadata --no-deps --format-version 1
-cargo tree -p fcs-source
+cargo tree -p fcs-source -e normal
+cargo tree -p fcs-source -e dev
+cargo tree -p fcs-source -e features
 ```
 
 Expected:
 
 - one workspace package named `fcs-source`;
-- Chumsky is exactly `0.11.1`;
-- no Chumsky alpha, Logos, Ariadne, Winnow, `nom`, `bytemuck`, or `thiserror`;
-- Serde/TOML appear only through dev/test resolution.
+- Chumsky is exactly `0.11.2`, with `std` and `stacker`, and no alpha release;
+- no direct Logos, Ariadne, Winnow, `nom`, `bytemuck`, or `thiserror` dependency;
+- Proptest, Serde, and TOML appear only through dev/test resolution;
+- Winnow appears only below TOML's approved dev-only parse feature;
+- `serde_json`, `nalgebra`, `sha2`, `crc`, `image`, `clap`, and `zip` are cataloged at the workspace
+  root but absent from the `fcs-source` normal and dev trees until their owning stages activate them;
+- all resolved crates use registry sources and no dependency points into `refer/`.
 
 - [ ] **Step 3: Run quality gates in repository order**
 
@@ -2257,7 +2397,7 @@ Expected: `## master` with no modified, deleted, or untracked files.
 The I0 handoff must report:
 
 - archive SHA and current master SHA;
-- commits created by Tasks 1–11;
+- commits created by Tasks 1–12;
 - exact workspace package list;
 - exact dependency tree summary;
 - exact Clippy and nextest outcomes and nextest pass count;

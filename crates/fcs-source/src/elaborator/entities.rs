@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::ast::{
     CollectionBlock, CollectionItem, Document, EntityConstructor, EntityExpression,
     ExpandedCollection, ExpandedEntity, ExpandedField, SourceExpression, SourceSpan,
-    TemplateDeclaration, TemplatesBlock, Type, TypedValue, WithExpression,
+    TemplateDeclaration, TemplateStatement, Type, TypedValue, WithExpression,
 };
 use crate::schema::{ConstructionSchema, EntitySchema, FieldConstraint};
 
@@ -15,7 +15,7 @@ pub(super) fn expand_collections(
     schema: &ConstructionSchema,
     limits: CompileTimeLimits,
 ) -> Result<Vec<ExpandedCollection>, Diagnostic> {
-    let templates = template_map(document.templates.as_ref());
+    let templates = template_map(document.definitions.as_ref());
     let mut context = ExpansionContext {
         document,
         schema,
@@ -30,11 +30,16 @@ pub(super) fn expand_collections(
         .collect()
 }
 
-fn template_map(block: Option<&TemplatesBlock>) -> BTreeMap<String, &TemplateDeclaration> {
+fn template_map(
+    block: Option<&crate::ast::DefinitionsBlock>,
+) -> BTreeMap<String, &TemplateDeclaration> {
     block
         .into_iter()
         .flat_map(|block| block.declarations.iter())
-        .map(|template| (template.name.clone(), template))
+        .filter_map(|definition| match definition {
+            crate::ast::Definition::Template(template) => Some((template.name.clone(), template)),
+            crate::ast::Definition::Const(_) | crate::ast::Definition::Function(_) => None,
+        })
         .collect()
 }
 
@@ -314,15 +319,98 @@ impl<'a> ExpansionContext<'a> {
             local_bindings.insert(parameter.name.clone(), value);
         }
         stack.push(name.to_owned());
-        let result = self.expand_expression(
+        let result = self.expand_template_statements(
             &template.body,
             &template.return_type,
             &local_bindings,
             stack,
             depth + 1,
+            &template.name,
+            template.span,
         );
         stack.pop();
         result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn expand_template_statements(
+        &mut self,
+        statements: &[TemplateStatement],
+        return_type: &Type,
+        bindings: &BTreeMap<String, TypedValue>,
+        stack: &mut Vec<String>,
+        depth: usize,
+        template_name: &str,
+        template_span: SourceSpan,
+    ) -> Result<ExpandedEntity, Diagnostic> {
+        let mut local_bindings = bindings.clone();
+        for statement in statements {
+            match statement {
+                TemplateStatement::Let(statement) => {
+                    let value = evaluate_with_bindings(
+                        &statement.initializer,
+                        self.document.definitions.as_ref(),
+                        &local_bindings,
+                        self.limits,
+                    )?;
+                    if value.ty() != statement.ty {
+                        return Err(Diagnostic::TypeMismatch {
+                            expected: statement.ty.clone(),
+                            actual: value.ty(),
+                            span: statement.initializer.span(),
+                        });
+                    }
+                    if local_bindings.contains_key(&statement.name) {
+                        return Err(Diagnostic::DuplicateBinding {
+                            name: statement.name.clone(),
+                            span: statement.name_span,
+                            previous_span: statement.name_span,
+                        });
+                    }
+                    local_bindings.insert(statement.name.clone(), value);
+                }
+                TemplateStatement::If(statement) => {
+                    let condition = evaluate_with_bindings(
+                        &statement.condition,
+                        self.document.definitions.as_ref(),
+                        &local_bindings,
+                        self.limits,
+                    )?;
+                    let TypedValue::Bool(selected) = condition else {
+                        return Err(Diagnostic::NonConstantStructuralCondition {
+                            span: statement.span,
+                        });
+                    };
+                    let branch = if selected {
+                        &statement.then_branch
+                    } else {
+                        &statement.else_branch
+                    };
+                    return self.expand_template_statements(
+                        branch,
+                        return_type,
+                        &local_bindings,
+                        stack,
+                        depth,
+                        template_name,
+                        template_span,
+                    );
+                }
+                TemplateStatement::Return(statement) => {
+                    return self.expand_expression(
+                        &statement.value,
+                        return_type,
+                        &local_bindings,
+                        stack,
+                        depth,
+                    );
+                }
+            }
+        }
+        Err(Diagnostic::MissingReturn {
+            function: template_name.to_owned(),
+            span: template_span,
+        })
     }
 
     fn expand_with(

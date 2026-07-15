@@ -1,4 +1,4 @@
-use fcs_source::ast::{Beat, Bpm, DocumentProfile};
+use fcs_source::ast::{Beat, Bpm, DocumentProfile, SourceSpan};
 use fcs_source::diagnostic::DiagnosticCode;
 use fcs_source::parser::{parse_document, parse_header};
 use fcs_source::version::{
@@ -196,6 +196,72 @@ fn rejects_profile_without_statement_terminator() {
             .code(),
         DiagnosticCode::SYNTAX_INVALID_TOKEN
     );
+}
+
+#[test]
+fn format_features_are_rejected_until_i1_adds_the_source_node() {
+    let source = "#fcs 5.0.0\nformat { profile: fragment; features: []; }";
+    assert_eq!(
+        parse_document(source)
+            .into_result()
+            .expect_err("I0 format does not include features")[0]
+            .code(),
+        DiagnosticCode::SYNTAX_INVALID_TOKEN
+    );
+}
+
+#[test]
+fn document_rejects_misplaced_or_duplicate_top_level_blocks() {
+    for source in [
+        "#fcs 5.0.0\nformat { profile: fragment; }\ntemplates { }",
+        "#fcs 5.0.0\nformat { profile: fragment; }\nmetadata { }",
+    ] {
+        assert_eq!(
+            parse_document(source)
+                .into_result()
+                .expect_err("misplaced top-level block")[0]
+                .code(),
+            DiagnosticCode::SYNTAX_MISPLACED_BLOCK
+        );
+    }
+
+    let duplicate = "#fcs 5.0.0\nformat { profile: fragment; }\nformat { profile: fragment; }";
+    let error = parse_document(duplicate)
+        .into_result()
+        .expect_err("duplicate format block")
+        .remove(0);
+    assert_eq!(error.code(), DiagnosticCode::NAME_DUPLICATE);
+    assert_eq!(error.labels().len(), 1);
+}
+
+#[test]
+fn duplicate_optional_top_level_blocks_report_both_declarations() {
+    let cases = [
+        ("tempoMap { 0beat -> 120bpm; }", "tempoMap"),
+        ("definitions { }", "definitions"),
+        ("collections { }", "collections"),
+    ];
+    for (block, keyword) in cases {
+        let source = format!("#fcs 5.0.0\nformat {{ profile: fragment; }}\n{block}\n{block}");
+        let first_start = source.find(block).unwrap();
+        let second_start = source.rfind(block).unwrap();
+        let error = parse_document(&source)
+            .into_result()
+            .expect_err("duplicate top-level block")
+            .remove(0);
+        assert_eq!(error.code(), DiagnosticCode::NAME_DUPLICATE, "{keyword}");
+        assert_eq!(
+            error.primary_span(),
+            SourceSpan::new(second_start, second_start + keyword.len()),
+            "{keyword}"
+        );
+        assert_eq!(error.labels().len(), 1, "{keyword}");
+        assert_eq!(
+            error.labels()[0].span(),
+            SourceSpan::new(first_start, first_start + block.len()),
+            "{keyword}"
+        );
+    }
 }
 
 #[test]
