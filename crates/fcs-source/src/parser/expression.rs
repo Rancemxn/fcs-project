@@ -1,45 +1,66 @@
-use crate::ast::{BinaryOperator, SourceExpression, SourceSpan, Type, UnaryOperator};
+use chumsky::{
+    error::Rich,
+    input::{Input as _, ValueInput},
+    prelude::*,
+};
 
-use super::input::source_span;
-use super::lexer::lex;
-use super::token::{Keyword, Punctuation as Symbol, Token as TokenKind};
-use super::{ParseError, ParseLimits, output_from_result};
+use crate::{
+    ast::{BinaryOperator, SourceExpression, SourceSpan, Type, UnaryOperator},
+    diagnostic::{Diagnostic, DiagnosticCode, DiagnosticStage, ParseOutput},
+};
 
-pub fn parse_expression(input: &str) -> crate::diagnostic::ParseOutput<SourceExpression> {
+use super::{
+    ParseError, ParseLimits,
+    input::{ChumskySpan, SpannedToken, source_span},
+    lexer::lex,
+    token::{Keyword, Punctuation, Token},
+};
+
+type ParserExtra<'tokens> = extra::Err<Rich<'tokens, Token, ChumskySpan>>;
+
+/// Parses one complete compile-time expression.
+pub fn parse_expression(input: &str) -> ParseOutput<SourceExpression> {
     parse_expression_with_limits(input, ParseLimits::default())
 }
 
+/// Parses one complete compile-time expression with explicit resource limits.
 pub fn parse_expression_with_limits<L: Into<ParseLimits>>(
     input: &str,
     limits: L,
-) -> crate::diagnostic::ParseOutput<SourceExpression> {
-    output_from_result(input, parse_expression_inner(input, limits.into()))
-}
-
-pub(super) fn parse_expression_inner(
-    input: &str,
-    limits: ParseLimits,
-) -> Result<SourceExpression, ParseError> {
-    if input.len() > limits.max_source_bytes {
-        return Err(ParseError::InvalidSyntax("resource limit"));
-    }
-    let tokens = lex(input, limits)
-        .map_err(|mut diagnostics| ParseError::Diagnostic(diagnostics.remove(0)))?;
-    let tokens = tokens.into_iter().map(Token::from).collect();
-    let mut parser = Parser::new(tokens, limits.max_nesting_depth);
-    let expression = match parser.parse_or() {
-        Ok(expression) => expression,
-        Err(()) if parser.limit_exceeded => {
-            return Err(ParseError::InvalidSyntax("resource limit"));
+) -> ParseOutput<SourceExpression> {
+    let limits = limits.into();
+    match lex(input, limits) {
+        Ok(tokens) => {
+            if let Some(span) = expression_limit_span(&tokens, limits.max_nesting_depth) {
+                return resource_limit_output(span);
+            }
+            parse_expression_tokens(input, &tokens)
         }
-        Err(()) => return Err(ParseError::InvalidSyntax("expression")),
-    };
-    if !parser.is_at_end() {
-        return Err(ParseError::InvalidSyntax("expression"));
+        Err(diagnostics) => ParseOutput::new(None, diagnostics),
     }
-    Ok(expression)
 }
 
+/// Parses one complete compile-time type.
+pub fn parse_type(input: &str) -> ParseOutput<Type> {
+    parse_type_with_limits(input, ParseLimits::default())
+}
+
+/// Parses one complete compile-time type with explicit resource limits.
+pub fn parse_type_with_limits<L: Into<ParseLimits>>(input: &str, limits: L) -> ParseOutput<Type> {
+    let limits = limits.into();
+    match lex(input, limits) {
+        Ok(tokens) => {
+            if let Some(span) = type_limit_span(&tokens, limits.max_nesting_depth) {
+                return resource_limit_output(span);
+            }
+            parse_type_tokens(input, &tokens)
+        }
+        Err(diagnostics) => ParseOutput::new(None, diagnostics),
+    }
+}
+
+/// Compatibility boundary for the handwritten document parser. Task 8 will pass its original
+/// token stream to [`parse_expression_tokens`] instead of lexing a substring here.
 pub(super) fn parse_expression_at(
     input: &str,
     byte_offset: usize,
@@ -48,418 +69,361 @@ pub(super) fn parse_expression_at(
         .map(|expression| shift_expression(expression, byte_offset))
 }
 
-pub fn parse_type(input: &str) -> crate::diagnostic::ParseOutput<Type> {
-    parse_type_with_limits(input, ParseLimits::default())
-}
-
-pub fn parse_type_with_limits<L: Into<ParseLimits>>(
+pub(super) fn parse_expression_inner(
     input: &str,
-    limits: L,
-) -> crate::diagnostic::ParseOutput<Type> {
-    output_from_result(input, parse_type_inner(input, limits.into()))
+    limits: ParseLimits,
+) -> Result<SourceExpression, ParseError> {
+    into_parse_error(parse_expression_with_limits(input, limits))
 }
 
 pub(super) fn parse_type_inner(input: &str, limits: ParseLimits) -> Result<Type, ParseError> {
-    if input.len() > limits.max_source_bytes {
-        return Err(ParseError::InvalidSyntax("resource limit"));
-    }
-    let tokens = lex(input, limits)
-        .map_err(|mut diagnostics| ParseError::Diagnostic(diagnostics.remove(0)))?;
-    let tokens = tokens.into_iter().map(Token::from).collect();
-    let mut parser = Parser::new(tokens, limits.max_nesting_depth);
-    let ty = match parser.parse_type_inner() {
-        Ok(ty) => ty,
-        Err(()) if parser.limit_exceeded => {
-            return Err(ParseError::InvalidSyntax("resource limit"));
-        }
-        Err(()) => return Err(ParseError::InvalidSyntax("type")),
-    };
-    if !parser.is_at_end() {
-        return Err(ParseError::InvalidSyntax("type"));
-    }
-    Ok(ty)
+    into_parse_error(parse_type_with_limits(input, limits))
 }
 
-struct Parser {
-    tokens: Vec<Token>,
-    current: usize,
-    nesting_depth: usize,
-    max_nesting_depth: usize,
-    limit_exceeded: bool,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct Token {
-    kind: TokenKind,
-    span: SourceSpan,
-}
-
-impl From<super::input::SpannedToken> for Token {
-    fn from((kind, span): super::input::SpannedToken) -> Self {
-        Self {
-            kind,
-            span: source_span(span),
-        }
+pub(super) fn parse_expression_tokens(
+    source: &str,
+    tokens: &[SpannedToken],
+) -> ParseOutput<SourceExpression> {
+    if expression_limit_span(tokens, 64).is_some() {
+        parse_with_large_stack(source.len(), tokens, parse_expression_tokens_inline)
+    } else {
+        parse_expression_tokens_inline(source.len(), tokens)
     }
 }
 
-impl Parser {
-    fn new(tokens: Vec<Token>, max_nesting_depth: usize) -> Self {
-        Self {
-            tokens,
-            current: 0,
-            nesting_depth: 0,
-            max_nesting_depth,
-            limit_exceeded: false,
-        }
+fn parse_expression_tokens_inline(
+    source_len: usize,
+    tokens: &[SpannedToken],
+) -> ParseOutput<SourceExpression> {
+    let end_span = ChumskySpan::new((), source_len..source_len);
+    let input = tokens.map(end_span, |(token, span)| (token, span));
+    let (output, errors) = expression_parser()
+        .then_ignore(end())
+        .parse(input)
+        .into_output_errors();
+    parse_output(output, errors)
+}
+
+pub(super) fn parse_type_tokens(source: &str, tokens: &[SpannedToken]) -> ParseOutput<Type> {
+    if type_limit_span(tokens, 64).is_some() {
+        parse_with_large_stack(source.len(), tokens, parse_type_tokens_inline)
+    } else {
+        parse_type_tokens_inline(source.len(), tokens)
     }
+}
 
-    fn parse_type_inner(&mut self) -> Result<Type, ()> {
-        let name = self.consume_type_name().ok_or(())?;
-        let scalar = match name.as_str() {
-            "bool" => Some(Type::Bool),
-            "int" => Some(Type::Int),
-            "float" => Some(Type::Float),
-            "string" => Some(Type::String),
-            "time" => Some(Type::Time),
-            "beat" => Some(Type::Beat),
-            "length" => Some(Type::Length),
-            "angle" => Some(Type::Angle),
-            "color" => Some(Type::Color),
-            "Note" => Some(Type::Note),
-            "Line" => Some(Type::Line),
-            "RenderNode" => Some(Type::RenderNode),
-            _ => None,
-        };
-        if let Some(ty) = scalar {
-            return Ok(ty);
-        }
+fn parse_type_tokens_inline(source_len: usize, tokens: &[SpannedToken]) -> ParseOutput<Type> {
+    let end_span = ChumskySpan::new((), source_len..source_len);
+    let input = tokens.map(end_span, |(token, span)| (token, span));
+    let (output, errors) = type_parser()
+        .then_ignore(end())
+        .parse(input)
+        .into_output_errors();
+    parse_output(output, errors)
+}
 
-        self.expect_symbol(Symbol::LessThan)?;
-        let element = Box::new(self.with_nesting(|parser| parser.parse_type_inner())?);
-        self.expect_symbol(Symbol::GreaterThan)?;
-        match name.as_str() {
-            "vec2" => Ok(Type::Vec2(element)),
-            "TrackSegment" => Ok(Type::TrackSegment(element)),
-            "Keyframe" => Ok(Type::Keyframe(element)),
-            _ => Err(()),
-        }
+fn parse_with_large_stack<T: Send + 'static>(
+    source_len: usize,
+    tokens: &[SpannedToken],
+    parse: fn(usize, &[SpannedToken]) -> ParseOutput<T>,
+) -> ParseOutput<T> {
+    let tokens = tokens.to_vec();
+    match std::thread::Builder::new()
+        .name("fcs-source-parser".to_owned())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || parse(source_len, &tokens))
+        .and_then(|thread| {
+            thread
+                .join()
+                .map_err(|_| std::io::Error::other("parser panicked"))
+        }) {
+        Ok(output) => output,
+        Err(_) => ParseOutput::new(
+            None,
+            vec![Diagnostic::new(
+                DiagnosticCode::RESOURCE_LIMIT_EXCEEDED,
+                DiagnosticStage::Parse,
+                "parser exhausted its execution stack",
+                SourceSpan::new(0, source_len),
+            )],
+        ),
     }
+}
 
-    fn parse_or(&mut self) -> Result<SourceExpression, ()> {
-        let mut expression = self.parse_and()?;
-        while self.consume_symbol(Symbol::OrOr).is_some() {
-            let right = self.parse_and()?;
-            expression = binary(expression, BinaryOperator::Or, right);
-        }
-        Ok(expression)
-    }
+fn into_parse_error<T>(output: ParseOutput<T>) -> Result<T, ParseError> {
+    output
+        .into_result()
+        .map_err(|mut diagnostics| ParseError::Diagnostic(diagnostics.remove(0)))
+}
 
-    fn parse_and(&mut self) -> Result<SourceExpression, ()> {
-        let mut expression = self.parse_equality()?;
-        while self.consume_symbol(Symbol::AndAnd).is_some() {
-            let right = self.parse_equality()?;
-            expression = binary(expression, BinaryOperator::And, right);
-        }
-        Ok(expression)
-    }
+fn parse_output<T>(output: Option<T>, errors: Vec<Rich<'_, Token, ChumskySpan>>) -> ParseOutput<T> {
+    ParseOutput::new(output, errors.into_iter().map(parser_diagnostic).collect())
+}
 
-    fn parse_equality(&mut self) -> Result<SourceExpression, ()> {
-        let left = self.parse_comparison()?;
-        let Some(operator) = self.consume_equality_operator() else {
-            return Ok(left);
-        };
-        let right = self.parse_comparison()?;
-        let mut previous = right.clone();
-        let mut expression = binary(left, operator, right);
-        while let Some(operator) = self.consume_equality_operator() {
-            let right = self.parse_comparison()?;
-            let comparison = binary(previous, operator, right.clone());
-            expression = binary(expression, BinaryOperator::And, comparison);
-            previous = right;
-        }
-        Ok(expression)
-    }
+fn parser_diagnostic(error: Rich<'_, Token, ChumskySpan>) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticCode::SYNTAX_INVALID_TOKEN,
+        DiagnosticStage::Parse,
+        "invalid expression or type syntax",
+        source_span(*error.span()),
+    )
+}
 
-    fn parse_comparison(&mut self) -> Result<SourceExpression, ()> {
-        let left = self.parse_additive()?;
-        let Some(operator) = self.consume_comparison_operator() else {
-            return Ok(left);
-        };
-        let right = self.parse_additive()?;
-        let mut previous = right.clone();
-        let mut expression = binary(left, operator, right);
-        while let Some(operator) = self.consume_comparison_operator() {
-            let right = self.parse_additive()?;
-            let comparison = binary(previous, operator, right.clone());
-            expression = binary(expression, BinaryOperator::And, comparison);
-            previous = right;
-        }
-        Ok(expression)
-    }
+fn resource_limit_output<T>(span: SourceSpan) -> ParseOutput<T> {
+    ParseOutput::new(
+        None,
+        vec![Diagnostic::new(
+            DiagnosticCode::RESOURCE_LIMIT_EXCEEDED,
+            DiagnosticStage::Parse,
+            "parser resource limit exceeded",
+            span,
+        )],
+    )
+}
 
-    fn consume_equality_operator(&mut self) -> Option<BinaryOperator> {
-        if self.consume_symbol(Symbol::EqualEqual).is_some() {
-            Some(BinaryOperator::Equal)
-        } else if self.consume_symbol(Symbol::BangEqual).is_some() {
-            Some(BinaryOperator::NotEqual)
-        } else {
-            None
-        }
-    }
+fn expression_parser<'tokens, I>()
+-> impl Parser<'tokens, I, SourceExpression, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    recursive(|expression| {
+        let literal = select! { Token::Literal(literal) => literal }
+            .map_with(|literal, extra| SourceExpression::Literal {
+                literal,
+                span: source_span(extra.span()),
+            })
+            .labelled("literal");
+        let identifier = select! { Token::Identifier(identifier) => identifier }
+            .map_with(|name, extra| SourceExpression::Name {
+                name,
+                span: source_span(extra.span()),
+            })
+            .labelled("identifier");
 
-    fn consume_comparison_operator(&mut self) -> Option<BinaryOperator> {
-        if self.consume_symbol(Symbol::LessThan).is_some() {
-            Some(BinaryOperator::LessThan)
-        } else if self.consume_symbol(Symbol::LessThanOrEqual).is_some() {
-            Some(BinaryOperator::LessThanOrEqual)
-        } else if self.consume_symbol(Symbol::GreaterThan).is_some() {
-            Some(BinaryOperator::GreaterThan)
-        } else if self.consume_symbol(Symbol::GreaterThanOrEqual).is_some() {
-            Some(BinaryOperator::GreaterThanOrEqual)
-        } else {
-            None
-        }
-    }
+        let grouped = expression
+            .clone()
+            .delimited_by(
+                just(Token::Punctuation(Punctuation::LeftParenthesis)),
+                just(Token::Punctuation(Punctuation::RightParenthesis)),
+            )
+            .map_with(|expression, extra| with_span(expression, source_span(extra.span())))
+            .labelled("parenthesized expression");
 
-    fn parse_additive(&mut self) -> Result<SourceExpression, ()> {
-        let mut expression = self.parse_multiplicative()?;
-        loop {
-            let operator = if self.consume_symbol(Symbol::Plus).is_some() {
-                BinaryOperator::Add
-            } else if self.consume_symbol(Symbol::Minus).is_some() {
-                BinaryOperator::Subtract
-            } else {
-                break;
-            };
-            let right = self.parse_multiplicative()?;
-            expression = binary(expression, operator, right);
-        }
-        Ok(expression)
-    }
-
-    fn parse_multiplicative(&mut self) -> Result<SourceExpression, ()> {
-        let mut expression = self.parse_unary()?;
-        loop {
-            let operator = if self.consume_symbol(Symbol::Star).is_some() {
-                BinaryOperator::Multiply
-            } else if self.consume_symbol(Symbol::Slash).is_some() {
-                BinaryOperator::Divide
-            } else if self.consume_symbol(Symbol::Percent).is_some() {
-                BinaryOperator::Remainder
-            } else {
-                break;
-            };
-            let right = self.parse_unary()?;
-            expression = binary(expression, operator, right);
-        }
-        Ok(expression)
-    }
-
-    fn parse_unary(&mut self) -> Result<SourceExpression, ()> {
-        if let Some(operator) = self.consume_symbol(Symbol::Minus) {
-            let operand = self.with_nesting(|parser| parser.parse_unary())?;
-            let span = SourceSpan::new(operator.span.start, operand.span().end);
-            return Ok(SourceExpression::Unary {
-                operator: UnaryOperator::Negate,
-                operand: Box::new(operand),
-                span,
-            });
-        }
-        if let Some(operator) = self.consume_symbol(Symbol::Bang) {
-            let operand = self.with_nesting(|parser| parser.parse_unary())?;
-            let span = SourceSpan::new(operator.span.start, operand.span().end);
-            return Ok(SourceExpression::Unary {
-                operator: UnaryOperator::Not,
-                operand: Box::new(operand),
-                span,
-            });
-        }
-        self.parse_postfix()
-    }
-
-    fn parse_postfix(&mut self) -> Result<SourceExpression, ()> {
-        let mut expression = self.parse_primary()?;
-        loop {
-            if self.consume_symbol(Symbol::LeftParenthesis).is_some() {
-                expression = self.finish_call(expression)?;
-            } else if self.consume_symbol(Symbol::Dot).is_some() {
-                let (field, field_span) = self.consume_identifier_with_span().ok_or(())?;
-                let span = SourceSpan::new(expression.span().start, field_span.end);
-                expression = SourceExpression::FieldAccess {
-                    base: Box::new(expression),
-                    field,
-                    span,
-                };
-            } else {
-                break;
-            }
-        }
-        Ok(expression)
-    }
-
-    fn finish_call(&mut self, callee: SourceExpression) -> Result<SourceExpression, ()> {
-        let start = callee.span().start;
-        let vec2_constructor = matches!(
-            &callee,
-            SourceExpression::Name { name, .. } if name == "vec2"
-        );
-        let mut arguments = Vec::new();
-        if !self.check_symbol(Symbol::RightParenthesis) {
-            loop {
-                arguments.push(self.with_nesting(|parser| parser.parse_or())?);
-                if self.consume_symbol(Symbol::Comma).is_none() {
-                    break;
-                }
-                if self.check_symbol(Symbol::RightParenthesis) {
-                    break;
-                }
-            }
-        }
-        let close = self.expect_symbol(Symbol::RightParenthesis)?;
-        let span = SourceSpan::new(start, close.span.end);
-
-        if vec2_constructor {
-            if arguments.len() != 2 {
-                return Err(());
-            }
-            let mut arguments = arguments.into_iter();
-            let x = arguments.next().ok_or(())?;
-            let y = arguments.next().ok_or(())?;
-            Ok(SourceExpression::Vec2 {
+        let vec2 = just(Token::Keyword(Keyword::Vec2))
+            .ignore_then(
+                expression
+                    .clone()
+                    .then_ignore(just(Token::Punctuation(Punctuation::Comma)))
+                    .then(expression.clone())
+                    .delimited_by(
+                        just(Token::Punctuation(Punctuation::LeftParenthesis)),
+                        just(Token::Punctuation(Punctuation::RightParenthesis)),
+                    )
+                    .labelled("vec2 arguments"),
+            )
+            .map_with(|(x, y), extra| SourceExpression::Vec2 {
                 x: Box::new(x),
                 y: Box::new(y),
-                span,
-            })
-        } else {
-            Ok(SourceExpression::Call {
-                callee: Box::new(callee),
-                arguments,
-                span,
-            })
-        }
-    }
+                span: source_span(extra.span()),
+            });
 
-    fn parse_primary(&mut self) -> Result<SourceExpression, ()> {
-        let token = self.advance().ok_or(())?.clone();
-        match token.kind {
-            TokenKind::Literal(literal) => Ok(SourceExpression::Literal {
-                literal,
-                span: token.span,
-            }),
-            TokenKind::Identifier(name) => Ok(SourceExpression::Name {
-                name,
-                span: token.span,
-            }),
-            TokenKind::Keyword(Keyword::Vec2) if self.check_symbol(Symbol::LeftParenthesis) => {
-                Ok(SourceExpression::Name {
-                    name: "vec2".to_owned(),
-                    span: token.span,
+        let primary = literal.or(vec2).or(identifier).or(grouped).boxed();
+
+        let arguments = expression
+            .clone()
+            .separated_by(just(Token::Punctuation(Punctuation::Comma)))
+            .allow_trailing()
+            .collect::<Vec<_>>();
+        let call = arguments
+            .delimited_by(
+                just(Token::Punctuation(Punctuation::LeftParenthesis)),
+                just(Token::Punctuation(Punctuation::RightParenthesis)),
+            )
+            .map_with(|arguments, extra| Postfix::Call(arguments, source_span(extra.span())))
+            .labelled("argument list");
+        let field = just(Token::Punctuation(Punctuation::Dot))
+            .ignore_then(select! { Token::Identifier(identifier) => identifier })
+            .map_with(|field, extra| Postfix::Field(field, source_span(extra.span())))
+            .labelled("field access");
+        let postfix =
+            primary.foldl_with(call.or(field).repeated(), |base, suffix, _| match suffix {
+                Postfix::Call(arguments, suffix_span) => SourceExpression::Call {
+                    span: SourceSpan::new(base.span().start, suffix_span.end),
+                    callee: Box::new(base),
+                    arguments,
+                },
+                Postfix::Field(field, suffix_span) => SourceExpression::FieldAccess {
+                    span: SourceSpan::new(base.span().start, suffix_span.end),
+                    base: Box::new(base),
+                    field,
+                },
+            });
+
+        let unary = recursive(|unary| {
+            choice((
+                just(Token::Punctuation(Punctuation::Minus)).to(UnaryOperator::Negate),
+                just(Token::Punctuation(Punctuation::Bang)).to(UnaryOperator::Not),
+            ))
+            .then(unary)
+            .map_with(|(operator, operand), extra| SourceExpression::Unary {
+                operator,
+                span: source_span(extra.span()),
+                operand: Box::new(operand),
+            })
+            .or(postfix.clone())
+        });
+
+        let power = recursive(|power| {
+            unary
+                .clone()
+                .then(
+                    just(Token::Punctuation(Punctuation::Power))
+                        .ignore_then(power)
+                        .or_not(),
+                )
+                .map(|(left, right)| match right {
+                    Some(right) => binary(left, BinaryOperator::Power, right),
+                    None => left,
                 })
-            }
-            TokenKind::Punctuation(Symbol::LeftParenthesis) => {
-                let expression = self.with_nesting(|parser| parser.parse_or())?;
-                let close = self.expect_symbol(Symbol::RightParenthesis)?;
-                Ok(with_span(
-                    expression,
-                    SourceSpan::new(token.span.start, close.span.end),
-                ))
-            }
-            TokenKind::Punctuation(_) | TokenKind::Keyword(_) => Err(()),
-        }
-    }
+        });
 
-    fn consume_type_name(&mut self) -> Option<String> {
-        let token = self.peek()?.clone();
-        let name = match token.kind {
-            TokenKind::Identifier(name) => name,
-            TokenKind::Keyword(keyword) => type_keyword_name(keyword)?.to_owned(),
-            TokenKind::Literal(_) | TokenKind::Punctuation(_) => return None,
-        };
-        self.current += 1;
-        Some(name)
-    }
+        let product = power.clone().foldl_with(
+            choice((
+                just(Token::Punctuation(Punctuation::Star)).to(BinaryOperator::Multiply),
+                just(Token::Punctuation(Punctuation::Slash)).to(BinaryOperator::Divide),
+                just(Token::Punctuation(Punctuation::Percent)).to(BinaryOperator::Remainder),
+            ))
+            .then(power)
+            .repeated(),
+            |left, (operator, right), _| binary(left, operator, right),
+        );
+        let sum = product.clone().foldl_with(
+            choice((
+                just(Token::Punctuation(Punctuation::Plus)).to(BinaryOperator::Add),
+                just(Token::Punctuation(Punctuation::Minus)).to(BinaryOperator::Subtract),
+            ))
+            .then(product)
+            .repeated(),
+            |left, (operator, right), _| binary(left, operator, right),
+        );
 
-    fn consume_identifier_with_span(&mut self) -> Option<(String, SourceSpan)> {
-        let Token {
-            kind: TokenKind::Identifier(name),
-            span,
-        } = self.peek()?.clone()
-        else {
-            return None;
-        };
-        self.current += 1;
-        Some((name, span))
-    }
-
-    fn expect_symbol(&mut self, symbol: Symbol) -> Result<Token, ()> {
-        self.consume_symbol(symbol).ok_or(())
-    }
-
-    fn consume_symbol(&mut self, symbol: Symbol) -> Option<Token> {
-        if !self.check_symbol(symbol) {
-            return None;
-        }
-        let token = self.tokens[self.current].clone();
-        self.current += 1;
-        Some(token)
-    }
-
-    fn check_symbol(&self, symbol: Symbol) -> bool {
-        matches!(
-            self.peek(),
-            Some(Token {
-                kind: TokenKind::Punctuation(actual),
-                ..
-            }) if *actual == symbol
-        )
-    }
-
-    fn advance(&mut self) -> Option<&Token> {
-        let token = self.tokens.get(self.current)?;
-        self.current += 1;
-        Some(token)
-    }
-
-    fn peek(&self) -> Option<&Token> {
-        self.tokens.get(self.current)
-    }
-
-    fn is_at_end(&self) -> bool {
-        self.current == self.tokens.len()
-    }
-
-    fn with_nesting<T>(&mut self, parse: impl FnOnce(&mut Self) -> Result<T, ()>) -> Result<T, ()> {
-        if self.nesting_depth == self.max_nesting_depth {
-            self.limit_exceeded = true;
-            return Err(());
-        }
-        self.nesting_depth += 1;
-        let result = parse(self);
-        self.nesting_depth -= 1;
-        result
-    }
+        let ordering = comparison_chain(
+            sum.clone(),
+            choice((
+                just(Token::Punctuation(Punctuation::LessThan)).to(BinaryOperator::LessThan),
+                just(Token::Punctuation(Punctuation::LessThanOrEqual))
+                    .to(BinaryOperator::LessThanOrEqual),
+                just(Token::Punctuation(Punctuation::GreaterThan)).to(BinaryOperator::GreaterThan),
+                just(Token::Punctuation(Punctuation::GreaterThanOrEqual))
+                    .to(BinaryOperator::GreaterThanOrEqual),
+            )),
+        );
+        let equality = ordering.clone().foldl_with(
+            choice((
+                just(Token::Punctuation(Punctuation::EqualEqual)).to(BinaryOperator::Equal),
+                just(Token::Punctuation(Punctuation::BangEqual)).to(BinaryOperator::NotEqual),
+            ))
+            .then(ordering)
+            .repeated(),
+            |left, (operator, right), _| binary(left, operator, right),
+        );
+        let logical_and = equality.clone().foldl_with(
+            just(Token::Punctuation(Punctuation::AndAnd))
+                .to(BinaryOperator::And)
+                .then(equality)
+                .repeated(),
+            |left, (operator, right), _| binary(left, operator, right),
+        );
+        logical_and
+            .clone()
+            .foldl_with(
+                just(Token::Punctuation(Punctuation::OrOr))
+                    .to(BinaryOperator::Or)
+                    .then(logical_and)
+                    .repeated(),
+                |left, (operator, right), _| binary(left, operator, right),
+            )
+            .labelled("expression")
+            .as_context()
+    })
 }
 
-fn type_keyword_name(keyword: Keyword) -> Option<&'static str> {
-    Some(match keyword {
-        Keyword::Bool => "bool",
-        Keyword::Int => "int",
-        Keyword::Float => "float",
-        Keyword::String => "string",
-        Keyword::Time => "time",
-        Keyword::Beat => "beat",
-        Keyword::Length => "length",
-        Keyword::Angle => "angle",
-        Keyword::Color => "color",
-        Keyword::Vec2 => "vec2",
-        Keyword::Note => "Note",
-        Keyword::LineType => "Line",
-        Keyword::RenderNode => "RenderNode",
-        Keyword::TrackSegment => "TrackSegment",
-        Keyword::KeyframeType => "Keyframe",
-        _ => return None,
+fn comparison_chain<'tokens, I, P, O>(
+    operand: P,
+    operator: O,
+) -> impl Parser<'tokens, I, SourceExpression, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+    P: Parser<'tokens, I, SourceExpression, ParserExtra<'tokens>> + Clone,
+    O: Parser<'tokens, I, BinaryOperator, ParserExtra<'tokens>> + Clone,
+{
+    operand
+        .clone()
+        .then(operator.then(operand).repeated().collect::<Vec<_>>())
+        .map(|(left, pairs)| {
+            let mut expression = left;
+            let mut previous = None;
+            for (operator, right) in pairs {
+                let comparison_left = previous.clone().unwrap_or_else(|| expression.clone());
+                let comparison = binary(comparison_left, operator, right.clone());
+                expression = if previous.is_some() {
+                    binary(expression, BinaryOperator::And, comparison)
+                } else {
+                    comparison
+                };
+                previous = Some(right);
+            }
+            expression
+        })
+}
+
+fn type_parser<'tokens, I>() -> impl Parser<'tokens, I, Type, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    recursive(|ty| {
+        let scalar = select! {
+            Token::Keyword(Keyword::Bool) => Type::Bool,
+            Token::Keyword(Keyword::Int) => Type::Int,
+            Token::Keyword(Keyword::Float) => Type::Float,
+            Token::Keyword(Keyword::String) => Type::String,
+            Token::Keyword(Keyword::Time) => Type::Time,
+            Token::Keyword(Keyword::Beat) => Type::Beat,
+            Token::Keyword(Keyword::Length) => Type::Length,
+            Token::Keyword(Keyword::Angle) => Type::Angle,
+            Token::Keyword(Keyword::Color) => Type::Color,
+            Token::Keyword(Keyword::Note) => Type::Note,
+            Token::Keyword(Keyword::LineType) => Type::Line,
+            Token::Keyword(Keyword::RenderNode) => Type::RenderNode,
+        };
+        let generic = choice((
+            just(Token::Keyword(Keyword::Vec2)).to(TypeConstructor::Vec2),
+            just(Token::Keyword(Keyword::TrackSegment)).to(TypeConstructor::TrackSegment),
+            just(Token::Keyword(Keyword::KeyframeType)).to(TypeConstructor::Keyframe),
+        ))
+        .then_ignore(just(Token::Punctuation(Punctuation::LessThan)))
+        .then(ty)
+        .then_ignore(just(Token::Punctuation(Punctuation::GreaterThan)))
+        .map(|(constructor, element)| match constructor {
+            TypeConstructor::Vec2 => Type::Vec2(Box::new(element)),
+            TypeConstructor::TrackSegment => Type::TrackSegment(Box::new(element)),
+            TypeConstructor::Keyframe => Type::Keyframe(Box::new(element)),
+        });
+        scalar.or(generic).labelled("type").as_context()
     })
+}
+
+#[derive(Debug)]
+enum Postfix {
+    Call(Vec<SourceExpression>, SourceSpan),
+    Field(String, SourceSpan),
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TypeConstructor {
+    Vec2,
+    TrackSegment,
+    Keyframe,
 }
 
 fn binary(
@@ -510,6 +474,62 @@ fn with_span(expression: SourceExpression, span: SourceSpan) -> SourceExpression
         }
         SourceExpression::Vec2 { x, y, .. } => SourceExpression::Vec2 { x, y, span },
     }
+}
+
+fn expression_limit_span(tokens: &[SpannedToken], maximum: usize) -> Option<SourceSpan> {
+    let mut unary_run = 0usize;
+    let mut group_depth = 0usize;
+    let mut power_depth = 0usize;
+    for (token, span) in tokens {
+        match token {
+            Token::Punctuation(Punctuation::Minus | Punctuation::Bang) => {
+                unary_run += 1;
+            }
+            Token::Punctuation(Punctuation::LeftParenthesis) => {
+                group_depth += 1;
+            }
+            Token::Punctuation(Punctuation::RightParenthesis) => {
+                group_depth = group_depth.saturating_sub(1);
+            }
+            Token::Punctuation(Punctuation::Power) => {
+                power_depth += 1;
+                unary_run = 0;
+            }
+            Token::Literal(_) | Token::Identifier(_) | Token::Keyword(Keyword::Vec2) => {
+                unary_run = 0;
+            }
+            Token::Punctuation(_) => {
+                unary_run = 0;
+                power_depth = 0;
+            }
+            _ => unary_run = 0,
+        }
+        if group_depth
+            .saturating_add(unary_run)
+            .saturating_add(power_depth)
+            > maximum
+        {
+            return Some(source_span(*span));
+        }
+    }
+    None
+}
+
+fn type_limit_span(tokens: &[SpannedToken], maximum: usize) -> Option<SourceSpan> {
+    let mut depth = 0usize;
+    for (token, span) in tokens {
+        match token {
+            Token::Punctuation(Punctuation::LessThan) => {
+                depth += 1;
+                if depth > maximum {
+                    return Some(source_span(*span));
+                }
+            }
+            Token::Punctuation(Punctuation::GreaterThan) => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn shift_expression(expression: SourceExpression, offset: usize) -> SourceExpression {

@@ -1293,7 +1293,7 @@ fn parses_every_binary_operator() {
 fn comparison_chains_lower_to_adjacent_comparisons() {
     for (source, comparison) in [
         ("a < b < c", BinaryOperator::LessThan),
-        ("a == b == c", BinaryOperator::Equal),
+        ("a <= b <= c", BinaryOperator::LessThanOrEqual),
     ] {
         let expression = parse_expression(source).into_result().unwrap();
         assert_eq!(expression.span(), SourceSpan::new(0, source.len()));
@@ -1454,12 +1454,114 @@ fn parser_rejects_nesting_beyond_the_shared_limit() {
             .into_result()
             .is_ok()
     );
+    let mixed_limit = parse_expression_with_limits(&mixed(LIMIT / 2 + 1, LIMIT / 2), limits);
+    assert!(mixed_limit.output().is_none());
     assert_eq!(
-        parse_expression_with_limits(&mixed(LIMIT / 2 + 1, LIMIT / 2), limits)
+        mixed_limit.diagnostics()[0].code(),
+        DiagnosticCode::RESOURCE_LIMIT_EXCEEDED
+    );
+    assert_eq!(
+        mixed_limit.diagnostics()[0].primary_span(),
+        SourceSpan::new(LIMIT, LIMIT + 1)
+    );
+
+    let power = |depth: usize| format!("value{}", " ** value".repeat(depth));
+    assert!(
+        parse_expression_with_limits(&power(LIMIT), limits)
             .into_result()
-            .expect_err("mixed nesting limit")[0]
+            .is_ok()
+    );
+    assert_eq!(
+        parse_expression_with_limits(&power(LIMIT + 1), limits)
+            .into_result()
+            .expect_err("power nesting limit")[0]
             .code(),
         DiagnosticCode::RESOURCE_LIMIT_EXCEEDED
+    );
+}
+
+#[test]
+fn generated_comparison_chains_evaluate_the_middle_expression_once() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const ordered: bool = 0 < (1 + 1) <= 3; }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let limits = CompileTimeLimits {
+        max_compile_time_operations: 4,
+        ..CompileTimeLimits::default()
+    };
+    assert!(elaborate(&document, phase2_schema(), limits).is_ok());
+}
+
+#[test]
+fn generated_comparison_chains_retain_all_middle_values_and_short_circuit() {
+    let ordered_limits = CompileTimeLimits {
+        max_compile_time_operations: 6,
+        ..CompileTimeLimits::default()
+    };
+    for expression in [
+        "0 < (1 + 1) <= 3 < 4",
+        "(0 < (1 + 1) <= 3 < 4)",
+        "((0 < (1 + 1) <= 3 < 4))",
+    ] {
+        let source = format!(
+            "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ const ordered: bool = {expression}; }}"
+        );
+        let document = parse_document(&source).into_result().unwrap();
+        assert!(elaborate(&document, phase2_schema(), ordered_limits).is_ok());
+    }
+
+    let stopped = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const stopped: bool = 3 < (1 + 1) <= 3 < 1 / 0; }"#;
+    let stopped_document = parse_document(stopped).into_result().unwrap();
+    let stopped_limits = CompileTimeLimits {
+        max_compile_time_operations: 4,
+        ..CompileTimeLimits::default()
+    };
+    assert!(elaborate(&stopped_document, phase2_schema(), stopped_limits).is_ok());
+}
+
+#[test]
+fn explicit_logical_and_does_not_share_repeated_source_expressions() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: bool = 0 < (1 + 1) && (1 + 1) < 4; }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let limits = CompileTimeLimits {
+        max_compile_time_operations: 4,
+        ..CompileTimeLimits::default()
+    };
+    let diagnostics = elaborate(&document, phase2_schema(), limits)
+        .expect_err("explicit && evaluates both source expressions");
+    assert_eq!(
+        diagnostics[0].code(),
+        DiagnosticCode::COMPILE_TIME_BUDGET_EXCEEDED
+    );
+}
+
+#[test]
+fn logical_operators_short_circuit_invalid_right_hand_values() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const and_value: bool = false && 1 / 0 == 0;
+  const or_value: bool = true || 1 / 0 == 0;
+}"#;
+    assert!(elaborate_source(source).is_ok());
+}
+
+#[test]
+fn power_is_rejected_by_the_i0_elaborator_boundary() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: int = 2 ** 3; }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let diagnostics = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect_err("I0 does not define power evaluation");
+    assert_eq!(
+        diagnostics[0].code(),
+        DiagnosticCode::TYPE_INVALID_OPERATION
     );
 }
 

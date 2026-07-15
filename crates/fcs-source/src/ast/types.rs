@@ -120,6 +120,7 @@ pub enum BinaryOperator {
     Multiply,
     Divide,
     Remainder,
+    Power,
     Equal,
     NotEqual,
     LessThan,

@@ -535,8 +535,29 @@ fn evaluate_expression(
             span,
         } => {
             budget.operation(*span)?;
+            if *operator == BinaryOperator::And
+                && let Some(chain) = generated_comparison_chain(left, right, *span)
+            {
+                return evaluate_generated_comparison_chain(
+                    chain,
+                    scope,
+                    constants,
+                    functions,
+                    const_values,
+                    budget,
+                );
+            }
             let left =
                 evaluate_expression(left, scope, constants, functions, const_values, budget)?;
+            match (*operator, &left) {
+                (BinaryOperator::And, TypedValue::Bool(false)) => {
+                    return Ok(TypedValue::Bool(false));
+                }
+                (BinaryOperator::Or, TypedValue::Bool(true)) => return Ok(TypedValue::Bool(true)),
+                (BinaryOperator::And | BinaryOperator::Or, TypedValue::Bool(_)) => {}
+                (BinaryOperator::And | BinaryOperator::Or, _) => return invalid_binary(*span),
+                _ => {}
+            }
             let right =
                 evaluate_expression(right, scope, constants, functions, const_values, budget)?;
             evaluate_binary(left, *operator, right, *span)
@@ -603,6 +624,147 @@ fn evaluate_expression(
             })
         }
     }
+}
+
+struct ComparisonStep<'expression> {
+    left: &'expression SourceExpression,
+    operator: BinaryOperator,
+    right: &'expression SourceExpression,
+    span: SourceSpan,
+}
+
+struct GeneratedComparisonChain<'expression> {
+    /// The root `&&` has already consumed its operation budget at the caller.
+    nested_and_spans: Vec<SourceSpan>,
+    steps: Vec<ComparisonStep<'expression>>,
+}
+
+fn generated_comparison_chain<'expression>(
+    left: &'expression SourceExpression,
+    right: &'expression SourceExpression,
+    root_span: SourceSpan,
+) -> Option<GeneratedComparisonChain<'expression>> {
+    let mut nested_and_spans = vec![root_span];
+    let mut reverse_steps = vec![ordering_step(right)?];
+    let mut current = left;
+
+    while let SourceExpression::Binary {
+        left,
+        operator: BinaryOperator::And,
+        right,
+        span,
+    } = current
+    {
+        nested_and_spans.push(*span);
+        reverse_steps.push(ordering_step(right)?);
+        current = left;
+    }
+    reverse_steps.push(ordering_step(current)?);
+    reverse_steps.reverse();
+
+    let valid_adjacency = reverse_steps
+        .windows(2)
+        .all(|pair| pair[0].right == pair[1].left);
+    let valid_span_topology = nested_and_spans.iter().enumerate().all(|(index, span)| {
+        span.start <= reverse_steps[0].left.span().start
+            && span.end
+                >= reverse_steps[reverse_steps.len() - index - 1]
+                    .right
+                    .span()
+                    .end
+    });
+    (valid_adjacency && valid_span_topology).then_some(GeneratedComparisonChain {
+        nested_and_spans,
+        steps: reverse_steps,
+    })
+}
+
+fn ordering_step(expression: &SourceExpression) -> Option<ComparisonStep<'_>> {
+    let SourceExpression::Binary {
+        left,
+        operator,
+        right,
+        span,
+    } = expression
+    else {
+        return None;
+    };
+    is_ordering_operator(*operator).then_some(ComparisonStep {
+        left,
+        operator: *operator,
+        right,
+        span: *span,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_generated_comparison_chain(
+    chain: GeneratedComparisonChain<'_>,
+    scope: &Scope,
+    constants: &BTreeMap<String, &ConstDeclaration>,
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+    const_values: &mut BTreeMap<String, TypedValue>,
+    budget: &mut Budget,
+) -> Result<TypedValue, Diagnostic> {
+    // Preserve the normal left-recursive `&&` budget order before evaluating the first comparison.
+    for span in chain.nested_and_spans.iter().skip(1) {
+        budget.operation(*span)?;
+    }
+
+    let mut steps = chain.steps.into_iter();
+    let first = steps
+        .next()
+        .expect("comparison chain has at least two steps");
+    budget.operation(first.span)?;
+    let left = evaluate_expression(
+        first.left,
+        scope,
+        constants,
+        functions,
+        const_values,
+        budget,
+    )?;
+    let mut middle = evaluate_expression(
+        first.right,
+        scope,
+        constants,
+        functions,
+        const_values,
+        budget,
+    )?;
+    if evaluate_binary(left, first.operator, middle.clone(), first.span)? == TypedValue::Bool(false)
+    {
+        return Ok(TypedValue::Bool(false));
+    }
+
+    for step in steps {
+        budget.operation(step.span)?;
+        let right = evaluate_expression(
+            step.right,
+            scope,
+            constants,
+            functions,
+            const_values,
+            budget,
+        )?;
+        if evaluate_binary(middle, step.operator, right.clone(), step.span)?
+            == TypedValue::Bool(false)
+        {
+            return Ok(TypedValue::Bool(false));
+        }
+        middle = right;
+    }
+    Ok(TypedValue::Bool(true))
+}
+
+const fn is_ordering_operator(operator: BinaryOperator) -> bool {
+    matches!(
+        operator,
+        BinaryOperator::LessThan
+            | BinaryOperator::LessThanOrEqual
+            | BinaryOperator::GreaterThan
+            | BinaryOperator::GreaterThanOrEqual
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -806,6 +968,9 @@ fn arithmetic(
     span: SourceSpan,
 ) -> Result<TypedValue, Diagnostic> {
     use BinaryOperator as Op;
+    if operator == Op::Power {
+        return invalid_binary(span);
+    }
     match (left, right) {
         (TypedValue::Int(left), TypedValue::Int(right)) => {
             let value = match operator {
