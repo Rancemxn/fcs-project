@@ -1,59 +1,59 @@
 # FCS 5 规范—实现—测试矩阵
 
-状态日期：2026-07-14
+状态日期：2026-07-15
 
 本矩阵记录 Frozen 规范与参考实现之间的可审计关系。它不定义格式语义；发生冲突时以
 `fcs.md`、`fcbc.md`、`fcs-render.md`、`fcs-conversion.md` 和绑定 conformance corpus 为准。
 
-I0-A（快照、归档和 `master` 分支切换）、I0-B（结构测试和唯一 `fcs-source` crate
-切换）以及 I0.4 稳定诊断边界已完成；I0.5 及后续 source implementation 尚未执行。下表中的实现路径现在已经是
-活动 workspace 的实际路径；“现状”继续描述 candidate source 的条款偏差，不因为 crate
-cutover 或测试通过而自动变成完整规范实现。
+I0.1–I0.8 已完成：活动 `master` 只有无版本前缀的 `crates/fcs-source`，source subset 使用
+Chumsky 0.11.2 的单一 spanned-token 数据流，并具备稳定诊断、严格 byte decode、固定配置
+Proptest robustness 和强类型 manifest 完整性门。当前 workspace 有 134 个通过的测试；这只
+证明 I0 retained subset 和治理门，不表示全部 FCS 5 source/canonical/runtime conformance 已完成。
 
-当前进度证据：`archive/fcs4-pre-cutover` 指向
-`148936d17b671bb34968c88969ab748c818f9fc0`，`master` 已从该快照 fast-forward，原 feature
-branch 保留。I0.3 cutover commit 为 `16e7db3`，I0.4 quality gate 为 100/100 tests passed；
-下一项实现工作是 I0.5 Chumsky lexer。在后续 parser 和 conformance gate 完成前，其他 source
-rows 仍按下表的实际偏差记录。
+当前进度证据：`archive/fcs4-pre-cutover` 固定在
+`148936d17b671bb34968c88969ab748c818f9fc0`；唯一 crate cutover 为 `16e7db3`，稳定诊断为
+`0185d8e`，Chumsky lexer/expression/document 迁移为 `7442210`、`cc8d94f`、`0b17e56f`，Frozen
+generator parser 边界为 `9d88a6a`。I0.9 最终结构、依赖、质量和独立审查 gate 尚待执行。
 
-允许的状态只有：`implemented`、`partial`、`not-started` 和 `blocked-by-I<n>`。
+允许的状态只有：`implemented`、`partial`、`not-started` 和 `blocked-by-I<n>`。`implemented`
+表示该行所列 I0 能力已有实际测试证据；`partial` 必须在“已知偏差”列写明缺失行为和接续阶段。
 
-| 规范条款 | 能力 | 目标 public API | 目标实现文件 | Valid fixture/test | Invalid fixture/test | 现状 | 下一阶段 | 已知偏差 |
+| 规范条款 | 能力 | Public API | 实现文件 | Valid fixture/test | Invalid fixture/test | 现状 | 下一阶段 | 已知偏差 |
 |---|---|---|---|---|---|---|---|---|
-| `fcs.md` 2.1 | UTF-8、BOM、换行 | `parser::parse_document` | `crates/fcs-source/src/parser/lexer.rs` | lexer unit tests BOM/CRLF | `decode.invalid-utf8` 由字节入口覆盖 | partial | I0-D | 候选 parser 接受 `&str`，尚无独立字节解码入口 |
-| `fcs.md` 2.2 | 精确 source header 与版本拒绝 | `parser::parse_header` | `crates/fcs-source/src/parser/header.rs` | `source.valid.minimal-fragment` | `source.invalid.missing-header` | partial | I0-F | 现有 API 使用 enum error，未映射稳定 code |
-| `fcs.md` 2.3 | 空白、行注释、nested block comment | `parser::parse_document` | `crates/fcs-source/src/parser/lexer.rs` | lexer unit test nested comment | `syntax.unclosed-comment` | partial | I0-D | 现有 block comment 不支持嵌套 |
-| `fcs.md` 2.4 | ASCII identifier 与完整保留词 | `parser::parse_document` | `crates/fcs-source/src/parser/token.rs` | reserved-word table test | reserved word as identifier | partial | I0-D | 现有 lexer 把大多数保留词当普通 identifier |
-| `fcs.md` 2.5–2.7 | Int/Float/String/Color literal | `parser::parse_expression` | `crates/fcs-source/src/parser/lexer.rs` | literal table tests | malformed/non-finite literal tests | partial | I0-D | 候选实现缺少完整稳定 diagnostic 分类 |
-| `fcs.md` 2.8–2.9 | 分隔符、array/object/reference/interval | `parser::parse_expression` | `crates/fcs-source/src/parser/expression.rs` | I1 grammar fixtures | I1 grammar fixtures | blocked-by-I1 | I1 | I0 只建立 token 和 parser 框架，不伪造缺失 AST |
-| `fcs.md` 3.1–3.4 | 基础类型、单位和显式转换边界 | `ast::Type`, `ast::SourceLiteral` | `crates/fcs-source/src/ast/types.rs` | `tests/compile_time.rs` type table | invalid type/conversion tests | partial | I2 | 当前 Type 缺少完整 array/Track 类型，转换矩阵未完成 |
-| `fcs.md` 4.1 | 表达式优先级和结合性 | `parser::parse_expression` | `crates/fcs-source/src/parser/expression.rs` | `tests/expression.rs` precedence table | missing operand/delimiter tests | partial | I0-E | 当前 parser 是手写 token cursor，尚未覆盖 Appendix B 全部 primary |
-| `fcs.md` 4.2–4.4 | 运算矩阵、builtin、字段访问 | `elaborator::elaborate` | `crates/fcs-source/src/elaborator/eval.rs` | existing compile-time tests | type/name/operator tests | partial | I2 | 候选 evaluator 不是完整 Frozen operator matrix |
-| `fcs.md` 4.5 | Runtime value 边界 | `elaborator::elaborate` | `crates/fcs-source/src/elaborator/eval.rs` | runtime expression fixtures | `source.invalid.runtime-gameplay` | partial | I2 | 完整 dynamic-field whitelist 尚未实现 |
-| `fcs.md` 5.1–5.2 | Document、format、profile | `parser::parse_document` | `crates/fcs-source/src/parser/document.rs` | `source.valid.minimal-fragment` | profile/misplaced block tests | partial | I0-F | 候选 top-level grammar 只覆盖早期 subset |
-| `fcs.md` 5.3 | definitions 中的 const/fn/template | `ast::DefinitionsBlock` | `crates/fcs-source/src/ast/definitions.rs` | `source.valid.template-if-with` | duplicate/misplaced declaration tests | partial | I0-F | 当前 template 使用独立 top-level block，违反 Frozen grammar |
-| `fcs.md` 5.4 | collections 与 source order | `ast::CollectionBlock` | `crates/fcs-source/src/ast/entity.rs` | collection parser tests | unknown/misplaced collection tests | partial | I0-F | 当前 schema collection 集仍是 Phase 2 subset |
-| `fcs.md` 6.1 | 绑定、作用域和禁止 shadowing | `elaborator::elaborate` | `crates/fcs-source/src/elaborator/scope.rs` | binding tests | `source.invalid.shadowing` | partial | I2 | 已有局部检查，完整跨种类 scope graph 未完成 |
-| `fcs.md` 6.2 | 纯函数、return、调用图 | `elaborator::elaborate` | `crates/fcs-source/src/elaborator/eval.rs` | function evaluation tests | cycle/missing return tests | partial | I2 | 诊断 trace 和完整路径分析未完成 |
-| `fcs.md` 6.3–6.5 | typed template、constructor、with、if | `elaborator::elaborate` | `crates/fcs-source/src/elaborator/entities.rs` | `source.valid.template-if-with` | `source.invalid.template-missing-line` | partial | I2 | 现有展开需迁移 definitions 归属并统一 budget context |
-| `fcs.md` 6.6 | `..<`/`..=` range 与 zero step | `ast::Generator` | `crates/fcs-source/src/parser/entities.rs` | generator range parser tests | `source.invalid.bare-range`, `source.invalid.generator-zero-step` | partial | I0-G/I2 | I0.2 已拒绝裸 `..` 并保留 zero-step 语法；elaborator 暂返回临时 `FeatureUnavailable`，zero-step 语义尚未展开求值 |
-| `fcs.md` 6.7 | generator body 与 typed emit | `ast::GeneratorItem` | `crates/fcs-source/src/ast/entity.rs` | `source.valid.compile-time-generator` | nested/misplaced generator tests | blocked-by-I2 | I2 | I0 只解析并返回明确 implementation diagnostic，不输出部分结果 |
-| `fcs.md` 6.8 | 六类共享 elaboration budget 与 trace | `elaborator::CompileTimeLimits` | `crates/fcs-source/src/elaborator/mod.rs` | budget unit tests | `source.invalid.generator-budget` | partial | I2 | limits 已有字段但未共享完整 context，也没有结构化 expansion trace |
-| `fcs.md` 7.1–7.5 | Metadata、credits、resources、sync、custom | 无 | 未来 `crates/fcs-source/src/ast/metadata.rs` 与 `fcs-model` | `source.valid.metadata-credits-resources-sync` | `source.invalid.unknown-resource`, `source.invalid.custom-duplicate-key` | blocked-by-I1 | I1/I3 | source AST 与 canonical validation 均未实现 |
-| `fcs.md` 8.1–8.3 | chartTime、tempo、offset、judgment/scroll 分离 | `ast::TempoMap`，未来 `fcs-model` | `crates/fcs-source/src/parser/tempo.rs`，未来 model | tempo parser tests | tempo invalid/non-monotonic tests | partial | I0-F/I3 | source tempo subset 已有；canonical time/scroll 语义未实现 |
-| `fcs.md` 9.1–9.5 | Track schema、segment/point、blend、边界 | 无 | 未来 source Track AST 与 `fcs-model` | `source.valid.track-boundaries` | `source.invalid.track-overlap` | blocked-by-I1 | I1/I3 | 尚无 Frozen Track source/canonical model |
-| `fcs.md` 10.1–10.4 | Scroll coordinate、speed、distance、积分 | 无 | 未来 `fcs-model`/`fcs-runtime` | `source.valid.time-scroll-note` | numeric/runtime vectors | blocked-by-I3 | I3/I4 | 未开始 |
-| `fcs.md` 11.1–11.5 | 坐标、Line、parent DAG、inherit、排序 | 无 | 未来 `fcs-model` | `source.valid.parent-transform` | `source.invalid.parent-cycle` | blocked-by-I3 | I3/I4 | 未开始 |
-| `fcs.md` 12.1–12.5 | Note gameplay/presentation/Hold/排序 | source constructor subset | `crates/fcs-source/src/schema.rs`，未来 `fcs-model` | note schema tests | `source.invalid.hold-end` | partial | I2/I3 | source schema 是候选 subset；canonical Note 未实现 |
-| `fcs.md` 13.1–13.4 | Runtime expression、环境和 lazy choose | source expression subset | 未来 `fcs-runtime` | `source.valid.runtime-choose` | environment/cycle tests | blocked-by-I1 | I1/I4 | choose source node和 runtime DAG 均未实现 |
-| `fcs.md` 14.1–14.3 | binary64、baking、Core easing | 无 | 未来 `fcs-runtime` | `expected/numeric-vectors.toml` | error-budget tests | blocked-by-I4 | I4 | 未开始 |
-| `fcs.md` 15.1–15.3 | Extension、fidelity、repair | 无 | 未来 `fcs-model` | future extension fixtures | repair/provenance fixtures | blocked-by-I5 | I5 | 未开始 |
-| `fcs.md` 16 | 稳定 diagnostic categories | `diagnostic::{Diagnostic, DiagnosticCode}` | `crates/fcs-source/src/diagnostic.rs` | `tests/diagnostic.rs` | all invalid fixtures | implemented | I0.5 | I0.4 建立当前手写 parser/elaborator 的稳定边界；完整 lexer/grammar invalid corpus 随后接入 |
-| `fcs.md` 17 | Expanded source 与 canonical lowering 边界 | `ast::ExpandedSourceDocument` | `crates/fcs-source/src/ast/entity.rs`，未来 `fcs-model` | expanded invariant tests | forbidden compile-time-node tests | partial | I2/I3 | Expanded candidate 存在；完整 invariant 与 canonical lowering 未完成 |
-| `fcs.md` 18 | Source/static/canonical/runtime conformance runner | manifest integrity test | `crates/fcs-source/tests/conformance_manifest.rs` | 22-entry manifest | malformed manifest unit cases | not-started | I0-G/I1–I4 | I0 只建立强类型 manifest 完整性门 |
-| `fcbc.md` 全部 | FCBC 2 与 Execution ABI | 无 | 未来 `fcs-fcbc` | 804-byte golden | 8 mutation vectors | blocked-by-I7 | I7 | 旧 FCBC 实现将在 I0 从活动主线删除 |
-| `fcs-conversion.md` 全部 | PGR/RPE/PEC conversion 与 report | 无 | 未来 `fcs-converter` 依赖 `fcs-model` | conversion mapping vectors | capability boundary vectors | blocked-by-I6 | I5/I6/I8 | 旧 converter/IR 将归档，不作为 canonical model |
-| `fcs-render.md` 全部 | Render source/canonical/section/raster | 无 | 未来 `fcs-render` | semantic/raster fixture | malformed render fixtures | blocked-by-I9 | I9 | 未开始 |
+| `fcs.md` 2.1 | UTF-8、BOM、换行 | `parser::parse_document_bytes` | `parser/document.rs`, `parser/lexer.rs` | `robustness::byte_entry_decodes_once_and_preserves_utf8_error_spans` | `robustness::arbitrary_bytes_never_escape_decode_or_parse_boundaries` | implemented | I1 | 严格 UTF-8 decode、BOM/CRLF byte span 和 bounded arbitrary bytes 已覆盖；I1 只扩展到新增 grammar production |
+| `fcs.md` 2.2 | 精确 source header 与版本拒绝 | `parser::parse_header` | `parser/header.rs`, `parser/lexer.rs`, `version.rs` | `frontend::parses_exact_fcs5_header`, `source.valid.minimal-fragment` | `frontend::rejects_missing_or_wrong_major_header`, `source.invalid.missing-header` | implemented | I1 | `5.0.x` 兼容规则、missing/invalid/unsupported 稳定 code 已覆盖；未来版本策略不在 I0 扩展 |
+| `fcs.md` 2.3 | 空白、行注释、nested block comment | `parser::parse_document` | `parser/lexer.rs` | `lexer::nested_comments_and_string_escapes_are_deterministic` | `frontend::rejects_unclosed_trailing_block_comment` | implemented | I1 | retained subset 的 trivia 与 nested-comment contract 已完成；I1 复用同一 lexer 接入完整 grammar |
+| `fcs.md` 2.4 | ASCII identifier 与保留词 | `parser::parse_expression`, `parser::parse_document` | `parser/token.rs`, `parser/lexer.rs` | `compile_time::identifiers_are_ascii_but_spans_remain_utf8_byte_offsets` | `expression::token_parser_rejects_reserved_names_and_trailing_input` | implemented | I1 | I0 token 表和 ASCII 约束已覆盖；I1 新增 source node 时不得把保留词降级为 identifier |
+| `fcs.md` 2.5–2.7 | Int/Float/String/Color 与单位 literal | `parser::parse_expression` | `parser/lexer.rs`, `ast/types.rs`, `ast/color.rs` | `compile_time::parses_scalar_and_unit_literals`, `compile_time::string_escapes_match_the_documented_table` | `compile_time::unit_literals_must_remain_finite_after_conversion` | implemented | I1 | I0 literal 表、escape、精确 Beat 与 non-finite 拒绝已覆盖；I1 仅补新增 grammar 上下文 |
+| `fcs.md` 2.8–2.9 | 分隔符、array/object/reference/interval | `parser::parse_expression` | 未来扩展 `parser/expression.rs`, `ast/types.rs` | `source.valid.track-boundaries`（manifest only） | I1 grammar fixtures | blocked-by-I1 | I1 | token 已保留部分分隔符；array/object/reference/interval AST 与 parser 尚未实现 |
+| `fcs.md` 3.1–3.4 | 基础类型、单位和显式转换边界 | `ast::Type`, `ast::SourceLiteral` | `ast/types.rs`, `elaborator/eval.rs` | `compile_time::phase2_type_display_uses_canonical_spellings` | `compile_time::requires_exact_declared_and_return_types` | partial | I1/I2 | scalar、`vec2`、`TrackSegment`、`Keyframe` 类型形状已实现；`array`/`Track` source 类型与完整显式转换矩阵缺失 |
+| `fcs.md` 4.1 | 表达式优先级和结合性 | `parser::parse_expression` | `parser/expression.rs` | `expression::token_parser_preserves_frozen_precedence_and_spans` | `compile_time::parser_rejects_trailing_or_incomplete_input` | partial | I1 | I0 retained primary/postfix/unary/power/binary 层已从同一 token stream 解析；array/object/reference/interval/choose primary 缺失 |
+| `fcs.md` 4.2–4.4 | 运算矩阵、builtin、字段访问 | `elaborator::elaborate` | `elaborator/eval.rs` | `compile_time::types_and_evaluates_phase2_pure_operators` | `compile_time::evaluates_fixed_builtins_and_diagnoses_bad_calls` | partial | I2 | I0 subset 支持纯运算、short-circuit、固定 builtin 和字段访问；power elaboration及完整 Frozen operator/builtin 矩阵缺失 |
+| `fcs.md` 4.5 | Runtime value 边界 | `elaborator::elaborate` | `elaborator/eval.rs`, `elaborator/entities.rs` | `compile_time::compile_time_collection_if_selects_one_branch_and_rejects_runtime_conditions` | `source.invalid.runtime-gameplay`（manifest only） | partial | I2/I4 | I0 能拒绝结构位置的非 compile-time value；完整 runtime value 类型、dynamic-field whitelist 与 DAG 在 I2/I4 实现 |
+| `fcs.md` 5.1–5.2 | Document、format、profile | `parser::parse_document` | `parser/document.rs` | `source.valid.minimal-fragment`, `frontend::parses_fragment_profile` | `frontend::document_rejects_misplaced_or_duplicate_top_level_blocks` | partial | I1 | I0 精确解析 header、profile、tempo/definitions/collections subset；format features 及其余 Frozen top-level blocks 明确拒绝并留给 I1 |
+| `fcs.md` 5.3 | definitions 中的 const/fn/template | `ast::DefinitionsBlock` | `ast/definitions.rs`, `parser/definitions.rs` | `compile_time::parses_definitions_with_global_byte_spans` | `compile_time::template_declaration_does_not_consume_following_definitions` | partial | I1/I2 | const/fn/template 已统一位于 definitions 并保留 span；完整 source type/statement 与全分支静态检查仍缺失 |
+| `fcs.md` 5.4 | collections 与 source order | `ast::CollectionBlock` | `ast/entity.rs`, `parser/entities.rs` | `compile_time::collection_blocks_retain_forward_compatible_items_and_spans` | `frontend::duplicate_optional_top_level_blocks_report_both_declarations` | partial | I1/I2 | collection 顺序和 retained Note/Line subset 已保留；完整 collection/schema/Track owner grammar 与静态检查缺失 |
+| `fcs.md` 6.1 | 绑定、作用域和禁止 shadowing | `elaborator::elaborate` | `elaborator/scope.rs` | `compile_time::rejects_duplicate_bindings_but_allows_sibling_branch_names` | `compile_time::rejects_shadowing_in_nested_scope`, `source.invalid.shadowing` | partial | I2 | I0 subset 已区分 duplicate/shadowing 并覆盖 global/builtin 冲突；完整跨 source node scope graph 缺失 |
+| `fcs.md` 6.2 | 纯函数、return、调用图 | `elaborator::elaborate` | `elaborator/eval.rs`, `elaborator/cycle.rs` | `compile_time::elaborates_const_and_pure_function` | `compile_time::requires_a_return_on_every_function_path`, `compile_time::detects_const_and_function_cycles_before_evaluation` | partial | I2 | retained function subset 具备 forward reference、路径 return 与结构化 cycle trace；完整类型、builtin 和未来 AST 调用图缺失 |
+| `fcs.md` 6.3–6.5 | typed template、constructor、with、if | `elaborator::elaborate` | `elaborator/entities.rs` | `compile_time::parses_and_elaborates_the_public_template_fixture` | `compile_time::entity_elaboration_reports_schema_and_template_errors` | partial | I2 | I0 Note/Line schema subset 可展开 template/with/if 且输出 lowered values；完整 schema、全分支静态检查和共享 budget context 缺失 |
+| `fcs.md` 6.6 | `..<`/`..=` range 与 zero step | `ast::Generator` | `parser/entities.rs`, `ast/entity.rs` | `compile_time::parses_only_frozen_generator_range_operators` | `compile_time::bare_range_uses_the_frozen_syntax_category`, `source.invalid.generator-zero-step`（manifest only） | partial | I2 | parser 只接受 `int`/`beat` 与两种 Frozen range operator；step 表达式求值、类型一致性、方向和 zero-step 诊断尚未实现 |
+| `fcs.md` 6.7 | generator body 与 typed emit | `ast::GeneratorItem` | `parser/entities.rs`, `ast/entity.rs`, `elaborator/entities.rs` | `compile_time::generator_body_retains_typed_let_and_nested_statement_spans` | `compile_time::rejects_return_and_nested_generate_in_generator_body` | partial | I1/I2 | typed let/if/emit 语法和 no-partial-output boundary 已实现；I1 补 nested/misplaced Frozen category 与 Track owner grammar，I2 实现 typed expansion |
+| `fcs.md` 6.8 | 六类共享 elaboration budget 与 trace | `elaborator::CompileTimeLimits` | `elaborator/mod.rs`, `diagnostic.rs` | `compile_time::template_cycle_detection_scans_template_bodies_before_expansion` | `source.invalid.generator-budget`（manifest only） | partial | I2 | I0 已有表达式/调用/展开 limits 与结构化 trace 形状；六类共享计数、generator index/emit trace 尚未实现 |
+| `fcs.md` 7.1–7.5 | Metadata、credits、resources、sync、custom | 无 | 未来 `ast/metadata.rs` 与 `fcs-model` | `source.valid.metadata-credits-resources-sync`（manifest only） | `source.invalid.unknown-resource`, `source.invalid.custom-duplicate-key`（manifest only） | blocked-by-I1 | I1/I3 | source AST/parser 与 canonical validation 均未实现 |
+| `fcs.md` 8.1–8.3 | chartTime、tempo、offset、judgment/scroll 分离 | `ast::TempoMap` | `parser/tempo.rs`, 未来 `fcs-model` | `frontend::parses_chart_tempo_map_with_exact_beats` | `frontend::tempo_points_must_be_non_decreasing` | partial | I1/I3 | source tempoMap subset、exact Beat 和 zero-start/monotonic checks 已实现；offset、完整 source 结构和 canonical time/scroll 语义缺失 |
+| `fcs.md` 9.1–9.5 | Track schema、segment/point、blend、边界 | 无 | 未来 source Track AST 与 `fcs-model` | `source.valid.track-boundaries`（manifest only） | `source.invalid.track-overlap`（manifest only） | blocked-by-I1 | I1/I3 | Frozen Track source/canonical model 尚未实现 |
+| `fcs.md` 10.1–10.4 | Scroll coordinate、speed、distance、积分 | 无 | 未来 `fcs-model`, `fcs-runtime` | `source.valid.time-scroll-note`（manifest only） | numeric/runtime vectors（manifest only） | blocked-by-I3 | I3/I4 | canonical scroll model 与 reference evaluator 尚未开始 |
+| `fcs.md` 11.1–11.5 | 坐标、Line、parent DAG、inherit、排序 | 无 | 未来 `fcs-model` | `source.valid.parent-transform`（manifest only） | `source.invalid.parent-cycle`（manifest only） | blocked-by-I3 | I3/I4 | I0 仅有 constructible Line identity subset；canonical graph 与 transform 未开始 |
+| `fcs.md` 12.1–12.5 | Note gameplay/presentation/Hold/排序 | source constructor subset | `schema.rs`, `elaborator/entities.rs`, 未来 `fcs-model` | `compile_time::phase2_note_schema_has_exact_fields_required_flags_and_variants` | `source.invalid.hold-end`（manifest only） | partial | I2/I3 | I0 Note schema 是 retained construction subset；完整 required/dynamic rules、Hold 语义、canonical ID 与排序缺失 |
+| `fcs.md` 13.1–13.4 | Runtime expression、环境和 lazy choose | source expression subset | 未来 `fcs-runtime` | `source.valid.runtime-choose`（manifest only） | environment/cycle tests（未接入） | blocked-by-I1 | I1/I4 | choose source node、runtime environment 和 DAG 均未实现；I0 只有 compile-time logical short-circuit |
+| `fcs.md` 14.1–14.3 | binary64、baking、Core easing | 无 | 未来 `fcs-runtime` | `expected/numeric-vectors.toml`（manifest only） | error-budget tests（未接入） | blocked-by-I4 | I4 | reference numeric evaluator 与 baking 尚未开始 |
+| `fcs.md` 15.1–15.3 | Extension、fidelity、repair | 无 | 未来 source extension AST 与 `fcs-model` | future extension fixtures | repair/provenance fixtures | blocked-by-I1 | I1/I5 | extension source grammar 先由 I1 建立，canonical fidelity/repair 由 I5 实现 |
+| `fcs.md` 16 | 稳定 diagnostic categories | `diagnostic::{Diagnostic, DiagnosticCode}` | `diagnostic.rs` | `diagnostic::diagnostics_are_sorted_by_span_then_code` | `diagnostic::missing_header_has_the_frozen_code_and_byte_span` | implemented | I1–I9 | I0 已稳定公共 code/stage/severity/span/labels/trace/budget 形状；后续阶段只在实现对应语义时激活已声明 category |
+| `fcs.md` 17 | Expanded source 与 canonical lowering 边界 | `ast::ExpandedSourceDocument` | `ast/entity.rs`, `elaborator/entities.rs`, 未来 `fcs-model` | `compile_time::expanded_ir_exposes_only_read_accessors` | `compile_time::generator_elaboration_fails_before_partial_output` | partial | I2/I3 | I0 retained subset 输出只含 concrete typed fields；完整 generator 消除、expanded invariants 和 canonical lowering 缺失 |
+| `fcs.md` 18 | Source/static/canonical/runtime conformance runner | manifest integrity API（test only） | `tests/conformance_manifest.rs` | `conformance_manifest::typed_manifests_load_with_frozen_counts` | `conformance_manifest::manifests_preserve_integrity_invariants` | partial | I1–I4 | 22-entry manifest 已强类型加载并验证路径/schema；尚未执行 fixture 的 parser/elaborator/canonical/runtime expected 结果 |
+| `fcbc.md` 全部 | FCBC 2 与 Execution ABI | 无 | 未来 `fcs-fcbc` | 804-byte golden（manifest only） | 8 mutation vectors（manifest only） | blocked-by-I7 | I7 | 活动 workspace 无 FCBC crate；旧实现只在归档分支 |
+| `fcs-conversion.md` 全部 | PGR/RPE/PEC conversion 与 report | 无 | 未来 `fcs-converter` 依赖 `fcs-model` | conversion mapping vectors（manifest only） | capability boundary vectors（manifest only） | blocked-by-I6 | I5/I6/I8 | 活动 workspace 无 converter；旧 converter/IR 只在归档分支且不作为 canonical model |
+| `fcs-render.md` 全部 | Render source/canonical/section/raster | 无 | 未来 `fcs-render` | semantic/raster fixtures（manifest only） | malformed render fixtures（manifest only） | blocked-by-I9 | I9 | Render source extension、canonical scene、FCBC section 与 raster harness 均未开始 |
 
 ## I0 更新规则
 

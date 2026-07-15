@@ -173,3 +173,34 @@ ebc374dd128e7272d06eb4491564770f8b7b218ff0e58df39f627abd73d72222
 
 四份权威规范、规范治理文件和 conformance tree 未修改，因此冻结版本与原始哈希记录保持
 不变。
+
+### 2026-07-15 I0 实施证据同步
+
+I0.1–I0.8 已按实际 workspace 复核并同步到 roadmap 与 implementation matrix：
+
+- `archive/fcs4-pre-cutover` 仍固定在
+  `148936d17b671bb34968c88969ab748c818f9fc0`，并且是当前 `master` 的祖先；
+- 活动 workspace 只有无版本前缀的 `crates/fcs-source`，旧 FCS 4 core、converter、CLI、VM
+  和 bytecode 只保留在归档分支；
+- source subset 已迁移到 Chumsky 0.11.2 的单一 spanned-token 数据流，严格 byte decode、
+  固定配置 Proptest robustness 和强类型 conformance manifest 完整性门已建立；
+- generator parser 只接受 `int`/`beat`、`..<`/`..=` 和 `let`/`if`/`emit`，I0 elaborator 在
+  产生任何部分输出前返回 `implementation.feature-unavailable`；
+- I0.8 同步时 workspace 有 134 个通过的测试；I0.9 最终结构、依赖、质量和独立审查 gate
+  仍需单独执行，不能据此声明完整 FCS 5 conformance。
+
+上一版依赖基线修订后的 roadmap SHA-256 保留为：
+
+```text
+ebc374dd128e7272d06eb4491564770f8b7b218ff0e58df39f627abd73d72222
+```
+
+本次 I0 实施证据同步后的 roadmap SHA-256 为：
+
+```text
+8ea7db4a25fc06808d114cd247e9d83c087a1c8bcd450cdee8b1d2ea920de374
+```
+
+本次同步只修改实施路线、协作指南、状态矩阵、审查附录和 decision 中的 Chumsky 参考仓库
+路径，并删除已被正式决策与计划取代的旧设计/计划副本。四份权威规范、规范治理文件、
+conformance corpus 和全部 Frozen 版本均未修改。

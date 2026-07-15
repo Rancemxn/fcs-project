@@ -18,7 +18,7 @@ Render Profile 与 CLI 的同一条确定性工具链。
 - I0-A 用 `archive/fcs4-pre-cutover` 保存完整旧工具链；I0 完成后活动 `master` 只保留一套
   无版本实现前缀的 FCS source API，不建立 FCS 4 兼容层。
 - 每个实施阶段结束前依次运行 Clippy、nextest、rustfmt check 和 diff check。
-- 当前未提交 generator 工作在编译期语言规范冻结后重新审计，不以现状反向定义语法。
+- generator 实现持续以 Frozen 编译期语言为准；I0 的 parser/feature-unavailable 边界不反向定义语法。
 
 ## 3. 版本基线
 
@@ -156,10 +156,10 @@ RenderSection、semantic conformance 和 reference raster conformance。
 
 ### I0：健康基线与规范对账
 
-当前进度：I0-A（快照、归档和 `master` 分支切换）、I0.2 generator staging、I0.3 唯一
-crate 切换和 I0.4 诊断边界已完成；I0.5 parser 重建和 conformance gate 尚未开始。活动树现已
-只有 `fcs-source`；generator 仍按 I0 边界不展开，不能将局部 source candidate 测试通过误记
-为完整 source implementation 已完成。
+当前进度：I0.1–I0.8 已完成；活动树只有 `fcs-source`，Chumsky token parser、稳定诊断、
+byte/property robustness、精确 generator parser 边界和强类型 manifest gate 已落地。
+generator 仍按 I0 边界不展开，不能将 retained source subset 的测试通过误记为完整 source
+implementation 已完成。I0.9 最终结构、依赖、质量和独立审查 gate 是当前剩余工作。
 
 - 提交完整切换前快照并建立永久 `archive/fcs4-pre-cutover`；
 - fast-forward `master`，删除活动主线中的 FCS 4、旧 converter 和旧 CLI；
@@ -274,21 +274,21 @@ crate 切换和 I0.4 诊断边界已完成；I0.5 parser 重建和 conformance g
   返回临时 `FeatureUnavailable { feature: "compile-time-generator", .. }`；已消除
   non-exhaustive match 和部分输出路径。稳定 `implementation.feature-unavailable` 公共
   diagnostic code 仍属于后续诊断边界任务。
-- **I0.3 唯一 crate 切换**：删除活动 FCS 4 core、旧 CLI、旧 converter 和第二 IR；将候选
+- **I0.3 唯一 crate 切换（已完成）**：删除活动 FCS 4 core、旧 CLI、旧 converter 和第二 IR；将候选
   source front end 提升为 `crates/fcs-source`，不提供兼容 re-export。
-- **I0.4 诊断边界**：建立稳定 `DiagnosticCode`、UTF-8 byte span、labels、确定性多诊断
+- **I0.4 诊断边界（已完成）**：建立稳定 `DiagnosticCode`、UTF-8 byte span、labels、确定性多诊断
   `ParseOutput<T>`；Chumsky error 不泄漏为 public API。
-- **I0.5 Chumsky parser 基线**：使用 0.11.2 稳定 token/span/recovery API 和 `stacker`，禁用
+- **I0.5 Chumsky parser 基线（已完成）**：使用 0.11.2 稳定 token/span/recovery API 和 `stacker`，禁用
   alpha、Pratt 和 unstable feature；迁移当前 Frozen-conforming expression/document subset，
   删除 raw-text Cursor、token clone 和固定 64 MiB parser thread。
-- **I0.6 Decode/robustness gate**：新增 `parse_document_bytes`、`decode.invalid-utf8` 和固定
+- **I0.6 Decode/robustness gate（已完成）**：新增 `parse_document_bytes`、`decode.invalid-utf8` 和固定
   seed/case 的 Proptest gate；验证任意 bounded bytes/string 不 panic、span 有界、结果确定且 limits
   在递归/分配前生效。
-- **I0.7 Manifest gate**：Serde/TOML 强类型加载根 manifest 和 22 个 FCS fixture，验证路径、
+- **I0.7 Manifest gate（已完成）**：Serde/TOML 强类型加载根 manifest 和 22 个 FCS fixture，验证路径、
   stage、expect、diagnostic、clauses 与 `implementation.*` 禁止规则。
-- **I0.8 条款矩阵**：维护 `docs/conformance/fcs5-implementation-matrix.md`，每行含规范章节、
+- **I0.8 条款矩阵（已完成）**：维护 `docs/conformance/fcs5-implementation-matrix.md`，每行含规范章节、
   public API、实现文件、valid/invalid fixture、状态、下一阶段和已知偏差。
-- **I0.9 基线 gate**：workspace 只有 `fcs-source`；结构搜索、依赖/feature 审计、Clippy、
+- **I0.9 基线 gate（当前）**：workspace 只有 `fcs-source`；结构搜索、依赖/feature 审计、Clippy、
   nextest、fmt、diff 和
   独立 review 全绿，记录准确 test count 与 archive/master SHA。
 
@@ -305,8 +305,9 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
   source-order collection。
 - **I1.4 Definitions parser**：统一 `const/fn/template` 到 definitions，template/function 使用
  不同 statement 类型或一个不能表示非法语句的 typed source enum。
-- **I1.5 Generator parser**：保持 I0 的 `..<`/`..=` 与裸 `..` 拒绝；补齐 local let、
-  nested/misplaced generate 和 segment/track owner grammar；zero step 统一留给 elaborator 求值。
+- **I1.5 Generator parser**：保持 I0 的 `..<`/`..=`、裸 `..` 拒绝和 local let；补齐
+  nested/misplaced generate 的 Frozen category 以及 segment/track owner grammar；zero step
+  统一留给 elaborator 求值。
 - **I1.6 Schema parser**：解析 Line/Note/Track/meta/credits/resources/sync；parser 只识别结构，
   schema 合法性留给 static phase。
 - **I1.7 Diagnostic**：所有 parser error 映射附录 C category，保留 primary/related span；不得
@@ -495,9 +496,10 @@ git diff --check
 - S1–S12：完成；逐章审查和首批机器可读 conformance fixture 已落地；
 - S13：完成；FCS 5.0.0、FCBC 2.0.0、ABI 1.0.0、Render 1.0.0、Conversion 1.0.0
   已于 2026-07-14 Frozen；
-- I0-A 快照与归档、I0.2 generator staging、I0.3 唯一 crate 切换和 I0.4 稳定诊断边界已完成；
-  100 个 candidate tests 通过；I0.5 及后续任务尚未执行；
-- 已有 Phase 1/2 source candidate：已提升为唯一 `fcs-source`，仍需按 S1–S4 对账；
-- 当前 generator AST/parser：已拒绝裸 `..`，zero-step 语法保留给 I2；elaborator 在 I0
-  暂不展开 generator 并返回临时 feature-unavailable 诊断；稳定诊断 API 已在 I0.4 建立；
+- I0.1–I0.8 已完成，134 个 workspace tests 通过；I0.9 最终结构、依赖、质量和独立审查
+  gate 正在执行；
+- retained source subset 已提升为唯一 `fcs-source`，完整 Source AST/grammar 仍按 I1 推进；
+- 当前 generator AST/parser 只接受 `int|beat`、`..<|..=` 和 `let|if|emit`，拒绝裸 `..`、
+  `return` 与 nested generator；zero-step 语法保留给 I2，elaborator 在 I0 不展开并返回稳定
+  `implementation.feature-unavailable`，且不产生部分输出；
 - I3–I10：未开始。

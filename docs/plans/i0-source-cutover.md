@@ -4,12 +4,12 @@
 > its step is completed. No specific agent skill or orchestration framework is required.
 
 > **Current status (2026-07-15):** I0-A through the unique `fcs-source` cutover and stable
-> diagnostics are complete. Tasks 8-11 are complete: document, definition, template, and collection
+> diagnostics are complete. Tasks 8-12 are complete: document, definition, template, and collection
 > parsing consume one spanned token stream; the Frozen generator grammar is exact at the I0
 > implementation boundary; and byte/property robustness plus typed conformance-manifest gates are
-> active. The workspace contains only `fcs-source` and has 134 passing tests. Raw-text scanners are
-> gone, and deep expressions use bounded execution without token cloning or the former fixed 64 MiB
-> fallback thread.
+> active. Governance guidance, roadmap, implementation matrix, and freeze-review evidence now match
+> the post-cutover workspace. The workspace contains only `fcs-source` and has 134 passing tests.
+> Task 13 final structure, dependency, quality, topology, and independent-review gates remain.
 
 **Goal:** Archive the complete pre-cutover FCS 4 workspace, make `master` the sole development
 branch, replace the mixed `fcs-core`/`v5` tree with an unversioned `fcs-source` crate, establish a
@@ -59,9 +59,9 @@ Before executing any task, read these files completely:
 - `fcs.md`, especially sections 2–6, 16, Appendix B, and Appendix C
 - `conformance/manifest.toml`
 - `conformance/fcs5/manifest.toml`
-- `refer/chumsky/Cargo.toml`
+- `refer/dependencies/chumsky/Cargo.toml`
 - Chumsky tag `0.11` versions of `examples/nano_rust.rs`, `src/input.rs`, and
-  `guide/error_and_recovery.md`, read with `git -C refer/chumsky show 0.11:<path>`
+  `guide/error_and_recovery.md`, read with `git -C refer/dependencies/chumsky show 0.11:<path>`
 
 The decision record controls implementation structure only. If it conflicts with `fcs.md` or the
 conformance corpus, the Frozen specification and corpus win.
@@ -159,7 +159,7 @@ Expected:
 - current branch is `codex/fcs5-phase2-compile-time-language`;
 - `git merge-base master HEAD` equals `git rev-parse master`;
 - status contains the known generator changes, Frozen documents, conformance corpus, decision/plan
-  documents, and old `docs/superpowers` deletions;
+  documents and governance cleanup;
 - no unrelated user file is silently included.
 
 If `archive/fcs4-pre-cutover` already exists, stop and compare its SHA with the intended snapshot;
@@ -402,7 +402,7 @@ git commit -m "fix(source): make generator staging explicit"
 
 - Create: `crates/fcs-core/tests/workspace_structure.rs`
 
-- [ ] **Step 1: Add the failing structure test**
+- [x] **Step 1: Add the failing structure test**
 
 ```rust
 use std::path::Path;
@@ -432,7 +432,7 @@ fn workspace_has_one_unversioned_source_implementation() {
 }
 ```
 
-- [ ] **Step 2: Run it and verify the correct red state**
+- [x] **Step 2: Run it and verify the correct red state**
 
 ```powershell
 cargo nextest run -p fcs-core --test workspace_structure
@@ -463,7 +463,7 @@ Expected: FAIL at `CARGO_PKG_NAME`, reporting `fcs-core` instead of `fcs-source`
 - Delete: `examples/fcs/simple.fcs`
 - Delete: `examples/fcs/template.fcs`
 
-- [ ] **Step 1: Move the only retained V4 value type into the candidate AST**
+- [x] **Step 1: Move the only retained V4 value type into the candidate AST**
 
 Move `crates/fcs-core/src/units/color.rs` to `crates/fcs-core/src/v5/ast/color.rs` and add to
 `crates/fcs-core/src/v5/ast/mod.rs`:
@@ -477,7 +477,7 @@ pub use color::Color;
 Change candidate imports from `crate::units::Color` to `crate::v5::ast::Color` and test imports
 from `fcs_core::units::Color` to `fcs_core::v5::ast::Color`.
 
-- [ ] **Step 2: Remove active V4 crates and modules**
+- [x] **Step 2: Remove active V4 crates and modules**
 
 Delete exactly:
 
@@ -495,7 +495,7 @@ crates/fcs-core/src/vm/
 
 Do not delete anything under `refer/` or `archive/fcs4-pre-cutover`.
 
-- [ ] **Step 3: Rename the crate and promote candidate modules**
+- [x] **Step 3: Rename the crate and promote candidate modules**
 
 Perform these repository renames:
 
@@ -511,7 +511,7 @@ crates/fcs-source/src/v5/version.rs    -> crates/fcs-source/src/version.rs
 
 Delete the now-empty `crates/fcs-source/src/v5/mod.rs` and `src/v5/` directory.
 
-- [ ] **Step 4: Replace package and workspace manifests**
+- [x] **Step 4: Replace package and workspace manifests**
 
 `Cargo.toml`:
 
@@ -539,7 +539,7 @@ description = "FCS source parser and compile-time elaborator"
 [dependencies]
 ```
 
-- [ ] **Step 5: Replace the crate entry point**
+- [x] **Step 5: Replace the crate entry point**
 
 `crates/fcs-source/src/lib.rs`:
 
@@ -558,7 +558,7 @@ pub mod version;
 mod validation;
 ```
 
-- [ ] **Step 6: Remove version prefixes from all Rust paths**
+- [x] **Step 6: Remove version prefixes from all Rust paths**
 
 Make these mechanical replacements only inside `crates/fcs-source`:
 
@@ -575,7 +575,7 @@ fcs_core::             -> fcs_source::
 
 Do not replace textual `FCS 5`, `5.0.0`, or `FCS_SOURCE_VERSION` references.
 
-- [ ] **Step 7: Rename tests and active FCS 5 examples**
+- [x] **Step 7: Rename tests and active FCS 5 examples**
 
 Apply the test/example renames listed in this task. Update helper paths from
 `fcs5-chart.fcs`, `fcs5-fragment.fcs`, and `fcs5-templates.fcs` to `chart.fcs`,
@@ -584,7 +584,7 @@ Apply the test/example renames listed in this task. Update helper paths from
 Delete the six FCS 4 examples listed in this task. Do not delete PGR/RPE/PEC or copyright
 fixtures; they remain reference inputs even though the converter crate is absent.
 
-- [ ] **Step 8: Regenerate the lockfile through Cargo**
+- [x] **Step 8: Regenerate the lockfile through Cargo**
 
 ```powershell
 cargo generate-lockfile
@@ -593,7 +593,7 @@ cargo generate-lockfile
 Expected: the lockfile no longer contains `fcs-cli`, `fcs-converter`, `nom`, `thiserror`,
 `serde`, or `bytemuck` at this intermediate stage.
 
-- [ ] **Step 9: Run the structural and migrated test gates**
+- [x] **Step 9: Run the structural and migrated test gates**
 
 ```powershell
 cargo clippy --workspace --all-targets -- -D warnings
@@ -605,7 +605,7 @@ git diff --check
 Expected: all commands exit 0; at least the 82 pre-cutover candidate tests execute under package
 `fcs-source`; `workspace_structure` passes.
 
-- [ ] **Step 10: Verify absence instead of trusting renames**
+- [x] **Step 10: Verify absence instead of trusting renames**
 
 ```powershell
 fd --hidden --exclude .git --exclude target --type d '^(v4|v5)$' crates
@@ -616,7 +616,7 @@ cargo metadata --no-deps --format-version 1
 Expected: both searches produce no matches; metadata lists exactly `fcs-source` as a workspace
 member.
 
-- [ ] **Step 11: Commit the destructive cutover**
+- [x] **Step 11: Commit the destructive cutover**
 
 ```powershell
 git add -A -- Cargo.toml Cargo.lock crates examples/fcs
@@ -1190,7 +1190,7 @@ git commit -m "refactor(source): stabilize diagnostic output"
 - Modify: `crates/fcs-source/src/parser/mod.rs`
 - Modify: `Cargo.lock`
 
-- [ ] **Step 1: Add lexer contract tests**
+- [x] **Step 1: Add lexer contract tests**
 
 Add these unit tests at the bottom of `src/parser/lexer.rs` so private tokens do not become public
 test API:
@@ -1251,7 +1251,7 @@ and literal length limit. Assert the three resource-limit cases use
 `DiagnosticCode::RESOURCE_LIMIT_EXCEEDED`, and assert the non-finite literal uses
 `DiagnosticCode::NUMERIC_NON_FINITE`.
 
-- [ ] **Step 2: Run lexer tests and observe failures**
+- [x] **Step 2: Run lexer tests and observe failures**
 
 ```powershell
 cargo nextest run -p fcs-source --lib
@@ -1260,7 +1260,7 @@ cargo nextest run -p fcs-source --lib
 Expected: compilation fails because token/input modules, `ParseLimits`, and the new lexer boundary
 do not exist.
 
-- [ ] **Step 3: Add the audited workspace catalog and activate Chumsky**
+- [x] **Step 3: Add the audited workspace catalog and activate Chumsky**
 
 Root `Cargo.toml`:
 
@@ -1293,7 +1293,7 @@ resource boundary because stack growth can be a no-op on unsupported targets. If
 added to the supported target matrix, it needs a target-specific parser-stack decision and compile
 gate before support is claimed.
 
-- [ ] **Step 4: Define owned tokens and punctuation**
+- [x] **Step 4: Define owned tokens and punctuation**
 
 `token.rs` must define three layers:
 
@@ -1351,7 +1351,7 @@ keywords are accepted only by `parse_type` or constructor/template grammar. `nul
 objects, references, and other reserved constructs outside the I0 AST are rejected rather than
 reclassified as identifiers.
 
-- [ ] **Step 5: Define parser input aliases and span conversion**
+- [x] **Step 5: Define parser input aliases and span conversion**
 
 `input.rs`:
 
@@ -1371,10 +1371,11 @@ pub(crate) fn source_span(span: ChumskySpan) -> SourceSpan {
 }
 ```
 
-- [ ] **Step 6: Implement the Chumsky lexer**
+- [x] **Step 6: Implement the Chumsky lexer**
 
-Follow the stable `refer/chumsky` tag `0.11` `nano_rust` pattern. The parser factory receives the
-limits that affect recursive trivia and literal conversion; do not hide those limits in globals:
+Follow the stable `refer/dependencies/chumsky` tag `0.11` `nano_rust` pattern. The parser factory
+receives the limits that affect recursive trivia and literal conversion; do not hide those limits
+in globals:
 
 ```rust
 fn lexer<'source>(limits: ParseLimits) -> impl Parser<
@@ -1404,7 +1405,7 @@ one invalid numeric token rather than split into an integer followed by an ident
 `Minus` punctuation token; unary parsing supplies the permitted negative sign, so a sign is never
 silently absorbed into a literal token and a leading `+` remains invalid.
 
-- [ ] **Step 7: Enforce explicit limits outside parser recursion**
+- [x] **Step 7: Enforce explicit limits outside parser recursion**
 
 Define the public limits value in `parser/mod.rs`:
 
@@ -1452,7 +1453,7 @@ each literal token span, including string delimiters and escape spelling. These 
 resource limits, not FCS syntax aliases; violations use `resource.limit-exceeded` and never
 `compile-time.budget-exceeded`.
 
-- [ ] **Step 8: Convert Rich errors into stable diagnostics**
+- [x] **Step 8: Convert Rich errors into stable diagnostics**
 
 Map unclosed comment/string explicitly. Map unknown token, invalid punctuation, malformed color,
 unknown escape, and a guarded single-dot failure to `syntax.invalid-token`; map a syntactically
@@ -1467,7 +1468,7 @@ two-dot span, and the lexer cannot silently split a forbidden bare range into tw
 leading BOM is consumed exactly once as trivia while all token spans continue to use offsets in the
 original source; a later U+FEFF is not trivia and is rejected as an invalid token.
 
-- [ ] **Step 9: Run lexer, existing, and dependency checks**
+- [x] **Step 9: Run lexer, existing, and dependency checks**
 
 ```powershell
 cargo clippy --workspace --all-targets -- -D warnings
@@ -1482,7 +1483,7 @@ dependencies. It contains no Chumsky `1.0.0-alpha.*` and has no direct Logos, Ar
 `nom`, `bytemuck`, or `thiserror` dependency. Future-stage workspace catalog entries remain absent
 from the `fcs-source` tree until an owning crate activates them.
 
-- [ ] **Step 10: Commit the lexer migration**
+- [x] **Step 10: Commit the lexer migration**
 
 ```powershell
 git add Cargo.toml crates/fcs-source Cargo.lock
@@ -1500,7 +1501,7 @@ git commit -m "refactor(parser): tokenize FCS source with Chumsky"
 - Create: `crates/fcs-source/tests/expression.rs`
 - Modify: `crates/fcs-source/tests/compile_time.rs`
 
-- [ ] **Step 1: Add precedence and span tests**
+- [x] **Step 1: Add precedence and span tests**
 
 Add table tests for:
 
@@ -1518,7 +1519,7 @@ vec2(1px, 2px)
 For every table row, assert the exact AST shape and complete half-open span. Add invalid cases for
 missing operands, unmatched delimiters, chained trailing input, and reserved words used as names.
 
-- [ ] **Step 2: Verify the red state against the token parser API**
+- [x] **Step 2: Verify the red state against the token parser API**
 
 ```powershell
 cargo nextest run -p fcs-source --test expression
@@ -1527,7 +1528,7 @@ cargo nextest run -p fcs-source --test expression
 Expected: compilation or assertions fail because `expression.rs` still consumes raw text or the old
 token representation.
 
-- [ ] **Step 3: Implement parser aliases over spanned tokens**
+- [x] **Step 3: Implement parser aliases over spanned tokens**
 
 Use the tag `0.11` split-token pattern:
 
@@ -1540,9 +1541,9 @@ expression_parser().parse(input);
 ```
 
 Parser functions are generic over `ValueInput<Token = Token, Span = ChumskySpan>` as demonstrated
-by `refer/chumsky` tag `0.11` `examples/nano_rust.rs`.
+by `refer/dependencies/chumsky` tag `0.11` `examples/nano_rust.rs`.
 
-- [ ] **Step 4: Add the public expression entry points**
+- [x] **Step 4: Add the public expression entry points**
 
 After the lexer returns tokens, keep Chumsky types inside `parser` and expose only the project
 result type:
@@ -1585,7 +1586,7 @@ existing `Type` representation, reserved words in type positions, and trailing i
 same stable diagnostic boundary as expressions. Document parsers call this crate-private token
 parser directly so a nested type does not re-lex a substring or lose its original byte span.
 
-- [ ] **Step 5: Implement one precedence function per Frozen grammar layer**
+- [x] **Step 5: Implement one precedence function per Frozen grammar layer**
 
 Use `foldl_with` for left-associative layers and `recursive` for unary/primary nesting. The `power`
 layer is right-associative; the Frozen precedence order makes unary bind more tightly than power,
@@ -1614,13 +1615,13 @@ generated logical node and the middle operand retained in both comparison nodes.
 left-associate it as `(a < b) <= c`. Add this case to the exact-AST table; a later I1 AST extension
 may replace the representation without changing the source meaning.
 
-- [ ] **Step 6: Preserve deterministic parse error selection**
+- [x] **Step 6: Preserve deterministic parse error selection**
 
 Use `.labelled()` and `.as_context()` at expression, argument-list, and delimiter boundaries.
 Convert all resulting Rich errors, sort by byte span then code, and deduplicate identical
 `(code, span)` pairs before constructing `ParseOutput`.
 
-- [ ] **Step 7: Run expression and full gates**
+- [x] **Step 7: Run expression and full gates**
 
 ```powershell
 cargo clippy --workspace --all-targets -- -D warnings
@@ -1631,7 +1632,7 @@ git diff --check
 
 Expected: all existing expression/type/elaborator tests and new precedence tests pass.
 
-- [ ] **Step 8: Commit expression parsing**
+- [x] **Step 8: Commit expression parsing**
 
 ```powershell
 git add crates/fcs-source/src crates/fcs-source/tests
@@ -2235,7 +2236,7 @@ git commit -m "test(conformance): validate the Frozen source manifest"
 - Modify: `docs/decisions/0006-unversioned-source-cutover.md` only if implementation exposed a
   factual path/API error
 
-- [ ] **Step 1: Update every I0 matrix row with evidence**
+- [x] **Step 1: Update every I0 matrix row with evidence**
 
 Before editing the matrix, update `AGENTS.md`'s repository-structure paragraph from the pre-cutover
 state to the post-cutover state: active `master` contains only `crates/fcs-source`, while the old
@@ -2265,7 +2266,7 @@ blocked-by-I10
 Every `implemented` row needs at least one test or conformance fixture. Every `partial` row needs a
 concrete missing behavior and its next stage.
 
-- [ ] **Step 2: Verify roadmap no longer promises V4 coexistence**
+- [x] **Step 2: Verify roadmap no longer promises V4 coexistence**
 
 ```powershell
 $stale = rg -n 'v4.*(共存|并行|兼容)|v5.*re-export|fcs_core|crate::v5|fcs_source::v5|crates/fcs-core/src/v5' docs/plans/fcs5-roadmap.md AGENTS.md
@@ -2276,7 +2277,7 @@ Expected: no stale active-version or compatibility claim. Bare mentions of `fcs-
 or `fcs-converter` are not searched here because archive/path explanations and future roadmap
 crate names are legitimate; the structural absence gate in Task 13 checks the active tree.
 
-- [ ] **Step 3: Recompute the revised roadmap hash without overwriting history**
+- [x] **Step 3: Recompute the revised roadmap hash without overwriting history**
 
 ```powershell
 Get-FileHash -Algorithm SHA256 docs/plans/fcs5-roadmap.md
@@ -2286,7 +2287,7 @@ Append the actual revised hash to the freeze review amendment. Keep the original
 `96c0398165c280c9c923c424c49e6c5e1f4512290f349846908ef6aada7edbf5` as the frozen-date
 historical value.
 
-- [ ] **Step 4: Re-run Markdown and unresolved-marker checks**
+- [x] **Step 4: Re-run Markdown and unresolved-marker checks**
 
 Check target-repository Markdown, excluding `refer/`, `.git/`, and `target/`, for:
 
@@ -2294,14 +2295,14 @@ Check target-repository Markdown, excluding `refer/`, `.git/`, and `target/`, fo
 - blank line after headings;
 - trailing whitespace;
 - U+FFFD;
-- stale `docs/superpowers` references;
+- stale legacy-plan path references;
 - unresolved `T[O]DO`, `T[B]D`, “有待商榷”, or “待定” markers outside text that explicitly
   prohibits those markers.
 
-- [ ] **Step 5: Commit governance evidence**
+- [x] **Step 5: Commit governance evidence**
 
 ```powershell
-git add AGENTS.md docs/conformance/fcs5-implementation-matrix.md docs/plans/fcs5-roadmap.md docs/reviews/2026-07-14-fcs5-freeze-review.md docs/decisions/0006-unversioned-source-cutover.md
+git add -A -- AGENTS.md docs
 git commit -m "docs: record the completed I0 source cutover"
 ```
 

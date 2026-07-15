@@ -160,8 +160,9 @@ fcs-cli         组合上述 crate 的命令行入口
 
 ## 5. Parser 技术选择
 
-I0 使用 crates.io 的 Chumsky `0.11.2` 重写 source lexer/parser。`refer/chumsky` 只作为只读
-参考资料，不作为 path dependency。实现只使用 0.11.x stable API，不跟随 1.0 alpha API。
+I0 使用 crates.io 的 Chumsky `0.11.2` 重写 source lexer/parser。
+`refer/dependencies/chumsky` 只作为只读参考资料，不作为 path dependency。实现只使用
+0.11.x stable API，不跟随 1.0 alpha API。
 
 依赖声明为：
 
