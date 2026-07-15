@@ -1,0 +1,52 @@
+schema_version = 1
+conversion_specification_version = "1.0.0"
+hash_algorithm = "sha256-utf8-contract"
+
+[[dialect]]
+id = "pgr.json.v1"
+version = "1.0.0"
+format = "pgr"
+contract = "UTF-8 JSON object; formatVersion exactly integer 1; preserve exact decimal spelling, field presence, unknown fields, judge-line/event/note order, and packed move values; no semantic coordinate or time decoding"
+content_sha256 = "98464d5c6782e16e640a90a576c99103526a8d35d7edad2ff0a34331c8db4d6a"
+
+[[dialect]]
+id = "pgr.json.v3"
+version = "1.0.0"
+format = "pgr"
+contract = "UTF-8 JSON object; formatVersion exactly integer 3; preserve exact decimal spelling, field presence, unknown fields, judge-line/event/note order, and split move X/Y values; no semantic coordinate or time decoding"
+content_sha256 = "f9c910ebf54bc5a3685ed88613cd2b44618268e9e2d130a3d860f98e9266c740"
+
+[[dialect]]
+id = "rpe.json.strict"
+version = "1.0.0"
+format = "rpe"
+contract = "UTF-8 JSON object with explicit META and BPMList; preserve RPEVersion JSON type, Beat triples, missing/null/present distinctions, unknown fields, event-layer indices, source order, parent and resource strings; reject undeclared aliases"
+content_sha256 = "65f8e14b818ae8d361c44d5e3433cb80ace1a743358796d5600f700b439b6fca"
+
+[[dialect]]
+id = "rpe.json.compatible"
+version = "1.0.0"
+format = "rpe"
+contract = "RPE strict JSON plus registered number/string RPEVersion and missing/null/sparse event-layer shapes; every compatibility shape remains observable and must not synthesize source version or repair semantic values"
+content_sha256 = "ec2d739be57eb2eaee54ef9a7529fe593f00e41e90912be32dc46c604da988b1"
+
+[[dialect]]
+id = "pec.line-command"
+version = "1.0.0"
+format = "pec"
+contract = "First physical line is offset; each later nonempty physical line contains one command; preserve token spans and global line order; # and & bind only to the most recent note according to physical command adjacency"
+content_sha256 = "99c9e4059d33a920a523715d45804ea4c22750c372bad83f02588dc3b453dd22"
+
+[[dialect]]
+id = "pec.token-stream"
+version = "1.0.0"
+format = "pec"
+contract = "After the offset token, ASCII whitespace separates a global command token stream; physical newlines are not semantic command boundaries; preserve original token spans and ordering"
+content_sha256 = "a0bf95621572fb6ba6d44613c6b883dd3073b37334425633bbab03e385cc8787"
+
+[[dialect]]
+id = "pec.global-suffix-zip"
+version = "1.0.0"
+format = "pec"
+contract = "Characterization-only line classifier that globally zips note, # and & lists; missing or extra suffix records can misassociate or drop notes and therefore cannot be used for strict conversion"
+content_sha256 = "8634b812713ff575680fe36f90b39c88c4894d1134feea5fc65cb8796cefb978"

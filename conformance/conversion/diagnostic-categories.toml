@@ -1,0 +1,194 @@
+schema_version = 1
+conversion_specification_version = "1.0.0"
+
+[[category]]
+id = "conversion.unsupported-format"
+uses = ["diagnostic"]
+domain = "syntax"
+description = "The source or target format family is not supported."
+
+[[category]]
+id = "conversion.unsupported-format-version"
+uses = ["diagnostic"]
+domain = "syntax"
+description = "The declared external format version is unsupported."
+
+[[category]]
+id = "conversion.parser-dialect-unsupported"
+uses = ["diagnostic"]
+domain = "syntax"
+description = "No supported parser dialect accepts the declared input shape."
+
+[[category]]
+id = "conversion.source-invalid"
+uses = ["diagnostic"]
+domain = "syntax"
+description = "The parsed source is illegal under the selected dialect or semantic profile."
+
+[[category]]
+id = "conversion.profile-required"
+uses = ["diagnostic"]
+domain = "profile"
+description = "An external source semantic profile is required but absent."
+
+[[category]]
+id = "conversion.profile-not-found"
+uses = ["diagnostic"]
+domain = "profile"
+description = "The requested semantic profile ID is not installed."
+
+[[category]]
+id = "conversion.profile-version-unsupported"
+uses = ["diagnostic"]
+domain = "profile"
+description = "The requested semantic profile version is unavailable or ambiguous."
+
+[[category]]
+id = "conversion.profile-hash-mismatch"
+uses = ["diagnostic"]
+domain = "profile"
+description = "The resolved semantic profile descriptor bytes do not match the bound SHA-256."
+
+[[category]]
+id = "conversion.profile-not-applicable"
+uses = ["diagnostic"]
+domain = "profile"
+description = "The selected profile direction, format, version, producer or runtime constraint is inapplicable."
+
+[[category]]
+id = "conversion.profile-parameter-invalid"
+uses = ["diagnostic"]
+domain = "profile"
+description = "A required typed profile parameter is missing, unknown, ill-typed or out of range."
+
+[[category]]
+id = "conversion.ambiguous-source-semantics"
+uses = ["diagnostic"]
+domain = "profile"
+description = "Multiple legal source profiles produce observably different canonical semantics."
+
+[[category]]
+id = "conversion.target-profile-required"
+uses = ["diagnostic"]
+domain = "profile"
+description = "A strict external target requires an explicit target semantic profile."
+
+[[category]]
+id = "conversion.capability-mismatch"
+uses = ["diagnostic", "report-entry"]
+domain = "cross-domain"
+description = "The target profile and actual writer/runtime capability intersection cannot represent a required feature."
+
+[[category]]
+id = "conversion.repair-not-authorized"
+uses = ["diagnostic"]
+domain = "syntax"
+description = "A source repair is required but its exact rule is not authorized."
+
+[[category]]
+id = "conversion.approximation-not-authorized"
+uses = ["diagnostic", "report-entry"]
+domain = "cross-domain"
+description = "Target approximation is required but no matching explicit authorization exists."
+
+[[category]]
+id = "conversion.approximation-budget-exceeded"
+uses = ["diagnostic", "report-entry"]
+domain = "cross-domain"
+description = "The generated target approximation exceeds its declared error or segment budget."
+
+[[category]]
+id = "conversion.drop-not-authorized"
+uses = ["diagnostic", "report-entry"]
+domain = "cross-domain"
+description = "A target field or feature would be dropped without matching explicit authorization."
+
+[[category]]
+id = "conversion.distance-mismatch"
+uses = ["diagnostic", "report-entry"]
+domain = "scroll"
+description = "Source speed integration disagrees with a cached floor or distance value."
+
+[[category]]
+id = "conversion.resource-missing"
+uses = ["diagnostic", "report-entry"]
+domain = "resource"
+description = "A profile-required package resource cannot be resolved."
+
+[[category]]
+id = "conversion.package-escape"
+uses = ["diagnostic"]
+domain = "package"
+description = "A logical package member escapes the authorized package root."
+
+[[category]]
+id = "conversion.roundtrip-mismatch"
+uses = ["diagnostic", "report-entry"]
+domain = "cross-domain"
+description = "Target reparse and canonical comparison disagree beyond the authorized error budget."
+
+[[category]]
+id = "conversion.report-limit"
+uses = ["diagnostic"]
+domain = "metadata"
+description = "A report, evidence, profile-candidate or comparison budget is exceeded."
+
+[[category]]
+id = "conversion.generated-canonical-tempo"
+uses = ["report-entry"]
+domain = "timing"
+description = "The external format has no unique global musical tempo and a specified canonical anchor was generated."
+
+[[category]]
+id = "conversion.compatibility-characterization"
+uses = ["report-entry"]
+domain = "profile"
+description = "The selected profile characterizes a pinned tool path and is not strict eligible."
+
+[[category]]
+id = "conversion.tool-rewrite"
+uses = ["report-entry"]
+domain = "motion"
+description = "A pinned compatibility tool performs an option-dependent representation rewrite."
+
+[[category]]
+id = "conversion.profile-evidence-conflict"
+uses = ["report-entry"]
+domain = "profile"
+description = "Primary evidence sources disagree about the selected profile axis."
+
+[[category]]
+id = "conversion.ignored-source-semantic-field"
+uses = ["report-entry"]
+domain = "timing"
+description = "The selected runtime profile intentionally ignores a present source semantic field."
+
+[[category]]
+id = "conversion.runtime-option-bound"
+uses = ["report-entry"]
+domain = "profile"
+description = "A semantic branch is bound by an explicit package or player runtime option."
+
+[[category]]
+id = "conversion.layer-loss"
+uses = ["report-entry"]
+domain = "motion"
+description = "One or more legal source event layers are not executed by a compatibility characterization."
+
+[[category]]
+id = "conversion.presentation-loss"
+uses = ["report-entry"]
+domain = "presentation"
+description = "Legal source presentation fields are not represented by a compatibility characterization or target."
+
+[[category]]
+id = "conversion.runtime-extension"
+uses = ["report-entry"]
+domain = "cross-domain"
+description = "Exact behavior depends on a named non-Core runtime extension."
+
+[[category]]
+id = "conversion.suffix-association-loss"
+uses = ["report-entry"]
+domain = "gameplay"
+description = "A characterization parser can misassociate or drop PEC note suffix records."

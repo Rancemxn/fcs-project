@@ -1,0 +1,339 @@
+schema_version = 1
+conversion_specification_version = "1.0.0"
+hash_algorithm = "sha256-utf8-contract"
+
+[[rule]]
+id = "pgr.time.source-line-beat-t32"
+version = "1.0.0"
+contract = "sourceLineBeat = exactDecimal(T) / 32; this value is source provenance and is not canonical chartBeat"
+content_sha256 = "e64ad0e59d1f2d740b991876a74444f4b65a26a203fd750231686cb1270b3da1"
+
+[[rule]]
+id = "pgr.time.per-line-bpm"
+version = "1.0.0"
+contract = "chartTimeSeconds = exactDecimal(T) * 60 / (32 * currentLineBpm); currentLineBpm must be finite and positive"
+content_sha256 = "54229ca39c92b13e41cbc6b6185e2fe1788be065785967793da446ac9d4b810e"
+
+[[rule]]
+id = "pgr.time.first-line-bpm"
+version = "1.0.0"
+contract = "chartTimeSeconds = exactDecimal(T) * 60 / (32 * firstLineBpm) for every line; firstLineBpm must be finite and positive"
+content_sha256 = "85714bf2812202620b4ffc2fbaaee267ed6cb12d5b3e35ff11a9a6dbd4491ec7"
+
+[[rule]]
+id = "pgr.tempo.per-line-canonical-anchor"
+version = "1.0.0"
+contract = "if all positive line BPM values are equal use that common BPM as canonical global tempo; otherwise use trusted declared global tempo or generate 0beat to 60bpm and report conversion.generated-canonical-tempo"
+content_sha256 = "9711f111c2477f7c50b2750f48496ba8207f9417c5bf8c51eeab7598d3204694"
+
+[[rule]]
+id = "pgr.tempo.first-line-anchor"
+version = "1.0.0"
+contract = "use the first judge-line positive finite BPM as the canonical global tempo for a first-line compatibility profile"
+content_sha256 = "b6ee066d5ef3bb8c944cec05bf809aa24eb65c8290168c89eca4be468035f56a"
+
+[[rule]]
+id = "pgr.note-x.unit108"
+version = "1.0.0"
+contract = "positionXLogicalPx = exactDecimal(sourceX) * 108"
+content_sha256 = "0535bbdb1e69884bc0030ac752c6869e81938e8315cf84392588c23073977475"
+
+[[rule]]
+id = "pgr.note-x.unit320_3"
+version = "1.0.0"
+contract = "positionXLogicalPx = exactDecimal(sourceX) * 1920 / 18, exactly equal to sourceX * 320 / 3"
+content_sha256 = "d2fb12d3a017744ae877b06f02a5895df3ea3326697cc4a50909994c434b17b2"
+
+[[rule]]
+id = "pgr.line-x.normalized"
+version = "1.0.0"
+contract = "lineXLogicalPx = (exactDecimal(sourceX) - 1/2) * 1920"
+content_sha256 = "9e00bd7239e69fab3945c962b58f9ea842b3bf7b10b46fb2a2a0437639634844"
+
+[[rule]]
+id = "pgr.line-y.normalized"
+version = "1.0.0"
+contract = "lineYLogicalPx = (exactDecimal(sourceY) - 1/2) * 1080"
+content_sha256 = "0c5418d5df64eb7c1010391f50e5a5cfbef01872580ee7d89bdf4c95df4007bf"
+
+[[rule]]
+id = "pgr.v1-move-x.trunc1000-div880"
+version = "1.0.0"
+contract = "lineXLogicalPx = (truncTowardZero(exactDecimal(packed)/1000)/880 - 1/2) * 1920; baseline packed must be nonnegative"
+content_sha256 = "adc4fd110c18dc4c4ac04cdcc1b0fd1d66322e5139e785bfbaaff591f5b88573"
+
+[[rule]]
+id = "pgr.v1-move-x.round1000-div880"
+version = "1.0.0"
+contract = "lineXLogicalPx = (roundTiesAwayFromZero(exactDecimal(packed)/1000)/880 - 1/2) * 1920; baseline packed must be nonnegative"
+content_sha256 = "158471a627a62db755baeaea0257aad001e2c79b1628088ae68a96633bd28618"
+
+[[rule]]
+id = "pgr.v1-move-y.mod1000-div520"
+version = "1.0.0"
+contract = "lineYLogicalPx = (truncRemainder(exactDecimal(packed),1000)/520 - 1/2) * 1080; baseline packed must be nonnegative"
+content_sha256 = "2b088ccc5e3e7345381223be960f0de8d2053ce3757b75828adf2e968dbd1941"
+
+[[rule]]
+id = "pgr.v1-move-y.mod1000-div530"
+version = "1.0.0"
+contract = "lineYLogicalPx = (truncRemainder(exactDecimal(packed),1000)/530 - 1/2) * 1080; baseline packed must be nonnegative"
+content_sha256 = "b1c6d7c609a5a5c504f323382a5fc3a3194c0265336d7fcb90ce064ea6fb5f13"
+
+[[rule]]
+id = "pgr.rotation.clockwise-deg"
+version = "1.0.0"
+contract = "fcsAngleRadians = -exactDecimal(sourceDegrees) * pi / 180"
+content_sha256 = "318e39e358126ae1f572d735cc42afa4ebd8faade871944374c4b2d86801937c"
+
+[[rule]]
+id = "pgr.offset.seconds"
+version = "1.0.0"
+contract = "fcsAudioOffsetSeconds = exactDecimal(sourceOffsetSeconds)"
+content_sha256 = "ad28855ad4b5a0f1cdc0aee9f71fe87477fb0568ac4a1763b1b8b3dd5dbe0d27"
+
+[[rule]]
+id = "pgr.speed.integrate-source-velocity"
+version = "1.0.0"
+contract = "integrate source speed over chartTime using the selected PGR time rule; raw floorPosition is validation-only and floorScalePx is a required positive finite profile parameter"
+content_sha256 = "c3233994aa79509a45c1cf2d80e1d7a2873de2904a06c7cabea70bf27cf67761"
+
+[[rule]]
+id = "pgr.hold-speed.phira-head1"
+version = "1.0.0"
+contract = "for Hold notes canonical head scrollFactor is 1 and tail geometry is derived from the selected line distance function; raw Hold speed remains provenance"
+content_sha256 = "dca8dc4bfe8cc224de6d8e74b05f93765fda06d561b5f9d53f82bf9e4104db82"
+
+[[rule]]
+id = "pgr.hold-speed.phichain-normalize"
+version = "1.0.0"
+contract = "normalize raw Hold speed by line speed at Hold start using rawHoldSpeed / (lineSpeed / 9 * 2); zero line speed yields canonical scrollFactor 0"
+content_sha256 = "9a962fabc7a8ec1a5542aa8ff265e861215212441d90bc6ecfdf6380cbde4125"
+
+[[rule]]
+id = "rpe.beat.abc-strict"
+version = "1.0.0"
+contract = "sourceBeat = integer(a) + integer(b)/integer(c); c must be greater than zero"
+content_sha256 = "c7705319151a83eb6a3bce61c156dcee53854e26bd06b93f4f1580a7e820333d"
+
+[[rule]]
+id = "rpe.beat.abc-zero-zero-integer"
+version = "1.0.0"
+contract = "if b=0 and c=0 then sourceBeat=integer(a); otherwise sourceBeat=a+b/c and c must be greater than zero"
+content_sha256 = "26b06c894bb72bcae6b050e6a3e9df94df2dd2c40ba2add7f8cd333b716408ea"
+
+[[rule]]
+id = "rpe.time.bpmfactor-divide"
+version = "1.0.0"
+contract = "effectiveBpm = BPMListBpm / positiveFinite(bpmfactor); within each BPM segment chartTimeDeltaSeconds = sourceBeatDelta * 60 * bpmfactor / BPMListBpm"
+content_sha256 = "08c7bf31b7aa8c7b24920ed6006540f2502d775ef5c8942a3f5f9d0b2cd8a538"
+
+[[rule]]
+id = "rpe.time.bpmfactor-multiply"
+version = "1.0.0"
+contract = "effectiveBpm = BPMListBpm * positiveFinite(bpmfactor); within each BPM segment chartTimeDeltaSeconds = sourceBeatDelta * 60 / (BPMListBpm * bpmfactor)"
+content_sha256 = "7b27c9b8be6a4908f83536a9ee62436f9793a3b3f446f77a54318ff1c5fa2f9e"
+
+[[rule]]
+id = "rpe.time.bpmfactor-ignore"
+version = "1.0.0"
+contract = "within each BPM segment chartTimeDeltaSeconds = sourceBeatDelta * 60 / BPMListBpm; raw bpmfactor remains provenance and does not affect runtime"
+content_sha256 = "5c386895968a4c5f9391ea5229a9f3ecd4b47592a8b767be0997180621b8f6e1"
+
+[[rule]]
+id = "rpe.x.canvas1350"
+version = "1.0.0"
+contract = "lineOrNoteXLogicalPx = exactDecimal(sourceX) * 1920 / 1350"
+content_sha256 = "871f60afae1da7a40cf60c4ad5d6fe8cfa70265e61f8abc8fa67326d8f3203a8"
+
+[[rule]]
+id = "rpe.y.canvas900"
+version = "1.0.0"
+contract = "lineOrOffsetYLogicalPx = exactDecimal(sourceY) * 1080 / 900"
+content_sha256 = "b217bd6e718636174c0d505ea3334a152badff19df3452050038d9172f9029ba"
+
+[[rule]]
+id = "rpe.alpha.byte255"
+version = "1.0.0"
+contract = "fcsLinearAlpha = exactDecimal(sourceAlpha) / 255; baseline sourceAlpha must be in closed interval 0..255"
+content_sha256 = "2a4305efa88a651f4962f6fd57bcb4866118bfa711f21d705951258a00d583e2"
+
+[[rule]]
+id = "rpe.offset.milliseconds"
+version = "1.0.0"
+contract = "fcsAudioOffsetSeconds = exactDecimal(sourceOffsetMilliseconds) / 1000"
+content_sha256 = "8f528ff70e2b4100ae806860202cce722ef6c664cca6a7d0b6a895c05a38d806"
+
+[[rule]]
+id = "rpe.rotation.clockwise-deg"
+version = "1.0.0"
+contract = "fcsAngleRadians = -exactDecimal(sourceDegrees) * pi / 180"
+content_sha256 = "318e39e358126ae1f572d735cc42afa4ebd8faade871944374c4b2d86801937c"
+
+[[rule]]
+id = "rpe.speed.scale4_5"
+version = "1.0.0"
+contract = "canonicalSpeed = exactDecimal(sourceSpeed) / 4.5 before profile-selected interpolation and distance integration"
+content_sha256 = "3b454ebd3c956f61b644fc851b55ee2fe26b23ab6f83448281acd2061722b52b"
+
+[[rule]]
+id = "rpe.note-fake.nonzero"
+version = "1.0.0"
+contract = "canonical judgment.enabled is true exactly when integer source isFake equals zero"
+content_sha256 = "9b62be514cc2079f8640fd146315b26e181d784baa726aa1f974a93abad9d747"
+
+[[rule]]
+id = "rpe.note-side.equals1"
+version = "1.0.0"
+contract = "integer source above equal to 1 maps to the above gameplay side; every other profile-accepted integer maps to below"
+content_sha256 = "62ad0843af2d694e75b5a29142604c71490f8c0069d9ef4a7cd08f496e62a4e3"
+
+[[rule]]
+id = "rpe.note-visible-time.phira"
+version = "1.0.0"
+contract = "visibleTime is seconds; if visibleTime is at least note chartTime in seconds the Phira characterization has no lower visibility bound, otherwise canonical visibleFrom equals noteChartTime minus visibleTime"
+content_sha256 = "ba370bac6f769a74ad3e2a3742540fa073ce82cc5431a89220c9f2008e83c9c4"
+
+[[rule]]
+id = "rpe.note-alpha.phira-u16"
+version = "1.0.0"
+contract = "for a Phira-profile Note with unsigned 16-bit source alpha, canonical linear alpha equals min(sourceAlpha,255) divided by 255"
+content_sha256 = "3751df2e2432f144380f7828818875b04ab5b2c3786bdb4a5106cc9369e7c044"
+
+[[rule]]
+id = "rpe.note-size.phira-uniform"
+version = "1.0.0"
+contract = "canonical Note presentation scaleX and scaleY both equal finite source size"
+content_sha256 = "688da52015d987802cacc30ce5a9ea6e996799e50a5d628012a9588e0afd4fa3"
+
+[[rule]]
+id = "rpe.note-y-offset.phira-speed"
+version = "1.0.0"
+contract = "canonical Note presentation offsetY in logical pixels equals sourceYOffset multiplied by 1080/900 and by finite source Note speed"
+content_sha256 = "84ec29055b0385269c983cebce691c8d0ecb97490db4890021646ecec9b887ef"
+
+[[rule]]
+id = "rpe.hitsound.phira-resource-root"
+version = "1.0.0"
+contract = "flick.mp3, tap.mp3 and drag.mp3 select their built-in Note hit sound; every other nonempty hitsound string resolves as an audio resource relative to the authorized package root and missing bytes are an error"
+content_sha256 = "db3bfee2ace4b2d87385d586d3f82296b185a20033e8358c6b26120ea32d551d"
+
+[[rule]]
+id = "rpe.layers.additive"
+version = "1.0.0"
+contract = "evaluate every present event layer independently in ascending layer index and add same-property values; retain layer index and within-layer source order"
+content_sha256 = "3118b754cb65d564bebfe6670ebc2a74a4f317838478924412041b96a1dc9406"
+
+[[rule]]
+id = "rpe.layers.first-only"
+version = "1.0.0"
+contract = "characterization-only projection evaluates the first event layer and drops later layers with mandatory conversion.layer-loss report; never strict eligible"
+content_sha256 = "025bb8334e7af96ed51adae48c5626669281b43150180833267a1f1c7ca5bdaa"
+
+[[rule]]
+id = "rpe.rotate-missing.false"
+version = "1.0.0"
+contract = "when rotateWithFather is absent interpret inherit.rotation as false; an explicit field value always wins"
+content_sha256 = "685d565f1a4232a8dd49f44cc76d0e1188092b79bebd7afaeb72c5732d2d9cd8"
+
+[[rule]]
+id = "rpe.rotate-missing.true"
+version = "1.0.0"
+contract = "when rotateWithFather is absent interpret inherit.rotation as true; an explicit field value always wins"
+content_sha256 = "4ebc741470870e2582ffce85446f963c4095cbf7f5a8994374b3d6841f9ae0d2"
+
+[[rule]]
+id = "rpe.speed.phira-legacy-player"
+version = "1.0.0"
+contract = "with useRpe170Speed=false ignore speed easing shape, add layers as piecewise-linear source speed, apply scale4_5 and integrate exact linear segments"
+content_sha256 = "a5d265233534a8bf64a388b9e40339c739a546c447d48dc34f311421ea11f1a1"
+
+[[rule]]
+id = "rpe.speed.phira-legacy-derivative"
+version = "1.0.0"
+contract = "with useRpe170Speed=true and source era below 170 interpret easing as distance shape and derive speed from its derivative while matching declared start and end speeds"
+content_sha256 = "172d20f06e1ae2843f93af5de65949f09a3251e752cf65fc0f0b713d1c42a28a"
+
+[[rule]]
+id = "rpe.speed.phira-modern-eased"
+version = "1.0.0"
+contract = "with useRpe170Speed=true and explicit source RPEVersion at least 170 apply easing directly to speed from start to end, then integrate the exact eased speed"
+content_sha256 = "a6375a0f03be69f3d99bec6ca71d315736dfcf1e9c5ad049febca7d42cac9784"
+
+[[rule]]
+id = "pec.time.direct-beat"
+version = "1.0.0"
+contract = "sourceBeat = exactDecimal(sourceTimeNumber); no implicit tick divisor"
+content_sha256 = "135a6c1b090e9f5579c83648207d9f14966699c434d555a5b2ecfd92a4ce2b62"
+
+[[rule]]
+id = "pec.note-x.relative2048"
+version = "1.0.0"
+contract = "notePositionXLogicalPx = exactDecimal(sourceX) * 1920 / 2048; source zero is the judge-line center"
+content_sha256 = "dafd917e14414825ae4e33721fbd9b447032829553f6b5d27a345886b61e2d40"
+
+[[rule]]
+id = "pec.line-x.canvas2048"
+version = "1.0.0"
+contract = "lineXLogicalPx = (exactDecimal(sourceX) / 2048 - 1/2) * 1920"
+content_sha256 = "6da35022d44b1e47ab3ebdba65fff2f8b1d75ca33ce1aa7674069f941d5b3bdd"
+
+[[rule]]
+id = "pec.line-y.canvas1400"
+version = "1.0.0"
+contract = "lineYLogicalPx = (exactDecimal(sourceY) / 1400 - 1/2) * 1080"
+content_sha256 = "fed541a8b0deaf2afe356adc5b59d2307a7bb6ae45c5db714a60d6bd72fc3828"
+
+[[rule]]
+id = "pec.rotation.clockwise-deg"
+version = "1.0.0"
+contract = "fcsAngleRadians = -exactDecimal(sourceDegrees) * pi / 180"
+content_sha256 = "318e39e358126ae1f572d735cc42afa4ebd8faade871944374c4b2d86801937c"
+
+[[rule]]
+id = "pec.alpha.byte255"
+version = "1.0.0"
+contract = "for nonnegative source alpha fcsLinearAlpha = exactDecimal(sourceAlpha) / 255"
+content_sha256 = "1d284f6f031b9fca578cdab77b0bfaa68ab165cde520534e67f2e3faf82fed33"
+
+[[rule]]
+id = "pec.offset.bias150ms"
+version = "1.0.0"
+contract = "fcsAudioOffsetSeconds = (exactDecimal(rawOffsetMilliseconds) - 150) / 1000"
+content_sha256 = "d441156970a1cfe9f84f76fc6dcdf64ea2ed1a6d385dc879bf739ffa051d2987"
+
+[[rule]]
+id = "pec.offset.bias175ms"
+version = "1.0.0"
+contract = "fcsAudioOffsetSeconds = (exactDecimal(rawOffsetMilliseconds) - 175) / 1000"
+content_sha256 = "1abca4958597a758b24e2370d7ac6b2491114491501a9643d5ffadd434a1c3ef"
+
+[[rule]]
+id = "pec.cv.scale5_85"
+version = "1.0.0"
+contract = "sourceScrollVelocity = exactDecimal(rawCv) / 5.85 before profile-selected distance and floorScale mapping"
+content_sha256 = "be02e2db7d37bfc9dc80d4a4bb51b12288fc1cefbfdeeb128974768017b76b01"
+
+[[rule]]
+id = "pec.cv.scale7"
+version = "1.0.0"
+contract = "sourceScrollVelocity = exactDecimal(rawCv) / 7 before profile-selected distance and floorScale mapping"
+content_sha256 = "a6899edf0ca5e122254084f98313e759994176ffd5eb284e443f3c12b7f6cd8a"
+
+[[rule]]
+id = "pec.cv.rpe-height900"
+version = "1.0.0"
+contract = "intermediateRpeSpeed = exactDecimal(rawCv) * 900 / 1400 and canonicalSpeed = intermediateRpeSpeed / 4.5, exactly composing to rawCv / 7"
+content_sha256 = "75a6b6adf3b43d2b3840969697156311f1763801270ba9700e5e76ec029b6b24"
+
+[[rule]]
+id = "pec.alpha.negative-phira-extension"
+version = "1.0.0"
+contract = "negative source alpha is passed unchanged to the required extension ref supplied by the negativeAlphaExtension profile parameter; without that binding conversion is unsupported and the value is never clamped or reinterpreted as ordinary alpha"
+content_sha256 = "45075c7a8ed23369206256fa5bf9a498aa9ba158f3f6465e97a6e60a7f7f9c81"
+
+[[rule]]
+id = "pec.event.stateful-current-value"
+version = "1.0.0"
+contract = "process commands in global source order; point commands set current state and interval commands take their start value from the same line state evaluated at the exact start Beat"
+content_sha256 = "f067175e973a555ceb5f45c9ab3cd6237cfda80c7dde334726e10781742d686d"

@@ -1,4 +1,4 @@
-schema_version = 1
+schema_version = 2
 render_profile_version = "1.0.0"
 
 [[fixture]]
@@ -11,4 +11,38 @@ width = 4
 height = 4
 color_space = "srgb"
 pixel_format = "rgba8"
-clauses = ["3", "5", "6", "8", "9", "15"]
+clauses = ["2", "3", "5", "6", "8", "9", "15"]
+
+[[source_fixture]]
+id = "render.source.valid.solid-rect"
+source = "solid-rect-4x4.fcs"
+expect = "success"
+clauses = ["2"]
+
+[[source_fixture]]
+id = "render.source.invalid.missing-viewport"
+source = "invalid-missing-viewport.fcs"
+expect = "error"
+diagnostic = "syntax.invalid-token"
+clauses = ["2"]
+
+[[source_fixture]]
+id = "render.source.invalid.unknown-node-kind"
+source = "invalid-unknown-node-kind.fcs"
+expect = "error"
+diagnostic = "syntax.invalid-token"
+clauses = ["2", "3.1"]
+
+[[binding_fixture]]
+id = "render.binding.embedded-image-resource"
+source = "binding/resource-image.fcs"
+workspace_root = "binding"
+resource_asset = "binding/assets/opaque-image.bin"
+semantic_expected = "binding/resource-image.semantic.json"
+canonical_resource_id = "43b6b71ca2ee7437"
+content_sha256 = "66eb55e69c42345c65021ea9364fc43c61d2151dde67a89dc02362543b289903"
+payload_length = 29
+fcbc_resources_section_type = 6
+fcbc_resource_data_section_type = 20
+decode = false
+clauses = ["1", "2", "10", "12", "14", "15", "17"]

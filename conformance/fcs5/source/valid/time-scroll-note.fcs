@@ -17,7 +17,7 @@ collections {
             id: "n";
             line: @main;
             gameplay.time: 2beat;
-            gameplay.side: above;
+            gameplay.side: "above";
             presentation.positionX: 0px;
         };
     }

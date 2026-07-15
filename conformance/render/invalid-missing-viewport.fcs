@@ -1,0 +1,8 @@
+#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    layer main {
+        pass: "overlay";
+    }
+}

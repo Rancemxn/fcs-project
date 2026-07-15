@@ -1,0 +1,37 @@
+schema_version = 1
+id = "pec.phispler"
+version = "1.0.0"
+format = "pec"
+directions = ["source"]
+profile_class = "compatibility-characterization"
+strict_eligible = false
+producer = "Pinned phispler-ext light_utils.py PEC converter behavior"
+runtime = "phispler-pec-import"
+format_version_policy = "absent"
+format_versions = []
+parser_dialects = ["pec.global-suffix-zip@1.0.0"]
+parameters = [{ name = "floorScalePx", value_type = "length", required_when = "always", constraint = "finite-positive", allowed_values = [] }]
+mapping_rules = [
+  "pec.time.direct-beat@1.0.0",
+  "pec.note-x.relative2048@1.0.0",
+  "pec.line-x.canvas2048@1.0.0",
+  "pec.line-y.canvas1400@1.0.0",
+  "pec.rotation.clockwise-deg@1.0.0",
+  "pec.alpha.byte255@1.0.0",
+  "pec.offset.bias150ms@1.0.0",
+  "pec.cv.rpe-height900@1.0.0",
+]
+contract = [
+  "All command times and bp positions are direct exact decimal Beat values; raw offset uses the 150 millisecond bias.",
+  "Raw cv is converted through a 900-high RPE speed space and scale4_5, exactly composing to raw cv divided by 7.",
+  "Notes, # records and & records are globally zipped by classification order, so missing suffixes can misassociate or drop later notes.",
+  "The suffix association algorithm is a parser limitation and cannot be used for strict conversion or inferred as PEC grammar.",
+]
+known_limitations = [
+  "Global suffix zip can lose or misassociate notes and modifiers.",
+  "The evidence directory has no Git history; the exact light_utils.py content hash is required.",
+]
+report_categories = ["conversion.suffix-association-loss", "conversion.compatibility-characterization"]
+evidence = [
+  "refer/chart/phispler-ext:src/light_utils.py@sha256:89e5c71c76ab011494292b06105e8f008149f6b4720c69eeee5b9eaa7a1204d6",
+]

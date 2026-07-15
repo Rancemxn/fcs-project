@@ -1,0 +1,32 @@
+{
+  "notes": [
+    {
+      "id": "resource-sound",
+      "judgeShape": {
+        "kind": "rectangle",
+        "center": [32.0, 0.0],
+        "halfExtents": [48.0, 24.0]
+      },
+      "soundPolicy": "resource",
+      "soundResourceId": "click",
+      "scorePolicy": "default"
+    },
+    {
+      "id": "disabled",
+      "judgmentEnabled": false,
+      "soundPolicy": "none",
+      "scorePolicy": "none"
+    },
+    {
+      "id": "custom-score",
+      "judgeShape": {
+        "kind": "circle",
+        "center": [0.0, 0.0],
+        "radius": 36.0
+      },
+      "soundPolicy": "none",
+      "scorePolicy": "custom",
+      "scoreExtension": "org.fcs.custom-score"
+    }
+  ]
+}

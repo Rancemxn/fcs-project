@@ -1,0 +1,15 @@
+#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+    notes {
+        tap {
+            id: "equivalent-note";
+            line: @main;
+            gameplay.time: 1beat;
+            gameplay.side: "above";
+            presentation.positionX: 64px;
+        };
+    }
+}

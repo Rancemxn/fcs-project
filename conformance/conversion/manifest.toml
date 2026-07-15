@@ -1,0 +1,8 @@
+schema_version = 2
+conversion_specification_version = "1.0.0"
+profile_registry = "profile-registry.toml"
+parser_dialect_registry = "parser-dialects.toml"
+mapping_rule_registry = "mapping-rules.toml"
+diagnostic_registry = "diagnostic-categories.toml"
+mapping_vectors = "mapping-vectors.toml"
+selection_vectors = "selection-vectors.toml"

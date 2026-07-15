@@ -1,0 +1,31 @@
+#fcs 5.0.0
+format { profile: renderable; }
+resources {
+    image sprite {
+        source: "assets/opaque-image.bin";
+        hash: "sha256:66eb55e69c42345c65021ea9364fc43c61d2151dde67a89dc02362543b289903";
+        mediaType: "image/png";
+        colorSpace: "srgb";
+        alpha: "straight";
+        sampling: "linear";
+    }
+}
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport {
+        width: 4px;
+        height: 4px;
+        colorSpace: "linear-srgb";
+    }
+    layer main {
+        pass: "overlay";
+        space: "screen";
+        children {
+            image spriteNode {
+                resource: @sprite;
+                destination.origin: vec2(-2px, -2px);
+                destination.size: vec2(4px, 4px);
+            }
+        }
+    }
+}

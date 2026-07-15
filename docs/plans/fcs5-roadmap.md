@@ -18,7 +18,8 @@ Render Profile 与 CLI 的同一条确定性工具链。
 - I0-A 用 `archive/fcs4-pre-cutover` 保存完整旧工具链；I0 完成后活动 `master` 只保留一套
   无版本实现前缀的 FCS source API，不建立 FCS 4 兼容层。
 - 每个实施阶段结束前依次运行 Clippy、nextest、rustfmt check 和 diff check。
-- generator 实现持续以 Frozen 编译期语言为准；I0 的 parser/feature-unavailable 边界不反向定义语法。
+- generator 实现持续以权威编译期语言为准；S15 五个版本域完成联合与独立复审并重新 Frozen 前
+  不开始 I1，I0 的 parser/feature-unavailable 边界不反向定义语法。
 
 ## 3. 版本基线
 
@@ -30,8 +31,16 @@ Render Profile 与 CLI 的同一条确定性工具链。
 | Render Profile | 1.0.0 | semantic 与 reference raster fixtures 完成 |
 | Conversion Specification | 1.0.0 | PGR/RPE/PEC mapping 与 loss report fixtures 完成 |
 
-上述五个版本已于 2026-07-14 达到冻结条件；冻结记录见
-`docs/reviews/2026-07-14-fcs5-freeze-review.md`，绑定 corpus 入口为 `conformance/manifest.toml`。
+五个版本曾于 2026-07-14 标记 Frozen。2026-07-15 用户确认尚未公开且兼容成本为零后，首先因
+Source grammar 未闭合而重开 FCS Core 5.0.0 与 Render Profile 1.0.0，并完成 S14 Reviewed
+证据。随后用户接受 ADR 0007–0009 以及 `docs/community/` evidence baseline，确认显式版本化
+conversion profile、FCS authoring source、自包含单谱面 FCBC、内嵌原始资源和 exact-first runtime
+expression 边界；因此 Core、FCBC、ABI、Render 与 Conversion 当前均按
+`docs/specification-governance.md` 进入 Draft/联合重审状态。
+
+历史冻结记录见 `docs/reviews/2026-07-14-fcs5-freeze-review.md`；S14 grammar closure 的 Reviewed
+hash 与独立复审范围见 `docs/reviews/2026-07-15-fcs5-source-grammar-closure-review.md`。这些记录只
+证明各自审查时点和范围，不覆盖当前状态。当前绑定 corpus 入口为 `conformance/manifest.toml`。
 
 ## 4. Part A：规范冻结
 
@@ -106,22 +115,25 @@ fake 的替代模型、稳定排序和动态值限制。
 
 ### S8：Runtime expression 和数值精度
 
-交付：`s/b/q/d/p`、`choose`、typed DAG、piecewise、adaptive baking、强制精确边界、
-属性级误差指标、Float64 和资源预算。
+交付：`s/b/q/d/p`、`choose`、typed DAG、piecewise、exact-first lowering、强制精确边界、
+显式 target approximation 的属性级误差指标、Float64 和资源预算。
 
-验证：无通用控制流、无循环依赖、baked error、1ms 最大验证间隔的正确含义。
+验证：无通用控制流、无循环依赖、标准 compile 不产生 BakedCurve、显式 approximation error、
+1ms 最大验证间隔不是固定输出采样率。
 
 ### S9：Metadata、credits、resources 和 sync
 
-交付：meta、contributors、credits、custom role、resource manifest、artwork、audio、font、
-hash、typed custom data、profile 最低要求和 FCBC 保留规则。
+交付：meta、contributors、credits、custom role、workspace resource manifest、artwork、audio、font、
+logical member path、opaque bytes/hash、typed custom data、profile 最低要求和 FCBC 保留规则。
 
-验证：自由角色、引用完整性、offset 公式、runtime/editable/archive 保留矩阵。
+验证：自由角色、引用完整性、offset 公式、runtime/fidelity/strict-runtime 保留矩阵，以及所有
+profile 都没有 source snapshot/authoring-only 数据。
 
 ### S10：Fidelity 和 Conversion
 
-交付：namespace/schema、来源状态、语义状态、preserve payload、repair、capabilities、
-ConversionReport、semantic/roundtrip/strict 策略和 PGR/RPE/PEC mapping。
+交付：namespace/schema、来源状态、语义状态、authoring-workspace source preservation 边界、
+versioned parser/profile、repair、capabilities、ConversionReport、semantic/roundtrip/strict 策略和
+PGR/RPE/PEC mapping。
 
 验证：每个丢失、近似和仅保留行为均机器可读；canonical semantic round-trip fixture。
 
@@ -135,9 +147,11 @@ checksum、loader validation、deterministic ordering 和 golden bytes。
 ### S12：Render Profile 1.0
 
 交付：retained scene graph、node/path/paint/stroke/clip/image/text、attachment、compositing、
-RenderSection、semantic conformance 和 reference raster conformance。
+RenderSection、FCBC stable resource ID→ResourceData binding、semantic conformance 和 reference raster
+conformance。
 
-验证：固定资源与 glyph、无 Canvas mutable state、无 pixel IO、render 不影响 gameplay。
+验证：固定内嵌资源与 glyph、无 workspace/URL/system-font fallback、exact descriptor only、无 Canvas
+mutable state、无 pixel IO、render 不影响 gameplay。
 
 ### S13：全规范审查和冻结
 
@@ -151,6 +165,50 @@ RenderSection、semantic conformance 和 reference raster conformance。
 6. 发布 conformance manifest。
 
 完成条件：实施代码不需要再做语言或容器设计，只需实现规范。
+
+### S14：FCS 5.0 Source grammar closure 与重新冻结
+
+2026-07-15 在准备 I1 时发现 Appendix B 引用了未定义顶级 production，closed enum 与 keyword
+grammar 冲突，extension/preserve/render envelope 不闭合，并且 parser/static diagnostic ownership
+不明确。用户确认格式尚未公开且兼容修改成本为零，因此在原 5.0.0/Render 1.0.0 候选版本上
+修正，不保留临时语法兼容层。
+
+交付：
+
+- 闭合 Core lexical、literal、format、metadata/resource/sync/tempo、extension、preserve 和完整
+  Appendix B EBNF；
+- closed enum 统一为 string literal，移除 mixed-Beat 临时语法；
+- Core 只平衡保存 Render payload，`fcs-render.md` 定义完整内部 source grammar；
+- 明确 decode/parse/source-structure/static/canonical/evaluate ownership；
+- 将 conformance baseline 扩展到 32 个 FCS fixture，并增加 grammar closure 边界；
+- 独立复审后把 FCS Core 5.0.0 与 Render Profile 1.0.0 重新标记 Frozen。
+
+完成条件：规范 grammar 无未定义 nonterminal，全部 source 示例与 fixture 使用同一语法，
+实现无需猜测 enum、extension payload、generator diagnostic stage 或 tempo validation phase。
+
+### S15：Authoring、Canonical 与分发边界闭合
+
+2026-07-15 用户接受 ADR 0007–0009，确认 FCS 是 workspace authoring source、FCBC 是单谱面
+自包含分发物、标准运行时保留 exact expression，baking 只属于显式 target approximation，播放器
+sampled cache 不进入格式。S15 按依赖顺序回写四份规范：
+
+1. FCS Core：SourceDocument→ExpandedSourceDocument→CanonicalCompilation、workspace resource、
+   Note policy、唯一 chartTime、exact DAG、preserve/source snapshot 消除；
+2. FCBC/ABI：one-chart、ResourceData、原始 payload、无外部 package、无 SourceSnapshot、exact
+   descriptor 与 loader/golden；
+3. Render：resource ID 最终解析到 FCBC embedded payload；
+4. Conversion：versioned source/target profile、ambiguity evidence、PGR/RPE/PEC mapping 与 report；
+5. 更新 conformance、cross-spec review 和五版本域 hash，再独立复审并重新 Frozen。
+
+Core、FCBC/ABI、Render 与 Conversion 的候选 delta 已依序写入；阶段范围分别见
+`docs/reviews/2026-07-15-fcs5-authoring-canonical-closure-review.md`、
+`docs/reviews/2026-07-15-fcbc2-execution-abi-closure-review.md`、
+`docs/reviews/2026-07-15-render1-resource-binding-closure-review.md` 和
+`docs/reviews/2026-07-15-conversion1-semantic-profile-closure-review.md`。Conversion corpus 当前绑定
+12 个 profile、7 个 parser dialect、56 个 mapping rule、32 个 diagnostic/report category、38 个
+exact vector、5 个 invalid vector 与 10 个 selection vector。下一 gate 是统一 hash/术语/交叉引用与
+完整测试审计，再进行独立复审；五个
+版本域重新 Frozen 且用户重新确认 I1 计划前，不开始 I1 Rust 实现。
 
 ## 5. Part B：参考实现
 
@@ -201,15 +259,16 @@ workspace tests 完成；I1 尚未开始。
 
 ### I4：Reference evaluator 与数值系统
 
-- 实现 Track、DAG、piecewise、easing、积分、distance 和 adaptive baking；
+- 实现 Track、DAG、piecewise、easing、exact integration descriptor 和 distance；
 - 建立未复用生产优化路径的 reference evaluator；
-- 验证 seek、误差、边界和跨平台确定性。
+- 验证 seek、误差、边界、标准路径无 BakedCurve 和跨平台确定性。
 
 完成条件：运行结果与帧率无关，所有 portable 值满足规范误差。
 
 ### I5：Metadata、resources、sync 与 fidelity
 
 - 实现 canonical metadata/credit/resource；
+- 实现 workspace member resolver、opaque resource bytes/SHA-256 与 CanonicalResourceBundle；
 - 实现 provenance、extension、repair 和 ConversionReport 数据结构；
 - 建立 profile 保留矩阵。
 
@@ -236,7 +295,7 @@ workspace tests 完成；I1 尚未开始。
 
 - deterministic FCS formatter；
 - PGR/RPE/PEC exporter；
-- capability negotiation 和 target baking；
+- capability negotiation 和用户显式授权的 target approximation；
 - semantic/roundtrip/strict 策略。
 
 完成条件：所有不可逆行为进入 ConversionReport，round-trip 按 canonical semantics 比较。
@@ -267,7 +326,7 @@ workspace tests 完成；I1 尚未开始。
 
 ### I0：健康基线与规范对账
 
-- **I0.1 快照与归档（已完成）**：提交当前 generator、Frozen 文档、conformance 和项目
+- **I0.1 快照与归档（已完成）**：提交当前 generator、当时 Frozen 的文档、conformance 和项目
   workflow 工作；创建指向精确切换前提交 `148936d17b671bb34968c88969ab748c818f9fc0` 的
   `archive/fcs4-pre-cutover`，然后 fast-forward `master`。后续 Trellis bookkeeping commits
   不移动归档指针。
@@ -280,7 +339,7 @@ workspace tests 完成；I1 尚未开始。
 - **I0.4 诊断边界（已完成）**：建立稳定 `DiagnosticCode`、UTF-8 byte span、labels、确定性多诊断
   `ParseOutput<T>`；Chumsky error 不泄漏为 public API。
 - **I0.5 Chumsky parser 基线（已完成）**：使用 0.11.2 稳定 token/span/recovery API 和 `stacker`，禁用
-  alpha、Pratt 和 unstable feature；迁移当前 Frozen-conforming expression/document subset，
+  alpha、Pratt 和 unstable feature；迁移当时 Frozen-conforming 的 expression/document subset，
   删除 raw-text Cursor、token clone 和固定 64 MiB parser thread。
 - **I0.6 Decode/robustness gate（已完成）**：新增 `parse_document_bytes`、`decode.invalid-utf8` 和固定
   seed/case 的 Proptest gate；验证任意 bounded bytes/string 不 panic、span 有界、结果确定且 limits
@@ -299,7 +358,8 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 ### I1：完整 Source AST 与 parser
 
 - **I1.1 Lexer 完整性**：补齐 I0 Chumsky lexer 的全部 Appendix B token、UTF-8/BOM、nested
-  comment、keyword、string escape、Color、decimal/unit 和 byte span conformance。
+  comment、重开后的 keyword、string escape/NUL/noncharacter、Color、unsigned decimal/unit 和
+  byte span conformance；负号只作为 unary token。
 - **I1.2 Grammar AST**：按附录 B 建立 document、definition、statement、schema block、entity、
   Track、metadata/resource/sync/extension source node；source node 保留完整半开 span。
 - **I1.3 顶级 parser**：强制 format，拒绝 duplicate/unknown block，允许规范声明的顺序无关和
@@ -309,14 +369,20 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 - **I1.5 Generator parser**：保持 I0 的 `..<`/`..=`、裸 `..` 拒绝和 local let；补齐
   nested/misplaced generate 的 Frozen category 以及 segment/track owner grammar；zero step
   统一留给 elaborator 求值。
-- **I1.6 Schema parser**：解析 Line/Note/Track/meta/credits/resources/sync；parser 只识别结构，
-  schema 合法性留给 static phase。
+- **I1.6 Schema parser**：解析 Line/Note/Track/meta/credits/resources/sync、ordered extension
+  object、preserve envelope 和 balanced Render payload；closed enum 的直接 spelling 是 string，
+  bare identifier 仍作为名称 expression 保留给 static phase，parser 只识别结构。
 - **I1.7 Diagnostic**：所有 parser error 映射附录 C category，保留 primary/related span；不得
   panic 或接受 trailing garbage。
 - **I1.8 Robustness 扩展**：在 I0 byte/property gate 上覆盖全部 grammar production、comment、
   delimiter、expression precedence 和长合法输入，并增加独立 fuzz lane。
 
 测试：每个 EBNF production 至少一个 valid/invalid fixture；所有 `fcs.md` source example parse。
+
+交付：完整、带 span 的 Core source AST，Appendix B parser、parse-stage conformance runner、
+production coverage ledger、独立 fuzz lane 和 I1 条款矩阵证据。逐步执行草案见
+`docs/plans/i1-source-ast-parser.md`；S14 独立复审和重新冻结完成后还必须再次确认该计划，才能
+开始 Rust 实现。
 
 ### I2：Static semantics 与编译期展开
 
@@ -376,9 +442,10 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
   speed 和 direct seek。
 - **I4.5 Expression DAG**：typed acyclic nodes、`s/b/q/d/p` availability、lazy choose、invalid math 和
   dependency-cycle analysis。
-- **I4.6 Piecewise lowering**：强制边界 partition、descriptor sharing 和无 overlap/gap invariant。
-- **I4.7 Adaptive baking**：recursive fit、property metric、velocity+distance dual validation、1ms
-  maximum validation interval和 compile budgets；输出 BakedCurve provenance。
+- **I4.6 Piecewise lowering**：强制边界 partition、descriptor sharing 和无 overlap/gap invariant；
+  无法静态化的合法 Core expression 保留 typed DAG，不进入默认 baking。
+- **I4.7 Exact integration validation**：对 portable-evaluable integrand 实现确定性求值/积分误差界、
+  direct-seek 与 analytic cross-check；不输出采样曲线或 BakedCurve。
 - **I4.8 Independent reference path**：reference evaluator 不复用 production caching/SIMD shortcut；
   production 与 reference cross-check。
 - **I4.9 Determinism/property**：seek=sequential、partition invariance、frame-rate independence、
@@ -388,8 +455,9 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 
 - **I5.1 Profile validator**：fragment/chart/playable/renderable/publishable + features 正交约束。
 - **I5.2 Contributors/credits**：标准/custom role、display order、identifier 和 typed reference。
-- **I5.3 Resource manifest**：激活 cataloged `sha2`，实现 kind、URI policy、SHA-256、
-  media/color/alpha/sampling/font validation。
+- **I5.3 Resource manifest**：激活 cataloged `sha2`，实现 component-normalized workspace member
+  path、root escape/symlink 防护、opaque bytes、SHA-256、media/color/alpha/sampling/font contract
+  和 CanonicalResourceBundle；不执行媒体转码。
 - **I5.4 Sync**：唯一 offset 公式、preview audio domain 和 player/converter shared test vector。
 - **I5.5 Typed custom**：ordered object、duplicate key、depth/count/string/byte limits和 FCBC-compatible
   value restrictions。
@@ -399,16 +467,19 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 
 ### I6：PGR/RPE/PEC importer
 
-- **I6.1 Shared import IR boundary**：激活 cataloged `serde`/`serde_json`，source parser输出版本化、
-  未经 FCS 猜测的 source semantic IR；lowering 才产生 CanonicalChart/provenance/report。只有明确
-  纳入 package input surface 后才为 owning converter crate 激活 defaults-disabled `zip`。
+- **I6.1 Shared import IR boundary**：激活 cataloged `serde`/`serde_json`，source parser 先输出
+  未经 FCS 猜测的 lossless parsed source；parser dialect、profile selection、Repair 分层后才得到
+  source semantic IR，lowering 才产生 CanonicalChart/provenance/report。只有明确纳入 package input
+  surface 后才为 owning converter crate 激活 defaults-disabled `zip`。
 - **I6.2 PGR v1/v3**：line BPM/time、event、coordinate、speed/floor validation、Note/fake/side/Hold。
 - **I6.3 RPE**：BPMList/exact Beat、bpmfactor、multi-layer blend、father/rotateWithFather、Bezier、
   controls、visibleTime、resource/metadata。
-- **I6.4 PEC**：tick/bp、offset sign、line point/easing、cv/integration、four Note、fake/Hold 和 command
-  source order。
-- **I6.5 Compatibility evaluator**：历史 source engine 行为与 Core semantic 分离；选择兼容路径时
-  记录 runtime-only/approximation，不能污染 Core evaluator。
+- **I6.4 PEC**：direct decimal Beat/bp、150/175ms offset profile、Note/Line X、line point/easing、
+  cv profile/integration、four Note、fake/Hold 和 command source order；不得恢复无证据的默认
+  `tick2048`。
+- **I6.5 Profile registry/selection**：实现 content-hash-bound typed selector、detection evidence、
+  candidate/equivalence/configured-default decision 和 `--source-profile`/`--target-profile` 公共 API；
+  历史 source engine 行为与 Core semantic 分离，Repair 不得选择合法但歧义的 profile。
 - **I6.6 Invalid source**：strict 默认失败；repair mode 每条修改有 record；验证脚本必须与实际
   parser/evaluator 逻辑一致。
 - **I6.7 Fixtures**：公开最小/feature/extreme fixture + opt-in copyright lane；每个有 canonical
@@ -420,13 +491,17 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
   Record、StringTable、ConstantPool 和 canonical zero；不引入 `byteorder`。
 - **I7.2 Container writer**：激活 cataloged `crc` 的 CRC-32/ISO-HDLC 与 `sha2`，实现 128-byte
   header、40-byte entries、alignment/padding、checksum、source hash 和 deterministic sections。
-- **I7.3 Core sections**：Meta through Distance 的 record writer/reader 和 version dispatch。
-- **I7.4 Descriptor ABI**：PropertyDescriptor、Segment/Piecewise/Baked、Expression topological nodes、
-  environment/type validation。
-- **I7.5 Profiles**：runtime/editable/archive/strict-runtime section/feature 保留矩阵。
+- **I7.3 Core sections**：Meta through Distance、required ResourceData 的 record writer/reader、原始
+  resource bytes/hash/coverage 和 version dispatch。
+- **I7.4 Descriptor ABI**：PropertyDescriptor、Segment/Piecewise/Expression topological nodes、
+  environment/type validation、analytic/evaluable Distance 和 descriptor kind 5 rejection；FCBC 2
+  所有 profile 都是 exact-only，显式 target approximation 不写入 standard FCBC。
+- **I7.5 Profiles**：runtime/fidelity/strict-runtime section/feature 保留矩阵，reserved profile 2
+  rejection；所有 profile 都是 one-chart/self-contained/no-source-snapshot。
 - **I7.6 Loader hardening**：先 bounds 再 allocation，count overflow、overlap、checksum、UTF-8、ID、
   DAG/reference/type、unknown optional/required 和公开 limits。
-- **I7.7 Golden files**：每种 section/descriptor/profile 的 byte fixture、manifest 和 SHA-256。
+- **I7.7 Golden files**：在 S15 的 864-byte empty 与 1021-byte embedded-resource schema 2 baseline
+  上，补齐每种 section/descriptor/profile 的 byte fixture、manifest、CRC 和 SHA-256。
 - **I7.8 Malformed corpus/fuzz**：header、section、record、index、graph 和 descriptor mutations；loader
   不 panic、不 OOM、不返回部分 chart。
 - **I7.9 Execution closure**：source→canonical→FCBC→load→reference execution 数值一致。
@@ -449,24 +524,29 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 
 ### I9：Render Profile
 
-- **I9.1 Render source/schema**：profile/version、Layer/Node/Geometry/Path/Paint/Stroke/Text 和 resource。
+- **I9.1 Render source/schema**：profile/version、Layer/Node/Geometry/Path/Paint/Stroke/Text，以及只允许
+  FCS `@resource` 的静态 resource source schema。
 - **I9.2 Compile-time construction**：RenderNode template/generator/emit，topology/resource 编译期固定。
 - **I9.3 Canonical scene**：stable forest、pass/sort、attachment dependency、dynamic property descriptor。
-- **I9.4 RenderSection codec**：全部 table/enum/reference 与 FCBC version/feature validation。
+- **I9.4 RenderSection codec**：全部 table/enum/reference、exact descriptor kind 1–4 与 FCBC
+  version/feature/Resources/ResourceData validation；section 不保存 path/payload/source text/cluster。
 - **I9.5 Semantic evaluator**：transform/opacity/active/visibility/clip/attachment/composite draw list。
 - **I9.6 Reference rasterizer**：为 render crate 激活 defaults-disabled `image`，只开启规范/fixture
   需要的 codec并设置 dimension/allocation limits；实现 fixed resources、path coverage、linear
-  compositing、image sampling、glyph run 和 RGBA8 output，不能让 image crate behavior 定义规范。
+  compositing、image sampling、embedded-font glyph run 和 RGBA8 output，不能让 image crate behavior
+  定义规范或访问外部 asset/system font。
 - **I9.7 Raster fixtures**：每种 node/paint/clip/composite、line/note attachment、dynamic boundary 和
-  malformed resource；比较规范容差。
+  malformed resource；在 S15 semantic binding fixture 上增加可解码 image/font FCBC payload 并比较
+  规范容差。
 - **I9.8 Backend interface**：GPU/realtime backend只消费 canonical display data，不能反向影响 chart。
 
 ### I10：CLI、发行组合与 Conformance Release Candidate
 
 - **I10.1 CLI surface**：在 CLI crate 激活 cataloged `clap`，提供 `check`、`format`、`compile`、
   `inspect`、`convert`、`report`，输出稳定 exit category 和可选 JSON diagnostic/report。
-- **I10.2 Profile/resource options**：FCBC profile、strict/repair、resolver root、target capability 和
-  bake budget显式参数。
+- **I10.2 Profile/resource options**：FCBC profile、strict/repair、resolver root、source/target
+  semantic profile 和 target capability；approximation budget 只属于显式 target conversion，不能
+  成为标准 FCS→FCBC compile 参数。
 - **I10.3 Public API assembly**：只组合无版本前缀的领域 crate，不建立第二默认 AST 或兼容 facade。
 - **I10.4 Converter assembly**：CLI 只通过 canonical/provenance API 调用 converter，不直接消费
   source AST。
@@ -494,10 +574,20 @@ git diff --check
 ## 8. 当前状态
 
 - S0：完成；权威文档、治理、路线图、版本表和旧设计迁移已落地；
-- S1–S12：完成；逐章审查和首批机器可读 conformance fixture 已落地；
-- S13：完成；FCS 5.0.0、FCBC 2.0.0、ABI 1.0.0、Render 1.0.0、Conversion 1.0.0
-  已于 2026-07-14 Frozen；
+- S1–S12：原章节语义审查完成；其中 FCS Source/Render source grammar 由 S14 重开闭合；
+- S13：2026-07-14 历史冻结记录保留；其 FCS/Render Source grammar 完整性结论已由 S14 纠正；
+- S14：FCS Core 5.0.0 与 Render Profile 1.0.0 grammar closure 已写入规范和 32-entry FCS
+  conformance baseline，其 Reviewed hash 作为该范围的历史审计证据保留；后续 ADR 0007–0009
+  又使五个版本域进入 Draft/联合重审，不能把 S14 hash 当作当前完整规范 hash；
+- S15：FCS Core、FCBC/ABI、Render 与 Conversion 候选 delta 已依依赖顺序写入；FCS manifest 为
+  39 项，FCBC 有两个 schema 2 golden/13 个 mutation，Render 有 embedded-resource binding，
+  Conversion 有 12-profile/7-dialect/56-rule/32-category/38-valid/5-invalid/10-selection registry。统一
+  cross-spec/hash/test 候选自检已完成，见 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md`；
+  真实 Conversion round-trip、非空 ABI/Render byte vector、Core fixture validation 与独立复审仍是
+  blocker，全部版本域保持 Draft；
 - I0.1–I0.9 已完成，135 个 workspace tests、结构/依赖/归档拓扑和独立复审 gate 全部通过；
+- I1 独立实施计划已按 S14 修订；S15 五版本域完成联合与独立复审、重新 Frozen 并由用户再次确认
+  计划前，Rust 实现不得开始；
 - retained source subset 已提升为唯一 `fcs-source`，完整 Source AST/grammar 仍按 I1 推进；
 - 当前 generator AST/parser 只接受 `int|beat`、`..<|..=` 和 `let|if|emit`，拒绝裸 `..`、
   `return` 与 nested generator；zero-step 语法保留给 I2，elaborator 在 I0 不展开并返回稳定

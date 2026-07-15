@@ -1,0 +1,26 @@
+schema_version = 2
+base = "embedded-resource.hex"
+
+[[mutation]]
+id = "resource-hash-mismatch"
+diagnostic = "fcbc.resource-hash-mismatch"
+
+[[mutation.patch]]
+offset = 844
+replace_hex = "67"
+
+[[mutation.patch]]
+offset = 360
+replace_hex = "0e4fc63b"
+
+[[mutation]]
+id = "resource-data-trailing-byte"
+diagnostic = "fcbc.invalid-resource-data"
+
+[[mutation.patch]]
+offset = 832
+replace_hex = "1c00000000000000"
+
+[[mutation.patch]]
+offset = 360
+replace_hex = "5d2da4cc"

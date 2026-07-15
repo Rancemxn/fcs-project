@@ -1,0 +1,48 @@
+#fcs 5.0.0
+format { profile: chart; }
+resources {
+    audio click {
+        source: "assets/opaque-resource.bin";
+        hash: "sha256:66eb55e69c42345c65021ea9364fc43c61d2151dde67a89dc02362543b289903";
+        mediaType: "audio/ogg";
+    }
+}
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+    notes {
+        tap {
+            id: "resource-sound";
+            line: @main;
+            gameplay.time: 1beat;
+            gameplay.judgeShape.kind: "rectangle";
+            gameplay.judgeShape.center: vec2(32px, 0px);
+            gameplay.judgeShape.halfExtents: vec2(48px, 24px);
+            gameplay.soundPolicy: "resource";
+            gameplay.soundResource: @click;
+            gameplay.scorePolicy: "default";
+        };
+        tap {
+            id: "disabled";
+            line: @main;
+            gameplay.time: 2beat;
+            gameplay.judgment.enabled: false;
+        };
+        hold {
+            id: "custom-score";
+            line: @main;
+            gameplay.time: 3beat;
+            gameplay.endTime: 4beat;
+            gameplay.judgeShape.kind: "circle";
+            gameplay.judgeShape.radius: 36px;
+            gameplay.soundPolicy: "none";
+            gameplay.scorePolicy: "custom";
+            gameplay.scoreExtension: "org.fcs.custom-score";
+        };
+    }
+}
+extensions {
+    extension("org.fcs.custom-score", 1.0.0) required {
+        "mode": "fixture",
+    }
+}

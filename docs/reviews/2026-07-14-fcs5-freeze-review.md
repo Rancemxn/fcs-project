@@ -239,3 +239,58 @@ b0a1d453c16a0c1e55a0ad1fefbaf9ccf39883f51d7305ea031cb6d7d5f0cee7
 
 四份权威规范、规范治理文件、conformance corpus 和全部 Frozen 版本仍未修改。I1 必须作为
 后续独立实施阶段启动，不能把 matrix 中的 `partial` 或 blocked 行计入 I0 完成范围。
+
+### 2026-07-15 I1 独立实施计划起草
+
+I0 复审接受后，已建立 `docs/plans/i1-source-ast-parser.md`，将路线图 I1.1–I1.8 展开为可执行的
+失败测试、实现、任务 gate、fixture/production coverage、limits/fuzz 和独立复审步骤。该计划
+明确 parser/static/canonical 阶段边界，并记录 `render` 内部 grammar 与 extension payload 由其
+owning profile/namespace 后续阶段验证；I1 不据此声明 Render 或 extension semantic conformance。
+
+计划当前等待用户确认，尚未开始 Rust 实现。上一版 I0 最终验证后的 roadmap SHA-256 保留为：
+
+```text
+b0a1d453c16a0c1e55a0ad1fefbaf9ccf39883f51d7305ea031cb6d7d5f0cee7
+```
+
+本次加入 I1 计划入口和待确认状态后的 roadmap SHA-256 为：
+
+```text
+5e2e0c7ad31ecf8a3e396ecc79ae608e09ee08dbb0a130fa71a7bb1862a52a35
+```
+
+四份权威规范、规范治理文件、implementation matrix、conformance corpus、I0 实现和归档分支
+均未修改。
+
+### 2026-07-15 Source grammar closure 状态更正
+
+后续 I1 计划审查发现，本审查在 S1–S3 中记录的“完整 EBNF”和 S12 的 Render source 完整性
+结论不成立：Appendix B 存在未定义顶级 production，closed enum 与 keyword grammar 冲突，
+extension/preserve/render envelope 未闭合，并且 parser/static diagnostic ownership 不明确。
+
+用户确认 FCS 5 尚未公开且兼容修改成本为零，因此撤回 FCS Core 5.0.0 和 Render Profile 1.0.0
+的本次 Frozen 结论，在相同候选版本上执行 S14 grammar closure。FCBC 2.0.0、Execution ABI
+1.0.0 和 Conversion Specification 1.0.0 的 Frozen 结论不受影响；I0 基础设施验收也不回退。
+
+在该次状态更正时，修订后的 FCS/Render 文档和 conformance baseline 为 Reviewed，等待新的独立
+复审；旧哈希仅是历史审计记录，不再代表当前 FCS/Render source bytes。新的范围、决定、fixture
+与哈希见
+`docs/reviews/2026-07-15-fcs5-source-grammar-closure-review.md`。
+
+### 2026-07-15 后续架构决定与其状态影响
+
+上一节所称“FCBC、Execution ABI 和 Conversion Specification 的 Frozen 结论不受影响”只描述
+Source grammar closure 当时的审查范围。随后用户接受 ADR 0007–0009 和 `docs/community/`
+evidence baseline，并确认 `fcbc.md` 继续联合定义 FCBC Container 与 Execution ABI。因此：
+
+- Conversion Specification 1.0.0 因 semantic profile、PGR/RPE/PEC mapping 和 report contract
+  修订而撤回旧 Frozen；
+- FCBC Container 2.0.0 因单谱面自包含容器、内嵌原始资源和 exact-first lowering 撤回旧
+  Frozen；
+- Execution ABI 1.0.0 与整个 `fcbc.md` 联合重审，候选版本不变且不预先断言 Expression DAG
+  指令语义发生变化；
+- FCS Core 5.0.0 与 Render Profile 1.0.0 的 S14 Reviewed hash 继续作为 grammar closure 范围的
+  历史证据，但后续跨规范修订完成前不再代表完整当前候选文件。
+
+本文件保留所有旧结论与 hash 作为按时点审计记录；当前状态只以
+`docs/specification-governance.md` 为准。

@@ -1,0 +1,9 @@
+#fcs 5.0.0
+format { profile: fragment; }
+resources {
+    binary escaped {
+        source: "../outside.bin";
+        hash: "sha256:66eb55e69c42345c65021ea9364fc43c61d2151dde67a89dc02362543b289903";
+        mediaType: "application/octet-stream";
+    }
+}

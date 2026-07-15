@@ -1,50 +1,94 @@
-schema_version = 1
+schema_version = 2
 base = "minimal-runtime.hex"
 
 [[mutation]]
 id = "bad-magic"
+diagnostic = "fcbc.bad-magic"
+
+[[mutation.patch]]
 offset = 0
 replace_hex = "00"
-diagnostic = "fcbc.bad-magic"
+
+[[mutation]]
+id = "unsupported-source-major"
+diagnostic = "fcbc.unsupported-source-version"
+
+[[mutation.patch]]
+offset = 8
+replace_hex = "0600"
 
 [[mutation]]
 id = "unsupported-container-major"
+diagnostic = "fcbc.unsupported-container-version"
+
+[[mutation.patch]]
 offset = 14
 replace_hex = "0300"
-diagnostic = "fcbc.unsupported-container-version"
 
 [[mutation]]
 id = "unsupported-abi-major"
+diagnostic = "fcbc.unsupported-abi-version"
+
+[[mutation.patch]]
 offset = 20
 replace_hex = "0200"
-diagnostic = "fcbc.unsupported-abi-version"
+
+[[mutation]]
+id = "reserved-container-profile"
+diagnostic = "fcbc.unsupported-profile"
+
+[[mutation.patch]]
+offset = 26
+replace_hex = "02"
 
 [[mutation]]
 id = "file-length-mismatch"
-offset = 48
-replace_hex = "2503000000000000"
 diagnostic = "fcbc.file-length-mismatch"
+
+[[mutation.patch]]
+offset = 48
+replace_hex = "6103000000000000"
 
 [[mutation]]
 id = "first-section-misaligned"
-offset = 144
-replace_hex = "8902000000000000"
 diagnostic = "fcbc.section-alignment"
+
+[[mutation.patch]]
+offset = 144
+replace_hex = "b102000000000000"
 
 [[mutation]]
 id = "first-section-checksum"
+diagnostic = "fcbc.section-checksum"
+
+[[mutation.patch]]
 offset = 160
 replace_hex = "00000000"
-diagnostic = "fcbc.section-checksum"
 
 [[mutation]]
 id = "unknown-required-section"
-offset = 128
-replace_hex = "ff000000"
 diagnostic = "fcbc.unknown-required-section"
+
+[[mutation.patch]]
+offset = 648
+replace_hex = "15000000"
+
+[[mutation]]
+id = "missing-resource-data"
+diagnostic = "fcbc.missing-required-section"
+
+[[mutation.patch]]
+offset = 648
+replace_hex = "15000000"
+
+[[mutation.patch]]
+offset = 658
+replace_hex = "0000"
 
 [[mutation]]
 id = "section-overlap"
-offset = 184
-replace_hex = "8802000000000000"
 diagnostic = "fcbc.section-overlap"
+
+[[mutation.patch]]
+offset = 184
+replace_hex = "b002000000000000"

@@ -1,0 +1,9 @@
+#fcs 5.0.0
+format { profile: fragment; }
+resources {
+    binary wrongHash {
+        source: "assets/opaque-resource.bin";
+        hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        mediaType: "application/octet-stream";
+    }
+}

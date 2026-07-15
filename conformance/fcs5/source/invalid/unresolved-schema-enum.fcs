@@ -1,0 +1,10 @@
+#fcs 5.0.0
+format { profile: fragment; }
+collections {
+    notes {
+        tap {
+            gameplay.time: 0beat;
+            gameplay.side: above;
+        };
+    }
+}

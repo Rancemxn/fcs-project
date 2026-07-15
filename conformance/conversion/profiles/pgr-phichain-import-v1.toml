@@ -1,0 +1,40 @@
+schema_version = 1
+id = "pgr.phichain-import.v1"
+version = "1.0.0"
+format = "pgr"
+directions = ["source"]
+profile_class = "compatibility-characterization"
+strict_eligible = false
+producer = "Pinned Phichain official_to_phichain importer behavior"
+runtime = "phichain-import-v1"
+format_version_policy = "exact"
+format_versions = ["1"]
+parser_dialects = ["pgr.json.v1@1.0.0"]
+parameters = [{ name = "floorScalePx", value_type = "length", required_when = "always", constraint = "finite-positive", allowed_values = [] }]
+mapping_rules = [
+  "pgr.time.source-line-beat-t32@1.0.0",
+  "pgr.time.first-line-bpm@1.0.0",
+  "pgr.tempo.first-line-anchor@1.0.0",
+  "pgr.note-x.unit320_3@1.0.0",
+  "pgr.v1-move-x.round1000-div880@1.0.0",
+  "pgr.v1-move-y.mod1000-div530@1.0.0",
+  "pgr.rotation.clockwise-deg@1.0.0",
+  "pgr.offset.seconds@1.0.0",
+  "pgr.speed.integrate-source-velocity@1.0.0",
+  "pgr.hold-speed.phichain-normalize@1.0.0",
+]
+contract = [
+  "All raw T values are interpreted through the first judge-line BPM even when later lines declare different BPM.",
+  "Packed v1 move X uses ties-away rounding and divisor 880; Y uses truncating remainder and divisor 530.",
+  "Note X uses one eighteenth of the full canvas width per source unit.",
+  "Hold speed is normalized by the line speed at Hold start according to the pinned importer formula.",
+  "Event fitting, constant shrinking, suffix removal and cache rebuilding are tool transformations, not legal source semantics.",
+]
+known_limitations = [
+  "The pinned importer can change event representation through option-dependent fitting and constant-event rewrites.",
+  "Different line BPM values are intentionally interpreted through the first line and differ from Phira runtime timing.",
+]
+report_categories = ["conversion.compatibility-characterization", "conversion.tool-rewrite"]
+evidence = [
+  "refer/chart/phichain@fe3448449781af86c67a36b97f672b0dbe6c8243:phichain-format/src/official/into_phichain.rs",
+]

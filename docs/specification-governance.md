@@ -13,19 +13,79 @@ FCS 5 规范由下列文件共同组成：
 `docs/plans/` 只记录实施顺序，不能创造格式语义。实现、测试或示例与规范冲突时，
 必须先判断是实现缺陷还是规范缺陷，不得让实现行为静默成为新规范。
 
+规范权威与外部格式证据属于不同职责，不能压成一条总排名：
+
+- 本文件管理五个版本域的候选版本、状态、变更和冻结流程，不替代四份根规范中的具体语义；
+- Accepted ADR 约束架构与后续规范修订方向，但不是 source grammar、二进制布局或执行语义的
+  替代文本；
+- `docs/community/` 综合 PGR、RPE、PEC 等外部格式证据、歧义与已知实现差异；
+- 固定 commit/hash 的 `refer/chart/` 是某个外部项目在特定版本下的一手行为证据，但单个项目
+  不能定义整个社区格式；
+- 当前实现、测试和 example 只提供实现或 fixture 证据，不获得规范权威。
+
+Accepted ADR 与现行规范发生实质冲突时，必须重开受影响的规范版本，暂停依赖该新语义的实现，
+依次更新规范、fixture、manifest、review 和状态记录，再经独立复审重新 Frozen；不得任选 ADR
+或旧规范直接实现。后续决定改变一个 Accepted ADR 时，应新增 ADR 并把旧记录标为 `Superseded`
+或 `Partially superseded`。勘误或治理补充可以追加 dated amendment，但不得静默改写旧决定的
+历史背景。
+
 ## 2. 当前候选版本
 
 | 规范 | 候选版本 | 状态 |
 |---|---:|---|
-| FCS Core Source Specification | 5.0.0 | Frozen（2026-07-14） |
-| FCBC Container Format | 2.0.0 | Frozen（2026-07-14） |
-| FCS Execution ABI | 1.0.0 | Frozen（2026-07-14） |
-| FCS Render Profile | 1.0.0 | Frozen（2026-07-14） |
-| FCS Conversion Specification | 1.0.0 | Frozen（2026-07-14） |
+| FCS Core Source Specification | 5.0.0 | Draft（authoring/canonical closure 与联合候选自检完成；等待完整 fixture validation 与独立复审） |
+| FCBC Container Format | 2.0.0 | Draft（one-chart/ResourceData/exact-only closure 与联合候选自检完成；等待非空 ABI/Render byte vector 与独立复审） |
+| FCS Execution ABI | 1.0.0 | Draft（与 `fcbc.md` 联合 closure 已写入；候选版本不变，等待非空 ABI byte/evaluation vector 与独立复审） |
+| FCS Render Profile | 1.0.0 | Draft（Source grammar/resource binding/exact-runtime closure 与联合候选自检完成；等待完整 RenderSection/decoder/raster vector 与独立复审） |
+| FCS Conversion Specification | 1.0.0 | Draft（semantic profile/selection/report closure 与联合候选自检完成；等待真实 round-trip fixture 与独立复审） |
 
 Draft/Reviewed/Frozen 是仓库发布状态，不写入 FCS 或 FCBC 的 SemVer 字段。Frozen 只表示
 规范文本和绑定 conformance baseline 已稳定；参考实现仍必须逐项通过 conformance 后才能宣称
 对应实现 conformance。
+
+2026-07-15 用户确认 FCS 5 尚未公开且兼容修改成本为零，因此首先撤回 FCS Core 5.0.0 和 Render
+Profile 1.0.0 的旧 Frozen 状态并完成 Source grammar closure。随后用户接受 ADR 0007–0009，并
+确认采用“FCS authoring source + 单谱面自包含 FCBC distribution container”、显式版本化转换
+profile 和 exact-first runtime expression 边界，因此五个版本域均进入本表所示的重新修订或联合
+复审状态。
+
+`fcbc.md` 继续联合定义 FCBC Container 2.0.0 与 Execution ABI 1.0.0。旧冻结审查只对整个文件
+保存一个 hash，而资源 payload、required section 和 loader contract 的修改会改变该联合文件；
+因此 Container 与 ABI 一起重审，不为了保留旧状态拆分文件或使用脆弱的章节级冻结。联合重审
+不预先断言 Expression DAG 指令语义已经变化，两个候选 SemVer 均保持不变。
+
+2026-07-14 的 Frozen hash 与 2026-07-15 的 Source grammar closure Reviewed hash 只保留历史审计
+用途，不代表当前候选文件 bytes。FCS Core 与 Render Profile 重新 Frozen、完成独立复审且用户
+再次确认 I1 计划前，不得开始 I1 Rust 实现；其他实施阶段同样不得依赖尚未重新 Frozen 的对应
+规范域。
+
+FCS Core 本轮 authoring/canonical delta、39-entry conformance 设计与跨规范 gate 记录在
+`docs/reviews/2026-07-15-fcs5-authoring-canonical-closure-review.md`。该文件只证明 Core 修订范围，
+不替代后续 FCBC/Render/Conversion closure 或最终 re-freeze review。
+
+FCBC 2.0/Execution ABI 1.0 的 one-chart、required ResourceData、exact-only profile、Note/Distance
+record、schema 2 golden/mutation delta 和自检记录在
+`docs/reviews/2026-07-15-fcbc2-execution-abi-closure-review.md`。该 closure 保持 Draft；Render resource
+binding 与 Conversion schema 已在后续候选 delta 中同步，但非空 ABI vector、联合审计和独立 review
+完成前仍不得解释为重新 Frozen。
+
+Render Profile 1.0 的 stable resource ID→FCBC Resources/ResourceData、exact descriptor only、no
+source-text/cluster/external-fallback delta 与 semantic binding fixture 记录在
+`docs/reviews/2026-07-15-render1-resource-binding-closure-review.md`。Opaque binding fixture 不执行
+媒体 decode；完整 decoder/RenderSection/raster vector 和独立 review 仍是重新 Frozen 的 gate。
+
+Conversion Specification 1.0 的 parser/profile/Repair 分层、source/target selector、12-profile registry、
+7 个 parser dialect、56 个 mapping rule、32 个 diagnostic/report category、38 个 exact mapping
+vector、5 个非法边界、10 个选择/歧义向量以及 FCBC no-source-snapshot 投影记录在
+`docs/reviews/2026-07-15-conversion1-semantic-profile-closure-review.md`。这些向量已由 Rust 强类型
+manifest integrity test 验证，但活动 workspace 尚无 converter，也尚未提供真实外部 source→canonical
+golden→target reparse 闭环；因此该 closure 仍是 Draft 候选证据。
+
+四规范当前候选 bytes、跨域不变量、完整 workspace gate、suite/tree hash，以及尚未关闭的
+Conversion 真实 round-trip、Execution ABI 非空 byte/evaluation、RenderSection binary/raster 和
+Core fixture validation blocker 统一记录在
+`docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md`。该文件是参与修改者的联合候选自检，
+不是独立 review；其中 Important finding 与独立复审关闭前，本表状态不得提升为 Reviewed/Frozen。
 
 ## 3. 规范用语
 
@@ -60,6 +120,10 @@ Draft/Reviewed/Frozen 是仓库发布状态，不写入 FCS 或 FCBC 的 SemVer 
 - major：现有合法输入、二进制布局或执行语义出现不兼容变化；
 - minor：保持已有语义的可选新增；
 - patch：不改变任何已有合法输入语义的勘误、澄清或诊断改进。
+
+尚未公开发布的候选版本可以在用户明确确认兼容成本为零后撤回 Frozen、保持候选 SemVer 修订并
+重新走完整审查；必须保留旧审计记录、标记其已撤回，并在重新 Frozen 前禁止实现阶段依赖新
+语义。已经公开的版本不得使用该例外。
 
 FCS、FCBC、Execution ABI、Render Profile、Conversion Specification 和 extension schema
 独立版本化。一个完全在编译期消失的 source 功能不必提升 FCBC 或 ABI；容器 framing

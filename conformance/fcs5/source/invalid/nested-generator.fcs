@@ -1,0 +1,10 @@
+#fcs 5.0.0
+format { profile: fragment; }
+collections {
+    notes {
+        generate i: int in 0..<1 step 1 {
+            generate j: int in 0..<1 step 1 {
+            }
+        }
+    }
+}

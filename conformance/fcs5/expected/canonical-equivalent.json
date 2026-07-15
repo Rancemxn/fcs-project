@@ -1,0 +1,22 @@
+{
+  "equivalenceGroup": "authoring-structure-eliminated",
+  "lineIds": ["main"],
+  "notes": [
+    {
+      "id": "equivalent-note",
+      "kind": "tap",
+      "lineId": "main",
+      "chartTimeSeconds": 0.5,
+      "side": "above",
+      "positionX": 64.0
+    }
+  ],
+  "forbiddenCanonicalFields": [
+    "sourceText",
+    "workspacePath",
+    "template",
+    "generator",
+    "local",
+    "preserveRawPayload"
+  ]
+}

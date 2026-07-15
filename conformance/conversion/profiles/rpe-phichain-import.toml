@@ -1,0 +1,42 @@
+schema_version = 1
+id = "rpe.phichain-import"
+version = "1.0.0"
+format = "rpe"
+directions = ["source"]
+profile_class = "compatibility-characterization"
+strict_eligible = false
+producer = "Pinned Phichain RPE importer behavior"
+runtime = "phichain-rpe-import"
+format_version_policy = "evidence-only"
+format_versions = []
+parser_dialects = ["rpe.json.compatible@1.0.0"]
+parameters = []
+mapping_rules = [
+  "rpe.beat.abc-zero-zero-integer@1.0.0",
+  "rpe.time.bpmfactor-ignore@1.0.0",
+  "rpe.x.canvas1350@1.0.0",
+  "rpe.y.canvas900@1.0.0",
+  "rpe.alpha.byte255@1.0.0",
+  "rpe.offset.milliseconds@1.0.0",
+  "rpe.rotation.clockwise-deg@1.0.0",
+  "rpe.speed.scale4_5@1.0.0",
+  "rpe.layers.first-only@1.0.0",
+  "rpe.rotate-missing.true@1.0.0",
+]
+contract = [
+  "Beat [a,0,0] is interpreted as integer a; other denominator-zero forms are invalid.",
+  "Raw bpmfactor is ignored; missing rotateWithFather means true.",
+  "Only the first ordinary event layer is projected; later layers are dropped with mandatory layer-loss reporting.",
+  "The pinned model cannot preserve all fake, presentation, extended-event and rotateWithFather=false behavior.",
+  "Parent promotion, cycle breaking, fake deletion and forced rotation inheritance are repairs or losses, never ordinary source semantics.",
+]
+known_limitations = [
+  "Second and later event layers are lost.",
+  "Several Note presentation fields and fake gameplay semantics are ignored or option-dependent.",
+  "rotateWithFather=false and invalid parent graphs cannot be represented exactly by the pinned importer.",
+]
+report_categories = ["conversion.layer-loss", "conversion.presentation-loss", "conversion.compatibility-characterization"]
+evidence = [
+  "refer/chart/phichain@fe3448449781af86c67a36b97f672b0dbe6c8243:phichain-format/src/rpe/schema.rs",
+  "refer/chart/phichain@fe3448449781af86c67a36b97f672b0dbe6c8243:phichain-format/src/rpe/into_phichain.rs",
+]

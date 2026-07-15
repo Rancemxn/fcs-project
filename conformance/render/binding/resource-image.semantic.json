@@ -1,0 +1,14 @@
+{
+  "canonicalResourceTextualId": "sprite",
+  "canonicalResourceId": "43b6b71ca2ee7437",
+  "kind": "image",
+  "mediaType": "image/png",
+  "contentSha256": "66eb55e69c42345c65021ea9364fc43c61d2151dde67a89dc02362543b289903",
+  "payloadLength": 29,
+  "renderReferenceOwner": "image spriteNode",
+  "fcbcResourcesSectionType": 6,
+  "fcbcResourceDataSectionType": 20,
+  "runtimeLookup": "stable-resource-id-only",
+  "externalLookupAllowed": false,
+  "mediaDecodePerformed": false
+}

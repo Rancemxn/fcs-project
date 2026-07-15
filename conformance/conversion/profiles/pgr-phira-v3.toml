@@ -1,0 +1,41 @@
+schema_version = 1
+id = "pgr.phira.v3"
+version = "1.0.0"
+format = "pgr"
+directions = ["source", "target"]
+profile_class = "semantic"
+strict_eligible = true
+producer = "PGR v3 interpreted by the pinned Phira runtime family"
+runtime = "phira-pgr-v3"
+format_version_policy = "exact"
+format_versions = ["3"]
+parser_dialects = ["pgr.json.v3@1.0.0"]
+parameters = [{ name = "floorScalePx", value_type = "length", required_when = "always", constraint = "finite-positive", allowed_values = [] }]
+mapping_rules = [
+  "pgr.time.source-line-beat-t32@1.0.0",
+  "pgr.time.per-line-bpm@1.0.0",
+  "pgr.tempo.per-line-canonical-anchor@1.0.0",
+  "pgr.note-x.unit108@1.0.0",
+  "pgr.line-x.normalized@1.0.0",
+  "pgr.line-y.normalized@1.0.0",
+  "pgr.rotation.clockwise-deg@1.0.0",
+  "pgr.offset.seconds@1.0.0",
+  "pgr.speed.integrate-source-velocity@1.0.0",
+  "pgr.hold-speed.phira-head1@1.0.0",
+]
+contract = [
+  "Every line decodes raw T with its own positive BPM; sourceLineBeat never becomes a second FCS clock.",
+  "Split v3 move X and Y use independent normalized 0..1 canvas coordinates.",
+  "Line events are source-linear; illegal overlap, reversed intervals, missing first speed and cache replacement are not profile semantics and require diagnostics or Repair.",
+  "Raw floorPosition is validation-only; exact scroll presentation requires the bound floorScalePx.",
+  "Hold head scrollFactor is 1 and Hold tail geometry comes from line distance.",
+  "Chart offset is seconds; independently declared package offset is composed as a separate provenance fact.",
+]
+known_limitations = [
+  "The PGR payload does not define a unique logical-pixel floor scale; the binding parameter is mandatory for strict scroll presentation.",
+]
+report_categories = ["conversion.generated-canonical-tempo", "conversion.distance-mismatch"]
+evidence = [
+  "refer/chart/phira@824e24b97af53c2e14c4e2dfa13ecd36d87c9e06:prpr/src/parse/pgr.rs",
+  "refer/chart/phira-docs@909a4913d726c13af8ea6904501faea6f91bd2ae:src/chart-standard/chart-format/phi",
+]

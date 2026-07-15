@@ -1,0 +1,192 @@
+schema_version = 1
+conversion_specification_version = "1.0.0"
+profile_registry = "profile-registry.toml"
+
+[[selection]]
+id = "pgr-v1-format-version-is-insufficient"
+direction = "source"
+format = "pgr"
+syntax_mode = "strict"
+profile_selection_mode = "strict"
+candidate_bindings = [
+  { profile = "pgr.phichain-import.v1@1.0.0", parameters = { floorScalePx = "120px" } },
+  { profile = "pgr.phira.v1@1.0.0", parameters = { floorScalePx = "120px" } },
+]
+evidence = ["format-field:formatVersion=1"]
+canonical_equivalent = false
+repair_enabled = false
+expected_reason = "unresolved"
+expected_diagnostic = "conversion.ambiguous-source-semantics"
+ambiguity_impacts = ["timing", "motion", "scroll"]
+clauses = ["4.4", "10.1"]
+
+[[selection]]
+id = "pgr-v3-current-input-canonical-equivalent"
+direction = "source"
+format = "pgr"
+syntax_mode = "strict"
+profile_selection_mode = "strict"
+candidate_bindings = [
+  { profile = "pgr.phichain-import.v3@1.0.0", parameters = { floorScalePx = "120px" } },
+  { profile = "pgr.phira.v3@1.0.0", parameters = { floorScalePx = "120px" } },
+]
+evidence = ["format-field:formatVersion=3", "input-fact:all-line-bpm-equal", "input-fact:no-hold", "input-fact:all-note-x-zero"]
+canonical_equivalent = true
+repair_enabled = false
+expected_reason = "canonical-equivalent"
+expected_profile = "pgr.phira.v3@1.0.0"
+ambiguity_impacts = []
+clauses = ["4.4", "10.1"]
+
+[[selection]]
+id = "rpe-explicit-divide-profile"
+direction = "source"
+format = "rpe"
+syntax_mode = "strict"
+profile_selection_mode = "strict"
+explicit_profile = "rpe.community.divide-bpmfactor@1.0.0"
+candidate_bindings = [
+  { profile = "rpe.community.divide-bpmfactor@1.0.0", parameters = { speedMode = "modern-eased" } },
+  { profile = "rpe.docs-example.multiply-bpmfactor@1.0.0", parameters = { speedMode = "modern-eased" } },
+  { profile = "rpe.phira.legacy-speed@1.0.0", parameters = {} },
+]
+evidence = ["explicit-selector:rpe.community.divide-bpmfactor@1.0.0"]
+canonical_equivalent = false
+repair_enabled = false
+expected_reason = "explicit"
+expected_profile = "rpe.community.divide-bpmfactor@1.0.0"
+ambiguity_impacts = ["timing", "motion", "scroll"]
+clauses = ["4.4", "11.2"]
+
+[[selection]]
+id = "rpe-nonunit-bpmfactor-strict-ambiguous"
+direction = "source"
+format = "rpe"
+syntax_mode = "strict"
+profile_selection_mode = "strict"
+candidate_bindings = [
+  { profile = "rpe.community.divide-bpmfactor@1.0.0", parameters = { speedMode = "modern-eased" } },
+  { profile = "rpe.docs-example.multiply-bpmfactor@1.0.0", parameters = { speedMode = "modern-eased" } },
+  { profile = "rpe.phira.legacy-speed@1.0.0", parameters = {} },
+]
+evidence = ["format-field:META.RPEVersion=160", "input-fact:bpmfactor=2"]
+canonical_equivalent = false
+repair_enabled = false
+expected_reason = "unresolved"
+expected_diagnostic = "conversion.ambiguous-source-semantics"
+ambiguity_impacts = ["timing", "motion", "scroll"]
+clauses = ["4.4", "11.2"]
+
+[[selection]]
+id = "rpe-compatible-configured-default"
+direction = "source"
+format = "rpe"
+syntax_mode = "strict"
+profile_selection_mode = "compatible"
+configured_default = "rpe.phira.legacy-speed@1.0.0"
+candidate_bindings = [
+  { profile = "rpe.community.divide-bpmfactor@1.0.0", parameters = { speedMode = "modern-eased" } },
+  { profile = "rpe.docs-example.multiply-bpmfactor@1.0.0", parameters = { speedMode = "modern-eased" } },
+  { profile = "rpe.phira.legacy-speed@1.0.0", parameters = {} },
+]
+evidence = ["configured-default:rpe.phira.legacy-speed@1.0.0", "input-fact:bpmfactor=2"]
+canonical_equivalent = false
+repair_enabled = false
+expected_reason = "configured-default"
+expected_profile = "rpe.phira.legacy-speed@1.0.0"
+ambiguity_impacts = ["timing", "motion", "scroll"]
+clauses = ["4.4", "11.2"]
+
+[[selection]]
+id = "repair-cannot-select-rpe-semantics"
+direction = "source"
+format = "rpe"
+syntax_mode = "strict"
+profile_selection_mode = "strict"
+candidate_bindings = [
+  { profile = "rpe.community.divide-bpmfactor@1.0.0", parameters = { speedMode = "modern-eased" } },
+  { profile = "rpe.docs-example.multiply-bpmfactor@1.0.0", parameters = { speedMode = "modern-eased" } },
+]
+evidence = ["input-fact:bpmfactor=2"]
+canonical_equivalent = false
+repair_enabled = true
+expected_reason = "unresolved"
+expected_diagnostic = "conversion.ambiguous-source-semantics"
+ambiguity_impacts = ["timing", "motion", "scroll"]
+clauses = ["3.3", "4.4"]
+
+[[selection]]
+id = "rpe-unit-factor-simple-input-equivalent"
+direction = "source"
+format = "rpe"
+syntax_mode = "strict"
+profile_selection_mode = "strict"
+candidate_bindings = [
+  { profile = "rpe.community.divide-bpmfactor@1.0.0", parameters = { speedMode = "legacy-linear" } },
+  { profile = "rpe.docs-example.multiply-bpmfactor@1.0.0", parameters = { speedMode = "legacy-linear" } },
+  { profile = "rpe.phira.legacy-speed@1.0.0", parameters = {} },
+]
+evidence = ["input-fact:bpmfactor=1", "input-fact:no-speed-easing", "input-fact:no-parent", "input-fact:one-event-layer"]
+canonical_equivalent = true
+repair_enabled = false
+expected_reason = "canonical-equivalent"
+expected_profile = "rpe.community.divide-bpmfactor@1.0.0"
+ambiguity_impacts = []
+clauses = ["4.4", "11.2"]
+
+[[selection]]
+id = "pec-offset-and-cv-strict-ambiguous"
+direction = "source"
+format = "pec"
+syntax_mode = "strict"
+profile_selection_mode = "strict"
+candidate_bindings = [
+  { profile = "pec.extends@1.0.0", parameters = { floorScalePx = "120px" } },
+  { profile = "pec.phira@1.0.0", parameters = { floorScalePx = "120px" } },
+  { profile = "pec.phispler@1.0.0", parameters = { floorScalePx = "120px" } },
+]
+evidence = ["structural-shape:unversioned-pec"]
+canonical_equivalent = false
+repair_enabled = false
+expected_reason = "unresolved"
+expected_diagnostic = "conversion.ambiguous-source-semantics"
+ambiguity_impacts = ["timing", "scroll"]
+clauses = ["4.4", "12.1", "12.2", "12.4"]
+
+[[selection]]
+id = "pec-package-declares-phira"
+direction = "source"
+format = "pec"
+syntax_mode = "strict"
+profile_selection_mode = "strict"
+declared_profile = "pec.phira@1.0.0"
+candidate_bindings = [
+  { profile = "pec.extends@1.0.0", parameters = { floorScalePx = "120px" } },
+  { profile = "pec.phira@1.0.0", parameters = { floorScalePx = "120px" } },
+  { profile = "pec.phispler@1.0.0", parameters = { floorScalePx = "120px" } },
+]
+evidence = ["package-declaration:semanticProfile=pec.phira@1.0.0"]
+canonical_equivalent = false
+repair_enabled = false
+expected_reason = "declared"
+expected_profile = "pec.phira@1.0.0"
+ambiguity_impacts = ["timing", "scroll"]
+clauses = ["4.4", "12.5"]
+
+[[selection]]
+id = "strict-external-target-needs-profile"
+direction = "target"
+format = "pgr"
+syntax_mode = "strict"
+profile_selection_mode = "strict"
+candidate_bindings = [
+  { profile = "pgr.phira.v1@1.0.0", parameters = { floorScalePx = "120px" } },
+  { profile = "pgr.phira.v3@1.0.0", parameters = { floorScalePx = "120px" } },
+]
+evidence = []
+canonical_equivalent = false
+repair_enabled = false
+expected_reason = "unresolved"
+expected_diagnostic = "conversion.target-profile-required"
+ambiguity_impacts = ["timing", "motion", "scroll"]
+clauses = ["4.5", "13"]

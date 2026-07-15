@@ -1,0 +1,126 @@
+#fcs 5.0.0
+format {
+    features: [playable, renderable];
+    profile: publishable;
+}
+meta {
+    title: "Grammar Closure";
+    chartVersion: "1";
+    documentId: "org.fcs.grammar-closure";
+    license: "CC0-1.0";
+    custom: { "suite": "source-grammar", "stable": true };
+}
+contributors {
+    person alice {
+        name: "Alice";
+        identifiers: { "local": "alice" };
+    }
+}
+credits {
+    credit {
+        role: "charter";
+        label: "Chart";
+        contributors: [@alice];
+    }
+}
+resources {
+    audio song {
+        source: "assets/opaque-resource.bin";
+        hash: "sha256:66eb55e69c42345c65021ea9364fc43c61d2151dde67a89dc02362543b289903";
+        mediaType: "audio/ogg";
+    }
+    image cover {
+        source: "assets/opaque-resource.bin";
+        hash: "sha256:66eb55e69c42345c65021ea9364fc43c61d2151dde67a89dc02362543b289903";
+        mediaType: "image/png";
+        colorSpace: "srgb";
+        alpha: "straight";
+        sampling: "linear";
+    }
+}
+artwork {
+    primary: @cover;
+}
+sync {
+    primaryAudio: @song;
+    audioOffset: 100ms;
+    preview: [30s, 45s);
+}
+definitions {
+    const STEP: beat = 1beat;
+    template Note makeTap(at: beat, whichLine: Line) {
+        return tap {
+            line: whichLine;
+            gameplay.time: at;
+            gameplay.side: "above";
+            gameplay.judgeShape.kind: "lineDefault";
+            gameplay.soundPolicy: "default";
+            gameplay.scorePolicy: "default";
+        };
+    }
+}
+tempoMap {
+    0beat -> 120bpm;
+}
+lines {
+    line main {
+        floorScale: 120px;
+        tracks {
+            track fade -> alpha: float {
+                blend: "replace";
+                segments {
+                    [0s, 1s): 1.0 -> 0.5 using "linear";
+                    generate i: int in 0..<1 step 1 {
+                        emit segment {
+                            start: 1s;
+                            end: 2s;
+                            startValue: 0.5;
+                            endValue: 1.0;
+                            interpolation: cubicBezier(0.42, 0.0, 0.58, 1.0);
+                        };
+                    }
+                }
+            }
+        }
+    }
+}
+collections {
+    notes {
+        makeTap(STEP, @main);
+    }
+}
+render profile 1.0.0 {
+    viewport {
+        width: 1920px;
+        height: 1080px;
+        colorSpace: "linear-srgb";
+    }
+    layer foreground {
+        pass: "aboveNotes";
+        space: "world";
+        children {
+            rect marker {
+                origin: vec2(0px, 0px);
+                size: vec2(10px, 10px);
+                fill: solid(#FFFFFFFF);
+            }
+        }
+    }
+}
+extensions {
+    extension("org.fcs.example", 1.0.0) optional {
+        "enabled": true,
+        "strength": 0.5,
+    }
+}
+preserve {
+    source {
+        format: "rpe";
+        version: "170";
+        hash: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    }
+    payload: extension("org.phigros.rpe", 1.0.0) {
+        "encoding": "base64",
+        "raw": "",
+    };
+}

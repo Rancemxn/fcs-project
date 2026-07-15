@@ -1,0 +1,13 @@
+schema_version = 2
+fcbc_version = "2.0.0"
+execution_abi_version = "1.0.0"
+
+[[fixture]]
+id = "minimal-runtime"
+manifest = "minimal-runtime.toml"
+mutations = "mutations.toml"
+
+[[fixture]]
+id = "embedded-resource"
+manifest = "embedded-resource.toml"
+mutations = "embedded-resource-mutations.toml"

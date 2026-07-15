@@ -53,7 +53,7 @@ fn parses_fragment_profile() {
 }
 
 #[test]
-fn parses_chart_tempo_map_with_exact_beats() {
+fn i0_retained_tempo_parser_accepts_mixed_beat_pending_i1_removal() {
     let document = parse_document(
         "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap {\n  0beat -> 180bpm;\n  4.5beat -> 200bpm;\n  [8,1,3]beat -> 220bpm;\n}",
     )
@@ -165,7 +165,7 @@ fn rejects_unclosed_trailing_block_comment() {
 }
 
 #[test]
-fn rejects_invalid_tempo_map_fraction_and_bpm() {
+fn i0_retained_tempo_parser_rejects_bad_mixed_beat_and_bpm() {
     let bad_fraction = parse_document(
         "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { [8,1,0]beat -> 220bpm; }",
     );

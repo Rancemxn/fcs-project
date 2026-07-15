@@ -1,84 +1,386 @@
-schema_version = 1
+schema_version = 2
 conversion_specification_version = "1.0.0"
+rule_registry = "mapping-rules.toml"
+forbidden_rule_ids = ["pec.time.tick2048"]
 
 [[vector]]
-rule_id = "pgr.time.t32"
-source = 32.0
-expected = 1.0
-unit = "beat"
+id = "pgr.source-line-beat.one"
+rule_id = "pgr.time.source-line-beat-t32"
+rule_version = "1.0.0"
+source = { T = "32" }
+expected = "1"
+unit = "source-line-beat"
+clauses = ["8.4", "10.2"]
 
 [[vector]]
-rule_id = "pgr.note-x.unit108"
-source = 1.0
-expected = 108.0
-unit = "px"
-
-[[vector]]
-rule_id = "pgr.line-x.normalized"
-source = 0.75
-expected = 480.0
-unit = "px"
-
-[[vector]]
-rule_id = "pgr.line-y.normalized"
-source = 0.25
-expected = -270.0
-unit = "px"
-
-[[vector]]
-rule_id = "rpe.beat.abc"
-source = [4, 1, 2]
-expected = "9/2"
-unit = "beat"
-
-[[vector]]
-rule_id = "rpe.x.canvas1350"
-source = 675.0
-expected = 960.0
-unit = "px"
-
-[[vector]]
-rule_id = "rpe.y.canvas900"
-source = -450.0
-expected = -540.0
-unit = "px"
-
-[[vector]]
-rule_id = "rpe.speed.scale4_5"
-source = 4.5
-expected = 1.0
-unit = "float"
-
-[[vector]]
-rule_id = "pec.time.tick2048"
-source = 1024.0
+id = "pgr.time.per-line-half-second"
+rule_id = "pgr.time.per-line-bpm"
+rule_version = "1.0.0"
+source = { T = "32", current_line_bpm = "120" }
 expected = "1/2"
-unit = "beat"
-
-[[vector]]
-rule_id = "pec.x.canvas2048"
-source = 2048.0
-expected = 960.0
-unit = "px"
-
-[[vector]]
-rule_id = "pec.y.canvas1400"
-source = 0.0
-expected = -540.0
-unit = "px"
-
-[[vector]]
-rule_id = "pec.offset.bias150ms"
-source = 250.0
-expected = 0.1
 unit = "s"
+clauses = ["8.4", "10.2"]
+
+[[vector]]
+id = "pgr.time.first-line-one-second"
+rule_id = "pgr.time.first-line-bpm"
+rule_version = "1.0.0"
+source = { T = "32", first_line_bpm = "60" }
+expected = "1"
+unit = "s"
+clauses = ["8.4", "10.2"]
+
+[[vector]]
+id = "pgr.tempo.per-line-different-bpm-generates-identity"
+rule_id = "pgr.tempo.per-line-canonical-anchor"
+rule_version = "1.0.0"
+source = { line_bpms = ["120", "180"], declared_global_tempo = "absent" }
+expected = "0beat->60bpm"
+unit = "canonical-tempo-map"
+clauses = ["10.2"]
+
+[[vector]]
+id = "pgr.tempo.first-line-anchor"
+rule_id = "pgr.tempo.first-line-anchor"
+rule_version = "1.0.0"
+source = { line_bpms = ["120", "180"] }
+expected = "0beat->120bpm"
+unit = "canonical-tempo-map"
+clauses = ["10.2"]
+
+[[vector]]
+id = "pgr.note-x.one-unit"
+rule_id = "pgr.note-x.unit108"
+rule_version = "1.0.0"
+source = { x = "1" }
+expected = "108"
+unit = "logical-px"
+clauses = ["8.4", "10.3"]
+
+[[vector]]
+id = "pgr.note-x.phichain-one-eighteenth-width"
+rule_id = "pgr.note-x.unit320_3"
+rule_version = "1.0.0"
+source = { x = "1" }
+expected = "320/3"
+unit = "logical-px"
+clauses = ["8.4", "10.3"]
+
+[[vector]]
+id = "pgr.line-x.three-quarters"
+rule_id = "pgr.line-x.normalized"
+rule_version = "1.0.0"
+source = { x = "0.75" }
+expected = "480"
+unit = "logical-px"
+clauses = ["8.4", "10.3"]
+
+[[vector]]
+id = "pgr.line-y.one-quarter"
+rule_id = "pgr.line-y.normalized"
+rule_version = "1.0.0"
+source = { y = "0.25" }
+expected = "-270"
+unit = "logical-px"
+clauses = ["8.4", "10.3"]
+
+[[vector]]
+id = "pgr.v1-x.truncation-boundary"
+rule_id = "pgr.v1-move-x.trunc1000-div880"
+rule_version = "1.0.0"
+source = { packed = "440500" }
+expected = "0"
+unit = "logical-px"
+clauses = ["8.4", "10.3"]
+
+[[vector]]
+id = "pgr.v1-x.rounding-boundary"
+rule_id = "pgr.v1-move-x.round1000-div880"
+rule_version = "1.0.0"
+source = { packed = "440500" }
+expected = "24/11"
+unit = "logical-px"
+clauses = ["8.4", "10.3"]
+
+[[vector]]
+id = "pgr.v1-y.base520-center"
+rule_id = "pgr.v1-move-y.mod1000-div520"
+rule_version = "1.0.0"
+source = { packed = "440260" }
+expected = "0"
+unit = "logical-px"
+clauses = ["8.4", "10.3"]
+
+[[vector]]
+id = "pgr.v1-y.base530-difference"
+rule_id = "pgr.v1-move-y.mod1000-div530"
+rule_version = "1.0.0"
+source = { packed = "440260" }
+expected = "-540/53"
+unit = "logical-px"
+clauses = ["8.4", "10.3"]
+
+[[vector]]
+id = "pgr.offset.seconds"
+rule_id = "pgr.offset.seconds"
+rule_version = "1.0.0"
+source = { offset_seconds = "0.125" }
+expected = "1/8"
+unit = "s"
+clauses = ["8.4", "10.5"]
+
+[[vector]]
+id = "rpe.beat.strict-fraction"
+rule_id = "rpe.beat.abc-strict"
+rule_version = "1.0.0"
+source = { a = 4, b = 1, c = 2 }
+expected = "9/2"
+unit = "source-beat"
+clauses = ["8.5", "11.1"]
+
+[[vector]]
+id = "rpe.beat.legacy-zero-zero"
+rule_id = "rpe.beat.abc-zero-zero-integer"
+rule_version = "1.0.0"
+source = { a = 4, b = 0, c = 0 }
+expected = "4"
+unit = "source-beat"
+clauses = ["8.5", "11.1"]
+
+[[vector]]
+id = "rpe.bpmfactor.divide"
+rule_id = "rpe.time.bpmfactor-divide"
+rule_version = "1.0.0"
+source = { beat_delta = "1", bpm = "120", bpmfactor = "2" }
+expected = "1"
+unit = "s"
+clauses = ["8.5", "11.2"]
+
+[[vector]]
+id = "rpe.bpmfactor.multiply"
+rule_id = "rpe.time.bpmfactor-multiply"
+rule_version = "1.0.0"
+source = { beat_delta = "1", bpm = "120", bpmfactor = "2" }
+expected = "1/4"
+unit = "s"
+clauses = ["8.5", "11.2"]
+
+[[vector]]
+id = "rpe.bpmfactor.ignore"
+rule_id = "rpe.time.bpmfactor-ignore"
+rule_version = "1.0.0"
+source = { beat_delta = "1", bpm = "120", bpmfactor = "2" }
+expected = "1/2"
+unit = "s"
+clauses = ["8.5", "11.2"]
+
+[[vector]]
+id = "rpe.x.half-width"
+rule_id = "rpe.x.canvas1350"
+rule_version = "1.0.0"
+source = { x = "675" }
+expected = "960"
+unit = "logical-px"
+clauses = ["8.5", "11.4"]
+
+[[vector]]
+id = "rpe.y.negative-half-height"
+rule_id = "rpe.y.canvas900"
+rule_version = "1.0.0"
+source = { y = "-450" }
+expected = "-540"
+unit = "logical-px"
+clauses = ["8.5", "11.4"]
+
+[[vector]]
+id = "rpe.alpha.half"
+rule_id = "rpe.alpha.byte255"
+rule_version = "1.0.0"
+source = { alpha = "127.5" }
+expected = "1/2"
+unit = "linear-alpha"
+clauses = ["8.5", "11.4"]
+
+[[vector]]
+id = "rpe.offset.milliseconds"
+rule_id = "rpe.offset.milliseconds"
+rule_version = "1.0.0"
+source = { offset_milliseconds = "125" }
+expected = "1/8"
+unit = "s"
+clauses = ["8.5", "11.4"]
+
+[[vector]]
+id = "rpe.speed.scale4_5"
+rule_id = "rpe.speed.scale4_5"
+rule_version = "1.0.0"
+source = { speed = "4.5" }
+expected = "1"
+unit = "canonical-speed"
+clauses = ["8.5", "11.3"]
+
+[[vector]]
+id = "rpe.note.fake-nonzero"
+rule_id = "rpe.note-fake.nonzero"
+rule_version = "1.0.0"
+source = { is_fake = 2 }
+expected = "judgment.enabled=false"
+unit = "gameplay-policy"
+clauses = ["8.5", "11.4"]
+
+[[vector]]
+id = "rpe.note.visible-time-absolute"
+rule_id = "rpe.note-visible-time.phira"
+rule_version = "1.0.0"
+source = { note_chart_time_seconds = "5", visible_time_seconds = "2" }
+expected = "3"
+unit = "visible-from-seconds"
+clauses = ["8.5", "11.4"]
+
+[[vector]]
+id = "rpe.note.alpha-256-saturates"
+rule_id = "rpe.note-alpha.phira-u16"
+rule_version = "1.0.0"
+source = { alpha = 256 }
+expected = "1"
+unit = "linear-alpha"
+clauses = ["8.5", "11.4"]
+
+[[vector]]
+id = "rpe.note.size-uniform"
+rule_id = "rpe.note-size.phira-uniform"
+rule_version = "1.0.0"
+source = { size = "1.5" }
+expected = "[3/2,3/2]"
+unit = "vec2-scale"
+clauses = ["8.5", "11.4"]
+
+[[vector]]
+id = "rpe.note.y-offset-speed-coupling"
+rule_id = "rpe.note-y-offset.phira-speed"
+rule_version = "1.0.0"
+source = { y_offset = "10", note_speed = "2" }
+expected = "24"
+unit = "logical-px"
+clauses = ["8.5", "11.4"]
+
+[[vector]]
+id = "pec.time.direct-decimal-beat"
+rule_id = "pec.time.direct-beat"
+rule_version = "1.0.0"
+source = { time = "1.25" }
+expected = "5/4"
+unit = "source-beat"
+clauses = ["8.6", "12.1"]
+
+[[vector]]
+id = "pec.note-x.positive-half-width"
+rule_id = "pec.note-x.relative2048"
+rule_version = "1.0.0"
+source = { x = "1024" }
+expected = "960"
+unit = "logical-px"
+clauses = ["8.6", "12.2"]
+
+[[vector]]
+id = "pec.line-x.center"
+rule_id = "pec.line-x.canvas2048"
+rule_version = "1.0.0"
+source = { x = "1024" }
+expected = "0"
+unit = "logical-px"
+clauses = ["8.6", "12.2"]
+
+[[vector]]
+id = "pec.line-y.center"
+rule_id = "pec.line-y.canvas1400"
+rule_version = "1.0.0"
+source = { y = "700" }
+expected = "0"
+unit = "logical-px"
+clauses = ["8.6", "12.2"]
+
+[[vector]]
+id = "pec.offset.bias150"
+rule_id = "pec.offset.bias150ms"
+rule_version = "1.0.0"
+source = { raw_offset_milliseconds = "250" }
+expected = "1/10"
+unit = "s"
+clauses = ["8.6", "12.2"]
+
+[[vector]]
+id = "pec.offset.bias175"
+rule_id = "pec.offset.bias175ms"
+rule_version = "1.0.0"
+source = { raw_offset_milliseconds = "250" }
+expected = "3/40"
+unit = "s"
+clauses = ["8.6", "12.2"]
+
+[[vector]]
+id = "pec.cv.scale5_85"
+rule_id = "pec.cv.scale5_85"
+rule_version = "1.0.0"
+source = { cv = "5.85" }
+expected = "1"
+unit = "source-scroll-velocity"
+clauses = ["8.6", "12.4"]
+
+[[vector]]
+id = "pec.cv.scale7"
+rule_id = "pec.cv.scale7"
+rule_version = "1.0.0"
+source = { cv = "7" }
+expected = "1"
+unit = "source-scroll-velocity"
+clauses = ["8.6", "12.4"]
+
+[[vector]]
+id = "pec.cv.rpe-height-chain"
+rule_id = "pec.cv.rpe-height900"
+rule_version = "1.0.0"
+source = { cv = "7", rpe_height = "900", pec_height = "1400", rpe_speed_scale = "4.5" }
+expected = "1"
+unit = "canonical-speed"
+clauses = ["8.6", "12.4"]
 
 [[invalid]]
-rule_id = "rpe.beat.abc"
-source = [1, 1, 0]
-diagnostic = "numeric.divide-by-zero"
+id = "rpe.beat.strict-zero-denominator"
+rule_id = "rpe.beat.abc-strict"
+rule_version = "1.0.0"
+source = { a = 1, b = 0, c = 0 }
+diagnostic = "conversion.source-invalid"
+clauses = ["8.5", "11.1"]
 
 [[invalid]]
-rule_id = "pgr.floor-scale"
-reason = "engine capability profile missing floorScalePx"
-status = "preserved-only"
+id = "rpe.beat.nonzero-over-zero"
+rule_id = "rpe.beat.abc-zero-zero-integer"
+rule_version = "1.0.0"
+source = { a = 1, b = 1, c = 0 }
+diagnostic = "conversion.source-invalid"
+clauses = ["8.5", "11.1"]
+
+[[invalid]]
+id = "pgr.v1.negative-packed"
+rule_id = "pgr.v1-move-x.trunc1000-div880"
+rule_version = "1.0.0"
+source = { packed = "-1" }
+diagnostic = "conversion.source-invalid"
+clauses = ["8.4", "10.3"]
+
+[[invalid]]
+id = "pgr.floor-scale.parameter-missing"
+rule_id = "pgr.speed.integrate-source-velocity"
+rule_version = "1.0.0"
+source = { floor_scale_parameter = "missing" }
+diagnostic = "conversion.profile-parameter-invalid"
+clauses = ["3.2", "10.4"]
+
+[[invalid]]
+id = "pec.negative-alpha.extension-binding-missing"
+rule_id = "pec.alpha.negative-phira-extension"
+rule_version = "1.0.0"
+source = { alpha = "-1", negative_alpha_extension = "missing" }
+diagnostic = "conversion.profile-parameter-invalid"
+clauses = ["3.2", "12.4"]

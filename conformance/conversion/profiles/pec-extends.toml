@@ -1,0 +1,39 @@
+schema_version = 1
+id = "pec.extends"
+version = "1.0.0"
+format = "pec"
+directions = ["source"]
+profile_class = "compatibility-characterization"
+strict_eligible = false
+producer = "Pinned sim-phi/extends PEC converter behavior"
+runtime = "extends-pec-import"
+format_version_policy = "absent"
+format_versions = []
+parser_dialects = ["pec.token-stream@1.0.0"]
+parameters = [{ name = "floorScalePx", value_type = "length", required_when = "always", constraint = "finite-positive", allowed_values = [] }]
+mapping_rules = [
+  "pec.time.direct-beat@1.0.0",
+  "pec.note-x.relative2048@1.0.0",
+  "pec.line-x.canvas2048@1.0.0",
+  "pec.line-y.canvas1400@1.0.0",
+  "pec.rotation.clockwise-deg@1.0.0",
+  "pec.alpha.byte255@1.0.0",
+  "pec.offset.bias175ms@1.0.0",
+  "pec.cv.scale7@1.0.0",
+  "pec.event.stateful-current-value@1.0.0",
+]
+contract = [
+  "All command times and bp positions are direct exact decimal Beat values; raw offset uses the 175 millisecond bias and raw cv uses divisor 7.",
+  "Commands are recognized from a global whitespace token stream rather than one physical command per line.",
+  "The pinned converter samples easing at integer source-time steps and clamps or disables some invalid events; those actions are approximation or Repair, not source semantics.",
+  "Negative alpha has no exact behavior in this characterization and cannot be silently clamped for strict conversion.",
+]
+known_limitations = [
+  "Integer-step easing expansion is an approximation with no implicit authorization.",
+  "Negative alpha and invalid intervals are warning/clamp/disable paths rather than exact semantics.",
+]
+report_categories = ["conversion.approximation-not-authorized", "conversion.compatibility-characterization"]
+evidence = [
+  "refer/chart/extends@00a6602e9b837dba4453aa758cdab06cafc79162:src/pec/pec2json.ts",
+  "refer/chart/extends@00a6602e9b837dba4453aa758cdab06cafc79162:src/pec/LinePec.ts",
+]

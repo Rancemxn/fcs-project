@@ -1,0 +1,32 @@
+#fcs 5.0.0
+format { profile: chart; }
+definitions {
+    template Note makeTap(at: beat, whichLine: Line) {
+        let x: length = 64px;
+        return tap {
+            id: "equivalent-note";
+            line: whichLine;
+            gameplay.time: at;
+            gameplay.side: "above";
+            presentation.positionX: x;
+        };
+    }
+}
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+    notes {
+        makeTap(1beat, @main);
+    }
+}
+preserve {
+    source {
+        format: "rpe";
+        version: "170";
+        hash: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    }
+    payload: extension("org.phigros.rpe", 1.0.0) {
+        "encoding": "base64",
+        "raw": "",
+    };
+}

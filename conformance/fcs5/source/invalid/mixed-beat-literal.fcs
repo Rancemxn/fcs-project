@@ -1,0 +1,5 @@
+#fcs 5.0.0
+format { profile: fragment; }
+tempoMap {
+    [8,1,3]beat -> 120bpm;
+}

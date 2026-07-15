@@ -1,0 +1,4 @@
+#fcs 5.0.0
+format { profile: fragment; }
+meta { title: "first"; }
+meta { title: "second"; }

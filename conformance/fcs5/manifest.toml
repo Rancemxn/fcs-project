@@ -1,4 +1,4 @@
-schema_version = 1
+schema_version = 2
 fcs_version = "5.0.0"
 
 [[fixture]]
@@ -7,6 +7,20 @@ path = "source/valid/minimal-fragment.fcs"
 stage = "parse"
 expect = "success"
 clauses = ["2.2", "5.2"]
+
+[[fixture]]
+id = "source.valid.complete-source-grammar"
+path = "source/valid/complete-source-grammar.fcs"
+stage = "parse"
+expect = "success"
+clauses = ["2.8", "2.10", "5.1", "5.2", "6.6", "7.1", "7.2", "7.3", "7.4", "8.2", "9.1", "9.4", "12.2", "15.1", "15.2", "Appendix B"]
+
+[[fixture]]
+id = "source.valid.escaped-nul-string"
+path = "source/valid/escaped-nul-string.fcs"
+stage = "parse"
+expect = "success"
+clauses = ["2.1", "2.6"]
 
 [[fixture]]
 id = "source.valid.minimal-chart"
@@ -46,6 +60,39 @@ expect = "success"
 clauses = ["13.1", "13.3"]
 
 [[fixture]]
+id = "source.valid.canonical-equivalent-direct"
+path = "source/valid/canonical-equivalent-direct.fcs"
+stage = "canonical"
+expect = "success"
+expected = "expected/canonical-equivalent.json"
+clauses = ["1.1", "6.8", "17", "18"]
+
+[[fixture]]
+id = "source.valid.canonical-equivalent-template"
+path = "source/valid/canonical-equivalent-template.fcs"
+stage = "canonical"
+expect = "success"
+expected = "expected/canonical-equivalent.json"
+clauses = ["1.1", "6.8", "15.2", "17", "18"]
+
+[[fixture]]
+id = "source.valid.exact-expression-dag"
+path = "source/valid/exact-expression-dag.fcs"
+stage = "canonical"
+expect = "success"
+expected = "expected/exact-expression-dag.json"
+clauses = ["13.1", "13.3", "13.4", "14.1", "14.2", "17"]
+
+[[fixture]]
+id = "source.valid.note-policies"
+path = "source/valid/note-policies.fcs"
+workspace_root = "source/valid"
+stage = "canonical"
+expect = "success"
+expected = "expected/note-policies.json"
+clauses = ["7.3", "12.2", "17"]
+
+[[fixture]]
 id = "source.valid.template-if-with"
 path = "source/valid/template-if-with.fcs"
 stage = "elaborate"
@@ -72,6 +119,7 @@ clauses = ["11.3", "11.4"]
 [[fixture]]
 id = "source.valid.metadata-credits-resources-sync"
 path = "source/valid/metadata-credits-resources-sync.fcs"
+workspace_root = "source/valid"
 stage = "canonical"
 expect = "success"
 expected = "expected/metadata-credits-resources-sync.json"
@@ -84,6 +132,70 @@ stage = "parse"
 expect = "error"
 diagnostic = "version.missing-header"
 clauses = ["2.2"]
+
+[[fixture]]
+id = "source.invalid.header-extra-space"
+path = "source/invalid/header-extra-space.fcs"
+stage = "parse"
+expect = "error"
+diagnostic = "version.invalid"
+clauses = ["2.2", "Appendix B"]
+
+[[fixture]]
+id = "source.invalid.header-leading-zero"
+path = "source/invalid/header-leading-zero.fcs"
+stage = "parse"
+expect = "error"
+diagnostic = "version.invalid"
+clauses = ["2.2", "Appendix B"]
+
+[[fixture]]
+id = "source.invalid.duplicate-top-level-block"
+path = "source/invalid/duplicate-top-level-block.fcs"
+stage = "parse"
+expect = "error"
+diagnostic = "name.duplicate"
+clauses = ["1.4", "5.1", "Appendix C"]
+
+[[fixture]]
+id = "source.invalid.nested-generator"
+path = "source/invalid/nested-generator.fcs"
+stage = "parse"
+expect = "error"
+diagnostic = "compile-time.nested-generator"
+clauses = ["1.4", "6.6", "Appendix B", "Appendix C"]
+
+[[fixture]]
+id = "source.invalid.misplaced-generator"
+path = "source/invalid/misplaced-generator.fcs"
+stage = "parse"
+expect = "error"
+diagnostic = "compile-time.misplaced-generator"
+clauses = ["1.4", "6.6", "Appendix B", "Appendix C"]
+
+[[fixture]]
+id = "source.invalid.unclosed-extension-payload"
+path = "source/invalid/unclosed-extension-payload.fcs"
+stage = "parse"
+expect = "error"
+diagnostic = "syntax.invalid-token"
+clauses = ["15.1", "Appendix B"]
+
+[[fixture]]
+id = "source.invalid.mixed-beat-literal"
+path = "source/invalid/mixed-beat-literal.fcs"
+stage = "parse"
+expect = "error"
+diagnostic = "syntax.invalid-token"
+clauses = ["2.5", "3.2", "8.2", "Appendix B"]
+
+[[fixture]]
+id = "source.invalid.unresolved-schema-enum"
+path = "source/invalid/unresolved-schema-enum.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "name.unknown"
+clauses = ["2.4", "2.10", "6.1"]
 
 [[fixture]]
 id = "source.invalid.bare-range"
@@ -150,12 +262,39 @@ diagnostic = "schema.dynamic-field-forbidden"
 clauses = ["4.5", "12.2"]
 
 [[fixture]]
+id = "source.invalid.note-policy-disabled-sound"
+path = "source/invalid/note-policy-disabled-sound.fcs"
+workspace_root = "source/invalid"
+stage = "canonical"
+expect = "error"
+diagnostic = "schema.non-constructible"
+clauses = ["7.3", "12.2"]
+
+[[fixture]]
 id = "source.invalid.unknown-resource"
 path = "source/invalid/unknown-resource.fcs"
 stage = "canonical"
 expect = "error"
 diagnostic = "resource.unknown-reference"
 clauses = ["7.3"]
+
+[[fixture]]
+id = "source.invalid.resource-path-escape"
+path = "source/invalid/resource-path-escape.fcs"
+workspace_root = "source/invalid"
+stage = "canonical"
+expect = "error"
+diagnostic = "resource.unknown-reference"
+clauses = ["1.4", "7.3", "17"]
+
+[[fixture]]
+id = "source.invalid.resource-hash-mismatch"
+path = "source/invalid/resource-hash-mismatch.fcs"
+workspace_root = "source/invalid"
+stage = "canonical"
+expect = "error"
+diagnostic = "resource.hash-mismatch"
+clauses = ["1.4", "7.3", "17"]
 
 [[fixture]]
 id = "source.invalid.generator-budget"

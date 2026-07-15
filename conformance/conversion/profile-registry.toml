@@ -1,0 +1,123 @@
+schema_version = 1
+conversion_specification_version = "1.0.0"
+hash_algorithm = "sha256"
+
+[[profile]]
+id = "pgr.phira.v1"
+version = "1.0.0"
+format = "pgr"
+directions = ["source", "target"]
+profile_class = "semantic"
+strict_eligible = true
+path = "profiles/pgr-phira-v1.toml"
+content_sha256 = "f805172d2f15dfd93bf1086e638d4fa3487cf3c26218117511e3f2c1f5955ada"
+
+[[profile]]
+id = "pgr.phira.v3"
+version = "1.0.0"
+format = "pgr"
+directions = ["source", "target"]
+profile_class = "semantic"
+strict_eligible = true
+path = "profiles/pgr-phira-v3.toml"
+content_sha256 = "8b4f8b1bbe2a40b6bab84b968e21032a4f3dc3aa9a2ce86ccba599ba36b55071"
+
+[[profile]]
+id = "pgr.phichain-import.v1"
+version = "1.0.0"
+format = "pgr"
+directions = ["source"]
+profile_class = "compatibility-characterization"
+strict_eligible = false
+path = "profiles/pgr-phichain-import-v1.toml"
+content_sha256 = "bea7ac8adadd83ffb7ce17d3c3893b5b5bddfc63258310f8cc1f22cc27149f2b"
+
+[[profile]]
+id = "pgr.phichain-import.v3"
+version = "1.0.0"
+format = "pgr"
+directions = ["source"]
+profile_class = "compatibility-characterization"
+strict_eligible = false
+path = "profiles/pgr-phichain-import-v3.toml"
+content_sha256 = "5c288daa81f6e595a22ced62278172954e5a9799cc2cbb4d61ab7fe888240f5e"
+
+[[profile]]
+id = "rpe.community.divide-bpmfactor"
+version = "1.0.0"
+format = "rpe"
+directions = ["source", "target"]
+profile_class = "evidence-profile"
+strict_eligible = true
+path = "profiles/rpe-community-divide-bpmfactor.toml"
+content_sha256 = "5c12a0b4fb2d2d6c3e036dd2fd3766d97fb1ebc8979e831c30bfcca023446bdb"
+
+[[profile]]
+id = "rpe.docs-example.multiply-bpmfactor"
+version = "1.0.0"
+format = "rpe"
+directions = ["source", "target"]
+profile_class = "evidence-profile"
+strict_eligible = true
+path = "profiles/rpe-docs-example-multiply-bpmfactor.toml"
+content_sha256 = "0a4e2d5d0f72f13c617ce5c98aaa3387e78e33ad90cee4e44eee776877a1f1b6"
+
+[[profile]]
+id = "rpe.phira.legacy-speed"
+version = "1.0.0"
+format = "rpe"
+directions = ["source", "target"]
+profile_class = "semantic"
+strict_eligible = true
+path = "profiles/rpe-phira-legacy-speed.toml"
+content_sha256 = "4f5e56a68329a92fa72b9b64ed60633f250e5d3668e093c477d534fe2b731b81"
+
+[[profile]]
+id = "rpe.phira.rpe170-speed"
+version = "1.0.0"
+format = "rpe"
+directions = ["source", "target"]
+profile_class = "semantic"
+strict_eligible = true
+path = "profiles/rpe-phira-rpe170-speed.toml"
+content_sha256 = "cc84ba0810ddf76d53957d67f808baa87197ac4ba1fbb620c24209222ada1e35"
+
+[[profile]]
+id = "rpe.phichain-import"
+version = "1.0.0"
+format = "rpe"
+directions = ["source"]
+profile_class = "compatibility-characterization"
+strict_eligible = false
+path = "profiles/rpe-phichain-import.toml"
+content_sha256 = "08dcb52c73e861feaef9d223331706a6fffbd83a2535727154b1642a7668b000"
+
+[[profile]]
+id = "pec.phira"
+version = "1.0.0"
+format = "pec"
+directions = ["source", "target"]
+profile_class = "semantic"
+strict_eligible = true
+path = "profiles/pec-phira.toml"
+content_sha256 = "04f8160c6f58575b493a77d0c5d4e5c7d3c4f9859d3700220ffc3b610cbddb22"
+
+[[profile]]
+id = "pec.extends"
+version = "1.0.0"
+format = "pec"
+directions = ["source"]
+profile_class = "compatibility-characterization"
+strict_eligible = false
+path = "profiles/pec-extends.toml"
+content_sha256 = "dc99ce91624c44f9570c7309990fc7c414039491f154673e8a4d455c93249b55"
+
+[[profile]]
+id = "pec.phispler"
+version = "1.0.0"
+format = "pec"
+directions = ["source"]
+profile_class = "compatibility-characterization"
+strict_eligible = false
+path = "profiles/pec-phispler.toml"
+content_sha256 = "20e95a69d11da566c815362b8cbfe8bdfc0326601c7398bd3dd0266e011962a5"

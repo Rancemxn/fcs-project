@@ -1,0 +1,50 @@
+schema_version = 1
+id = "rpe.phira.rpe170-speed"
+version = "1.0.0"
+format = "rpe"
+directions = ["source", "target"]
+profile_class = "semantic"
+strict_eligible = true
+producer = "RPE interpreted by pinned Phira with useRpe170Speed enabled"
+runtime = "phira-rpe-rpe170-option"
+format_version_policy = "evidence-only"
+format_versions = []
+parser_dialects = ["rpe.json.strict@1.0.0", "rpe.json.compatible@1.0.0"]
+parameters = [{ name = "rpeVersionEra", value_type = "string-enum", required_when = "source-version-absent", constraint = "one-of", allowed_values = ["pre170", "at-least-170"] }]
+mapping_rules = [
+  "rpe.beat.abc-strict@1.0.0",
+  "rpe.time.bpmfactor-ignore@1.0.0",
+  "rpe.x.canvas1350@1.0.0",
+  "rpe.y.canvas900@1.0.0",
+  "rpe.alpha.byte255@1.0.0",
+  "rpe.offset.milliseconds@1.0.0",
+  "rpe.rotation.clockwise-deg@1.0.0",
+  "rpe.speed.scale4_5@1.0.0",
+  "rpe.layers.additive@1.0.0",
+  "rpe.rotate-missing.false@1.0.0",
+  "rpe.speed.phira-legacy-derivative@1.0.0",
+  "rpe.speed.phira-modern-eased@1.0.0",
+  "rpe.note-fake.nonzero@1.0.0",
+  "rpe.note-side.equals1@1.0.0",
+  "rpe.note-visible-time.phira@1.0.0",
+  "rpe.note-alpha.phira-u16@1.0.0",
+  "rpe.note-size.phira-uniform@1.0.0",
+  "rpe.note-y-offset.phira-speed@1.0.0",
+  "rpe.hitsound.phira-resource-root@1.0.0",
+]
+contract = [
+  "Raw bpmfactor is ignored but retained as provenance; all Beat-timed values use BPMList directly.",
+  "Event layers add in ascending layer index; absent rotateWithFather means false.",
+  "With useRpe170Speed enabled, explicit RPEVersion below 170 uses derivative speed semantics and version at least 170 eases speed directly before integration.",
+  "A parser-invented default RPEVersion cannot select the branch; an explicit binding parameter is required when source evidence is absent.",
+  "Any nonzero isFake is fake; custom hitsound and texture paths resolve from the declared package resource root.",
+  "Note visibleTime, alpha, size and yOffset follow the pinned Phira presentation rules rather than documentation defaults.",
+]
+known_limitations = [
+  "Ignoring non-unit bpmfactor is a runtime interpretation, not evidence that the source field is meaningless.",
+]
+report_categories = ["conversion.ignored-source-semantic-field", "conversion.runtime-option-bound"]
+evidence = [
+  "refer/chart/phira@824e24b97af53c2e14c4e2dfa13ecd36d87c9e06:prpr/src/parse/rpe.rs",
+  "refer/chart/phira@824e24b97af53c2e14c4e2dfa13ecd36d87c9e06:prpr/src/info.rs",
+]

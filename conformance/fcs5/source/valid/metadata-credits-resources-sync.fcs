@@ -15,15 +15,15 @@ contributors {
 }
 credits {
     credit {
-        role: charter;
+        role: "charter";
         label: "谱面";
         contributors: [@alice];
     }
 }
 resources {
     binary empty {
-        source: "data:application/octet-stream;base64,";
-        hash: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        source: "assets/opaque-resource.bin";
+        hash: "sha256:66eb55e69c42345c65021ea9364fc43c61d2151dde67a89dc02362543b289903";
         mediaType: "application/octet-stream";
     }
 }

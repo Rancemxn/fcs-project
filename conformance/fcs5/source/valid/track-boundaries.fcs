@@ -8,13 +8,13 @@ lines {
         alpha: 1.0;
         tracks {
             track fade -> alpha: float {
-                blend: replace;
+                blend: "replace";
                 priority: 0;
-                fill: base;
-                extrapolateBefore: base;
-                extrapolateAfter: holdAfter;
+                fill: "base";
+                extrapolateBefore: "base";
+                extrapolateAfter: "holdAfter";
                 segments {
-                    [0s, 1s): 1.0 -> 0.5 using linear;
+                    [0s, 1s): 1.0 -> 0.5 using "linear";
                     point 1s: 0.5;
                 }
             }

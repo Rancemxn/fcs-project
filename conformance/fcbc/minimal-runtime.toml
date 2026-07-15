@@ -1,99 +1,111 @@
-schema_version = 1
+schema_version = 2
+id = "minimal-runtime"
 fcbc_version = "2.0.0"
 execution_abi_version = "1.0.0"
 source_fcs_version = "5.0.0"
 container_profile = "runtime"
 document_profile = "fragment"
+chart_count = 1
+resource_count = 0
+exact_descriptors_only = true
 path = "minimal-runtime.hex"
-decoded_length = 804
-sha256 = "461b6bf2a1cf5e99ad0e81fb01d4621f149dd0a54f8eff403bf4924dda837f6c"
+decoded_length = 864
+sha256 = "504fbdb039b386854f7551dd5ea3edf6f324cadbaaabdb141594efe4ecc7fb19"
 
 [[section]]
 type = 1
 name = "StringTable"
-offset = 648
+offset = 688
 length = 8
 crc32 = "6522df69"
 
 [[section]]
 type = 2
 name = "ConstantPool"
-offset = 656
+offset = 696
 length = 4
 crc32 = "2144df1c"
+
 [[section]]
 type = 3
 name = "Meta"
-offset = 664
-length = 24
-crc32 = "016062d3"
+offset = 704
+length = 40
+crc32 = "c9a0b53d"
 
 [[section]]
 type = 4
 name = "Contributors"
-offset = 688
+offset = 744
 length = 4
 crc32 = "2144df1c"
 
 [[section]]
 type = 5
 name = "Credits"
-offset = 696
+offset = 752
 length = 4
 crc32 = "2144df1c"
 
 [[section]]
 type = 6
 name = "Resources"
-offset = 704
+offset = 760
 length = 4
 crc32 = "2144df1c"
 
 [[section]]
 type = 7
 name = "Sync"
-offset = 712
+offset = 768
 length = 48
 crc32 = "6ea5c831"
 
 [[section]]
 type = 8
 name = "TempoMap"
-offset = 760
+offset = 816
 length = 4
 crc32 = "2144df1c"
 
 [[section]]
 type = 9
 name = "Lines"
-offset = 768
+offset = 824
 length = 4
 crc32 = "2144df1c"
 
 [[section]]
 type = 10
 name = "Notes"
-offset = 776
+offset = 832
 length = 4
 crc32 = "2144df1c"
 
 [[section]]
 type = 11
 name = "Tracks"
-offset = 784
+offset = 840
 length = 4
 crc32 = "2144df1c"
 
 [[section]]
 type = 12
 name = "Expressions"
-offset = 792
+offset = 848
 length = 4
 crc32 = "2144df1c"
 
 [[section]]
 type = 13
 name = "Distance"
-offset = 800
+offset = 856
 length = 4
 crc32 = "2144df1c"
+
+[[section]]
+type = 20
+name = "ResourceData"
+offset = 864
+length = 0
+crc32 = "00000000"

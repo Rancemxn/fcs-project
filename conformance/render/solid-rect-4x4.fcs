@@ -5,12 +5,12 @@ render profile 1.0.0 {
     viewport {
         width: 4px;
         height: 4px;
-        colorSpace: linear-srgb;
+        colorSpace: "linear-srgb";
     }
     layer main {
-        pass: overlay;
+        pass: "overlay";
         zOrder: 0;
-        space: screen;
+        space: "screen";
         children {
             rect full {
                 origin: vec2(-2px, -2px);

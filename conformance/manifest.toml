@@ -1,5 +1,5 @@
-schema_version = 1
-freeze_baseline = "2026-07-14"
+schema_version = 2
+candidate_baseline = "2026-07-15-s15-cross-spec-closure"
 
 [[suite]]
 id = "fcs-core-source"
@@ -17,8 +17,7 @@ manifest = "fcs5/expected/numeric-vectors.toml"
 id = "fcbc-container"
 specification = "FCBC Container Format"
 version = "2.0.0"
-manifest = "fcbc/minimal-runtime.toml"
-mutations = "fcbc/mutations.toml"
+manifest = "fcbc/manifest.toml"
 
 [[suite]]
 id = "execution-abi"
@@ -36,4 +35,4 @@ manifest = "render/manifest.toml"
 id = "conversion"
 specification = "FCS Conversion Specification"
 version = "1.0.0"
-manifest = "conversion/mapping-vectors.toml"
+manifest = "conversion/manifest.toml"

@@ -1,0 +1,43 @@
+schema_version = 1
+id = "rpe.community.divide-bpmfactor"
+version = "1.0.0"
+format = "rpe"
+directions = ["source", "target"]
+profile_class = "evidence-profile"
+strict_eligible = true
+producer = "Community-document interpretation using BPM divided by bpmfactor"
+runtime = "rpe-community-divide"
+format_version_policy = "evidence-only"
+format_versions = []
+parser_dialects = ["rpe.json.strict@1.0.0", "rpe.json.compatible@1.0.0"]
+parameters = [{ name = "speedMode", value_type = "string-enum", required_when = "always", constraint = "one-of", allowed_values = ["legacy-linear", "legacy-derivative", "modern-eased"] }]
+mapping_rules = [
+  "rpe.beat.abc-strict@1.0.0",
+  "rpe.time.bpmfactor-divide@1.0.0",
+  "rpe.x.canvas1350@1.0.0",
+  "rpe.y.canvas900@1.0.0",
+  "rpe.alpha.byte255@1.0.0",
+  "rpe.offset.milliseconds@1.0.0",
+  "rpe.rotation.clockwise-deg@1.0.0",
+  "rpe.speed.scale4_5@1.0.0",
+  "rpe.layers.additive@1.0.0",
+  "rpe.rotate-missing.false@1.0.0",
+  "rpe.speed.phira-legacy-player@1.0.0",
+  "rpe.speed.phira-legacy-derivative@1.0.0",
+  "rpe.speed.phira-modern-eased@1.0.0",
+]
+contract = [
+  "BPMList remains the canonical global tempo source; each line maps every Beat-timed value with effective BPM equal to BPMList BPM divided by bpmfactor.",
+  "Event layers add in ascending layer index and retain within-layer source order.",
+  "Absent rotateWithFather means false; explicit values win.",
+  "The required speedMode parameter chooses one complete instantaneous-speed and distance interpretation.",
+  "Parser compatibility for missing/null layers and number/string RPEVersion remains separate from this semantic profile.",
+]
+known_limitations = [
+  "Community documentation contains conflicting formulas; this profile represents only the divide interpretation.",
+]
+report_categories = ["conversion.profile-evidence-conflict"]
+evidence = [
+  "refer/chart/phira-docs@909a4913d726c13af8ea6904501faea6f91bd2ae:src/chart-standard/chart-format/rpe/beat.md",
+  "refer/chart/phira-docs@909a4913d726c13af8ea6904501faea6f91bd2ae:src/chart-standard/chart-format/rpe/judgeLine.md",
+]

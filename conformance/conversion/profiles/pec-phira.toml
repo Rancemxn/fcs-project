@@ -1,0 +1,44 @@
+schema_version = 1
+id = "pec.phira"
+version = "1.0.0"
+format = "pec"
+directions = ["source", "target"]
+profile_class = "semantic"
+strict_eligible = true
+producer = "PEC interpreted by the pinned Phira runtime family"
+runtime = "phira-pec"
+format_version_policy = "absent"
+format_versions = []
+parser_dialects = ["pec.line-command@1.0.0"]
+parameters = [
+  { name = "floorScalePx", value_type = "length", required_when = "always", constraint = "finite-positive", allowed_values = [] },
+  { name = "negativeAlphaExtension", value_type = "extension-ref", required_when = "negative-alpha-present", constraint = "registered-required-extension", allowed_values = [] },
+]
+mapping_rules = [
+  "pec.time.direct-beat@1.0.0",
+  "pec.note-x.relative2048@1.0.0",
+  "pec.line-x.canvas2048@1.0.0",
+  "pec.line-y.canvas1400@1.0.0",
+  "pec.rotation.clockwise-deg@1.0.0",
+  "pec.alpha.byte255@1.0.0",
+  "pec.offset.bias150ms@1.0.0",
+  "pec.cv.scale5_85@1.0.0",
+  "pec.alpha.negative-phira-extension@1.0.0",
+  "pec.event.stateful-current-value@1.0.0",
+]
+contract = [
+  "All command times and bp positions are direct exact decimal Beat values; no tick divisor exists.",
+  "Raw offset uses the 150 millisecond bias and raw cv uses divisor 5.85.",
+  "Note X is line-relative while cp/cm X is absolute 2048 canvas; the rules cannot be exchanged.",
+  "Point and interval commands execute in global source order; interpolation requires a concrete prior value.",
+  "Negative alpha requires an explicitly bound registered required-extension ref and is not silently clamped.",
+  "Overlap clipping, insertion of a first speed event and unknown-easing fallback are Repair rather than profile semantics.",
+]
+known_limitations = [
+  "Negative alpha requires a registered extension binding and remains ineligible for strict portable conversion.",
+  "The PEC payload does not independently fix logical-pixel floor scale.",
+]
+report_categories = ["conversion.runtime-extension", "conversion.distance-mismatch"]
+evidence = [
+  "refer/chart/phira@824e24b97af53c2e14c4e2dfa13ecd36d87c9e06:prpr/src/parse/pec.rs",
+]

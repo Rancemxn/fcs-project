@@ -1,0 +1,9 @@
+{
+  "noteId": "exact-expression",
+  "property": "presentation.alpha",
+  "descriptorKind": "ExpressionDAG",
+  "requiredInputs": ["s", "d"],
+  "containsChoose": true,
+  "containsSin": true,
+  "forbiddenDescriptorKinds": ["BakedCurve"]
+}

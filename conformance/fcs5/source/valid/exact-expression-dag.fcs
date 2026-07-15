@@ -1,0 +1,17 @@
+#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+    notes {
+        tap {
+            id: "exact-expression";
+            line: @main;
+            gameplay.time: 2beat;
+            presentation.alpha: choose {
+                when d < 100px => 0.5 + 0.5 * sin(s / 1s);
+                else => 0.25;
+            };
+        };
+    }
+}

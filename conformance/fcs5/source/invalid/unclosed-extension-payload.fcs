@@ -1,0 +1,5 @@
+#fcs 5.0.0
+format { profile: fragment; }
+extensions {
+    extension("org.fcs.unclosed", 1.0.0) optional {
+        "enabled": true,
