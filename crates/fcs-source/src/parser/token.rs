@@ -6,6 +6,8 @@ use crate::{
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Token {
     Header(Version),
+    InvalidVersion,
+    UnsupportedVersion,
     TempoBpm(Bpm),
     Literal(SourceLiteral),
     Identifier(String),
