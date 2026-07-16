@@ -169,25 +169,23 @@
 
 ### Matt Pocock skills
 
-本仓库可以使用 `C:\Users\Admin\.agents\skills` 中的 Matt Pocock 工程 skills。它们是协作流程和推理纪律，不是 FCS、FCBC、Render 或 Conversion 规范的替代品；skill 的建议与本文件、根规范、治理文件或 Accepted ADR 冲突时，必须按“资料职责、权威与冲突处理”中的流程处理，不能直接以 skill 的默认做法覆盖项目约束。
+本仓库可以使用 `~/.codex/skills` 中已安装的 Matt Pocock 工程 skills。它们是协作流程和推理纪律，不是 FCS、FCBC、Render 或 Conversion 规范的替代品；skill 的建议与本文件、根规范、治理文件或 Accepted ADR 冲突时，必须按“资料职责、权威与冲突处理”中的流程处理，不能直接以 skill 的默认做法覆盖项目约束。
 
 #### 调用时机
 
 - 当任务明确匹配某个 skill 的描述时调用对应 skill；用户直接点名 skill 或 slash command 时，按用户指定的 skill 执行。
-- 在开始实现前，若需求来自 spec、issue 或一组 tickets，使用 `implement`；若需求尚未足够清晰、规模超过单次会话，使用 `wayfinder` 先建立决策地图。
-- 用户要求把已有讨论整理成 spec、tickets 或 triage 操作时，分别使用 `to-spec`、`to-tickets` 或 `triage`；这些会读写已配置的 `.scratch/<feature-slug>/` issue tracker，不能擅自改用 GitHub/GitLab。
-- 用户要求 review 某个分支、提交点或工作区变更时，使用 `code-review`，同时检查仓库 Standards 与 originating spec 两个维度。
-- 用户报告 bug、异常、失败或性能回归并要求诊断时，使用 `diagnosing-bugs`；用户要求 test-first、red-green-refactor 或 integration tests 时，使用 `tdd`。
-- 设计模块接口、边界、seam、可测试性或 AI 可导航性时，使用 `codebase-design`；需要构建或修订领域术语、`CONTEXT.md` 或 ADR 时，使用 `domain-modeling`。
-- 需要外部事实、依赖/API 资料或高可信来源调查并沉淀 Markdown 证据时，使用 `research`，并遵守本仓库对 `refer/`、固定 commit/hash 和 `refer/dependencies/` 的阅读路由。
-- 需要验证状态模型或逻辑是否可行、且产物明确是一次性探索时，使用 `prototype`；需要对方案、决定或计划进行逐项压力测试时，使用 `grilling`。若压力测试还应同步维护领域文档，使用 `grill-with-docs`。
-- 需要解决正在进行的 merge/rebase 冲突时，使用 `resolving-merge-conflicts`；需要把当前会话交给下一次 agent 时，使用 `handoff`。
-- 需要了解应选哪个工程 skill 时，使用 `ask-matt`；需要创建或编辑 skill 时，使用 `writing-great-skills`。
+- 用户报告 bug、异常、失败或性能回归并要求诊断时，使用 `diagnose`；用户要求 test-first、red-green-refactor 或 integration tests 时，使用 `tdd`。
+- 对陌生代码区域需要先了解更高层的模块、调用方与系统边界时，使用 `zoom-out`。
+- 需要对方案、决定或计划进行逐项压力测试时，使用 `grill-me`。若压力测试还应同步维护领域文档，使用 `grill-with-docs`；该 skill 必须使用根目录 `CONTEXT.md` 和 `docs/decisions/`，不得创建 `docs/adr/`。
+- 设计模块接口、边界、seam、可测试性或 AI 可导航性时，使用 `improve-codebase-architecture`；其领域术语和 ADR 阅读同样必须遵守 `docs/agents/domain.md` 的单一上下文约定。
+- 用户要求设计 agent/automation loop 的 Markdown 契约时，使用 `agent-loop`；该 skill 只能产出 `loop.md`，不得执行 loop 或生成运行时机制。
+- 需要创建或编辑新的 agent skill 时，使用 `write-a-skill`。
 
 #### 调用边界
 
 - 简单问答、单文件的机械编辑、只读检查或与上述场景无关的任务不必强行调用 Matt Pocock skill。
-- `implement`、`to-spec`、`to-tickets`、`triage`、`wayfinder`、`grilling` 等会改变工作流状态或持续追问的 skill，只有在用户明确要求，或任务描述已经明确要求对应流程时才调用；不要仅凭“看起来可能有帮助”启动它们。
+- `grill-me` 和 `grill-with-docs` 会持续追问或修改领域文档，只有在用户明确要求，或任务描述已经明确要求对应流程时才调用；不要仅凭“看起来可能有帮助”启动它们。
+- `github-triage`、`to-issues` 和 `to-prd` 默认操作 GitHub，与本仓库的 `.scratch/<feature-slug>/` 本地 issue tracker 冲突；在它们完成本地适配前不得调用。
 - 先阅读本文件及目标路径更近的 `AGENTS.md`，再按“阅读路由”读取相关规范、ADR、fixture 和现有 docs；skill 不能免除这些前置阅读。
 - skill 产出的计划、术语、假设和 issue 只能记录或安排工作，不能创造新的规范语义。凡是规范未定义的边界，记录为候选并报告影响；不得用 skill 的默认推断替代显式 semantic profile、规范修订或用户选择。
 - 任务结束时按本文件的 Rust 验证要求执行检查；若 skill 自带的验证或写作流程与仓库命令、目录职责或提交范围冲突，以本文件为准，并在交付说明中标明未执行的步骤及原因。
