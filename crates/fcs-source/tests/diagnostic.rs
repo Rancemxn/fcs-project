@@ -37,9 +37,7 @@ fn bound_parse_error_fixtures_keep_stable_categories_and_spans() {
             DiagnosticCode::VERSION_INVALID,
         ),
         (
-            include_str!(
-                "../../../conformance/fcs5/source/invalid/duplicate-top-level-block.fcs"
-            ),
+            include_str!("../../../conformance/fcs5/source/invalid/duplicate-top-level-block.fcs"),
             DiagnosticCode::NAME_DUPLICATE,
         ),
         (
@@ -51,9 +49,7 @@ fn bound_parse_error_fixtures_keep_stable_categories_and_spans() {
             DiagnosticCode::COMPILE_TIME_MISPLACED_GENERATOR,
         ),
         (
-            include_str!(
-                "../../../conformance/fcs5/source/invalid/unclosed-extension-payload.fcs"
-            ),
+            include_str!("../../../conformance/fcs5/source/invalid/unclosed-extension-payload.fcs"),
             DiagnosticCode::SYNTAX_INVALID_TOKEN,
         ),
         (
@@ -68,7 +64,10 @@ fn bound_parse_error_fixtures_keep_stable_categories_and_spans() {
 
     for (source, expected_code) in cases {
         let output = parse_document(source);
-        assert!(output.output().is_none(), "parser must not expose partial AST");
+        assert!(
+            output.output().is_none(),
+            "parser must not expose partial AST"
+        );
         let diagnostics = output.diagnostics();
         assert!(!diagnostics.is_empty(), "fixture must produce a diagnostic");
         assert_eq!(diagnostics[0].code(), expected_code, "{source}");
