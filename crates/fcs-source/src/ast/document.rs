@@ -2,7 +2,8 @@
 
 use super::{
     ArtworkBlock, CollectionsBlock, ContributorsBlock, CreditsBlock, DefinitionsBlock,
-    LineDeclaration, LinesBlock, MetaBlock, ResourcesBlock, SourceSpan, SyncBlock, TempoMap,
+    ExtensionsBlock, LineDeclaration, LinesBlock, MetaBlock, PreserveBlock, ResourcesBlock,
+    SourceSpan, SyncBlock, TempoMap,
 };
 use crate::version::{FCS_SOURCE_VERSION, Version};
 
@@ -125,8 +126,8 @@ pub enum TopLevelBlock {
     Lines(LinesBlock),
     Collections(CollectionsBlock),
     Render(RenderBlock),
-    Extensions(SourceBlock),
-    Preserve(SourceBlock),
+    Extensions(ExtensionsBlock),
+    Preserve(PreserveBlock),
 }
 
 /// Stable kind labels for source-order inspection and duplicate checking.
@@ -174,7 +175,8 @@ impl TopLevelBlock {
             Self::Resources(block) => block.span,
             Self::Artwork(block) => block.span,
             Self::Sync(block) => block.span,
-            Self::Extensions(block) | Self::Preserve(block) => block.span,
+            Self::Extensions(block) => block.span,
+            Self::Preserve(block) => block.span,
             Self::Lines(block) => block.span,
             Self::Definitions(block) => block.span,
             Self::TempoMap(block) => block.span,
@@ -201,6 +203,8 @@ pub struct Document {
     pub resources: Option<ResourcesBlock>,
     pub artwork: Option<ArtworkBlock>,
     pub sync: Option<SyncBlock>,
+    pub extensions: Option<ExtensionsBlock>,
+    pub preserve: Option<PreserveBlock>,
     top_level_blocks: Vec<TopLevelBlock>,
 }
 
@@ -257,6 +261,14 @@ impl Document {
             TopLevelBlock::Sync(block) => Some(block.clone()),
             _ => None,
         });
+        let extensions = top_level_blocks.iter().find_map(|block| match block {
+            TopLevelBlock::Extensions(block) => Some(block.clone()),
+            _ => None,
+        });
+        let preserve = top_level_blocks.iter().find_map(|block| match block {
+            TopLevelBlock::Preserve(block) => Some(block.clone()),
+            _ => None,
+        });
         Self {
             source_version,
             format,
@@ -271,6 +283,8 @@ impl Document {
             resources,
             artwork,
             sync,
+            extensions,
+            preserve,
             top_level_blocks,
         }
     }

@@ -1,9 +1,10 @@
 use fcs_source::diagnostic::{DiagnosticCode, DiagnosticStage};
 use fcs_source::{
     ast::{
-        CollectionItem, Definition, DocumentProfile, FunctionStatement, GeneratorOwner,
-        LineBodyItem, ResourceKind, SchemaValue, SourceEntityConstructorKind, SourceExpression,
-        SourceSpan, SourceTypeKind, TopLevelBlock, TopLevelBlockKind, TrackSegmentItem, Type,
+        CollectionItem, Definition, DocumentProfile, ExtensionRequirement, FunctionStatement,
+        GeneratorOwner, LineBodyItem, PreserveItem, ResourceKind, SchemaValue,
+        SourceEntityConstructorKind, SourceExpression, SourceSpan, SourceTypeKind, TopLevelBlock,
+        TopLevelBlockKind, TrackSegmentItem, Type,
     },
     parser::parse_document,
     parser::parse_type,
@@ -605,4 +606,91 @@ fn every_core_resource_kind_has_a_typed_source_node() {
             ResourceKind::Binary,
         ]
     );
+}
+
+#[test]
+fn extension_preserve_and_render_envelopes_retain_order_and_balanced_spans() {
+    let source = include_str!("../../../conformance/fcs5/source/valid/complete-source-grammar.fcs");
+    let document = parse_document(source)
+        .into_result()
+        .expect("extension, preserve, and Render envelopes are valid Core source");
+
+    let TopLevelBlock::Extensions(extensions) = document
+        .top_level(TopLevelBlockKind::Extensions)
+        .expect("extensions block")
+    else {
+        panic!("expected typed extensions block");
+    };
+    let extension = &extensions.declarations[0];
+    assert_eq!(extension.header.namespace, "org.fcs.example");
+    assert_eq!(extension.header.version.to_string(), "1.0.0");
+    assert_eq!(extension.requirement, ExtensionRequirement::Optional);
+    assert_eq!(
+        extension
+            .payload
+            .entries
+            .iter()
+            .map(|entry| entry.key.as_str())
+            .collect::<Vec<_>>(),
+        ["enabled", "strength"]
+    );
+
+    let TopLevelBlock::Preserve(preserve) = document
+        .top_level(TopLevelBlockKind::Preserve)
+        .expect("preserve block")
+    else {
+        panic!("expected typed preserve block");
+    };
+    assert_eq!(preserve.items.len(), 2);
+    let PreserveItem::Source(source_item) = &preserve.items[0] else {
+        panic!("expected preserve source item first");
+    };
+    assert_eq!(source_item.fields[0].path.segments, ["format"]);
+    let PreserveItem::Payload(payload) = &preserve.items[1] else {
+        panic!("expected preserve payload item second");
+    };
+    assert_eq!(payload.header.namespace, "org.phigros.rpe");
+    assert_eq!(payload.payload.entries[0].key, "encoding");
+    assert!(payload.span.start < payload.span.end);
+
+    let TopLevelBlock::Render(render) = document
+        .top_level(TopLevelBlockKind::Render)
+        .expect("render block")
+    else {
+        panic!("expected Render block");
+    };
+    assert_eq!(render.version.to_string(), "1.0.0");
+    assert!(!render.payload.elements.is_empty());
+    assert!(render.payload.span.start < render.payload.span.end);
+}
+
+#[test]
+fn extension_payload_duplicate_keys_remain_ordered_and_unbalanced_envelopes_fail() {
+    let source = "#fcs 5.0.0\nformat { profile: fragment; }\nextensions {\n\
+        extension(\"not-normalized\", 9.9.9) required { \"same\": 1, \"same\": 2, }\n\
+    }";
+    let document = parse_document(source)
+        .into_result()
+        .expect("namespace semantics and duplicate keys belong to later phases");
+    let TopLevelBlock::Extensions(extensions) = document
+        .top_level(TopLevelBlockKind::Extensions)
+        .expect("extensions block")
+    else {
+        panic!("expected typed extensions block");
+    };
+    let entries = &extensions.declarations[0].payload.entries;
+    assert_eq!(entries[0].key, "same");
+    assert_eq!(entries[1].key, "same");
+    assert!(entries[0].span.start < entries[1].span.start);
+
+    for malformed in [
+        "#fcs 5.0.0\nformat { profile: fragment; }\nextensions { extension(\"x\", 1.0.0) optional { \"x\": 1, }",
+        "#fcs 5.0.0\nformat { profile: fragment; }\npreserve { source { format: \"rpe\"; }",
+        "#fcs 5.0.0\nformat { profile: fragment; }\nrender profile 1.0.0 { layer x {",
+        "#fcs 5.0.0\nformat { profile: fragment; }\nrender profile 1.0.0 { active: [0s, 1s); }",
+    ] {
+        parse_document(malformed)
+            .into_result()
+            .expect_err("truncated envelope must fail at the parser boundary");
+    }
 }

@@ -2,6 +2,7 @@ mod color;
 mod definitions;
 mod document;
 mod entity;
+mod extension;
 mod metadata;
 mod time;
 mod track;
@@ -13,6 +14,10 @@ pub use entity::{
     EntityField, ExpandedCollection, ExpandedEntity, ExpandedField, ExpandedSourceDocument,
     FieldPath, Generator, GeneratorItem, GeneratorOwner, NoteVariant, SchemaField, SchemaValue,
     SourceEntityConstructor, SourceEntityConstructorKind, SourceRange, WithExpression,
+};
+pub use extension::{
+    ExtensionDeclaration, ExtensionHeader, ExtensionRequirement, ExtensionsBlock, OrderedObject,
+    PreserveBlock, PreserveItem, PreservePayload, PreserveSource,
 };
 pub use metadata::{
     ArtworkBlock, ContributorDeclaration, ContributorsBlock, CreditEntry, CreditsBlock, MetaBlock,

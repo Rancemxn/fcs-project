@@ -2,8 +2,8 @@ use chumsky::{error::RichReason, input::Input as _, prelude::*};
 
 use crate::ast::{
     Document, DocumentProfile, FeatureList, FormatBlock, FormatFeature, FormatField, FormatProfile,
-    ProfileFeature, RenderBlock, SourceBlock, SourceElement, SourceGroup, SourceSpan,
-    TempoMapBlock, TopLevelBlock,
+    ProfileFeature, RenderBlock, SourceElement, SourceGroup, SourceSpan, TempoMapBlock,
+    TopLevelBlock,
 };
 use crate::diagnostic::{
     Diagnostic, DiagnosticCode, DiagnosticLabel, DiagnosticStage, ParseOutput,
@@ -13,6 +13,7 @@ use super::{
     MISPLACED_GENERATOR_ERROR, ParseLimits,
     definitions::definitions_block_parser,
     entities::collections_block_parser,
+    extension::{extensions_block_parser, preserve_block_parser},
     header::{header_parser, parse_header_tokens},
     input::{ChumskySpan, ParserExtra, SpannedToken, source_span},
     lexer::lex_document,
@@ -325,10 +326,9 @@ where
         collections_block_parser()
             .map(|block| DocumentItem::Block(TopLevelBlock::Collections(block))),
         render_block_parser().map(|block| DocumentItem::Block(TopLevelBlock::Render(block))),
-        raw_block_parser(Keyword::Extensions)
+        extensions_block_parser()
             .map(|block| DocumentItem::Block(TopLevelBlock::Extensions(block))),
-        raw_block_parser(Keyword::Preserve)
-            .map(|block| DocumentItem::Block(TopLevelBlock::Preserve(block))),
+        preserve_block_parser().map(|block| DocumentItem::Block(TopLevelBlock::Preserve(block))),
         misplaced_item_parser(),
         unknown_item_parser(),
         trailing_item_parser(),
@@ -428,22 +428,6 @@ where
             FormatField::Features(value)
         });
     choice((profile, features))
-}
-
-fn raw_block_parser<'tokens, I>(
-    keyword: Keyword,
-) -> impl Parser<'tokens, I, SourceBlock, ParserExtra<'tokens>> + Clone
-where
-    I: chumsky::input::ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
-{
-    just(Token::Keyword(keyword))
-        .map_with(|_, extra| source_span(extra.span()))
-        .then(source_group_parser(true))
-        .map_with(|(keyword_span, body), extra| SourceBlock {
-            body,
-            span: source_span(extra.span()),
-            keyword_span,
-        })
 }
 
 fn render_block_parser<'tokens, I>()
@@ -745,7 +729,8 @@ impl TopLevelBlockExt for TopLevelBlock {
             TopLevelBlock::Resources(block) => block.keyword_span,
             TopLevelBlock::Artwork(block) => block.keyword_span,
             TopLevelBlock::Sync(block) => block.keyword_span,
-            TopLevelBlock::Extensions(block) | TopLevelBlock::Preserve(block) => block.keyword_span,
+            TopLevelBlock::Extensions(block) => block.keyword_span,
+            TopLevelBlock::Preserve(block) => block.keyword_span,
             TopLevelBlock::Lines(block) => block.keyword_span,
             TopLevelBlock::Definitions(block) => {
                 SourceSpan::new(block.span.start, block.span.start + "definitions".len())

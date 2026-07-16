@@ -2,6 +2,7 @@ mod definitions;
 mod document;
 mod entities;
 mod expression;
+mod extension;
 mod header;
 mod input;
 mod lexer;
