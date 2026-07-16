@@ -22,6 +22,68 @@ fn missing_header_has_the_frozen_code_and_byte_span() {
 }
 
 #[test]
+fn bound_parse_error_fixtures_keep_stable_categories_and_spans() {
+    let cases = [
+        (
+            include_str!("../../../conformance/fcs5/source/invalid/missing-header.fcs"),
+            DiagnosticCode::VERSION_MISSING_HEADER,
+        ),
+        (
+            include_str!("../../../conformance/fcs5/source/invalid/header-extra-space.fcs"),
+            DiagnosticCode::VERSION_INVALID,
+        ),
+        (
+            include_str!("../../../conformance/fcs5/source/invalid/header-leading-zero.fcs"),
+            DiagnosticCode::VERSION_INVALID,
+        ),
+        (
+            include_str!(
+                "../../../conformance/fcs5/source/invalid/duplicate-top-level-block.fcs"
+            ),
+            DiagnosticCode::NAME_DUPLICATE,
+        ),
+        (
+            include_str!("../../../conformance/fcs5/source/invalid/nested-generator.fcs"),
+            DiagnosticCode::COMPILE_TIME_NESTED_GENERATOR,
+        ),
+        (
+            include_str!("../../../conformance/fcs5/source/invalid/misplaced-generator.fcs"),
+            DiagnosticCode::COMPILE_TIME_MISPLACED_GENERATOR,
+        ),
+        (
+            include_str!(
+                "../../../conformance/fcs5/source/invalid/unclosed-extension-payload.fcs"
+            ),
+            DiagnosticCode::SYNTAX_INVALID_TOKEN,
+        ),
+        (
+            include_str!("../../../conformance/fcs5/source/invalid/mixed-beat-literal.fcs"),
+            DiagnosticCode::SYNTAX_INVALID_TOKEN,
+        ),
+        (
+            include_str!("../../../conformance/fcs5/source/invalid/bare-range.fcs"),
+            DiagnosticCode::SYNTAX_INVALID_TOKEN,
+        ),
+    ];
+
+    for (source, expected_code) in cases {
+        let output = parse_document(source);
+        assert!(output.output().is_none(), "parser must not expose partial AST");
+        let diagnostics = output.diagnostics();
+        assert!(!diagnostics.is_empty(), "fixture must produce a diagnostic");
+        assert_eq!(diagnostics[0].code(), expected_code, "{source}");
+        assert!(diagnostics.iter().all(|diagnostic| {
+            let span = diagnostic.primary_span();
+            diagnostic.stage() == DiagnosticStage::Parse
+                && span.start <= span.end
+                && span.end <= source.len()
+                && source.is_char_boundary(span.start)
+                && source.is_char_boundary(span.end)
+        }));
+    }
+}
+
+#[test]
 fn parser_resource_limits_use_the_stable_resource_code() {
     let result = parse_expression_with_limits(
         "1",
