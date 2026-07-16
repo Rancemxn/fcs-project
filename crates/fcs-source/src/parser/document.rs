@@ -16,6 +16,10 @@ use super::{
     header::{header_parser, parse_header_tokens},
     input::{ChumskySpan, ParserExtra, SpannedToken, source_span},
     lexer::lex_document,
+    metadata::{
+        artwork_block_parser, contributors_block_parser, credits_block_parser, meta_block_parser,
+        resources_block_parser, sync_block_parser,
+    },
     tempo::tempo_map_block_parser,
     token::{Keyword, Punctuation, Token},
     tracks::lines_block_parser,
@@ -301,18 +305,13 @@ where
 {
     choice((
         format_parser().map(DocumentItem::Format),
-        raw_block_parser(Keyword::Meta)
-            .map(|block| DocumentItem::Block(TopLevelBlock::Meta(block))),
-        raw_block_parser(Keyword::Contributors)
+        meta_block_parser().map(|block| DocumentItem::Block(TopLevelBlock::Meta(block))),
+        contributors_block_parser()
             .map(|block| DocumentItem::Block(TopLevelBlock::Contributors(block))),
-        raw_block_parser(Keyword::Credits)
-            .map(|block| DocumentItem::Block(TopLevelBlock::Credits(block))),
-        raw_block_parser(Keyword::Resources)
-            .map(|block| DocumentItem::Block(TopLevelBlock::Resources(block))),
-        raw_block_parser(Keyword::Artwork)
-            .map(|block| DocumentItem::Block(TopLevelBlock::Artwork(block))),
-        raw_block_parser(Keyword::Sync)
-            .map(|block| DocumentItem::Block(TopLevelBlock::Sync(block))),
+        credits_block_parser().map(|block| DocumentItem::Block(TopLevelBlock::Credits(block))),
+        resources_block_parser().map(|block| DocumentItem::Block(TopLevelBlock::Resources(block))),
+        artwork_block_parser().map(|block| DocumentItem::Block(TopLevelBlock::Artwork(block))),
+        sync_block_parser().map(|block| DocumentItem::Block(TopLevelBlock::Sync(block))),
         definitions_block_parser()
             .map(|block| DocumentItem::Block(TopLevelBlock::Definitions(block))),
         tempo_map_block_parser().map_with(|(map, span), _| {
@@ -740,14 +739,13 @@ trait TopLevelBlockExt {
 impl TopLevelBlockExt for TopLevelBlock {
     fn keyword_span(&self) -> SourceSpan {
         match self {
-            TopLevelBlock::Meta(block)
-            | TopLevelBlock::Contributors(block)
-            | TopLevelBlock::Credits(block)
-            | TopLevelBlock::Resources(block)
-            | TopLevelBlock::Artwork(block)
-            | TopLevelBlock::Sync(block)
-            | TopLevelBlock::Extensions(block)
-            | TopLevelBlock::Preserve(block) => block.keyword_span,
+            TopLevelBlock::Meta(block) => block.keyword_span,
+            TopLevelBlock::Contributors(block) => block.keyword_span,
+            TopLevelBlock::Credits(block) => block.keyword_span,
+            TopLevelBlock::Resources(block) => block.keyword_span,
+            TopLevelBlock::Artwork(block) => block.keyword_span,
+            TopLevelBlock::Sync(block) => block.keyword_span,
+            TopLevelBlock::Extensions(block) | TopLevelBlock::Preserve(block) => block.keyword_span,
             TopLevelBlock::Lines(block) => block.keyword_span,
             TopLevelBlock::Definitions(block) => {
                 SourceSpan::new(block.span.start, block.span.start + "definitions".len())

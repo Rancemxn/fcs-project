@@ -5,6 +5,7 @@ mod expression;
 mod header;
 mod input;
 mod lexer;
+mod metadata;
 mod tempo;
 mod token;
 mod tracks;

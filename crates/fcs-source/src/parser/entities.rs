@@ -350,7 +350,7 @@ where
         .delimited_by(just(left_brace()), just(right_brace()))
 }
 
-fn schema_fields_parser<'tokens, I>()
+pub(super) fn schema_fields_parser<'tokens, I>()
 -> impl Parser<'tokens, I, Vec<SchemaField>, ParserExtra<'tokens>> + Clone
 where
     I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
