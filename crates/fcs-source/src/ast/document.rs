@@ -1,6 +1,8 @@
 //! Source document envelope and source-ordered top-level declarations.
 
-use super::{CollectionsBlock, DefinitionsBlock, SourceSpan, TempoMap};
+use super::{
+    CollectionsBlock, DefinitionsBlock, LineDeclaration, LinesBlock, SourceSpan, TempoMap,
+};
 use crate::version::{FCS_SOURCE_VERSION, Version};
 
 /// The profile declared by a document's mandatory `format` block.
@@ -119,7 +121,7 @@ pub enum TopLevelBlock {
     Sync(SourceBlock),
     Definitions(DefinitionsBlock),
     TempoMap(TempoMapBlock),
-    Lines(SourceBlock),
+    Lines(LinesBlock),
     Collections(CollectionsBlock),
     Render(RenderBlock),
     Extensions(SourceBlock),
@@ -171,9 +173,9 @@ impl TopLevelBlock {
             | Self::Resources(block)
             | Self::Artwork(block)
             | Self::Sync(block)
-            | Self::Lines(block)
             | Self::Extensions(block)
             | Self::Preserve(block) => block.span,
+            Self::Lines(block) => block.span,
             Self::Definitions(block) => block.span,
             Self::TempoMap(block) => block.span,
             Self::Collections(block) => block.span,
@@ -192,6 +194,7 @@ pub struct Document {
     pub tempo_map: Option<TempoMap>,
     pub definitions: Option<DefinitionsBlock>,
     pub collections: Vec<super::CollectionBlock>,
+    pub lines: Vec<LineDeclaration>,
     top_level_blocks: Vec<TopLevelBlock>,
 }
 
@@ -217,6 +220,13 @@ impl Document {
                 _ => None,
             })
             .unwrap_or_default();
+        let lines = top_level_blocks
+            .iter()
+            .find_map(|block| match block {
+                TopLevelBlock::Lines(block) => Some(block.lines.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
         Self {
             source_version,
             format,
@@ -224,6 +234,7 @@ impl Document {
             tempo_map,
             definitions,
             collections,
+            lines,
             top_level_blocks,
         }
     }

@@ -117,8 +117,41 @@ pub enum SourceEntityConstructorKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceEntityConstructor {
     pub kind: SourceEntityConstructorKind,
-    pub fields: Vec<EntityField>,
+    pub fields: Vec<SchemaField>,
     pub span: SourceSpan,
+}
+
+/// A source field whose value is owned by a schema production rather than the
+/// ordinary expression grammar.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SchemaField {
+    pub path: FieldPath,
+    pub value: SchemaValue,
+    pub span: SourceSpan,
+}
+
+/// Schema-owned values retained before static validation.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SchemaValue {
+    Expression(SourceExpression),
+    CubicBezier {
+        values: [SourceExpression; 4],
+        span: SourceSpan,
+    },
+    Interval {
+        start: SourceExpression,
+        end: SourceExpression,
+        span: SourceSpan,
+    },
+}
+
+impl SchemaValue {
+    pub const fn span(&self) -> SourceSpan {
+        match self {
+            Self::Expression(expression) => expression.span(),
+            Self::CubicBezier { span, .. } | Self::Interval { span, .. } => *span,
+        }
+    }
 }
 
 /// A source range used by a compile-time generator.

@@ -2,9 +2,9 @@ use chumsky::{input::ValueInput, prelude::*};
 
 use crate::ast::{
     CollectionBlock, CollectionItem, CollectionsBlock, EntityConstructor, EntityExpression,
-    EntityField, FieldPath, Generator, GeneratorItem, GeneratorOwner, NoteVariant,
-    SourceEntityConstructor, SourceEntityConstructorKind, SourceExpression, SourceRange,
-    SourceSpan, Type, WithExpression,
+    EntityField, FieldPath, Generator, GeneratorItem, GeneratorOwner, NoteVariant, SchemaField,
+    SchemaValue, SourceEntityConstructor, SourceEntityConstructorKind, SourceExpression,
+    SourceRange, SourceSpan, Type, WithExpression,
 };
 
 use super::{
@@ -104,7 +104,10 @@ where
                 },
             );
         choice((
-            generator_parser().map(CollectionItem::Generator),
+            generator_parser(GeneratorOwner::Collection {
+                name: String::new(),
+            })
+            .map(CollectionItem::Generator),
             conditional,
             entity_expression_parser()
                 .then_ignore(just(semicolon()))
@@ -118,7 +121,9 @@ where
     })
 }
 
-fn generator_parser<'tokens, I>() -> impl Parser<'tokens, I, Generator, ParserExtra<'tokens>> + Clone
+pub(super) fn generator_parser<'tokens, I>(
+    owner: GeneratorOwner,
+) -> impl Parser<'tokens, I, Generator, ParserExtra<'tokens>> + Clone
 where
     I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
 {
@@ -145,16 +150,14 @@ where
                 .delimited_by(just(left_brace()), just(right_brace())),
         )
         .map_with(
-            |(
+            move |(
                 ((((((variable, variable_span), variable_type), start), inclusive_end), end), step),
                 body,
             ),
-             extra| {
+                  extra| {
                 let range_span = SourceSpan::new(start.span().start, step.span().end);
                 Generator {
-                    owner: Box::new(GeneratorOwner::Collection {
-                        name: String::new(),
-                    }),
+                    owner: Box::new(owner.clone()),
                     variable,
                     variable_span,
                     variable_type,
@@ -299,7 +302,7 @@ where
         Token::Keyword(Keyword::Segment) => SourceEntityConstructorKind::Segment,
         Token::Keyword(Keyword::Keyframe) => SourceEntityConstructorKind::Keyframe,
     }
-    .then(fields_parser())
+    .then(schema_fields_parser())
     .map_with(|(kind, fields), extra| SourceEntityConstructor {
         kind,
         fields,
@@ -347,7 +350,84 @@ where
         .delimited_by(just(left_brace()), just(right_brace()))
 }
 
-fn field_parser<'tokens, I>() -> impl Parser<'tokens, I, EntityField, ParserExtra<'tokens>> + Clone
+fn schema_fields_parser<'tokens, I>()
+-> impl Parser<'tokens, I, Vec<SchemaField>, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    schema_field_parser()
+        .repeated()
+        .collect()
+        .delimited_by(just(left_brace()), just(right_brace()))
+}
+
+fn schema_field_parser<'tokens, I>()
+-> impl Parser<'tokens, I, SchemaField, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    field_path_parser()
+        .then_ignore(just(colon()))
+        .then(schema_value_parser())
+        .then_ignore(just(semicolon()))
+        .map_with(|(path, value), extra| SchemaField {
+            path,
+            value,
+            span: source_span(extra.span()),
+        })
+}
+
+fn schema_value_parser<'tokens, I>()
+-> impl Parser<'tokens, I, SchemaValue, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    cubic_bezier_value_parser()
+        .map(|(values, span)| SchemaValue::CubicBezier { values, span })
+        .or(schema_interval_parser())
+        .or(expression_parser().map(SchemaValue::Expression))
+}
+
+fn schema_interval_parser<'tokens, I>()
+-> impl Parser<'tokens, I, SchemaValue, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    just(left_bracket())
+        .ignore_then(expression_parser())
+        .then_ignore(just(comma()))
+        .then(expression_parser())
+        .then_ignore(just(right_parenthesis()))
+        .map_with(|(start, end), extra| SchemaValue::Interval {
+            start,
+            end,
+            span: source_span(extra.span()),
+        })
+}
+
+pub(super) fn cubic_bezier_value_parser<'tokens, I>()
+-> impl Parser<'tokens, I, ([SourceExpression; 4], SourceSpan), ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    just(Token::Keyword(Keyword::CubicBezier))
+        .ignore_then(
+            expression_parser()
+                .then_ignore(just(comma()))
+                .then(expression_parser())
+                .then_ignore(just(comma()))
+                .then(expression_parser())
+                .then_ignore(just(comma()))
+                .then(expression_parser())
+                .delimited_by(just(left_parenthesis()), just(right_parenthesis())),
+        )
+        .map_with(|(((first, second), third), fourth), extra| {
+            ([first, second, third, fourth], source_span(extra.span()))
+        })
+}
+
+pub(super) fn field_parser<'tokens, I>()
+-> impl Parser<'tokens, I, EntityField, ParserExtra<'tokens>> + Clone
 where
     I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
 {
@@ -390,7 +470,22 @@ where
     }
 }
 
-fn field_segment_parser<'tokens, I>()
+pub(super) fn field_path_parser<'tokens, I>()
+-> impl Parser<'tokens, I, FieldPath, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    field_segment_parser()
+        .separated_by(just(Token::Punctuation(Punctuation::Dot)))
+        .at_least(1)
+        .collect::<Vec<_>>()
+        .map_with(|segments, extra| FieldPath {
+            segments,
+            span: source_span(extra.span()),
+        })
+}
+
+pub(super) fn field_segment_parser<'tokens, I>()
 -> impl Parser<'tokens, I, String, ParserExtra<'tokens>> + Clone
 where
     I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
@@ -429,8 +524,20 @@ fn left_brace() -> Token {
 fn right_brace() -> Token {
     Token::Punctuation(Punctuation::RightBrace)
 }
+fn left_parenthesis() -> Token {
+    Token::Punctuation(Punctuation::LeftParenthesis)
+}
+fn right_parenthesis() -> Token {
+    Token::Punctuation(Punctuation::RightParenthesis)
+}
+fn left_bracket() -> Token {
+    Token::Punctuation(Punctuation::LeftBracket)
+}
 fn colon() -> Token {
     Token::Punctuation(Punctuation::Colon)
+}
+fn comma() -> Token {
+    Token::Punctuation(Punctuation::Comma)
 }
 fn semicolon() -> Token {
     Token::Punctuation(Punctuation::Semicolon)

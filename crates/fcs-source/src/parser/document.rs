@@ -18,6 +18,7 @@ use super::{
     lexer::lex_document,
     tempo::tempo_map_block_parser,
     token::{Keyword, Punctuation, Token},
+    tracks::lines_block_parser,
 };
 
 pub fn parse_document(source: &str) -> ParseOutput<Document> {
@@ -321,8 +322,7 @@ where
                 keyword_span: SourceSpan::new(span.start, span.start + "tempoMap".len()),
             }))
         }),
-        raw_block_parser(Keyword::Lines)
-            .map(|block| DocumentItem::Block(TopLevelBlock::Lines(block))),
+        lines_block_parser().map(|block| DocumentItem::Block(TopLevelBlock::Lines(block))),
         collections_block_parser()
             .map(|block| DocumentItem::Block(TopLevelBlock::Collections(block))),
         render_block_parser().map(|block| DocumentItem::Block(TopLevelBlock::Render(block))),
@@ -465,7 +465,7 @@ where
         })
 }
 
-fn source_group_parser<'tokens, I>(
+pub(super) fn source_group_parser<'tokens, I>(
     allow_half_open: bool,
 ) -> impl Parser<'tokens, I, SourceGroup, ParserExtra<'tokens>> + Clone
 where
@@ -746,9 +746,9 @@ impl TopLevelBlockExt for TopLevelBlock {
             | TopLevelBlock::Resources(block)
             | TopLevelBlock::Artwork(block)
             | TopLevelBlock::Sync(block)
-            | TopLevelBlock::Lines(block)
             | TopLevelBlock::Extensions(block)
             | TopLevelBlock::Preserve(block) => block.keyword_span,
+            TopLevelBlock::Lines(block) => block.keyword_span,
             TopLevelBlock::Definitions(block) => {
                 SourceSpan::new(block.span.start, block.span.start + "definitions".len())
             }

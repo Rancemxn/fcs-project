@@ -128,7 +128,9 @@ fn collect_template_calls_in_entity(
         }
         EntityExpression::SourceConstructor(constructor) => {
             for field in &constructor.fields {
-                collect_template_calls(&field.value, names, output);
+                if let crate::ast::SchemaValue::Expression(expression) = &field.value {
+                    collect_template_calls(expression, names, output);
+                }
             }
         }
         EntityExpression::Source(expression) => collect_template_calls(expression, names, output),
