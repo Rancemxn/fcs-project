@@ -34,3 +34,13 @@ List exact commands, fixtures, hashes, and review gates.
 ## Risks and prohibited shortcuts
 
 Identify ambiguity, technical debt, interfaces that must remain stable, and tempting shortcuts that must not be used.
+
+## Progress
+
+### YYYY-MM-DD — Contract established
+
+- Completed: captured scope, authority inputs, acceptance criteria, and dependencies.
+- Evidence: <!-- relevant docs, Issue relationships, inspected code, or fixture -->
+- Decisions: <!-- why this work unit and direction exist -->
+- Blockers: <!-- exact missing fact/owner, or none -->
+- Next: <!-- next bounded action -->

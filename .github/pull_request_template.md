@@ -21,6 +21,18 @@ Closes #
 
 Explain the checked items and name affected files or gates.
 
+## Progress
+
+### YYYY-MM-DD — Initial reviewable checkpoint
+
+- Completed: <!-- meaningful commit/change group and resulting capability -->
+- Evidence: <!-- commits, tests, fixtures, review, or inspected output -->
+- Decisions: <!-- why this change group exists and why this approach was chosen -->
+- Blockers: <!-- exact blocker/owner, or none -->
+- Next: <!-- next bounded action or ready-for-review disposition -->
+
+Append a checkpoint after each material push and before marking the PR ready. Keep this narrative aligned with the current diff and commit set; do not substitute a raw commit list.
+
 ## Verification
 
 - [ ] Rust/build/dependency/test/executable-fixture change: a full Rust checkpoint is required before ready/merge.

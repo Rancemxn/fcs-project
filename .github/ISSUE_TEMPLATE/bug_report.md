@@ -31,3 +31,13 @@ List affected fixtures, manifests, public interfaces, stages, or version domains
 - [ ] A deterministic failing test or fixture reproduces the issue.
 - [ ] The cause is distinguished from any specification ambiguity.
 - [ ] The fix passes the repository quality gates.
+
+## Progress
+
+### YYYY-MM-DD — Report established
+
+- Completed: captured the smallest known reproduction and expected behavior.
+- Evidence: <!-- input, command, diagnostic, fixture, or link -->
+- Decisions: <!-- why this is treated as a bug rather than an open specification question -->
+- Blockers: <!-- exact missing fact/owner, or none -->
+- Next: reproduce deterministically and establish the failing test or fixture.
