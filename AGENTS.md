@@ -31,8 +31,9 @@
   `docs/reviews/2026-07-16-fcbc2-execution-abi-nonempty-review.md`；Render stable-resource binding、
   exact descriptor 与 no-source-text delta 见
   `docs/reviews/2026-07-15-render1-resource-binding-closure-review.md`，RenderSection layout、decoder/
-  shaping、semantic/raster 与 diagnostic 规范文字的独立闭合见
-  `docs/reviews/2026-07-16-render1-binary-raster-closure-review.md`；Conversion parser/profile/Repair 分层、
+  shaping、semantic/raster 与 diagnostic 规范文字的历史独立闭合见
+  `docs/reviews/2026-07-16-render1-binary-raster-closure-review.md`；REN-I08–I16 的规范重开与当前复审
+  入口见 `docs/reviews/2026-07-16-render1-normative-amendment-review.md`；Conversion parser/profile/Repair 分层、
   12-profile registry、mapping/selection vector 与 no-source-snapshot projection 见
   `docs/reviews/2026-07-15-conversion1-semantic-profile-closure-review.md`。四规范联合候选自检及其
   dated amendment、当前 hash/test evidence、仍开放的 Render/Conversion/Core fixture blocker 与最终
@@ -43,6 +44,12 @@
   `docs/plans/i1-source-ast-parser.md`。计划只能安排工作，不能创造格式语义。
 - `examples/` 保存各格式输入样例；I0 删除活动 FCS 4 examples，但保留 PGR/RPE/PEC 与版权
   输入，供未来 converter 重建时复用。旧 converter 测试由归档分支保存，不迁移到 source crate。
+- 制订，修改任何文档或者计划时，思考：
+	* 项目最容易在哪些地方踩坑；
+	* 哪些设计可能在后期形成技术债；
+	* 哪些接口和边界需要提前固定；
+	* 后续实现时应该遵循哪些原则；
+	* 哪些看似方便的方案应该明确禁止。
 
 ## 资料职责、权威与冲突处理
 
@@ -154,6 +161,31 @@
 ### Domain docs
 
 本仓库采用 single-context 布局，使用根目录的 `CONTEXT.md` 和 `docs/adr/`。详见 `docs/agents/domain.md`。
+
+### Matt Pocock skills
+
+本仓库可以使用 `C:\Users\Admin\.agents\skills` 中的 Matt Pocock 工程 skills。它们是协作流程和推理纪律，不是 FCS、FCBC、Render 或 Conversion 规范的替代品；skill 的建议与本文件、根规范、治理文件或 Accepted ADR 冲突时，必须按“资料职责、权威与冲突处理”中的流程处理，不能直接以 skill 的默认做法覆盖项目约束。
+
+#### 调用时机
+
+- 当任务明确匹配某个 skill 的描述时调用对应 skill；用户直接点名 skill 或 slash command 时，按用户指定的 skill 执行。
+- 在开始实现前，若需求来自 spec、issue 或一组 tickets，使用 `implement`；若需求尚未足够清晰、规模超过单次会话，使用 `wayfinder` 先建立决策地图。
+- 用户要求把已有讨论整理成 spec、tickets 或 triage 操作时，分别使用 `to-spec`、`to-tickets` 或 `triage`；这些会读写已配置的 `.scratch/<feature-slug>/` issue tracker，不能擅自改用 GitHub/GitLab。
+- 用户要求 review 某个分支、提交点或工作区变更时，使用 `code-review`，同时检查仓库 Standards 与 originating spec 两个维度。
+- 用户报告 bug、异常、失败或性能回归并要求诊断时，使用 `diagnosing-bugs`；用户要求 test-first、red-green-refactor 或 integration tests 时，使用 `tdd`。
+- 设计模块接口、边界、seam、可测试性或 AI 可导航性时，使用 `codebase-design`；需要构建或修订领域术语、`CONTEXT.md` 或 ADR 时，使用 `domain-modeling`。
+- 需要外部事实、依赖/API 资料或高可信来源调查并沉淀 Markdown 证据时，使用 `research`，并遵守本仓库对 `refer/`、固定 commit/hash 和 `refer/dependencies/` 的阅读路由。
+- 需要验证状态模型或逻辑是否可行、且产物明确是一次性探索时，使用 `prototype`；需要对方案、决定或计划进行逐项压力测试时，使用 `grilling`。若压力测试还应同步维护领域文档，使用 `grill-with-docs`。
+- 需要解决正在进行的 merge/rebase 冲突时，使用 `resolving-merge-conflicts`；需要把当前会话交给下一次 agent 时，使用 `handoff`。
+- 需要了解应选哪个工程 skill 时，使用 `ask-matt`；需要创建或编辑 skill 时，使用 `writing-great-skills`。
+
+#### 调用边界
+
+- 简单问答、单文件的机械编辑、只读检查或与上述场景无关的任务不必强行调用 Matt Pocock skill。
+- `implement`、`to-spec`、`to-tickets`、`triage`、`wayfinder`、`grilling` 等会改变工作流状态或持续追问的 skill，只有在用户明确要求，或任务描述已经明确要求对应流程时才调用；不要仅凭“看起来可能有帮助”启动它们。
+- 先阅读本文件及目标路径更近的 `AGENTS.md`，再按“阅读路由”读取相关规范、ADR、fixture 和现有 docs；skill 不能免除这些前置阅读。
+- skill 产出的计划、术语、假设和 issue 只能记录或安排工作，不能创造新的规范语义。凡是规范未定义的边界，记录为候选并报告影响；不得用 skill 的默认推断替代显式 semantic profile、规范修订或用户选择。
+- 任务结束时按本文件的 Rust 验证要求执行检查；若 skill 自带的验证或写作流程与仓库命令、目录职责或提交范围冲突，以本文件为准，并在交付说明中标明未执行的步骤及原因。
 
 ## 依赖、库/API 文档与 Context7
 
