@@ -7,7 +7,7 @@ use crate::ast::{
 };
 
 use super::{
-    entities::entity_expression_parser,
+    entities::strict_entity_expression_parser,
     expression::{expression_parser, type_parser},
     input::{ChumskySpan, ParserExtra, source_span},
     token::{Keyword, Punctuation, Token},
@@ -131,12 +131,16 @@ where
             .repeated()
             .collect::<Vec<_>>()
             .delimited_by(just(left_brace()), just(right_brace()));
+        let else_if = statement
+            .clone()
+            .filter(|statement| matches!(statement, FunctionStatement::If(_)))
+            .map(|statement| vec![statement]);
         let conditional = just(Token::Keyword(Keyword::If))
             .ignore_then(expression_parser())
             .then(block.clone())
             .then(
                 just(Token::Keyword(Keyword::Else))
-                    .ignore_then(block)
+                    .ignore_then(block.or(else_if))
                     .or_not(),
             )
             .map_with(|((condition, then_branch), else_branch), extra| {
@@ -250,12 +254,16 @@ where
             .repeated()
             .collect::<Vec<_>>()
             .delimited_by(just(left_brace()), just(right_brace()));
+        let else_if = statement
+            .clone()
+            .filter(|statement| matches!(statement, TemplateStatement::If(_)))
+            .map(|statement| vec![statement]);
         let conditional = just(Token::Keyword(Keyword::If))
             .ignore_then(expression_parser())
             .then(block.clone())
             .then(
                 just(Token::Keyword(Keyword::Else))
-                    .ignore_then(block)
+                    .ignore_then(block.or(else_if))
                     .or_not(),
             )
             .map_with(|((condition, then_branch), else_branch), extra| {
@@ -269,7 +277,7 @@ where
         choice((
             let_statement_parser().map(TemplateStatement::Let),
             just(Token::Keyword(Keyword::Return))
-                .ignore_then(entity_expression_parser())
+                .ignore_then(strict_entity_expression_parser())
                 .then_ignore(just(semicolon()))
                 .map_with(|value, extra| {
                     TemplateStatement::Return(ReturnEntityStatement {

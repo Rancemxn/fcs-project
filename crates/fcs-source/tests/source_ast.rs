@@ -1,6 +1,9 @@
 use fcs_source::diagnostic::DiagnosticCode;
 use fcs_source::{
-    ast::{DocumentProfile, SourceSpan, SourceTypeKind, TopLevelBlockKind, Type},
+    ast::{
+        Definition, DocumentProfile, FunctionStatement, SourceSpan, SourceTypeKind,
+        TopLevelBlockKind, Type,
+    },
     parser::parse_document,
     parser::parse_type,
 };
@@ -217,4 +220,99 @@ fn source_types_preserve_nested_generic_spans_and_static_shape() {
         Type::Array(Box::new(Type::Note))
     );
     assert!(!statically_invalid.is_constructible());
+}
+
+#[test]
+fn definitions_retain_else_if_as_a_nested_typed_statement() {
+    let source = "#fcs 5.0.0\nformat { profile: fragment; }\ndefinitions {\n\
+        fn choose(flag: bool) -> int {\n\
+            if flag { return 1; } else if false { return 2; } else { return 3; }\n\
+        }\n\
+    }";
+    let document = parse_document(source)
+        .into_result()
+        .expect("else-if is valid definition syntax");
+    let definitions = document.definitions.as_ref().expect("definitions");
+    let Definition::Function(function) = &definitions.declarations[0] else {
+        panic!("expected function");
+    };
+    let FunctionStatement::If(root) = &function.body[0] else {
+        panic!("expected outer if");
+    };
+    assert!(matches!(
+        root.else_branch.as_slice(),
+        [FunctionStatement::If(_)]
+    ));
+}
+
+#[test]
+fn template_declarations_retain_nonconstructible_types_for_later_validation() {
+    let source = "#fcs 5.0.0\nformat { profile: fragment; }\ndefinitions {\n\
+        template int invalid() { return tap { gameplay.time: 0beat; }; }\n\
+    }";
+    let document = parse_document(source)
+        .into_result()
+        .expect("constructibility is an I2 semantic check");
+    let definitions = document.definitions.as_ref().expect("definitions");
+    let Definition::Template(template) = &definitions.declarations[0] else {
+        panic!("expected template");
+    };
+    assert_eq!(template.return_type, Type::Int);
+}
+
+#[test]
+fn template_returns_reject_value_only_expression_forms() {
+    let source = "#fcs 5.0.0\nformat { profile: fragment; }\ndefinitions {\n\
+        template Note invalid() { return 1; }\n\
+    }";
+    let errors = parse_document(source)
+        .into_result()
+        .expect_err("template return must use entityExpression syntax");
+    assert_eq!(
+        errors[0].code(),
+        fcs_source::diagnostic::DiagnosticCode::SYNTAX_INVALID_TOKEN
+    );
+}
+
+#[test]
+fn definition_bodies_reject_owner_invalid_generator_and_entity_statements() {
+    for body in [
+        "emit tap { gameplay.time: 0beat; };",
+        "generate i: int in 0..<1 step 1 { emit tap { gameplay.time: 0beat; }; }",
+        "return tap { gameplay.time: 0beat; };",
+    ] {
+        let source = format!(
+            "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ fn invalid() -> int {{ {body} }} }}"
+        );
+        let errors = parse_document(&source)
+            .into_result()
+            .expect_err("function bodies only accept let/if/value-return statements");
+        assert_eq!(
+            errors[0].code(),
+            fcs_source::diagnostic::DiagnosticCode::SYNTAX_INVALID_TOKEN,
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn malformed_definition_body_does_not_swallow_following_declaration() {
+    let source = "#fcs 5.0.0\nformat { profile: fragment; }\ndefinitions {\n\
+        fn broken() -> int { generate i: int in 0..<1 step 1 { } }\n\
+        const after: int = 1;\n\
+    }";
+    let errors = parse_document(source)
+        .into_result()
+        .expect_err("malformed statement must reject the definitions block");
+    let malformed_start = source.find("generate").expect("malformed statement");
+    let following_start = source.find("const after").expect("following declaration");
+    assert_eq!(
+        errors[0].primary_span(),
+        SourceSpan::new(malformed_start, malformed_start + "generate".len())
+    );
+    assert!(
+        errors
+            .iter()
+            .all(|error| error.primary_span().end <= following_start)
+    );
 }

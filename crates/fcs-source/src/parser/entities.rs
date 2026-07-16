@@ -3,7 +3,7 @@ use chumsky::{input::ValueInput, prelude::*};
 use crate::ast::{
     CollectionBlock, CollectionItem, CollectionsBlock, EntityConstructor, EntityExpression,
     EntityField, FieldPath, Generator, GeneratorItem, NoteVariant, SourceEntityConstructor,
-    SourceEntityConstructorKind, SourceRange, SourceSpan, Type, WithExpression,
+    SourceEntityConstructorKind, SourceExpression, SourceRange, SourceSpan, Type, WithExpression,
 };
 
 use super::{
@@ -202,6 +202,59 @@ where
             })
         },
     )
+}
+
+/// Parses the Appendix B `entityExpression` production without accepting a
+/// value-only literal/name as a template or generator entity result.
+pub(super) fn strict_entity_expression_parser<'tokens, I>()
+-> impl Parser<'tokens, I, EntityExpression, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    let base = constructor_parser()
+        .map(EntityExpression::Constructor)
+        .or(source_entity_constructor_parser().map(EntityExpression::SourceConstructor))
+        .or(entity_call_parser());
+    base.foldl_with(
+        just(Token::Keyword(Keyword::With))
+            .ignore_then(fields_parser())
+            .repeated(),
+        |base, fields, extra| {
+            EntityExpression::With(WithExpression {
+                span: SourceSpan::new(base.span().start, source_span(extra.span()).end),
+                base: Box::new(base),
+                fields,
+            })
+        },
+    )
+}
+
+fn entity_call_parser<'tokens, I>()
+-> impl Parser<'tokens, I, EntityExpression, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    identifier_with_span()
+        .then(
+            expression_parser()
+                .separated_by(just(Token::Punctuation(Punctuation::Comma)))
+                .allow_trailing()
+                .collect::<Vec<_>>()
+                .delimited_by(
+                    just(Token::Punctuation(Punctuation::LeftParenthesis)),
+                    just(Token::Punctuation(Punctuation::RightParenthesis)),
+                ),
+        )
+        .map_with(|((name, name_span), arguments), extra| {
+            EntityExpression::Source(SourceExpression::Call {
+                callee: Box::new(SourceExpression::Name {
+                    name,
+                    span: name_span,
+                }),
+                arguments,
+                span: source_span(extra.span()),
+            })
+        })
 }
 
 fn source_entity_constructor_parser<'tokens, I>()
