@@ -4,7 +4,11 @@ GitHub Issues are the repository's work contracts. Pull Requests deliver one rev
 
 Use the authenticated `gh` CLI for repository operations. Prefer `--json` plus `jq` over parsing human-readable tables.
 
-For transient network failures only (DNS, timeout/reset, interrupted TLS, or HTTP 502/503/504), wait 5 seconds and retry the same `gh` operation up to five times. Before retrying a mutation, query by stable identity to determine whether the previous attempt already succeeded. Never blindly repeat Issue/PR creation, comments, reviews, or merge. Do not retry authentication/authorization failures, invalid input, not-found responses, merge conflicts, or failed checks; report them immediately. After five retries, stop and report the last error.
+For transient network failures only (DNS, timeout/reset, interrupted TLS, or HTTP 502/503/504), wait 5 seconds and retry the same `gh` operation up to ten times after the initial failure. Before every mutation retry, query by stable identity to determine whether the previous attempt already succeeded. Never blindly repeat Issue/PR creation, comments, reviews, or merge. Do not retry authentication/authorization failures, invalid input, not-found responses, merge conflicts, or failed checks; report them immediately.
+
+After ten retries, preserve the exact payload, stable identity, last error, and a `pending remote sync` marker, then continue safe local work that does not depend on the remote action succeeding. This local record is a transport outbox, not a second Issue tracker. At the next meaningful checkpoint, and before handoff, PR Ready, review, merge, or another transition that depends on remote state, query first and retry synchronization under the same duplicate-prevention rule. Never claim that a deferred action happened remotely. If the missing remote state is itself a prerequisite for an irreversible or externally visible transition, defer that transition rather than the local work.
+
+Use event- or state-only headings for Issue and PR progress messages. Do not manually add calendar dates such as `YYYY-MM-DD`; the GitHub message timestamp is the time record.
 
 ## Issue contract
 
@@ -20,13 +24,13 @@ Before implementation, ensure the Issue records:
 
 An Issue may arrange specification work but cannot decide format or runtime semantics. If two materially different behaviors remain valid, stop implementation and route the choice through specification governance.
 
-## Issue progress narrative
+## Issue progress messages
 
-The Issue body is the current work contract and must contain an append-only `Progress` section for every non-mechanical unit. Do not leave the body as an initial conversation, an unfilled template, or a pointer to comments.
+The Issue body is the stable initial work contract and must contain one substantive initial `Progress` checkpoint for every non-mechanical unit. Do not leave the body as an initial conversation, an unfilled template, or a raw pointer elsewhere.
 
-Add a checkpoint when the contract is established, scope or a decision changes, a meaningful work unit completes, a blocker appears or clears, verification produces a decision-relevant result, a PR opens, or delivery state changes. One entry covers a meaningful checkpoint; do not mirror every commit.
+After creation, send each later checkpoint as a new Issue comment. Do not repeatedly edit the body or an earlier comment to accumulate progress. Send a checkpoint when scope or a decision changes, a meaningful work unit completes, a blocker appears or clears, verification produces a decision-relevant result, a PR opens, or delivery state changes. One message covers one meaningful checkpoint; do not mirror every commit.
 
-Each entry contains:
+Each progress message contains:
 
 - **Completed**: the work unit or state transition;
 - **Evidence**: commits, PR, tests, fixtures, review, or inspected output;
@@ -34,7 +38,7 @@ Each entry contains:
 - **Blockers**: current blockers or `none`;
 - **Next**: the next bounded action or final disposition.
 
-Comments may preserve discussion and notifications, but they do not replace the body. Before merge or an explicit close, append a delivery-ready checkpoint. After delivery, append a final checkpoint with the merged/delivered result, final verification, residual work, and follow-up Issues even if `Closes #<n>` has already closed the Issue.
+If an earlier message is wrong or obsolete, post a new message that explicitly identifies and supersedes the affected statement; preserve the old message as history instead of silently rewriting it. Before merge or an explicit close, send a separate delivery-ready comment. After delivery, send a separate final comment with the merged/delivered result, final verification, residual work, and follow-up Issues even if `Closes #<n>` has already closed the Issue.
 
 Use parent/sub-issues for a large effort and dependency links for sequencing:
 
@@ -42,6 +46,7 @@ Use parent/sub-issues for a large effort and dependency links for sequencing:
 gh issue create --title "..." --body-file issue.md --label needs-triage
 gh issue create --title "..." --body-file child.md --parent 12 --blocked-by 10,11
 gh issue edit 12 --add-sub-issue 13 --add-blocked-by 9
+gh issue comment 12 --body-file progress-checkpoint.md
 ```
 
 ## Triage
@@ -86,13 +91,13 @@ Before editing:
 3. Reconfirm that the Issue is consistent with the current normative dependency closure.
 4. Preserve unrelated worktree changes.
 
-During implementation, append new scope to the Issue or open a follow-up Issue; do not silently expand the PR.
+During implementation, announce changed scope in a new Issue comment that explicitly supersedes the affected contract statement, or open a follow-up Issue. Re-triage when the change affects readiness or authority; do not silently expand the PR.
 
 ## Pull Request contract
 
 Open a draft PR when early CI or interface feedback is useful. Mark it ready only after the intended scope and local gates are complete.
 
-The PR body records:
+The PR body records the stable initial delivery contract:
 
 - `Closes #<n>` when merge should close the Issue, otherwise `Refs #<n>`;
 - summary and non-goals;
@@ -101,7 +106,9 @@ The PR body records:
 - skipped/unavailable gates and reason;
 - residual risk and follow-up Issues.
 
-It also maintains a `Progress` section. Group commits by meaningful outcome and explain what the group changed, why it was necessary, the evidence and decisions it produced, current blockers, and the next step. A raw commit list is not progress. Update the body after every material push and before marking the PR ready so the narrative matches the current diff and commit set. A single-checkpoint PR still needs one substantive entry; it does not need one entry per commit.
+It also contains one substantive initial `Progress` checkpoint. Group the initial commits by meaningful outcome and explain what the group changed, why it was necessary, the evidence and decisions it produced, current blockers, and the next step. A raw commit list is not progress.
+
+After the PR is created, every later meaningful checkpoint is a new PR comment. Post one after each material push, when blockers change, and before marking the PR ready so the latest message matches the current diff and commit set. Do not repeatedly edit the PR body or an earlier comment. Correct stale information with a new explicitly superseding comment. A single-checkpoint PR still needs one substantive initial message; it does not need one message per commit.
 
 Select focused and full validation according to the risk-based rules in `AGENTS.md`. A documentation/workflow-only PR does not trigger Rust Clippy, nextest, or cargo fmt. A Rust/build/dependency/test/executable-fixture change must reach one full Rust checkpoint before the PR is ready or merged.
 
@@ -109,6 +116,7 @@ Useful commands:
 
 ```text
 gh pr create --draft --base main --title "..." --body-file pr.md
+gh pr comment 17 --body-file progress-checkpoint.md
 gh pr diff <number>
 gh pr checks <number> --required
 gh pr view <number> --json reviewDecision,mergeable,statusCheckRollup,files |
@@ -122,7 +130,7 @@ Do not merge until required checks pass, review requirements are satisfied, the 
 
 After merge:
 
-1. Append the final merged/delivered Issue progress checkpoint, then confirm the linked Issue closed as intended.
+1. Send a new final merged/delivered progress comment to the PR and Issue, then confirm the linked Issue closed as intended.
 2. Record residual work as linked Issues rather than hidden PR notes.
 3. Update plans, implementation matrix, conformance manifests, or dated reviews only when their owning process requires it.
 4. Do not rewrite historical review evidence to match the merged implementation.

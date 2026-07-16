@@ -34,10 +34,12 @@ List affected fixtures, manifests, public interfaces, stages, or version domains
 
 ## Progress
 
-### YYYY-MM-DD — Report established
+### Report established
 
 - Completed: captured the smallest known reproduction and expected behavior.
 - Evidence: <!-- input, command, diagnostic, fixture, or link -->
 - Decisions: <!-- why this is treated as a bug rather than an open specification question -->
 - Blockers: <!-- exact missing fact/owner, or none -->
 - Next: reproduce deterministically and establish the failing test or fixture.
+
+Keep this initial checkpoint in the body. Send every later meaningful checkpoint as a new Issue comment with the same five fields; do not append to or repeatedly edit this message. Use an event- or state-only heading without a manually written date; GitHub supplies the timestamp.
