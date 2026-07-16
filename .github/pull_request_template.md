@@ -23,13 +23,24 @@ Explain the checked items and name affected files or gates.
 
 ## Verification
 
+- [ ] Rust/build/dependency/test/executable-fixture change: a full Rust checkpoint is required before ready/merge.
+- [ ] Documentation/workflow/metadata-only change: Rust gates are not applicable.
+
+Focused checks actually run:
+
 ```text
-cargo clippy --workspace --all-targets -- -D warnings
-cargo nextest run --workspace
-cargo fmt --all -- --check
+<!-- commands and results -->
 ```
 
-List additional focused tests, fixture/hash checks, and any command not run with its reason.
+Full Rust checkpoint, when applicable:
+
+```text
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo nextest run --workspace
+```
+
+List every skipped or unavailable gate with its reason. Do not report a non-applicable gate as passed.
 
 ## Risks and follow-up
 

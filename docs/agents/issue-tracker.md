@@ -83,6 +83,8 @@ The PR body records:
 - skipped/unavailable gates and reason;
 - residual risk and follow-up Issues.
 
+Select focused and full validation according to the risk-based rules in `AGENTS.md`. A documentation/workflow-only PR does not trigger Rust Clippy, nextest, or cargo fmt. A Rust/build/dependency/test/executable-fixture change must reach one full Rust checkpoint before the PR is ready or merged.
+
 Useful commands:
 
 ```text

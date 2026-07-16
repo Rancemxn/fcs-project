@@ -148,17 +148,30 @@
 
 - 日常编译和测试不要使用 `--release`。
 - 项目使用 `cargo-nextest` 运行测试，不要把普通 `cargo test` 当作默认测试命令。
-- 每次运行测试前先执行 Clippy；推荐使用：
+- 验证遵循“足以发现当前错误的最小反馈”：在编辑循环中优先运行受影响 crate、模块、测试或
+  fixture 的 focused check。不要在每个文件、patch 或 focused test 后运行全 workspace Clippy/nextest，
+  也不要把全量 Clippy 作为每次 focused test 的前置条件。
+- 只在 Rust 源码、build/dependency 配置、测试或可执行 fixture 发生变更，且到达一个可交付检查点时
+  运行全量门禁。检查点包括：一个完整工作单元完成、PR 从 draft 转 ready、交接给其他实施者，或变更涉及
+  公开接口、workspace/dependency、conformance 行为。用户明确要求全量验证时也应执行。
+- 全量 Rust 检查点的默认顺序是：
 
   ```text
+  cargo fmt --all -- --check
   cargo clippy --workspace --all-targets -- -D warnings
   cargo nextest run --workspace
   ```
 
-- 任务结束时运行 `cargo fmt --all` 统一 Rust 代码格式。若只需检查格式，可使用 `cargo fmt --all -- --check`。
-- 修改 source parser 或 elaborator 时先补充失败测试；converter、VM 和旧 bytecode 已不在活动
+  若格式检查只发现本次 Rust 改动的差异，运行 `cargo fmt --all` 并审查它的 diff；若失败来自与任务无关的
+  既有文件，不要顺带格式化，应记录为既有门禁问题。一个检查点的全量门禁通过后，只有后续改动可能使结果
+  失效时才重跑。
+- 只修改 Markdown、AGENTS、Issue/PR 模板、评论、label 或其他不参与 Rust 构建的元数据时，不运行 Clippy、
+  nextest 或 cargo fmt；改用 diff、链接、Markdown/YAML/JSON schema 和相关 CLI smoke check。
+- 修改 source parser 或 elaborator 时先补充失败测试，并在 red→green 循环中只运行能复现当前行为的
+  focused test；完成该工作单元后再进全量 Rust 检查点。converter、VM 和旧 bytecode 已不在活动
   workspace。未来跨格式语义变化必须针对 canonical model、ConversionReport、
   round-trip fixture 和 `examples/` 验证，converter 不得直接消费 source AST。
+- 交付说明必须列出实际运行的 focused/full 检查、未运行的门禁及原因。不得将“未适用”写成“已通过”。
 - 使用校验脚本或外部模拟器验证解析逻辑时，先确认校验脚本与模拟器的代码逻辑一致，不能用有问题的校验脚本得出结论。
 - 遇到规范未定义的外部谱面边界时，研究阶段可以记录候选假设，但规范性实现不得发明“通用
   语义”。Strict mode 必须失败或要求显式 semantic profile；repair 只能修复非法或矛盾输入，
