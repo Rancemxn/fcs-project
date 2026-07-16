@@ -4,6 +4,8 @@ GitHub Issues are the repository's work contracts. Pull Requests deliver one rev
 
 Use the authenticated `gh` CLI for repository operations. Prefer `--json` plus `jq` over parsing human-readable tables.
 
+For transient network failures only (DNS, timeout/reset, interrupted TLS, or HTTP 502/503/504), wait 5 seconds and retry the same `gh` operation up to five times. Before retrying a mutation, query by stable identity to determine whether the previous attempt already succeeded. Never blindly repeat Issue/PR creation, comments, reviews, or merge. Do not retry authentication/authorization failures, invalid input, not-found responses, merge conflicts, or failed checks; report them immediately. After five retries, stop and report the last error.
+
 ## Issue contract
 
 Before implementation, ensure the Issue records:

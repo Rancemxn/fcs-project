@@ -16,6 +16,7 @@ Issue/PR 的便利性也可能模糊资料权威：Issue 中的验收条件、PR
 - Pull Requests 交付一个可独立审查的工作单元，并链接对应 Issue、验证命令、规范/ADR/conformance/review 影响与剩余风险。
 - 分支从 `main` 创建，使用 `codex/<issue>-<slug>` 命名；Issue 使用 parent/sub-issue 和 blocked-by/blocking 表达分解与依赖。
 - 使用 `gh` 读写 GitHub 状态；程序化检查使用 `gh --json` 或 `gh api` 输出，由 `jq` 投影、聚合或以 `jq -e` 形成门禁。
+- `gh` 只在 DNS、超时/连接重置、TLS 中断或 HTTP 502/503/504 等瞬时网络失败时每隔 5 秒重试，最多重试 5 次。写操作重试前必须先查询远程是否已成功；认证/权限、校验、not found、冲突或门禁失败不属于可重试网络故障。
 - Issue、PR、label、comment、branch 和 CI 只有工作流与实施证据职责，不获得规范权威。规范修订、fixture/manifest 绑定、dated review、baseline 和 Frozen gate 仍按 `docs/specification-governance.md` 执行。
 
 ## 3. 后果

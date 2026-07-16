@@ -191,6 +191,7 @@
 ### GitHub delivery workflow
 
 - 只读检查使用 `gh issue list/view`、`gh pr list/view/diff/checks` 和 `gh api`。创建、编辑、评论、关闭、push、review 或 merge 是外部状态变更，只在用户明确要求对应工作流时执行。
+- `gh` 因 DNS、连接超时/重置、TLS 中断或 HTTP 502/503/504 等瞬时网络问题失败时，每隔 5 秒重试同一操作，最多重试 5 次。写操作在重试前必须先查询远程是否已生效，避免重复创建 Issue/PR、重复评论或重复 merge。不得重试认证/权限失败、参数/校验错误、not found、合并冲突或门禁失败；应立即报告。五次重试耗尽后停止并报告最后一次错误。
 - 开始非机械工作前，确保有一个写明范围、权威输入、验收条件、非目标、依赖和验证方法的 Issue。大型工作用 parent/sub-issue 和 blocked-by/blocking 关系，不在一个 Issue 中堆放不可独立验收的横向任务。
 - 从最新 `origin/main` 创建 `codex/<issue>-<slug>` 分支；一个分支和 PR 只交付一个可审查工作单元。不要将工作区中与 Issue 无关的改动带入提交。
 - PR 正文必须链接 Issue；只有 PR 合并即应关闭 Issue 时才使用 `Closes #<n>`，否则使用 `Refs #<n>`。正文同时记录规范/ADR/conformance/review 影响、实际验证命令、未执行门禁和剩余风险。
