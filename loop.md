@@ -1,6 +1,6 @@
 # Goal & Success Signal
 
-- **Goal:** 从当前已合并的 I0/I1.1 基线和 I1.2 frontier 出发，按
+- **Goal:** 从 GitHub root Issue 的最新有效 checkpoint 和最早 dependency-ready frontier 出发，按
   `docs/plans/fcs5-roadmap.md`、各阶段计划、权威规范和治理规则持续完成 I1–I10，并在各自 owning
   stage 关闭 S15 遗留 blocker，最终在 `main` 上形成一个可复现、可发布但尚未公开发布的 FCS 5
   conformance release candidate。客观 stage gate 满足后自动衔接，不要求逐阶段人工确认。
@@ -29,6 +29,8 @@
 - `docs/specification-governance.md` 管理版本状态；`fcs.md`、`fcbc.md`、`fcs-render.md` 和
   `fcs-conversion.md` 在各自版本域定义规范性行为；Accepted ADR 约束设计方向但不替代规范文本；
   `docs/plans/fcs5-roadmap.md` 是唯一总实施路线。
+- `loop.md` 是设计契约，不是执行器或运行时机制；它不产生规范语义、不替代 Issue/PR、计划、复审或
+  fixture 证据，也不自行声明阶段完成。
 - `docs/community/` 是外部格式证据综合，`refer/chart/` 是固定快照下的一手证据。外部格式结论
   必须遵守仓库阅读路由、固定 commit/hash 和多来源冲突规则；单个参考实现不得成为社区规范。
 - Issue、PR、计划、实现、example、fixture、reference harness、skill 和外部项目都不能静默成为新
@@ -66,7 +68,8 @@
   只在 stage gate、frontier 或重大 blocker 变化时更新，不镜像每个 commit 或 child checkpoint。
 - **Current state authority:** root Issue 的最新有效 checkpoint、child Issue dependency graph、已合并
   PR 和仓库 gate artifact 共同构成当前状态证据。`.scratch/fcs5-rc` 只保留历史，不得作为当前
-  request surface、iteration count 或 frontier。
+  request surface、iteration count 或 frontier。`loop.md` 不复制瞬时 commit/Issue 状态；若文档与
+  动态证据冲突，按该 authority 修订文档，不能据此声称完成。
 - **Bounded quantity that must advance:** active child Issue 在开始时拥有有限且编号的 acceptance
   criteria 和未决 decision residual；任何非终止 iteration 必须关闭至少一个 criterion、消除一个
   decision residual、完成保持原验收覆盖的严格缩小拆分，或按 Residual Routing 退出该路径。240 预算
