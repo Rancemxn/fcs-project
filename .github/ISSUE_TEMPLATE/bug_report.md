@@ -41,3 +41,5 @@ List affected fixtures, manifests, public interfaces, stages, or version domains
 - Decisions: <!-- why this is treated as a bug rather than an open specification question -->
 - Blockers: <!-- exact missing fact/owner, or none -->
 - Next: reproduce deterministically and establish the failing test or fixture.
+
+Keep this initial checkpoint in the body. Send every later meaningful checkpoint as a new Issue comment with the same five fields; do not append to or repeatedly edit this message.

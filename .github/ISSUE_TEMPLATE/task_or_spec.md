@@ -44,3 +44,5 @@ Identify ambiguity, technical debt, interfaces that must remain stable, and temp
 - Decisions: <!-- why this work unit and direction exist -->
 - Blockers: <!-- exact missing fact/owner, or none -->
 - Next: <!-- next bounded action -->
+
+Keep this initial checkpoint in the body. Send every later meaningful checkpoint as a new Issue comment with the same five fields; do not append to or repeatedly edit this message.

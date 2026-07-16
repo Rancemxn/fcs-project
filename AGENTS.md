@@ -191,14 +191,14 @@
 ### GitHub delivery workflow
 
 - 只读检查使用 `gh issue list/view`、`gh pr list/view/diff/checks` 和 `gh api`。创建、编辑、评论、关闭、push、review 或 merge 是外部状态变更，只在用户明确要求对应工作流时执行。
-- `gh` 因 DNS、连接超时/重置、TLS 中断或 HTTP 502/503/504 等瞬时网络问题失败时，每隔 5 秒重试同一操作，最多重试 5 次。写操作在重试前必须先查询远程是否已生效，避免重复创建 Issue/PR、重复评论或重复 merge。不得重试认证/权限失败、参数/校验错误、not found、合并冲突或门禁失败；应立即报告。五次重试耗尽后停止并报告最后一次错误。
+- `gh` 因 DNS、连接超时/重置、TLS 中断或 HTTP 502/503/504 等瞬时网络问题失败时，每隔 5 秒重试同一操作，首次失败后最多再试 10 次。写操作在每次重试以及稍后补同步前，必须先按稳定身份查询远程是否已生效，避免重复创建 Issue/PR、重复评论、review 或 merge。不得重试认证/权限失败、参数/校验错误、not found、合并冲突或门禁失败；应立即报告。10 次重试耗尽后，记录完整待同步 payload、稳定身份、最后错误和 `pending remote sync` 状态，继续不依赖该远端结果的安全本地工作；在下一个有意义检查点以及 handoff、PR Ready、review 或 merge 等依赖远端状态的动作前再次查询并尝试同步。待同步记录只是 transport outbox，不是第二个 tracker；不得把未确认的远端动作描述为成功。
 - 开始非机械工作前，确保有一个写明范围、权威输入、验收条件、非目标、依赖和验证方法的 Issue。大型工作用 parent/sub-issue 和 blocked-by/blocking 关系，不在一个 Issue 中堆放不可独立验收的横向任务。
-- 非机械 Issue 必须在正文中维护 `Progress` 检查点记录，不得只保留初始对话、空模板或零散评论。创建时先记录契约建立；范围/决定变化、完成一个有意义工作单元、出现/解除阻塞、获得验证结果、创建 PR 或交付状态变化时追加记录。每条记录包含 Completed、Evidence、Decisions、Blockers 和 Next；不需要为每个 commit 写一条。
+- 非机械 Issue 正文必须写明稳定的初始工作契约和一条实质性的初始 `Progress`，不得只保留初始对话或空模板。之后每个有意义检查点分别发送一条新的 Issue comment，不在正文或旧评论中累计、反复 edit。范围/决定变化、完成工作单元、出现/解除阻塞、获得验证结果、创建 PR 或交付状态变化时发送新消息；每条包含 Completed、Evidence、Decisions、Blockers 和 Next。更正旧消息时发送显式 superseding comment 并指出被替代内容，不静默覆盖历史；不需要为每个 commit 发一条。
 - 从最新 `origin/main` 创建 `codex/<issue>-<slug>` 分支；一个分支和 PR 只交付一个可审查工作单元。不要将工作区中与 Issue 无关的改动带入提交。
 - PR 正文必须链接 Issue；只有 PR 合并即应关闭 Issue 时才使用 `Closes #<n>`，否则使用 `Refs #<n>`。正文同时记录规范/ADR/conformance/review 影响、实际验证命令、未执行门禁和剩余风险。
-- PR 不得只有空初始说明和一串 commits。正文必须维护 `Progress` 记录，按有意义的 commit/变更组说明完成了什么、为什么需要这些改动、证据与决定是什么、还剩什么。每次重要 push 后和 PR 转 Ready 前必须使正文与当前 diff 和 commits 一致；commit message 和评论不能替代该记录。
+- PR 不得只有空初始说明和一串 commits。正文必须含一条实质性的初始 `Progress`，说明首个可审查 change group、原因、证据、决定和剩余项；之后每次重要 push、阻塞变化和转 Ready 前分别发送新的 PR comment，使最新消息与当前 diff/commits 一致。不得把后续进度反复 edit 到正文或旧评论中；更正使用显式 superseding comment。commit message 不能替代这些进度消息。
 - push 前审查 staged diff；PR 合并前检查 `gh pr checks --required`、review decision、mergeability 和未解决评论。不得用 `--admin` 绕过 branch protection，也不得为了变绿而降低测试、fixture 或 review gate。
-- merge 前在 Issue 和 PR 中写入 delivery-ready Progress；合并后即使 Issue 已由 `Closes` 自动关闭，也要补充 final merged checkpoint，记录合并 PR/交付结果、最终验证、未完成项与后续 Issue 链接，再确认 Issue 状态和后续 blocker。Issue/PR 的进度记录是工作流证据，不获得规范权威。
+- merge 前分别在 Issue 和 PR 中发送新的 delivery-ready Progress comment；合并后即使 Issue 已由 `Closes` 自动关闭，也要分别发送新的 final merged checkpoint，记录合并 PR/交付结果、最终验证、未完成项与后续 Issue 链接，再确认 Issue 状态和后续 blocker。Issue/PR 的进度消息是工作流证据，不获得规范权威。
 
 ### Domain docs
 

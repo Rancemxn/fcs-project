@@ -16,7 +16,7 @@ Issue/PR 的便利性也可能模糊资料权威：Issue 中的验收条件、PR
 - Pull Requests 交付一个可独立审查的工作单元，并链接对应 Issue、验证命令、规范/ADR/conformance/review 影响与剩余风险。
 - 分支从 `main` 创建，使用 `codex/<issue>-<slug>` 命名；Issue 使用 parent/sub-issue 和 blocked-by/blocking 表达分解与依赖。
 - 使用 `gh` 读写 GitHub 状态；程序化检查使用 `gh --json` 或 `gh api` 输出，由 `jq` 投影、聚合或以 `jq -e` 形成门禁。
-- `gh` 只在 DNS、超时/连接重置、TLS 中断或 HTTP 502/503/504 等瞬时网络失败时每隔 5 秒重试，最多重试 5 次。写操作重试前必须先查询远程是否已成功；认证/权限、校验、not found、冲突或门禁失败不属于可重试网络故障。
+- `gh` 只在 DNS、超时/连接重置、TLS 中断或 HTTP 502/503/504 等瞬时网络失败时每隔 5 秒重试，最多重试 5 次。写操作重试前必须先查询远程是否已成功；认证/权限、校验、not found、冲突或门禁失败不属于可重试网络故障。当前上限与耗尽后的处理已由第 6 节 dated amendment 修订。
 - Issue、PR、label、comment、branch 和 CI 只有工作流与实施证据职责，不获得规范权威。规范修订、fixture/manifest 绑定、dated review、baseline 和 Frozen gate 仍按 `docs/specification-governance.md` 执行。
 
 ## 3. 后果
@@ -45,3 +45,19 @@ Issue/PR 的便利性也可能模糊资料权威：Issue 中的验收条件、PR
 用户补充接受：Issue 和 PR 不得只保留初始对话、空模板、零散评论或原始 commit 列表。非机械 Issue 必须在正文中以 `Progress` 记录工作契约、有意义检查点、证据、决定、阻塞与下一步；PR 必须按 commit/变更组解释完成内容与原因，并在重要 push 后和转 Ready 前保持正文与当前 diff 一致。
 
 进度以有意义工作单元为粒度，不强制每个 commit 一条。评论可以保留讨论时序，但不能替代正文中的当前可信摘要。Issue/PR 进度仍只是工作流证据，不得替代根规范、conformance artifact、dated review 或 implementation baseline。
+
+## 6. 2026-07-17 dated amendment：分条进度消息与延后远端同步
+
+用户进一步修订第 2、5 节：Issue/PR 正文只保存稳定的初始契约和一条实质性初始 Progress。之后每个
+有意义检查点分别发送一条新 comment，不再把全部进度累计到正文或旧评论中，也不为日常进度反复
+edit 同一个消息。每条消息仍包含 Completed、Evidence、Decisions、Blockers 和 Next；若旧消息需要
+更正，发送明确指出被替代内容的 superseding comment，保留原消息作为历史。delivery-ready 与
+final merged checkpoint 也分别使用新消息。该决定取代第 5 节关于正文持续维护当前摘要、评论不能
+替代正文的要求；commit 列表仍不能替代进度叙事。
+
+瞬时网络失败仍每隔 5 秒重试，但首次失败后最多再试 10 次，取代第 2 节的 5 次上限。每次重试写
+操作以及稍后补同步前，都必须先按稳定身份查询远端，避免重复创建、评论、review 或 merge。10 次
+耗尽后，保存完整 payload、稳定身份、最后错误和 `pending remote sync` 标记，继续所有不依赖该远端
+结果的安全本地工作；在下一个有意义检查点，以及 handoff、PR Ready、review、merge 等依赖远端状态
+的动作前再次查询并尝试同步。该本地记录只是 transport outbox，不是第二个 tracker；未确认的远端
+动作不得描述为成功，依赖远端前置状态的外部转换必须延后。
