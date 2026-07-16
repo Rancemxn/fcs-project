@@ -12,6 +12,8 @@ Workflow state is represented by exactly one of these GitHub labels on each open
 
 Type labels such as `bug`, `documentation`, `enhancement`, and `question` are orthogonal and may coexist with one state label.
 
+Do not add an `in-progress` state. For `ready-for-agent`, the assignee and linked branch/PR record that work has started. Keep the state label until the Issue closes through merge or returns to triage.
+
 ## State changes
 
 Use `gh issue edit` to remove the old state and add the new one atomically in one command:

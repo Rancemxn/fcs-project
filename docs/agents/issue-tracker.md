@@ -37,6 +37,8 @@ needs-info   -> needs-triage
 
 After new information resolves the gap, return the Issue to `needs-triage` before declaring it ready. Type labels such as `bug`, `documentation`, and `enhancement` may coexist with one state label. See `triage-labels.md`.
 
+There is no separate `in-progress` label. An assignee plus a linked development branch or open PR records that a `ready-for-agent` Issue has been claimed; retain `ready-for-agent` until merge closes the Issue or new evidence requires re-triage.
+
 ## Inspect with gh and jq
 
 Use structured output for automation and audit checks:
