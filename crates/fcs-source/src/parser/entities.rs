@@ -2,8 +2,8 @@ use chumsky::{input::ValueInput, prelude::*};
 
 use crate::ast::{
     CollectionBlock, CollectionItem, CollectionsBlock, EntityConstructor, EntityExpression,
-    EntityField, FieldPath, Generator, GeneratorItem, NoteVariant, SourceRange, SourceSpan, Type,
-    WithExpression,
+    EntityField, FieldPath, Generator, GeneratorItem, NoteVariant, SourceEntityConstructor,
+    SourceEntityConstructorKind, SourceRange, SourceSpan, Type, WithExpression,
 };
 
 use super::{
@@ -188,6 +188,7 @@ where
 {
     let base = constructor_parser()
         .map(EntityExpression::Constructor)
+        .or(source_entity_constructor_parser().map(EntityExpression::SourceConstructor))
         .or(expression_parser().map(EntityExpression::Source));
     base.foldl_with(
         just(Token::Keyword(Keyword::With))
@@ -201,6 +202,24 @@ where
             })
         },
     )
+}
+
+fn source_entity_constructor_parser<'tokens, I>()
+-> impl Parser<'tokens, I, SourceEntityConstructor, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    select! {
+        Token::Keyword(Keyword::RenderNode) => SourceEntityConstructorKind::RenderNode,
+        Token::Keyword(Keyword::Segment) => SourceEntityConstructorKind::Segment,
+        Token::Keyword(Keyword::Keyframe) => SourceEntityConstructorKind::Keyframe,
+    }
+    .then(fields_parser())
+    .map_with(|(kind, fields), extra| SourceEntityConstructor {
+        kind,
+        fields,
+        span: source_span(extra.span()),
+    })
 }
 
 fn constructor_parser<'tokens, I>()
@@ -284,9 +303,7 @@ where
 {
     select! {
         Token::Identifier(segment) => segment,
-        Token::Keyword(Keyword::Time) => "time".to_owned(),
-        Token::Keyword(Keyword::Color) => "color".to_owned(),
-        Token::Keyword(Keyword::Render) => "render".to_owned(),
+        Token::Keyword(keyword) => keyword.as_str().to_owned(),
     }
 }
 

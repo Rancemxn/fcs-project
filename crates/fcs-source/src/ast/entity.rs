@@ -101,6 +101,26 @@ pub struct EntityConstructor {
     pub span: SourceSpan,
 }
 
+/// A source entity constructor whose semantic type is owned by a later phase.
+///
+/// `RenderNode`, `segment`, and `keyframe` are valid source productions, but their
+/// static schema/element type is not available to the I1 source parser. Keeping the
+/// constructor kind separate prevents the parser from inventing a placeholder `Type`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceEntityConstructorKind {
+    RenderNode,
+    Segment,
+    Keyframe,
+}
+
+/// A fully spanned source constructor retained before static schema validation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceEntityConstructor {
+    pub kind: SourceEntityConstructorKind,
+    pub fields: Vec<EntityField>,
+    pub span: SourceSpan,
+}
+
 /// A source range used by a compile-time generator.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceRange {
@@ -177,6 +197,7 @@ impl CollectionItem {
 #[derive(Debug, Clone, PartialEq)]
 pub enum EntityExpression {
     Constructor(EntityConstructor),
+    SourceConstructor(SourceEntityConstructor),
     Source(SourceExpression),
     With(WithExpression),
 }
@@ -186,6 +207,7 @@ impl EntityExpression {
     pub const fn span(&self) -> SourceSpan {
         match self {
             Self::Constructor(constructor) => constructor.span,
+            Self::SourceConstructor(constructor) => constructor.span,
             Self::Source(expression) => expression.span(),
             Self::With(with_expression) => with_expression.span,
         }

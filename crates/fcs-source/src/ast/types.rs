@@ -187,6 +187,7 @@ pub enum SourceTypeKind {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SourceLiteral {
     Bool(bool),
+    Null,
     Int(i64),
     IntMagnitude(String),
     Float(f64),
@@ -196,6 +197,27 @@ pub enum SourceLiteral {
     Length(f64),
     Angle(f64),
     Color(Color),
+}
+
+/// An ordered key/value entry in a source object expression.
+///
+/// Object key order is source-visible and must remain intact until a later semantic
+/// phase explicitly assigns object meaning. Duplicate keys are therefore retained as
+/// separate entries by the parser.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceObjectEntry {
+    pub key: String,
+    pub key_span: SourceSpan,
+    pub value: SourceExpression,
+    pub span: SourceSpan,
+}
+
+/// One ordered arm in a source `choose` expression.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceChooseArm {
+    pub condition: SourceExpression,
+    pub value: SourceExpression,
+    pub span: SourceSpan,
 }
 
 /// A unary operator represented by the expression source AST.
@@ -233,6 +255,18 @@ pub enum SourceExpression {
         literal: SourceLiteral,
         span: SourceSpan,
     },
+    Array {
+        elements: Vec<SourceExpression>,
+        span: SourceSpan,
+    },
+    Object {
+        entries: Vec<SourceObjectEntry>,
+        span: SourceSpan,
+    },
+    Reference {
+        name: String,
+        span: SourceSpan,
+    },
     Name {
         name: String,
         span: SourceSpan,
@@ -258,6 +292,16 @@ pub enum SourceExpression {
         field: String,
         span: SourceSpan,
     },
+    Index {
+        base: Box<SourceExpression>,
+        index: Box<SourceExpression>,
+        span: SourceSpan,
+    },
+    Choose {
+        arms: Vec<SourceChooseArm>,
+        else_value: Box<SourceExpression>,
+        span: SourceSpan,
+    },
     Vec2 {
         x: Box<SourceExpression>,
         y: Box<SourceExpression>,
@@ -270,11 +314,16 @@ impl SourceExpression {
     pub const fn span(&self) -> SourceSpan {
         match self {
             Self::Literal { span, .. }
+            | Self::Array { span, .. }
+            | Self::Object { span, .. }
+            | Self::Reference { span, .. }
             | Self::Name { span, .. }
             | Self::Unary { span, .. }
             | Self::Binary { span, .. }
             | Self::Call { span, .. }
             | Self::FieldAccess { span, .. }
+            | Self::Index { span, .. }
+            | Self::Choose { span, .. }
             | Self::Vec2 { span, .. } => *span,
         }
     }

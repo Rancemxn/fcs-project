@@ -9,9 +9,12 @@ fn source_types_preserve_nested_generic_spans_and_static_shape() {
     let source_type = parse_type(source).into_result().unwrap();
 
     assert_eq!(source_type.span(), SourceSpan::new(0, 24));
-    assert_eq!(source_type.to_type(), Type::Track(Box::new(Type::Array(Box::new(
-        Type::Vec2(Box::new(Type::Bool)),
-    )))));
+    assert_eq!(
+        source_type.to_type(),
+        Type::Track(Box::new(Type::Array(Box::new(Type::Vec2(Box::new(
+            Type::Bool
+        )),))))
+    );
     assert!(!source_type.is_constructible());
 
     let SourceTypeKind::Track(array) = source_type.kind() else {
