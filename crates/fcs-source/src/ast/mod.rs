@@ -2,6 +2,7 @@ mod color;
 mod definitions;
 mod document;
 mod entity;
+mod metadata;
 mod time;
 mod track;
 mod types;
@@ -12,6 +13,10 @@ pub use entity::{
     EntityField, ExpandedCollection, ExpandedEntity, ExpandedField, ExpandedSourceDocument,
     FieldPath, Generator, GeneratorItem, GeneratorOwner, NoteVariant, SchemaField, SchemaValue,
     SourceEntityConstructor, SourceEntityConstructorKind, SourceRange, WithExpression,
+};
+pub use metadata::{
+    ArtworkBlock, ContributorDeclaration, ContributorsBlock, CreditEntry, CreditsBlock, MetaBlock,
+    ResourceDeclaration, ResourceKind, ResourcesBlock, SyncBlock,
 };
 pub use time::{Beat, BeatError, Bpm, InvalidBpm, SourceBpm};
 pub use track::{

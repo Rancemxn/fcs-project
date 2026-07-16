@@ -1,7 +1,8 @@
 //! Source document envelope and source-ordered top-level declarations.
 
 use super::{
-    CollectionsBlock, DefinitionsBlock, LineDeclaration, LinesBlock, SourceSpan, TempoMap,
+    ArtworkBlock, CollectionsBlock, ContributorsBlock, CreditsBlock, DefinitionsBlock,
+    LineDeclaration, LinesBlock, MetaBlock, ResourcesBlock, SourceSpan, SyncBlock, TempoMap,
 };
 use crate::version::{FCS_SOURCE_VERSION, Version};
 
@@ -113,12 +114,12 @@ pub struct RenderBlock {
 /// A top-level declaration in source order.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TopLevelBlock {
-    Meta(SourceBlock),
-    Contributors(SourceBlock),
-    Credits(SourceBlock),
-    Resources(SourceBlock),
-    Artwork(SourceBlock),
-    Sync(SourceBlock),
+    Meta(MetaBlock),
+    Contributors(ContributorsBlock),
+    Credits(CreditsBlock),
+    Resources(ResourcesBlock),
+    Artwork(ArtworkBlock),
+    Sync(SyncBlock),
     Definitions(DefinitionsBlock),
     TempoMap(TempoMapBlock),
     Lines(LinesBlock),
@@ -167,14 +168,13 @@ impl TopLevelBlock {
 
     pub const fn span(&self) -> SourceSpan {
         match self {
-            Self::Meta(block)
-            | Self::Contributors(block)
-            | Self::Credits(block)
-            | Self::Resources(block)
-            | Self::Artwork(block)
-            | Self::Sync(block)
-            | Self::Extensions(block)
-            | Self::Preserve(block) => block.span,
+            Self::Meta(block) => block.span,
+            Self::Contributors(block) => block.span,
+            Self::Credits(block) => block.span,
+            Self::Resources(block) => block.span,
+            Self::Artwork(block) => block.span,
+            Self::Sync(block) => block.span,
+            Self::Extensions(block) | Self::Preserve(block) => block.span,
             Self::Lines(block) => block.span,
             Self::Definitions(block) => block.span,
             Self::TempoMap(block) => block.span,
@@ -195,6 +195,12 @@ pub struct Document {
     pub definitions: Option<DefinitionsBlock>,
     pub collections: Vec<super::CollectionBlock>,
     pub lines: Vec<LineDeclaration>,
+    pub meta: Option<MetaBlock>,
+    pub contributors: Option<ContributorsBlock>,
+    pub credits: Option<CreditsBlock>,
+    pub resources: Option<ResourcesBlock>,
+    pub artwork: Option<ArtworkBlock>,
+    pub sync: Option<SyncBlock>,
     top_level_blocks: Vec<TopLevelBlock>,
 }
 
@@ -227,6 +233,30 @@ impl Document {
                 _ => None,
             })
             .unwrap_or_default();
+        let meta = top_level_blocks.iter().find_map(|block| match block {
+            TopLevelBlock::Meta(block) => Some(block.clone()),
+            _ => None,
+        });
+        let contributors = top_level_blocks.iter().find_map(|block| match block {
+            TopLevelBlock::Contributors(block) => Some(block.clone()),
+            _ => None,
+        });
+        let credits = top_level_blocks.iter().find_map(|block| match block {
+            TopLevelBlock::Credits(block) => Some(block.clone()),
+            _ => None,
+        });
+        let resources = top_level_blocks.iter().find_map(|block| match block {
+            TopLevelBlock::Resources(block) => Some(block.clone()),
+            _ => None,
+        });
+        let artwork = top_level_blocks.iter().find_map(|block| match block {
+            TopLevelBlock::Artwork(block) => Some(block.clone()),
+            _ => None,
+        });
+        let sync = top_level_blocks.iter().find_map(|block| match block {
+            TopLevelBlock::Sync(block) => Some(block.clone()),
+            _ => None,
+        });
         Self {
             source_version,
             format,
@@ -235,6 +265,12 @@ impl Document {
             definitions,
             collections,
             lines,
+            meta,
+            contributors,
+            credits,
+            resources,
+            artwork,
+            sync,
             top_level_blocks,
         }
     }

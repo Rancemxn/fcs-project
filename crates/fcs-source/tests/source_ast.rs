@@ -2,8 +2,8 @@ use fcs_source::diagnostic::{DiagnosticCode, DiagnosticStage};
 use fcs_source::{
     ast::{
         CollectionItem, Definition, DocumentProfile, FunctionStatement, GeneratorOwner,
-        LineBodyItem, SchemaValue, SourceEntityConstructorKind, SourceSpan, SourceTypeKind,
-        TopLevelBlockKind, TrackSegmentItem, Type,
+        LineBodyItem, ResourceKind, SchemaValue, SourceEntityConstructorKind, SourceExpression,
+        SourceSpan, SourceTypeKind, TopLevelBlock, TopLevelBlockKind, TrackSegmentItem, Type,
     },
     parser::parse_document,
     parser::parse_type,
@@ -465,5 +465,144 @@ fn track_generators_retain_track_owner_and_schema_cubic_values() {
             .fields
             .iter()
             .any(|field| matches!(&field.value, SchemaValue::CubicBezier { .. }))
+    );
+}
+
+#[test]
+fn metadata_schema_ast_retains_ordered_declarations_and_spans() {
+    let source =
+        include_str!("../../../conformance/fcs5/source/valid/metadata-credits-resources-sync.fcs");
+    let document = parse_document(source)
+        .into_result()
+        .expect("metadata/resource/sync source grammar is valid");
+
+    let TopLevelBlock::Meta(meta) = document
+        .top_level(TopLevelBlockKind::Meta)
+        .expect("meta block")
+    else {
+        panic!("expected typed meta block");
+    };
+    assert_eq!(
+        meta.fields
+            .iter()
+            .map(|field| field.path.segments.as_slice())
+            .collect::<Vec<_>>(),
+        [
+            ["title"].as_slice(),
+            ["chartVersion"].as_slice(),
+            ["documentId"].as_slice(),
+            ["revision"].as_slice(),
+            ["custom"].as_slice(),
+        ]
+    );
+    let SchemaValue::Expression(SourceExpression::Object { entries, .. }) = &meta.fields[4].value
+    else {
+        panic!("expected ordered custom object");
+    };
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| entry.key.as_str())
+            .collect::<Vec<_>>(),
+        ["suite", "stable"]
+    );
+
+    let TopLevelBlock::Contributors(contributors) = document
+        .top_level(TopLevelBlockKind::Contributors)
+        .expect("contributors block")
+    else {
+        panic!("expected typed contributors block");
+    };
+    assert_eq!(contributors.people[0].name, "alice");
+    assert!(contributors.people[0].span.start < contributors.people[0].span.end);
+
+    let TopLevelBlock::Credits(credits) = document
+        .top_level(TopLevelBlockKind::Credits)
+        .expect("credits block")
+    else {
+        panic!("expected typed credits block");
+    };
+    assert_eq!(credits.entries.len(), 1);
+
+    let TopLevelBlock::Resources(resources) = document
+        .top_level(TopLevelBlockKind::Resources)
+        .expect("resources block")
+    else {
+        panic!("expected typed resources block");
+    };
+    assert_eq!(resources.resources[0].kind, ResourceKind::Binary);
+    assert_eq!(resources.resources[0].name, "empty");
+
+    let complete_source =
+        include_str!("../../../conformance/fcs5/source/valid/complete-source-grammar.fcs");
+    let complete_document = parse_document(complete_source)
+        .into_result()
+        .expect("complete schema source is valid");
+    let TopLevelBlock::Sync(sync) = complete_document
+        .top_level(TopLevelBlockKind::Sync)
+        .expect("sync block")
+    else {
+        panic!("expected typed sync block");
+    };
+    let preview = sync
+        .fields
+        .iter()
+        .find(|field| field.path.segments == ["preview"])
+        .expect("preview field");
+    assert!(matches!(&preview.value, SchemaValue::Interval { .. }));
+    assert!(sync.span.end <= complete_source.len());
+}
+
+#[test]
+fn metadata_custom_object_duplicate_keys_remain_source_ordered() {
+    let source = include_str!("../../../conformance/fcs5/source/invalid/custom-duplicate-key.fcs");
+    let document = parse_document(source)
+        .into_result()
+        .expect("duplicate custom keys are a later semantic error");
+    let TopLevelBlock::Meta(meta) = document
+        .top_level(TopLevelBlockKind::Meta)
+        .expect("meta block")
+    else {
+        panic!("expected typed meta block");
+    };
+    let SchemaValue::Expression(SourceExpression::Object { entries, .. }) = &meta.fields[0].value
+    else {
+        panic!("expected custom object");
+    };
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].key, "same");
+    assert_eq!(entries[1].key, "same");
+    assert!(entries[0].span.start < entries[1].span.start);
+}
+
+#[test]
+fn every_core_resource_kind_has_a_typed_source_node() {
+    let source = "#fcs 5.0.0\nformat { profile: fragment; }\nresources {\n\
+        audio a {} image i {} font f {} texture t {} path p {} shader s {} binary b {}\n\
+    }";
+    let document = parse_document(source)
+        .into_result()
+        .expect("all Core resource kind productions are syntactically valid");
+    let TopLevelBlock::Resources(resources) = document
+        .top_level(TopLevelBlockKind::Resources)
+        .expect("resources block")
+    else {
+        panic!("expected typed resources block");
+    };
+    assert_eq!(
+        resources
+            .resources
+            .iter()
+            .map(|resource| resource.kind)
+            .collect::<Vec<_>>(),
+        [
+            ResourceKind::Audio,
+            ResourceKind::Image,
+            ResourceKind::Font,
+            ResourceKind::Texture,
+            ResourceKind::Path,
+            ResourceKind::Shader,
+            ResourceKind::Binary,
+        ]
     );
 }
