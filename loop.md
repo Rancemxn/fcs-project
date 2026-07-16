@@ -1,191 +1,203 @@
 # Goal & Success Signal
 
-- **Goal:** 从当前 FCS 5 工作区出发，按 `docs/plans/fcs5-roadmap.md` 和各权威规范持续完成 S15
-  剩余闭合工作以及 I1–I10 的文档、conformance、Rust 实现、独立复审和治理记录，形成一个本地、
-  可发布但尚未对外发布的 FCS 5 conformance release candidate。每个阶段在客观 gate 满足后自动
-  进入下一阶段，不要求用户逐阶段确认。
+- **Goal:** 从当前已合并的 I0/I1.1 基线和 I1.2 frontier 出发，按
+  `docs/plans/fcs5-roadmap.md`、各阶段计划、权威规范和治理规则持续完成 I1–I10，并在各自 owning
+  stage 关闭 S15 遗留 blocker，最终在 `main` 上形成一个可复现、可发布但尚未公开发布的 FCS 5
+  conformance release candidate。客观 stage gate 满足后自动衔接，不要求逐阶段人工确认。
 - **Observable success signal:** 以下条件同时成立：
-  - FCS Core、FCBC Container、Execution ABI、Render Profile 和 Conversion Specification 的当前
-    候选版本均满足治理文件规定的 Frozen 条件；
-  - S15 的 Execution ABI、RenderSection、Conversion round-trip 和 Core fixture validation blocker
-    均由机器可执行 artifact 关闭；
-  - 路线图 I1–I10 的每个 task 与阶段完成条件均有对应实现、测试、fixture、review 和记录；
-  - source、canonical、runtime、FCBC、converter、Render 和 CLI 都是实际实现，不以空壳、manifest
-    integrity test 或 test-only oracle 冒充产品能力；
-  - implementation matrix 没有无 owner、无下一阶段或与实际证据不符的 `partial`/`blocked` 项；
-  - 所有适用的 source fixture、binary golden/mutation、reference evaluation、conversion
-    round-trip、render semantic/raster、property/fuzz、CLI end-to-end 和 workspace gate 通过；
-  - 所有绑定 file/suite/tree hash 与实际 bytes 一致，本地链接和 UTF-8 检查通过；
-  - 独立复审没有未关闭的 Critical 或 Important finding；
-  - 工作区拥有可审查的本地提交历史和完整交付报告，但没有在未获批准时 push、tag、release 或
-    发布 crate/artifact。
-- **Observable failure signal:** 达到迭代上限、满足无进展条件、出现必须路由 HUMAN 的 residual，
-  或任一声称完成的 checkpoint 仍有失败 gate、过期 hash、未关闭 Critical/Important finding、
-  未经授权的公开语义选择或被测试/计划偷偷创造的规范行为。
+  - FCS Core、FCBC Container、Execution ABI、Render Profile 和 Conversion Specification 五个版本域
+    均满足 `docs/specification-governance.md` 的 Frozen 条件；
+  - 路线图 I1–I10 的每个 task 和阶段完成条件都有已合并实现、测试、fixture、review 与治理证据；
+  - source、canonical、runtime、FCBC、converter、Render 和 CLI 都是产品实现，不以空壳、manifest
+    integrity test 或 test-only oracle 冒充能力；
+  - S15 的 Core fixture execution、Conversion round-trip、FCBC/Execution ABI 和 Render executable
+    blocker 均由 owning stage 的机器可执行 artifact 关闭；
+  - implementation matrix 不含无 owner、无下一阶段或与实际证据不符的 `partial`/`blocked` 项；
+  - 所有适用的 source/canonical/runtime、golden/mutation、round-trip、semantic/raster、property/fuzz、
+    CLI end-to-end、hash、link、UTF-8 和 workspace gate 通过；
+  - 最终联合独立复审没有未关闭的 Critical/Important finding；
+  - 所有 RC 内工作均通过 PR 合并到 `main`，root Issue 的最终证据与实际 merge/hash/gate 一致并已关闭；
+  - 不存在影响规范、conformance、路线图验收、安全性、正确性或可复现性的 open Issue。只有明确属于
+    RC 非目标的 Minor/增强 follow-up 可以继续开放；
+  - 未为本 RC 创建公开 tag、GitHub Release，未发布 crate，也未上传公开 release/conformance bundle。
+- **Observable failure signal:** 达到 240 个 work-unit iterations、满足全局 no-progress、只剩无法解除的
+  HUMAN residual，或任一声称完成的 gate 仍有失败检查、过期 hash、未关闭 Critical/Important finding、
+  未授权公开语义选择、未合并交付或由计划/Issue/测试偷偷创造的规范行为。
 
 # Scope & Authority
 
-- `docs/specification-governance.md` 管理规范状态；`fcs.md`、`fcbc.md`、`fcs-render.md` 和
+- `docs/specification-governance.md` 管理版本状态；`fcs.md`、`fcbc.md`、`fcs-render.md` 和
   `fcs-conversion.md` 在各自版本域定义规范性行为；Accepted ADR 约束设计方向但不替代规范文本；
   `docs/plans/fcs5-roadmap.md` 是唯一总实施路线。
 - `docs/community/` 是外部格式证据综合，`refer/chart/` 是固定快照下的一手证据。外部格式结论
   必须遵守仓库阅读路由、固定 commit/hash 和多来源冲突规则；单个参考实现不得成为社区规范。
-- 当前实现、example、fixture、reference harness 和外部项目都不能静默成为新规范。实现暴露规范
-  缺口时，先按治理流程修订 Draft/重开的规范、fixture、manifest 和 review；I1–I9 只有在受影响的
-  Reviewed Implementation Baseline 重新独立复审后才能继续，I10/发布仍须受影响版本重新 Frozen。
-- 用户已接受 ADR 0010 并取消“I1 必须再次由用户确认计划”这一特殊历史门禁。I1–I9 的客观 gate
-  是阶段完整 normative dependency closure、绑定 fixture/hash、独立复审无未关闭
-  Critical/Important、阶段计划与条款一致、前置质量门通过；满足后自动衔接。该 baseline 不是版本
-  状态。I10 conformance RC 仍要求五个版本域全部 Frozen 和最终联合 executable conformance。
-- 精确表达式、FCS authoring workspace、自包含单谱面 FCBC、原始资源 bytes、版本化 conversion
-  semantic profile、无默认 baking、无 FCBC source snapshot/player cache 等已接受边界必须保持；
-  改变这些边界需要 HUMAN routing，而不是由实现便利性决定。
-- 不得覆盖或回退已有无关修改，不得把 `refer/` 作为 Cargo path dependency，不得恢复 FCS 4
-  compatibility facade；只有路线阶段需要时才创建后续领域 crate。
+- Issue、PR、计划、实现、example、fixture、reference harness、skill 和外部项目都不能静默成为新
+  规范。规范缺口按治理流程处理，不能由实现便利性决定。
+- I1–I9 仅在对应完整 normative dependency closure 建立 Reviewed Implementation Baseline 后实施；
+  baseline 失效时只重开受影响阶段及其依赖阶段。I10/本地 RC 仍要求五个版本域 Frozen、最终联合
+  独立复审和完整 executable conformance。
+- 精确表达式、FCS authoring workspace、自包含单谱面 FCBC、原始资源 bytes、版本化 Conversion
+  semantic profile、无默认 baking、无 FCBC source snapshot/player cache 等已接受边界必须保持。
+- 不覆盖或回退无关修改，不把 `refer/` 作为 Cargo path dependency，不恢复 FCS 4 compatibility
+  facade；后续领域 crate 和依赖只在 owning stage 的 gate 允许后创建或激活。
 
 # Termination Conditions
 
-- **Max iterations / budget:** 最多 160 次迭代。一次迭代只承诺一个有限、具有明确验收项和匹配
-  artifact 的工作单元；不得用扩大单次范围绕过上限。达到上限时停止，保留已验证检查点，输出
-  已完成证据、当前 gate、剩余有限 backlog、residual 分类和下一份缩小范围的 loop 建议；不得
-  声称目标完成或降低质量门。
-- **Goal-achievement check:** 对照 Goal 的 observable success signal、路线图 task、implementation
-  matrix、规范状态表、独立 finding ledger 和全部适用验证 artifact 逐项复核。只有所有条件同时
-  满足才能终止为 achieved；实际 push/release 不属于完成条件。
-- **No-progress condition:** 同一个阻塞条件连续 3 次迭代同时满足以下全部条件：没有关闭 active
-  work unit 的任何 acceptance criterion；没有新增能唯一决定下一动作的验证证据；没有把问题拆成
-  严格更小且分别有限可验收的单元；没有其他不依赖该 blocker 的安全路线图工作可推进。任务困难、
-  一次方案失败、测试暴露 bug、发现新 finding 或需要规范修订本身不算无进展。
-- **Worst-case Plan B:** 保留所有已验证提交和 artifact，把未完成范围收敛到最靠前的阶段或 blocker，
-  为下一循环提供有限 backlog。不得通过把 Draft/Reviewed 冒充 Frozen、manifest integrity 冒充
-  execution conformance、test-only harness 冒充产品实现、删除失败 fixture、放宽误差界、跳过
-  fuzz/raster/round-trip 或临时诊断替代规范 category 来制造完成。
+- **Max iterations / budget:** 最多 240 个 work-unit iterations。一次 iteration 是对一个有限 Issue
+  acceptance unit 的一次有界实施尝试，不是命令、commit、Progress message 或等待轮询。每次消耗一份
+  预算；不得通过扩大单元、重复命名或拆出等价 Issue 绕过上限。
+- **Goal-achievement check:** 对照 Goal 的全部 success signal、路线图 task、implementation matrix、
+  五域状态、root/child Issue 依赖、合并 PR、finding ledger 和全部适用 domain artifact 逐项复核。
+  只有这些证据同时成立才能以 achieved 终止；公开发布不属于完成条件。
+- **Per-Issue no-progress:** 两次不同技术路径都没有关闭验收项或减少未决问题时转 PLANNER；第三次
+  仍没有新增决定性证据时，把该 Issue 路由为 `needs-info` 或 `ready-for-human`，保留证据并转向
+  其他依赖独立的工作。
+- **Global no-progress:** 连续 3 个 work-unit iterations 均未关闭验收项、未新增能唯一决定下一动作的
+  证据、未产生严格更小且可独立验收的 ready unit，并且整个 frontier 已无其他
+  `ready-for-agent` 工作时终止。单纯新建 Issue、重复同一检查或改写说明不算进展。
+- **Worst-case Plan B:** 保留所有已合并 checkpoint 和可复现 artifact，把未完成范围收敛到最早
+  blocker，输出有限 backlog、依赖、residual 分类和解除条件。达到预算时由 PLANNER 产出仍指向 I10
+  同一目标的后继 `loop.md`；不得把目标缩到某个阶段或降低 gate。
 
-# Progress Invariant
+# Progress & Frontier Invariant
 
-- **Bounded quantity that must advance:** 当前 active work unit 在选定时必须拥有一个有限且编号的
-  acceptance-criteria ledger。任何非终止迭代都必须使其中至少一个未满足 criterion 变为由
-  domain-matched artifact 证明的 satisfied；迭代预算同时从 160 单调递减。
-- **Persistent handoff invariant:** 每次执行都必须能从仓库维护的有限 ledger 识别当前 work unit、
-  已满足 criteria、剩余 blocker、绑定 hash 与下一 frontier，并在结束前更新这些事实。本合同只规定
-  可观察状态要求，不规定执行器、循环代码或状态存储机制。
-- **How each path advances or exits:** LOCAL 路径关闭至少一个 criterion；PLANNER 路径只能把工作
-  改写为严格更小、各自有限且保持原验收覆盖的单元，并在本次迭代结束前选择可执行单元或终止；
-  HUMAN 路径记录证据后退出受阻范围，并继续所有可分离工作，直到只剩 HUMAN residual 时终止。
-  新发现的 finding 必须进入有 owner、severity、验收方法的有限 ledger，不能作为无限扩展范围的
-  借口，也不能被忽略以维持表面进度。
+- **Persistent objective:** GitHub root Issue 固定 I10 目标、success signal、全局 blocker 和当前
+  frontier；每个可独立验收的 work unit 使用 bounded child Issue 和一个 linked branch/PR。root Issue
+  只在 stage gate、frontier 或重大 blocker 变化时更新，不镜像每个 commit 或 child checkpoint。
+- **Current state authority:** root Issue 的最新有效 checkpoint、child Issue dependency graph、已合并
+  PR 和仓库 gate artifact 共同构成当前状态证据。`.scratch/fcs5-rc` 只保留历史，不得作为当前
+  request surface、iteration count 或 frontier。
+- **Bounded quantity that must advance:** active child Issue 在开始时拥有有限且编号的 acceptance
+  criteria 和未决 decision residual；任何非终止 iteration 必须关闭至少一个 criterion、消除一个
+  decision residual、完成保持原验收覆盖的严格缩小拆分，或按 Residual Routing 退出该路径。240 预算
+  同时单调递减。
+- **Frontier selection:** 默认选择路线图中最早、依赖已满足的 `ready-for-agent` Issue，优先关闭
+  当前 stage gate，不以容易的后期任务长期回避关键路径 blocker。
+- **Safe look-ahead:** 当前路径受阻时，可以推进不依赖该 blocker 的后续规范闭包研究、fixture 设计、
+  计划或独立证据，但它必须关闭一个明确的未来 gate。在前置质量门和本阶段 Reviewed Implementation
+  Baseline 通过前，不创建未来产品 crate、不激活 owning-stage 依赖，也不合并依赖未稳定接口的产品
+  实现。
+- **Deferred Issue boundary:** 能改变当前 stage 公开产物、dependency closure 或 acceptance criteria
+  的 Issue 阻塞受影响 gate，但不阻塞可分离工作；经证据证明不影响当前 stage 的 Issue 必须记录 owner、
+  目标 stage、依赖与验收方法后才能延期。RC 成功时只允许明确的 post-RC Minor/增强 follow-up 开放。
+- **Path invariant:** LOCAL 关闭或减少 active ledger；PLANNER 只能严格缩小、重新排序或改变匹配的
+  measurement；HUMAN 路径保存选择所需证据并退出受影响范围。任何路径若既不前进也不退出，即为
+  undeliverable。
 
-# Reversible Change Authority
+# Authorized Change & Delivery
 
-- 可以自动编辑仓库内文件、运行工具、更新 Draft 规范和计划、创建/切换本地 branch/worktree、
-  stage 并创建本地检查点提交，无需逐次询问。
-- 每个提交只包含一个可审查的规范、fixture、实现、review 或治理检查点。提交前运行与风险匹配的
-  Measurement Domain gate；失败或尚未关闭 finding 的中间提交必须明确标为 Draft，不得描述为阶段
-  完成、Reviewed 或 Frozen。
-- 不 amend 用户已有提交，不 rebase/reset/checkout 丢弃现有工作，不清理无关 dirty changes，
-  不让并行写入者覆盖共享文件。默认不 push。
-- 规范/依赖/API 工作遵守根 `AGENTS.md` 的本地固定依赖源码与 Context7 路由；添加依赖必须记录
-  版本、feature、MSRV、license、dependency tree 和激活范围，不能仅凭记忆。
+- 可以自动进行仓库内设计、实现、测试、fixture、计划、review 和治理修改，以及正常的 GitHub
+  Issue/branch/push/PR/review/merge 生命周期；所有远端进度与网络行为遵守 `AGENTS.md` 和 ADR 0011，
+  本文件不复制其操作规则。
+- 每个 branch/PR 只交付一个可审查 work unit。提交和 push 前审查作用域与 diff；不 amend 用户提交，
+  不 rebase/reset/checkout 丢弃工作，不清理无关 dirty changes。
+- 普通 merge 已获持续授权，但只有 child Issue acceptance criteria、适用验证和独立复审要求全部满足，
+  PR 为 Ready 且 mergeable、required checks 与 review requirements 满足、没有未解决 review thread，
+  并已记录 delivery-ready 证据时才可执行。不得使用 `--admin`、force-push、降低 gate 或隐藏 finding。
+- stage 的客观 gate 满足后自动进入下一 frontier；不为已经由规范、ADR、fixture 和证据唯一决定的
+  普通实现选择反复请求确认。
+- 规范/依赖/API 工作遵守根 `AGENTS.md` 的固定依赖源码和 Context7 路由。添加依赖必须记录版本、
+  feature、MSRV、license、dependency tree 和激活范围。
 
 # Approval Gates
 
-只有不可逆或外部状态动作设置审批门。普通设计、实现、测试、计划更新、独立复审修复、规范状态
-按客观条件迁移和本地提交不设人工门。
+Routine GitHub delivery 和满足 Authorized Change & Delivery 条件的普通 merge 已获授权。以下动作仍须
+单独取得明确批准：
 
 | Gate | Trigger | If approved | If denied |
 |---|---|---|---|
-| Remote source-control mutation | `git push`、force-push、创建/更新远程 PR 或修改远端 branch | 只执行获批的具体远端动作并记录结果 | 保留经验证的本地 branch/commit，继续所有可分离工作 |
-| Public release | 创建公开 tag、GitHub Release、发布 crate、上传发行物或公开 conformance bundle | 按批准范围发布并执行发布后校验 | 保留本地 release candidate，不把未发布描述为已发布 |
-| Destructive history/data operation | 删除或重写已有 Git 历史、branch、archive、用户数据或外部数据 | 仅对已明确目标执行，并先验证作用域 | 不执行；采用非破坏替代或保留 residual |
-| Credential/system mutation | 使用凭据、签名密钥、付费服务、修改远端配置、安装系统级软件/驱动或改机器全局配置 | 在最小权限和明确作用域内执行 | 继续不依赖该能力的工作，必要时路由 HUMAN |
-| Copyright/license distribution | 准备分发许可证或版权状态不明确的社区谱面、音频、图片、字体或其他资源 | 仅分发获批且有记录的材料 | 只保留本地 opt-in fixture lane，不纳入公开 artifact |
+| Public release | 创建公开 tag、GitHub Release、发布 crate、上传发行物或公开 conformance bundle | 只按批准范围发布并执行发布后校验 | 保留已合并的本地 RC，不把它描述为已公开发布 |
+| Destructive history/data operation | 删除或重写已有 Git 历史、branch、archive、用户数据或外部数据 | 仅对明确目标执行，并先验证作用域 | 不执行；采用非破坏替代或保留 residual |
+| Credential/system mutation | 使用签名密钥、付费服务、修改远端保护/配置、安装系统级软件/驱动或改机器全局配置 | 在最小权限和明确作用域内执行 | 继续所有不依赖该能力的工作，必要时路由 HUMAN |
+| Copyright/license distribution | 把许可证或版权状态不明确的谱面、音频、图片、字体等纳入公开分发 | 仅分发获批且有证据记录的材料 | 只保留本地 opt-in fixture lane，不进入公开 artifact |
 
 # Measurement Domain
 
+每个 Issue 选择足以发现当前错误的最小 focused feedback；只在 `AGENTS.md` 定义的适用交付检查点
+运行全量 Rust gate。验证记录必须区分 passed、failed、skipped 和 non-applicable，不能把缺失 gate
+写成通过。
+
 | Output domain | Verification method | Required artifact |
 |---|---|---|
-| 规范与治理文档 | 条款/术语/版本/交叉引用审计；规范 example 与 conformance 映射；独立复审；状态转换条件复核 | 权威文件 diff、无缺失本地链接、finding ledger、状态/hash 记录 |
-| Source grammar 与 AST | 每个 grammar production 的 valid/invalid coverage；精确 span/diagnostic；完整输入消费；limit/property/fuzz | production ledger、parse fixture 结果、bounded fuzz/property 报告 |
-| Static/elaboration/canonical | 类型、名称、展开、稳定 ID、canonical invariant 和 source-reorder 等价性测试；later-stage fixture 真正执行 | canonical snapshot、invariant traversal、诊断与限额测试 |
-| Runtime 与数值 ABI | reference evaluator 对 typed DAG、lazy semantics、seek、Track、Distance 和困难 binary64 vector 求值 | 输入向量、expected bits/trace、reference 与产品 evaluator 对比结果 |
-| FCBC/Execution ABI | reference writer→static bytes→独立 loader→evaluator；CRC/SHA、section/record/reference、profile 和 mutation 验证 | 非空 `.hex` golden、声明式 manifest、mutation corpus、loader/evaluation 报告 |
-| Conversion | 真实公开 PGR v1/v3、RPE、PEC source/package 经 exact ProfileBinding 解析、canonical、target、同 profile reparse 比较；capability/error-budget 边界 | 固定来源 fixture、canonical golden、resource bundle、ConversionReport/Fidelity bytes、round-trip 报告 |
-| Render | RenderSection byte codec、resource decode/shaping、semantic draw list 与 reference raster 在规定容差内比较 | 非空 RenderSection golden、固定 image/font、semantic snapshot、raster image/diff |
-| CLI 与发行组合 | 对每个命令、profile/resource/capability 参数、exit category、JSON/text diagnostic 和端到端组合执行 | command transcript、expected output/exit、package/tree/version 审计 |
-| Rust workspace | 先 Clippy，再 nextest；rustfmt、diff、normal/dev dependency tree、结构搜索；不用普通 `cargo test` 作为默认，不用 `--release` | 完整命令与退出状态、精确测试通过/跳过数、依赖树摘要 |
-| Repository/conformance integrity | 文件/树 hash 独立复算；UTF-8/NUL/链接检查；archive/master/workspace/refer 边界检查 | hash ledger、路径计数、`git status`、结构与链接审计结果 |
+| 规范与治理文档 | 条款/术语/版本/交叉引用审计；example/conformance 映射；独立复审；状态转换条件复核 | 权威文件 diff、链接审计、finding ledger、状态/hash 记录 |
+| GitHub delivery evidence | 核对 root/child 依赖、Issue acceptance、PR diff/merge state、review thread 与实际 gate | linked Issue/PR、merge SHA、验证结果和 residual owner；不获得规范权威 |
+| Source grammar 与 AST | 每个 production 的 valid/invalid coverage；精确 span/diagnostic；完整消费；limit/property/fuzz | production ledger、fixture 执行结果、bounded fuzz/property 报告 |
+| Static/elaboration/canonical | 类型、名称、展开、稳定 ID、canonical invariant、source-reorder 等价和 later-stage fixture 执行 | canonical snapshot、invariant traversal、诊断与限额结果 |
+| Runtime 与数值 ABI | reference evaluator 对 typed DAG、lazy semantics、seek、Track、Distance 和困难 binary64 vector 求值 | 输入向量、expected bits/trace、reference 与产品 evaluator 对比 |
+| FCBC/Execution ABI | reference writer→static bytes→独立 loader→evaluator；CRC/SHA、section/record/reference、profile、mutation | 非空 golden、声明式 manifest、mutation corpus、load/evaluation 报告 |
+| Conversion | 真实固定来源 PGR v1/v3、RPE、PEC 经 exact ProfileBinding 完成 parse→canonical→target→同 profile reparse；验证 capability/error budget | source/package fixture、canonical golden、resource bundle、ConversionReport/Fidelity bytes、round-trip 报告 |
+| Render | RenderSection codec、resource decode/shaping、semantic draw list 和 reference raster 容差比较 | 非空 RenderSection golden、固定 image/font、semantic snapshot、raster/diff |
+| CLI 与发行组合 | 命令、profile/resource/capability/budget 参数、exit category、JSON/text diagnostic 和端到端组合 | command transcript、expected output/exit、package/tree/version 审计 |
+| Rust workspace | 编辑循环运行受影响 focused check；适用 full checkpoint 按 `cargo fmt --all -- --check`、Clippy、workspace nextest 顺序执行；不用普通 `cargo test` 作默认，不用 `--release` | 精确命令/退出状态/测试计数、跳过原因、normal/dev dependency tree 和结构审计 |
+| Repository/conformance integrity | file/suite/tree hash 独立复算；UTF-8/NUL/链接；archive/main/workspace/refer 边界 | hash ledger、路径计数、`git status`、结构与链接审计 |
 
 # Residual Routing
 
 | Residual / failure | Route: LOCAL / PLANNER / HUMAN | Action |
 |---|---|---|
-| Clippy、test、fmt、hash、链接、manifest、golden、round-trip 或 raster 不一致 | LOCAL | 找到最先失败的真实原因，补匹配测试/证据，修复并重跑对应 gate |
-| 规范缺口但权威规范、Accepted ADR 和固定证据能唯一决定结果 | LOCAL | 修订受影响规范、fixture、manifest、review 与治理记录；重建受影响阶段 baseline，I10/发布再完成 Frozen gate |
-| 实现与规范冲突且证据表明是实现缺陷 | LOCAL | 修实现和回归测试，不让实现反向定义规范 |
-| 工作单元过大、验收耦合、计划顺序错误或 measurement domain 不匹配 | PLANNER | 保留原验收覆盖，拆成更小有限单元或调整顺序/测量方法 |
-| 同一 LOCAL 方案连续两次失败但存在其他技术路线 | PLANNER | 建立最小复现，替换方案；不得仅重复同一动作 |
-| 两个以上合法设计产生 materially different 公开语义，规范/ADR/证据无法排序 | HUMAN | 提供证据、选项、影响与推荐值；继续所有不依赖该选择的工作 |
-| 需要推翻 Accepted ADR 或用户已确认的产品边界 | HUMAN | 停止受影响实现，提出新 ADR 候选和迁移影响 |
-| 不可逆动作、凭据、系统配置、许可证或版权分发问题 | HUMAN | 触发对应 Approval Gate；拒绝时保留本地安全状态 |
-| 同一外部 blocker 连续三次满足 no-progress 且无安全替代工作 | HUMAN | 提交完整阻塞证据、已尝试路径和解除阻塞所需的最小输入 |
-| 达到 160 次上限 | PLANNER | 终止本循环，输出剩余有限 backlog 和下一份缩小范围的 loop 建议 |
+| focused/full test、Clippy、fmt、hash、link、manifest、golden、round-trip 或 raster 不一致 | LOCAL | 找到最先失败的原因，补匹配证据，修复并只重跑可能失效的 gate |
+| 规范缺口且权威规范、Accepted ADR 和固定证据能唯一决定结果 | LOCAL | 按治理流程更新规范、fixture、manifest、review 与状态记录；重建受影响 baseline，I10/发布再完成 Frozen gate |
+| 实现与规范冲突且证据表明是实现缺陷 | LOCAL | 修实现和回归证据，不让实现反向定义规范 |
+| active unit 过大、验收耦合、顺序错误或 measurement domain 不匹配 | PLANNER | 保留原验收覆盖，拆成严格更小的 bounded Issues，或调整顺序/测量 |
+| 两次不同技术路径仍未减少验收项或 decision residual | PLANNER | 建立最小复现并重新规划；第三次仍无决定性证据则退出该 Issue |
+| 当前 stage dependency Issue 未关闭 | PLANNER | 阻塞受影响 gate，继续可分离工作；不得把挂起当作完成 |
+| finding 经证据证明属于 later stage | PLANNER | 记录 owner、目标 stage、依赖与验收方法后延期，并在 owning gate 前重新进入 frontier |
+| 两个以上合法设计产生 materially different 公开语义，规范/ADR/证据无法排序 | HUMAN | 提供证据、选项、影响与推荐；停止依赖该选择的实现，继续可分离工作 |
+| 需要推翻 Accepted ADR 或用户已确认的产品边界 | HUMAN | 停止受影响范围，提出新 ADR 候选和迁移影响 |
+| 第三次尝试仍无决定性证据，或外部输入/能力缺失 | HUMAN | 标记 `needs-info` 或 `ready-for-human`，记录最小所需输入并退出受影响路径 |
+| 不可逆动作、凭据、系统配置或版权/许可证分发 | HUMAN | 触发 Approval Gate；拒绝时保留本地安全状态 |
+| 连续 3 次满足全局 no-progress 且无 ready frontier | HUMAN | 终止并提交完整阻塞证据、已尝试路径和解除条件 |
+| 达到 240 次上限 | PLANNER | 终止本轮，保留合并证据并产出仍指向 I10 的后继 loop 建议 |
 
 # Subagent Using Policy
 
-所有角色共享工作区。最多并发三个子任务；同一权威规范域或文件集合最多一个写入角色。只读研究
-可以与不相关写入并行；独立 reviewer 不得参与被审内容的设计或修改。共享文件发生冲突时，相关
-写入立即停止并由主执行者整合。主执行者始终负责最终 diff、验证、治理状态和提交。
+Subagent 不是每个 work unit 的必需步骤。主执行者与最多三个子任务共享工作区；同一文件集合或规范域
+最多一个写入角色。只读研究可与不相关写入并行；共享文件冲突时相关写入立即停止，由主执行者统一
+审查、验证和交付。子任务不得自行切换 branch、commit、push、创建/修改 Issue/PR 或 merge。
 
 ## Dispatch Point: Independent Review
 
-- **Trigger:** 阶段 baseline 建立/重开、规范重新 Frozen、阶段完成、重大二进制/转换/渲染 contract
-  或重大实现准备通过 gate。
+- **Trigger:** stage baseline 建立/重开、规范重新 Frozen、stage 完成，或重大 binary/conversion/render
+  contract 与实现准备通过 gate。
 - **Role capability:** 未参与被审修改的只读独立 reviewer。
-- **Tool boundary:** 只读规范、diff、fixture、manifest、hash、测试输出和固定参考资料；不得编辑、
-  stage、commit、改变状态或接受作者结论代替复现。
-- **Input contract:** 明确审查范围、权威条款、候选 commit/diff、验收项、运行命令、已知 residual 和
-  禁止依赖的实现假设。
-- **Output contract:** finding ledger；每项包含 severity、文件/紧凑位置、违反条款、可复现证据、
-  影响和 disposition 建议；另列实际复现的 gate 与未覆盖范围。
-- **Acceptance check:** Critical/Important finding 全部关闭并复审；无 finding 时也必须给出审查范围、
-  复现 artifact 和限制，不能只写“通过”或提供内部推理。
-- **Concurrency:** reviewer 可与不触及被审快照的只读研究并行；不得与被审写入并行。
-- **Failure routing:** 缺证据为 LOCAL；审查范围/测量不匹配为 PLANNER；角色不独立或能力不可用为
-  HUMAN。
-- **Sub-task termination:** 一个有限审查范围，最多两次修正请求；连续两次未减少审查验收项则返回
+- **Tool boundary:** 只读固定 commit、规范、diff、fixture、manifest、hash、测试输出和允许的固定证据；
+  不编辑、改变状态或接受作者结论代替复现。
+- **Input contract:** 有限审查范围、权威条款、固定 commit/artifact、验收项、复现命令、已知 residual
+  和禁止依赖的实现假设。
+- **Output contract:** finding ledger；每项含 severity、紧凑位置、违反条款、可复现 artifact、影响和
+  disposition 建议；另列实际复现 gate 与未覆盖范围。
+- **Acceptance check:** Critical/Important 全部关闭并复审；零 finding 也必须给出审查范围、复现
+  artifact 和限制。
+- **Concurrency:** reviewer 不与被审 snapshot 的写入并行；可与不触及该 snapshot 的只读研究并行。
+- **Failure routing:** 缺证据为 LOCAL；范围/测量不匹配为 PLANNER；角色不独立或能力不可用为 HUMAN。
+- **Sub-task termination:** 一个固定审查范围，最多两次证据澄清；连续两次未减少审查 residual 时返回
   PLANNER，不自行扩大范围。
 
 ## Dispatch Point: External Evidence Research
 
 - **Trigger:** PGR/RPE/PEC、依赖源码、codec、字体、许可证或外部 producer/runtime 行为需要固定证据。
-- **Role capability:** 只读证据研究者，能够核对版本、schema、parser、调用方和独立来源。
-- **Tool boundary:** 读取仓库权威资料、`refer/` 固定快照和公开只读资料；遵守参考仓库规则；不得
-  修改权威规范、选择 semantic profile 或把单个实现推广成社区规范。
-- **Input contract:** 具体事实问题、允许来源、要求的 commit/hash、目标路径、冲突标准和交付格式。
-- **Output contract:** “项目/来源 + commit/hash/version + 路径/章节 + 可观察行为 + 冲突/限制”的证据表。
-- **Acceptance check:** 主执行者能在固定来源复现每个结论；community 摘要与一手证据冲突被明确
-  标出；规范选择仍由权威流程完成。
-- **Concurrency:** 可同时进行多个互不依赖的只读调查，但总子任务数不超过三。
-- **Failure routing:** 缺单一来源可换独立来源为 LOCAL；证据冲突为 PLANNER；许可/访问不可解决为
-  HUMAN。
-- **Sub-task termination:** 一个事实问题或一个固定格式/profile；最多两次补证，未收敛则返回证据
-  缺口，不猜测结论。
+- **Role capability:** 只读证据研究者，能核对 version、commit/hash、schema/parser、调用方和独立来源。
+- **Tool boundary:** 读取仓库权威资料、允许的 `refer/` 固定快照和公开只读资料；不修改规范、不选择
+  semantic profile，也不把单个实现推广为社区规范。
+- **Input contract:** 一个事实问题、允许来源、固定 version/commit/hash、目标路径、冲突标准和交付格式。
+- **Output contract:** “来源 + version/commit/hash + 路径/章节 + 可观察行为 + 冲突/限制”的证据表。
+- **Acceptance check:** 主执行者能在固定来源复现结论，且冲突与未知项显式保留。
+- **Concurrency:** 可并行调查互不依赖的问题，但全部子任务总数不超过三个。
+- **Failure routing:** 可替代来源缺失为 LOCAL；来源冲突为 PLANNER；许可/访问无法解决为 HUMAN。
+- **Sub-task termination:** 一个事实问题，最多两次补证；仍不收敛则返回证据缺口，不猜测结论。
 
 ## Dispatch Point: Bounded Implementation or Fixture Work
 
-- **Trigger:** 子任务文件范围互不重叠、规范行为已唯一确定、验收命令明确，并且并行能缩短等待。
-- **Role capability:** 有界全能力执行者，可在授权文件范围内实现代码、文档或 fixture。
-- **Tool boundary:** 只修改输入合同列出的路径；可运行本地非破坏工具；不得改变产品语义、权威
-  规范状态、用户无关修改、远端状态或提交历史。
-- **Input contract:** 一个有限 deliverable、权威条款、允许/禁止文件、现有 dirty-state 说明、失败
-  测试、验证命令、质量门、residual 路由和终止条件。
-- **Output contract:** 实际修改路径、关键 diff、运行命令与精确结果、未解决 residual、对共享文件的
-  任何风险；不得只声明完成。
-- **Acceptance check:** 主执行者审查 diff，确认无越权修改，并独立运行 domain-matched gate；只有
-  artifact 与测试都满足合同才接受。
-- **Concurrency:** 同一文件集合或规范域只允许一个写入者；最多三个总子任务；主执行者整合后再
-  提交。
-- **Failure routing:** 普通实现/测试失败为 LOCAL；两次不同修正仍不收敛为 PLANNER；语义歧义、
-  越权需求或不可逆动作立即返回 HUMAN/Approval Gate。
-- **Sub-task termination:** 一个 deliverable，最多两次修正尝试；连续两次未减少验收项时停止并返回
-  最小复现和 residual，不扩大任务。
+- **Trigger:** 文件范围互不重叠、规范行为已唯一确定、验收命令明确，且并行能缩短当前 ready work。
+- **Role capability:** 有界写入执行者，可在授权路径内实现代码、文档或 fixture。
+- **Tool boundary:** 只修改 input contract 列出的路径并运行本地非破坏工具；不改变公开语义、规范
+  状态、无关修改、远端状态或提交历史。
+- **Input contract:** 一个有限 deliverable、权威条款、允许/禁止路径、dirty-state、失败证据、验证
+  命令、residual routing 和终止条件。
+- **Output contract:** 修改路径、关键 diff、命令与精确结果、未解决 residual 和共享文件风险。
+- **Acceptance check:** 主执行者审查完整 diff、确认无越权，并独立运行 domain-matched acceptance gate。
+- **Concurrency:** 同一文件集合或规范域只有一个 writer；全部子任务总数不超过三个。
+- **Failure routing:** 普通实现失败为 LOCAL；两次不同修正不收敛为 PLANNER；语义歧义或越权需求为
+  HUMAN。
+- **Sub-task termination:** 一个 deliverable，最多两次修正；连续两次未减少 acceptance residual 时
+  停止并返回最小复现，不扩大任务。
