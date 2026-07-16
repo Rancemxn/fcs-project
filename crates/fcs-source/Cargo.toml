@@ -10,7 +10,9 @@ chumsky.workspace = true
 
 [dev-dependencies]
 crc.workspace = true
+image = { workspace = true, features = ["png", "webp"] }
 proptest.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 toml.workspace = true

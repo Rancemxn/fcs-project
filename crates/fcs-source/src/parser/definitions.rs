@@ -51,7 +51,7 @@ where
     just(Token::Keyword(Keyword::Const))
         .ignore_then(identifier_with_span())
         .then_ignore(just(colon()))
-        .then(type_parser())
+        .then(type_parser().map(|ty| ty.to_type()))
         .then_ignore(just(equal()))
         .then(expression_parser())
         .then_ignore(just(semicolon()))
@@ -75,7 +75,7 @@ where
         .ignore_then(function_name_with_span())
         .then(function_parameters_parser())
         .then_ignore(just(Token::Punctuation(Punctuation::Arrow)))
-        .then(type_parser())
+        .then(type_parser().map(|ty| ty.to_type()))
         .then(function_block_parser())
         .map_with(
             |((((name, name_span), parameters), return_type), body), extra| FunctionDeclaration {
@@ -96,7 +96,7 @@ where
 {
     identifier_with_span()
         .then_ignore(just(colon()))
-        .then(type_parser())
+        .then(type_parser().map(|ty| ty.to_type()))
         .map_with(|((name, name_span), ty), extra| FunctionParameter {
             name,
             name_span,
@@ -171,7 +171,7 @@ where
     just(Token::Keyword(Keyword::Let))
         .ignore_then(identifier_with_span())
         .then_ignore(just(colon()))
-        .then(type_parser())
+        .then(type_parser().map(|ty| ty.to_type()))
         .then_ignore(just(equal()))
         .then(expression_parser())
         .then_ignore(just(semicolon()))
@@ -192,7 +192,7 @@ where
     I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
 {
     just(Token::Keyword(Keyword::Template))
-        .ignore_then(type_parser())
+        .ignore_then(type_parser().map(|ty| ty.to_type()))
         .then(identifier_with_span())
         .then(template_parameters_parser())
         .then(template_block_parser())
@@ -215,7 +215,7 @@ where
 {
     identifier_with_span()
         .then_ignore(just(colon()))
-        .then(type_parser())
+        .then(type_parser().map(|ty| ty.to_type()))
         .map_with(|((name, name_span), ty), extra| TemplateParameter {
             name,
             name_span,

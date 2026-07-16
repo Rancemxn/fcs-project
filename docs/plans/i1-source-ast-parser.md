@@ -4,13 +4,14 @@
 > tests, implementation, review, and task gate pass. No specific agent skill or orchestration
 > framework is required.
 
-> **Current status (2026-07-16):** Revised against the S14 Source grammar closure and blocked until
-> all five S15 version domains are Frozen, independent review has no open Critical/Important finding,
-> this plan matches the final specifications, and the I0/prerequisite quality gate passes. Enter I1
-> automatically when all four conditions hold; no further user confirmation is required. Do not begin
-> Rust implementation before that gate. I0 remains the accepted infrastructure baseline;
-> `e25352991d626fc8b1187d7a757e251038ea1f4f` is its historical
-> verification commit, not the required implementation-start HEAD.
+> **Current status (2026-07-16):** The I1 Reviewed Implementation Baseline passed and is recorded in
+> `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`; I1 Task 1 passed its implementation
+> gate and Task 2 is active automatically under ADR 0010. The independently reviewed plan snapshot
+> hash is retained in that record; this status-only
+> amendment does not change task semantics. Render raster, Conversion round-trip and Core canonical
+> execution remain later-stage blockers unless a finding changes I1's public AST/parser behavior. I0
+> remains the accepted infrastructure baseline; `e25352991d626fc8b1187d7a757e251038ea1f4f` is its
+> historical verification commit, not the required implementation-start HEAD.
 
 **Goal:** Complete the FCS 5 Core source syntax representation and parser on the I0 Chumsky token,
 span, limit, and diagnostic boundary. Every Core production in `fcs.md` Appendix B must have an AST
@@ -19,7 +20,7 @@ later phase must parse without premature semantic rejection.
 
 **I1 completion condition:** All legal Core source in the I1 conformance boundary parses into a
 fully spanned AST; malformed Core source is rejected deterministically with the most specific
-Frozen parser category and bounded spans; every Appendix B production has valid and invalid test
+baseline-bound stable parser category and bounded spans; every Appendix B production has valid and invalid test
 evidence; the parse-stage conformance runner executes applicable manifest entries; all I1 quality,
 robustness, dependency, and independent-review gates pass.
 
@@ -45,12 +46,14 @@ Before implementing a task, read the relevant files completely:
 - `fcs.md`, especially sections 1.4, 2.1–2.10, 3–9, 11–13, 15–18, Appendix B, and Appendix C;
 - `fcs-render.md` section 2 only to establish the ownership boundary of `renderBlock`;
 - `docs/specification-governance.md`;
+- `docs/decisions/0010-stage-scoped-implementation-baselines.md`;
 - `docs/reviews/2026-07-15-fcs5-source-grammar-closure-review.md` 作为 grammar closure 历史证据，
   `docs/reviews/2026-07-15-fcs5-authoring-canonical-closure-review.md` 作为当前 Core delta/gate，
   `docs/reviews/2026-07-15-fcbc2-execution-abi-closure-review.md`、
   `docs/reviews/2026-07-15-render1-resource-binding-closure-review.md`、
   `docs/reviews/2026-07-15-conversion1-semantic-profile-closure-review.md` 作为依赖域 delta，
-  以及 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md` 指定的完整 re-freeze gate；
+  以及 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md` 记录的跨规范 blocker 与阶段 baseline
+  dated amendment；
 - `docs/plans/fcs5-roadmap.md`, I1 and its quality gates;
 - `docs/plans/i0-source-cutover.md`, especially the final parser/diagnostic/robustness state;
 - `docs/conformance/fcs5-implementation-matrix.md`;
@@ -61,19 +64,32 @@ Before implementing a task, read the relevant files completely:
   uncertain. Do not query Context7 for Chumsky while that audited source is available locally.
 
 If any decision record, previous implementation, reference project, or this plan conflicts with the
-re-frozen specification or bound conformance fixture, the authoritative source wins. Record an
+current authoritative specification or bound conformance fixture, the authoritative source wins. Record an
 ambiguity; do not silently turn current behavior into a new rule.
 
 ## Specification precondition gate
 
-Before Task 1, the current re-freeze review must retain the complete S14 grammar gate: Appendix B has
-no undefined nonterminal, every Core source example follows the same grammar, the original 32-entry
-grammar baseline remains bound, and the current 39-entry FCS manifest is internally valid. It must
-additionally confirm that the S15 ADR 0007–0009 changes do not leave a Core/FCBC/ABI/Render/Conversion
-boundary unresolved, and record the current Frozen hashes for all five version domains. If
-that gate changes source syntax or diagnostic ownership, update this plan and independently verify
-that it matches the final clauses; keep the gate closed while any Critical/Important finding remains.
-Planning text cannot fill any remaining normative gap, but no additional user confirmation is required.
+Before Task 1, establish a dated I1 Reviewed Implementation Baseline. Its normative dependency closure
+must include:
+
+- the `fcs.md` source lexical, grammar, document/schema/envelope, parse-stage diagnostic, parser-limit
+  and parse-conformance clauses consumed by Tasks 1–8, including Appendix B and the applicable Appendix C
+  categories;
+- `fcs-render.md` section 2 only for the balanced Core `renderBlock` ownership/envelope boundary;
+- every `conformance/fcs5` source input and manifest expectation that I1 will parse or reject;
+- ADR 0006/0008/0010 architecture constraints that keep source AST separate from canonical/runtime and
+  forbid compatibility/path-dependency shortcuts.
+
+The baseline review must list exact clause and fixture coverage, record the candidate file hashes, confirm
+Appendix B has no undefined nonterminal, and report no open Critical/Important finding in this dependency
+closure. It must also list out-of-scope S15 blockers and explain why they cannot change I1's public AST,
+parser categories, spans, limits or envelope behavior. Render raster/resource decode/attachment semantics,
+Conversion round-trip and Core canonical evaluation remain out of scope unless dependency analysis proves
+otherwise.
+
+If the review changes source syntax, parser diagnostic ownership, fixture expectations or a prerequisite
+public invariant, update this plan and repeat the independent baseline review. Planning text cannot fill a
+normative gap, but no additional user confirmation is required once the objective gate passes.
 
 ## Baseline and preserved invariants
 
@@ -137,8 +153,8 @@ instead of resetting them.
   expansion, shared elaboration budgets, or removal of compile-time structures;
 - Track interval/easing/overlap/gap semantics, tempo/graph/Hold validation, runtime expression DAG,
   canonical lowering, repair, ConversionReport, rendering, serialization, and formatting;
-- modifying the re-frozen specifications or rewriting normative conformance expected outputs to
-  match implementation behavior.
+- modifying baseline-bound specification behavior or rewriting normative conformance expected outputs to
+  match implementation behavior without first reopening the affected baseline.
 
 An input that is syntactically valid but semantically invalid must produce an AST in I1. For
 example, zero generator step, unknown resource references, duplicate typed custom keys, Track
@@ -214,29 +230,39 @@ Before parser expansion, establish and test these representation rules:
 
 **Clauses:** `fcs.md` 2.1–2.8, Appendix B lexer notes, Appendix C decode/version/syntax categories.
 
-- [ ] **Step 1: Add failing lexical coverage tests.** Build table-driven tests for every reserved
+- [x] **Step 1: Add failing lexical coverage tests.** Build table-driven tests for every reserved
   word, punctuation/operator, literal/unit suffix, delimiter, and longest-match pair. Include
   `..<`, `..=`, bare `..`, `->`, `=>`, `**`, comparison/logical operators, `true`, `false`, `null`,
   semver-versus-float tokenization, all entity/type/envelope keywords, contextual Render
   identifiers, field-name keyword context, and identifiers adjacent to punctuation.
-- [ ] **Step 2: Add malformed lexical tests.** Cover a second/interior BOM, raw U+0000 versus valid
+- [x] **Step 2: Add malformed lexical tests.** Cover a second/interior BOM, raw U+0000 versus valid
   `\0`, raw/escaped Unicode noncharacters, non-ASCII identifiers, leading-zero semver, malformed or
   overflowing numeric magnitudes, invalid unit adjacency, mixed-Beat rejection, malformed Color,
   bad Unicode scalar escapes, raw newline in strings, unclosed string/comment, nested comment depth,
   and invalid standalone punctuation. Assert that leading minus is always a unary token.
-- [ ] **Step 3: Complete the token model and Chumsky lexer.** Preserve longest-match behavior and
+- [x] **Step 3: Complete the token model and Chumsky lexer.** Preserve longest-match behavior and
   original byte spans. Reserved words must never fall back to identifiers. Do not add a raw scan or
   re-lex path to produce special diagnostics.
-- [ ] **Step 4: Verify limit ordering.** Source-byte, token, comment-depth, nesting, and literal-byte
+- [x] **Step 4: Verify limit ordering.** Source-byte, token, comment-depth, nesting, and literal-byte
   limits must be checked before the limited allocation/recursion. Add identifier and token payload
   coverage if `max_literal_bytes` already owns them; otherwise document and add the smallest generic
   public limit needed rather than one limit per keyword.
-- [ ] **Step 5: Run the task gate.** Clippy must run before targeted nextest. Then run lexer,
+- [x] **Step 5: Run the task gate.** Clippy must run before targeted nextest. Then run lexer,
   diagnostic, robustness, and workspace-structure tests, rustfmt, and `git diff --check`.
 
 **Task gate:** Every Appendix B terminal has a unique intended tokenization; invalid lexemes have a
-bounded Frozen category/span; structural tests still prove one Chumsky token path and no raw-text
+bounded baseline-bound stable category/span; structural tests still prove one Chumsky token path and no raw-text
 pre-parser.
+
+**Completed 2026-07-16:** The single Chumsky stream now covers the complete Core keyword/operator/unit
+set, exact header and standalone semver tokenization, source BPM magnitudes, arbitrary-length semver and
+integer magnitudes, malformed lexeme sentinels, Unicode/BOM/string/comment boundaries, and structured
+source/token/comment/nesting/literal budgets. Structural tests also remove and forbid the legacy fixed
+parser thread so Chumsky's reviewed `stacker` feature remains the sole recursive-stack mechanism. The
+Task 1 gate passed with 175/175 workspace tests; the fixed I1 Core/Render/manifest/fixture-tree hashes were
+reproduced without modifying any baseline-bound input. FCBC's later `u16` version-field representability
+for a source semver component greater than 65535 is routed to I7 and does not truncate or weaken the I1
+source AST.
 
 ### Task 2: I1.2 Complete grammar AST and expression/type parser
 
@@ -330,7 +356,7 @@ Appendix C generator categories.
 - [ ] **Step 2: Generalize owner-aware source nodes.** A generator retains its owner/registered
   entity context structurally without resolving its type. Reuse typed generator statements across
   legal owner collections without allowing nested generators through the AST.
-- [ ] **Step 3: Emit Frozen source-structure categories.** Bare `..` remains `syntax.invalid-token`;
+- [ ] **Step 3: Emit baseline-bound source-structure categories.** Bare `..` remains `syntax.invalid-token`;
   syntactically recognizable nested and misplaced generators use
   `compile-time.nested-generator` and `compile-time.misplaced-generator` with `Parse` stage and the
   generator keyword as primary span. Add related owner/generator spans where useful.
@@ -341,7 +367,7 @@ Appendix C generator categories.
   nextest, rustfmt, and `git diff --check`.
 
 **Task gate:** Legal generators parse in every Core owner grammar; nested/misplaced cases use the
-Frozen categories; zero-step remains an I2 error; no parser or elaborator path emits partial data.
+baseline-bound stable categories; zero-step remains an I2 error; no parser or elaborator path emits partial data.
 
 ### Task 6: I1.6 Complete Core schema-block parsers
 
@@ -454,7 +480,7 @@ This task closes I1 after roadmap tasks I1.1–I1.8; it does not add product beh
   exists.
 - [ ] **Step 2: Update roadmap and plan status.** Mark I1.1–I1.8 complete only after their task gates,
   record exact tests/fixtures/fuzz commands, and make I2 the next unstarted phase. Update `AGENTS.md`
-  to point to the completed I1 plan without changing the re-frozen specifications.
+  to point to the completed I1 plan without changing baseline-bound specification behavior.
 - [ ] **Step 3: Audit the public/source boundary.** Confirm one source crate, one token path, no
   `v5`/FCS 4 compatibility paths, no canonical/runtime model, no path dependency into `refer/`, no
   accidental activation of future catalog dependencies, and no public Chumsky/token types.
@@ -478,8 +504,8 @@ This task closes I1 after roadmap tasks I1.1–I1.8; it does not add product beh
   acceptance.
 - [ ] **Step 6: Record exact evidence.** Capture the final master SHA, workspace packages,
   dependency tree, nextest pass count, parse fixture counts, production coverage, fuzz smoke result,
-  remaining partial/blocked matrix rows, review disposition, and confirmation that re-frozen files were
-  not changed.
+  remaining partial/blocked matrix rows, review disposition, and confirmation that baseline-bound clauses and
+  fixtures were not changed without reopening the baseline.
 
 **I1 final gate:** All I1.1–I1.8 tasks are complete; no matrix row remains `blocked-by-I1`; all legal
 Core source fixtures parse; all parser-invalid fixtures have deterministic categories/spans; all
@@ -530,12 +556,12 @@ The I1 handoff must report:
 - parser limits and defaults;
 - dependency/feature changes, including fuzz-only tooling;
 - implementation-matrix transitions and all remaining `partial`/blocked owners;
-- render/extension/preserve boundary and any recorded Frozen-spec ambiguity;
+- render/extension/preserve boundary and any recorded baseline/specification ambiguity;
 - independent-review findings and disposition;
-- confirmation that the re-frozen `fcs.md`/`fcs-render.md`, other authoritative specifications,
-  normative conformance inputs/expected files, and `archive/fcs4-pre-cutover` were not changed during
-  I1 implementation.
+- confirmation that baseline-bound `fcs.md`/`fcs-render.md` clauses, normative conformance
+  inputs/expected files and `archive/fcs4-pre-cutover` were not changed during I1 implementation without
+  reopening the baseline.
 
 Do not begin I2 in the same implementation task. Start I2 automatically in a separate implementation
-task only after its related specifications are Frozen, independent review has no open
-Critical/Important finding, the I2 plan matches the final clauses, and the I1 quality gate passes.
+task only after its normative dependency closure has a Reviewed Implementation Baseline with no open
+Critical/Important finding, the I2 plan matches the bound clauses, and the I1 quality gate passes.

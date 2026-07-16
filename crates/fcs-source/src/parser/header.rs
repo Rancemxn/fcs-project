@@ -8,12 +8,12 @@ use crate::{
 use super::{
     ParseLimits,
     input::{ChumskySpan, ParserExtra, SpannedToken},
-    lexer::lex,
+    lexer::lex_document,
     token::Token,
 };
 
 pub fn parse_header(input: &str) -> ParseOutput<Version> {
-    match lex(input, ParseLimits::default()) {
+    match lex_document(input, ParseLimits::default()) {
         Ok(tokens) => parse_header_tokens(&tokens),
         Err(diagnostics) => ParseOutput::new(None, diagnostics),
     }
@@ -29,7 +29,7 @@ where
 
 pub(super) fn parse_header_tokens(tokens: &[SpannedToken]) -> ParseOutput<Version> {
     match tokens.first() {
-        Some((Token::Header(version), _)) => ParseOutput::new(Some(*version), Vec::new()),
+        Some((Token::Header(version), _)) => ParseOutput::new(Some(version.clone()), Vec::new()),
         Some(_) => missing_header(crate::ast::SourceSpan::new(0, 0)),
         None => missing_header(crate::ast::SourceSpan::new(0, 0)),
     }

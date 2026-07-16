@@ -1,6 +1,6 @@
 use chumsky::{input::ValueInput, prelude::*};
 
-use crate::ast::{Beat, SourceLiteral, SourceSpan, TempoMap, TempoPoint};
+use crate::ast::{Beat, SourceBpm, SourceLiteral, SourceSpan, TempoMap, TempoPoint};
 
 use super::{
     input::{ChumskySpan, ParserExtra, source_span},
@@ -12,7 +12,7 @@ pub(super) fn tempo_map_block_parser<'tokens, I>()
 where
     I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
 {
-    just(Token::Identifier("tempoMap".to_owned()))
+    just(Token::Keyword(Keyword::TempoMap))
         .ignore_then(tempo_points_parser().delimited_by(
             just(Token::Punctuation(Punctuation::LeftBrace)),
             just(Token::Punctuation(Punctuation::RightBrace)),
@@ -26,25 +26,7 @@ fn tempo_points_parser<'tokens, I>()
 where
     I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
 {
-    let integer = select! { Token::Literal(SourceLiteral::Int(value)) => value };
-    let mixed = integer
-        .then_ignore(just(Token::Punctuation(Punctuation::Comma)))
-        .then(integer)
-        .then_ignore(just(Token::Punctuation(Punctuation::Comma)))
-        .then(integer)
-        .delimited_by(
-            just(Token::Punctuation(Punctuation::LeftBracket)),
-            just(Token::Punctuation(Punctuation::RightBracket)),
-        )
-        .then_ignore(just(Token::Keyword(Keyword::Beat)))
-        .try_map(|((whole, numerator), denominator), span| {
-            Beat::new(whole, 1)
-                .and_then(|whole| {
-                    Beat::new(numerator, denominator).and_then(|part| whole.checked_add(part))
-                })
-                .map_err(|_| chumsky::error::Rich::custom(span, "invalid tempo beat"))
-        });
-    let beat = select! { Token::Literal(SourceLiteral::Beat(beat)) => beat }.or(mixed);
+    let beat = select! { Token::Literal(SourceLiteral::Beat(beat)) => beat };
     let signed_beat = just(Token::Punctuation(Punctuation::Minus))
         .or_not()
         .then(beat)
@@ -56,9 +38,20 @@ where
                 Ok(beat)
             }
         });
+    let bpm = select! { Token::TempoBpm(bpm) => bpm };
+    let signed_bpm = just(Token::Punctuation(Punctuation::Minus))
+        .or_not()
+        .then(bpm)
+        .map(|(negative, bpm)| {
+            if negative.is_some() {
+                SourceBpm::from_value(-bpm.get())
+            } else {
+                bpm
+            }
+        });
     signed_beat
         .then_ignore(just(Token::Punctuation(Punctuation::Arrow)))
-        .then(select! { Token::TempoBpm(bpm) => bpm })
+        .then(signed_bpm)
         .then_ignore(just(Token::Punctuation(Punctuation::Semicolon)))
         .map(|(beat, bpm)| TempoPoint { beat, bpm })
         .repeated()

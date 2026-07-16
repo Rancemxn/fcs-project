@@ -121,6 +121,9 @@ enum ElaboratorError {
         chain: Vec<String>,
         span: SourceSpan,
     },
+    NumericOverflow {
+        span: SourceSpan,
+    },
     InvalidOperation {
         message: &'static str,
         span: SourceSpan,
@@ -153,7 +156,7 @@ fn elaborate_inner(
     }
     let collections = entities::expand_collections(document, schema, limits)?;
     Ok(ExpandedSourceDocument::from_collections(
-        document.source_version,
+        document.source_version.clone(),
         document.profile,
         document.tempo_map.clone(),
         collections,
@@ -311,6 +314,12 @@ impl ElaboratorError {
                 DiagnosticCode::COMPILE_TIME_NON_CONSTANT_CONDITION,
                 DiagnosticStage::Elaborate,
                 "structural condition is not compile-time constant",
+                span,
+            ),
+            Self::NumericOverflow { span } => Diagnostic::new(
+                DiagnosticCode::NUMERIC_OVERFLOW,
+                DiagnosticStage::Elaborate,
+                "integer magnitude is outside the signed 64-bit range",
                 span,
             ),
             Self::InvalidOperation { message, span } => Diagnostic::new(

@@ -14,7 +14,7 @@ use super::{
     entities::collections_block_parser,
     header::{header_parser, parse_header_tokens},
     input::{ChumskySpan, ParserExtra, SpannedToken, source_span},
-    lexer::lex,
+    lexer::lex_document,
     tempo::tempo_map_block_parser,
     token::{Keyword, Punctuation, Token},
 };
@@ -55,7 +55,7 @@ pub fn parse_document_with_limits<L: Into<ParseLimits>>(
     source: &str,
     limits: L,
 ) -> ParseOutput<Document> {
-    match lex(source, limits.into()) {
+    match lex_document(source, limits.into()) {
         Ok(tokens) => parse_document_tokens(source, &tokens),
         Err(diagnostics) => ParseOutput::new(None, diagnostics),
     }
@@ -173,7 +173,7 @@ where
 {
     just(Token::Keyword(Keyword::Format))
         .ignore_then(
-            just(Token::Identifier("profile".to_owned()))
+            just(Token::Keyword(Keyword::Profile))
                 .ignore_then(just(Token::Punctuation(Punctuation::Colon)))
                 .ignore_then(select! {
                     Token::Keyword(Keyword::Fragment) => DocumentProfile::Fragment,
@@ -291,7 +291,7 @@ enum BlockKind {
 fn block_kind(token: &Token) -> Option<BlockKind> {
     match token {
         Token::Keyword(Keyword::Format) => Some(BlockKind::Format),
-        Token::Identifier(name) if name == "tempoMap" => Some(BlockKind::TempoMap),
+        Token::Keyword(Keyword::TempoMap) => Some(BlockKind::TempoMap),
         Token::Keyword(Keyword::Definitions) => Some(BlockKind::Definitions),
         Token::Keyword(Keyword::Collections) => Some(BlockKind::Collections),
         Token::Identifier(name) if matches!(name.as_str(), "templates" | "metadata") => {
@@ -320,7 +320,7 @@ fn invalid_profile_span(tokens: &[SpannedToken]) -> Option<SourceSpan> {
         .position(|(token, _)| *token == Token::Keyword(Keyword::Format))?;
     let profile = tokens[format..]
         .iter()
-        .position(|(token, _)| matches!(token, Token::Identifier(name) if name == "profile"))?
+        .position(|(token, _)| *token == Token::Keyword(Keyword::Profile))?
         + format;
     let (_, span) = tokens.get(profile + 2)?;
     (!matches!(

@@ -2,7 +2,7 @@ use chumsky::error::RichReason;
 use chumsky::inspector::RollbackState;
 use chumsky::prelude::*;
 
-use crate::ast::{Beat, Bpm, Color, SourceLiteral, SourceSpan};
+use crate::ast::{Beat, Color, SourceBpm, SourceLiteral, SourceSpan};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticStage};
 use crate::version::{FCS_SOURCE_VERSION, Version};
 
@@ -16,21 +16,51 @@ type LexerExtra<'source> =
 const UNCLOSED_COMMENT: &str = "unclosed block comment";
 const UNCLOSED_STRING: &str = "unclosed string literal";
 const RESOURCE_LIMIT: &str = "parser resource limit exceeded";
-const INVALID_NUMERIC: &str = "invalid numeric literal";
+const FORBIDDEN_SOURCE_SCALAR: &str = "forbidden source scalar";
 
 #[derive(Debug, Clone)]
 struct LexerState {
     comment_depth: usize,
     max_comment_depth: usize,
+    token_count: usize,
+    max_tokens: usize,
+    max_token_bytes: usize,
+    literal_bytes: usize,
+    max_literal_bytes: usize,
 }
 
 pub(super) fn lex(source: &str, limits: ParseLimits) -> Result<Vec<SpannedToken>, Vec<Diagnostic>> {
+    lex_with_header_policy(source, limits, false)
+}
+
+pub(super) fn lex_document(
+    source: &str,
+    limits: ParseLimits,
+) -> Result<Vec<SpannedToken>, Vec<Diagnostic>> {
+    lex_with_header_policy(source, limits, true)
+}
+
+fn lex_with_header_policy(
+    source: &str,
+    limits: ParseLimits,
+    require_header_at_start: bool,
+) -> Result<Vec<SpannedToken>, Vec<Diagnostic>> {
     if source.len() > limits.max_source_bytes {
-        return Err(vec![resource_limit(SourceSpan::new(0, source.len()))]);
+        return Err(vec![resource_limit(
+            "max_source_bytes",
+            limits.max_source_bytes,
+            source.len(),
+            SourceSpan::new(0, source.len()),
+        )]);
     }
     let mut state = RollbackState(LexerState {
         comment_depth: 0,
         max_comment_depth: limits.max_comment_depth,
+        token_count: 0,
+        max_tokens: limits.max_tokens,
+        max_token_bytes: limits.max_token_bytes,
+        literal_bytes: 0,
+        max_literal_bytes: limits.max_literal_bytes,
     });
     let (tokens, errors) = lexer()
         .parse_with_state(source, &mut state)
@@ -39,6 +69,17 @@ pub(super) fn lex(source: &str, limits: ParseLimits) -> Result<Vec<SpannedToken>
         return Err(errors.into_iter().map(rich_diagnostic).collect());
     }
     let (has_bom, tokens) = tokens.expect("a complete lexer produces tokens when it has no errors");
+    let header_start = usize::from(has_bom) * '\u{feff}'.len_utf8();
+    if require_header_at_start
+        && matches!(tokens.first(), Some((Token::Header(_), span)) if span.start != header_start)
+    {
+        return Err(vec![Diagnostic::new(
+            DiagnosticCode::VERSION_MISSING_HEADER,
+            DiagnosticStage::Parse,
+            "source is missing an #fcs header",
+            SourceSpan::new(header_start, header_start),
+        )]);
+    }
     if let Some((token, span)) = tokens.first() {
         let code = match token {
             Token::InvalidVersion => Some(DiagnosticCode::VERSION_INVALID),
@@ -55,37 +96,94 @@ pub(super) fn lex(source: &str, limits: ParseLimits) -> Result<Vec<SpannedToken>
             return Err(vec![version_diagnostic(code, span)]);
         }
     }
-    if tokens.len() > limits.max_tokens {
-        return Err(vec![resource_limit(SourceSpan::new(0, source.len()))]);
+    if let Some((
+        Token::ResourceLimit {
+            kind,
+            limit,
+            observed,
+        },
+        span,
+    )) = tokens
+        .iter()
+        .find(|(token, _)| matches!(token, Token::ResourceLimit { .. }))
+    {
+        return Err(vec![resource_limit(
+            kind,
+            *limit,
+            *observed,
+            source_span(*span),
+        )]);
     }
-    if let Some((_, span)) = tokens.iter().find(|(token, span)| {
-        matches!(token, Token::Literal(_))
-            && span.end.saturating_sub(span.start) > limits.max_literal_bytes
+    if let Some((_, span)) = tokens.iter().find(|(token, _)| {
+        matches!(
+            token,
+            Token::InvalidLexeme | Token::InvalidSemver | Token::InvalidColor
+        )
     }) {
-        return Err(vec![resource_limit(source_span(*span))]);
+        return Err(vec![syntax(
+            DiagnosticCode::SYNTAX_INVALID_TOKEN,
+            source_span(*span),
+        )]);
     }
-    if let Some(span) = nesting_limit(&tokens, limits.max_nesting_depth) {
-        return Err(vec![resource_limit(span)]);
+    if let Some((token, span)) = tokens
+        .iter()
+        .find(|(token, _)| matches!(token, Token::InvalidNumeric | Token::NonFiniteNumeric))
+    {
+        let code = if *token == Token::NonFiniteNumeric {
+            DiagnosticCode::NUMERIC_NON_FINITE
+        } else {
+            DiagnosticCode::SYNTAX_INVALID_TOKEN
+        };
+        return Err(vec![syntax(code, source_span(*span))]);
+    }
+    if let Some((span, observed)) = nesting_limit(&tokens, limits.max_nesting_depth) {
+        return Err(vec![resource_limit(
+            "max_nesting_depth",
+            limits.max_nesting_depth,
+            observed,
+            span,
+        )]);
     }
     Ok(tokens)
 }
 
 fn lexer<'source>()
 -> impl Parser<'source, &'source str, (bool, Vec<SpannedToken>), LexerExtra<'source>> {
+    let source_character = any().try_map(|character, span| {
+        if is_forbidden_source_scalar(character) {
+            Err(Rich::custom(span, FORBIDDEN_SOURCE_SCALAR))
+        } else {
+            Ok(character)
+        }
+    });
     let digit = one_of("0123456789");
-    let integer = just('0')
-        .ignored()
-        .or(one_of("123456789").then(digit.repeated()).ignored())
-        .ignored();
+    let version_component = digit.repeated().at_least(1);
+    let semver = version_component
+        .then_ignore(just('.'))
+        .then(version_component)
+        .then_ignore(just('.'))
+        .then(version_component)
+        .to_slice()
+        .map_with(|text: &str, extra| {
+            let state: &mut RollbackState<LexerState> = extra.state();
+            if text.len() > state.max_token_bytes {
+                return Token::ResourceLimit {
+                    kind: "max_token_bytes",
+                    limit: state.max_token_bytes,
+                    observed: state.max_token_bytes.saturating_add(1),
+                };
+            }
+            text.parse::<Version>()
+                .map(Token::Semver)
+                .unwrap_or(Token::InvalidSemver)
+        });
+    let integer = digit.repeated().at_least(1).ignored();
     let fraction = just('.').then(digit.repeated().at_least(1)).ignored();
     let exponent = choice((
         one_of("eE")
             .then(one_of("+-").or_not())
-            .then(digit.repeated().at_least(1))
+            .then(digit.repeated())
             .ignored(),
-        one_of("eE")
-            .then(one_of("+-").or_not())
-            .try_map(|_, span| Err::<(), _>(Rich::custom(span, INVALID_NUMERIC))),
         one_of("eE").not().ignored(),
     ));
     let unit = choice((
@@ -103,13 +201,27 @@ fn lexer<'source>()
     ))
     .or_not()
     .ignored();
+    let adjacent_identifier_continuation = any()
+        .filter(|character: &char| character.is_ascii_alphanumeric() || *character == '_')
+        .repeated()
+        .ignored();
     let number = integer
         .then(fraction.or_not())
         .then(exponent)
         .then(unit)
+        .then(adjacent_identifier_continuation)
         .to_slice()
-        .try_map(|text: &str, span| {
-            parse_number_token(text).map_err(|message| Rich::custom(span, message))
+        .map_with(|text: &str, extra| {
+            if let Some(limit) = literal_limit_token(text.len(), extra.state()) {
+                return limit;
+            }
+            parse_number_token(text).unwrap_or_else(|message| {
+                if message == "non-finite numeric literal" {
+                    Token::NonFiniteNumeric
+                } else {
+                    Token::InvalidNumeric
+                }
+            })
         });
 
     let escape = just('\\').ignore_then(choice((
@@ -133,39 +245,78 @@ fn lexer<'source>()
                     u32::from_str_radix(&digits, 16)
                         .ok()
                         .and_then(char::from_u32)
+                        .filter(|character| !is_unicode_noncharacter(*character))
                         .ok_or_else(|| Rich::custom(span, "invalid unicode escape"))
                 })
                 .map_err(|error| preserve_custom(error, "invalid unicode escape")),
         ),
         any().try_map(|_, span| Err(Rich::custom(span, "invalid string escape"))),
     )));
-    let string = just('"').ignore_then(
-        escape
-            .or(none_of("\\\"\r\n"))
-            .repeated()
-            .collect::<String>()
-            .then_ignore(just('"'))
-            .map(|value| Token::Literal(SourceLiteral::String(value)))
-            .map_err(|error| preserve_custom(error, UNCLOSED_STRING)),
-    );
+    let string_character = none_of("\\\"\r\n").try_map(|character, span| {
+        if is_forbidden_source_scalar(character) {
+            Err(Rich::custom(span, FORBIDDEN_SOURCE_SCALAR))
+        } else {
+            Ok(character)
+        }
+    });
+    let string_open =
+        just('"')
+            .map_with(|_, extra| extra.span())
+            .try_map_with(|span: ChumskySpan, extra| {
+                let state: &mut RollbackState<LexerState> = extra.state();
+                state.literal_bytes = 0;
+                charge_literal_bytes(span, state)
+            });
+    let string_piece = escape
+        .or(string_character)
+        .map_with(|character, extra| (character, extra.span()))
+        .try_map_with(|(character, span), extra| {
+            charge_literal_bytes(span, extra.state())?;
+            Ok(character)
+        });
+    let string_close = just('"')
+        .map_with(|_, extra| extra.span())
+        .try_map_with(|span, extra| charge_literal_bytes(span, extra.state()));
+    let string_body = string_piece
+        .repeated()
+        .collect::<String>()
+        .then_ignore(string_close)
+        .map_err(|error| preserve_custom(error, UNCLOSED_STRING));
+    let string = string_open
+        .ignore_then(string_body)
+        .map(|value| Token::Literal(SourceLiteral::String(value)));
 
     let color_digits = any()
         .filter(|character: &char| character.is_ascii_alphanumeric())
-        .repeated()
-        .collect::<String>();
-    let color = just('#').ignore_then(color_digits).try_map(|digits, span| {
-        format!("#{digits}")
-            .parse::<Color>()
-            .map(SourceLiteral::Color)
-            .map(Token::Literal)
-            .map_err(|_| Rich::custom(span, "malformed color literal"))
-    });
+        .repeated();
+    let color = just('#')
+        .ignore_then(color_digits)
+        .to_slice()
+        .map_with(|text: &str, extra| {
+            if let Some(limit) = literal_limit_token(text.len(), extra.state()) {
+                return limit;
+            }
+            text.parse::<Color>()
+                .map(SourceLiteral::Color)
+                .map(Token::Literal)
+                .unwrap_or(Token::InvalidColor)
+        });
 
-    let identifier = text::ascii::ident().map(|identifier: &str| match identifier {
-        "true" => Token::Literal(SourceLiteral::Bool(true)),
-        "false" => Token::Literal(SourceLiteral::Bool(false)),
-        identifier => Keyword::from_identifier(identifier)
-            .map_or_else(|| Token::Identifier(identifier.to_owned()), Token::Keyword),
+    let identifier = text::ascii::ident().map_with(|identifier: &str, extra| {
+        let state: &mut RollbackState<LexerState> = extra.state();
+        if identifier.len() > state.max_token_bytes {
+            return Token::ResourceLimit {
+                kind: "max_token_bytes",
+                limit: state.max_token_bytes,
+                observed: state.max_token_bytes.saturating_add(1),
+            };
+        }
+        match identifier {
+            "true" => Token::Literal(SourceLiteral::Bool(true)),
+            "false" => Token::Literal(SourceLiteral::Bool(false)),
+            identifier => Keyword::from_identifier(identifier)
+                .map_or_else(|| Token::Identifier(identifier.to_owned()), Token::Keyword),
+        }
     });
 
     let compound_punctuation = choice((
@@ -180,7 +331,7 @@ fn lexer<'source>()
         just(">=").to(Token::Punctuation(Punctuation::GreaterThanOrEqual)),
         just("&&").to(Token::Punctuation(Punctuation::AndAnd)),
         just("||").to(Token::Punctuation(Punctuation::OrOr)),
-        just("..").try_map(|_, span| Err::<Token, _>(Rich::custom(span, "bare range operator"))),
+        just("..").to(Token::InvalidLexeme),
     ));
     let simple_punctuation = choice((
         just('(').to(Token::Punctuation(Punctuation::LeftParenthesis)),
@@ -208,10 +359,15 @@ fn lexer<'source>()
         just('<').to(Token::Punctuation(Punctuation::LessThan)),
         just('>').to(Token::Punctuation(Punctuation::GreaterThan)),
     ));
-    let punctuation = choice((compound_punctuation, simple_punctuation));
+    let invalid_punctuation = one_of("&|?").to(Token::InvalidLexeme);
+    let punctuation = choice((
+        compound_punctuation,
+        simple_punctuation,
+        invalid_punctuation,
+    ));
 
     let line_comment = just("//")
-        .ignore_then(any().and_is(just('\n').not()).repeated())
+        .ignore_then(source_character.and_is(just('\n').not()).repeated())
         .ignored();
     let block_comment = recursive(|comment| {
         let open = just("/*")
@@ -220,7 +376,14 @@ fn lexer<'source>()
                 let state: &mut RollbackState<LexerState> = extra.state();
                 state.comment_depth += 1;
                 if state.comment_depth > state.max_comment_depth {
-                    Err(Rich::custom(span, RESOURCE_LIMIT))
+                    Err(Rich::custom(
+                        span,
+                        resource_limit_message(
+                            "max_comment_depth",
+                            state.max_comment_depth,
+                            state.comment_depth,
+                        ),
+                    ))
                 } else {
                     Ok(())
                 }
@@ -232,7 +395,7 @@ fn lexer<'source>()
         open.ignore_then(
             choice((
                 comment,
-                any()
+                source_character
                     .and_is(just("/*").not())
                     .and_is(just("*/").not())
                     .ignored(),
@@ -245,24 +408,67 @@ fn lexer<'source>()
     });
     let trivia = choice((line_comment, block_comment, one_of(" \t\r\n").ignored())).repeated();
 
-    let token = choice((string, color, number, identifier, punctuation))
-        .map_with(|token, extra| (token, extra.span()));
-    let line_ending = choice((just("\r\n").to(true), just('\n').to(true), end().to(false)));
+    let raw_token = choice((string, color, identifier, semver, number, punctuation))
+        .map_with(|token, extra| (token, extra.span()))
+        .try_map_with(|token, extra| enforce_literal_token(token, extra.state()));
+    let line_ending = choice((
+        just("\r\n").ignored(),
+        just('\n').ignored(),
+        end().ignored(),
+    ));
     let header = just("#fcs ")
-        .ignore_then(none_of("\r\n").repeated().collect::<String>())
-        .then(line_ending)
-        .map_with(|(version, terminated), extra| {
+        .ignore_then(none_of("\r\n").repeated().to_slice())
+        .then_ignore(line_ending)
+        .map_with(|version: &str, extra| {
             let span: ChumskySpan = extra.span();
+            let state: &mut RollbackState<LexerState> = extra.state();
+            if span.end.saturating_sub(span.start) > state.max_token_bytes {
+                return (
+                    Token::ResourceLimit {
+                        kind: "max_token_bytes",
+                        limit: state.max_token_bytes,
+                        observed: state.max_token_bytes.saturating_add(1),
+                    },
+                    span,
+                );
+            }
             match version.parse::<Version>() {
-                Ok(version) if terminated && FCS_SOURCE_VERSION.supports_source(version) => {
+                Ok(version) if FCS_SOURCE_VERSION.supports_source(&version) => {
                     (Token::Header(version), span)
                 }
-                Ok(_) if terminated => (Token::UnsupportedVersion, span),
+                Ok(_) => (Token::UnsupportedVersion, span),
                 _ => (Token::InvalidVersion, span),
             }
         });
+    let malformed_header = just("#fcs")
+        .ignore_then(none_of("\r\n").repeated())
+        .then_ignore(choice((
+            just("\r\n").ignored(),
+            just('\n').ignored(),
+            just('\r').ignored(),
+            end().ignored(),
+        )))
+        .map_with(|_, extra| extra.span())
+        .map_with(|span: ChumskySpan, extra| {
+            let state: &mut RollbackState<LexerState> = extra.state();
+            let token = if span.end.saturating_sub(span.start) > state.max_token_bytes {
+                Token::ResourceLimit {
+                    kind: "max_token_bytes",
+                    limit: state.max_token_bytes,
+                    observed: state.max_token_bytes.saturating_add(1),
+                }
+            } else {
+                Token::InvalidVersion
+            };
+            (token, span)
+        });
     let leading_bom = just('\u{feff}').or_not().map(|bom| bom.is_some());
-    let first_token = choice((header, token.clone()));
+    let token_guard = empty()
+        .map_with(|_, extra| extra.span())
+        .try_map_with(|span, extra| begin_token(span, extra.state()));
+    let first_token =
+        token_guard.ignore_then(choice((header, malformed_header, raw_token.clone())));
+    let token = token_guard.ignore_then(raw_token);
     leading_bom
         .then(trivia.clone())
         .then(choice((
@@ -277,6 +483,125 @@ fn lexer<'source>()
         )))
         .then_ignore(end())
         .map(|((has_bom, ()), tokens)| (has_bom, tokens))
+}
+
+fn begin_token<'source>(
+    span: ChumskySpan,
+    state: &mut RollbackState<LexerState>,
+) -> Result<(), Rich<'source, char, ChumskySpan>> {
+    state.token_count = state.token_count.saturating_add(1);
+    if state.token_count > state.max_tokens {
+        Err(Rich::custom(
+            span,
+            resource_limit_message("max_tokens", state.max_tokens, state.token_count),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn enforce_literal_token<'source>(
+    token: SpannedToken,
+    state: &mut RollbackState<LexerState>,
+) -> Result<SpannedToken, Rich<'source, char, ChumskySpan>> {
+    if matches!(&token.0, Token::ResourceLimit { .. }) {
+        return Ok(token);
+    }
+    enforce_token_length(token.1.end.saturating_sub(token.1.start), token.1, state)?;
+    if matches!(
+        &token.0,
+        Token::Literal(_) | Token::TempoBpm(_) | Token::InvalidNumeric | Token::NonFiniteNumeric
+    ) {
+        enforce_literal_length(token.1.end.saturating_sub(token.1.start), token.1, state)?;
+    }
+    Ok(token)
+}
+
+fn literal_limit_token(length: usize, state: &RollbackState<LexerState>) -> Option<Token> {
+    if length > state.max_token_bytes {
+        Some(Token::ResourceLimit {
+            kind: "max_token_bytes",
+            limit: state.max_token_bytes,
+            observed: state.max_token_bytes.saturating_add(1),
+        })
+    } else if length > state.max_literal_bytes {
+        Some(Token::ResourceLimit {
+            kind: "max_literal_bytes",
+            limit: state.max_literal_bytes,
+            observed: state.max_literal_bytes.saturating_add(1),
+        })
+    } else {
+        None
+    }
+}
+
+fn enforce_token_length<'source>(
+    length: usize,
+    span: ChumskySpan,
+    state: &mut RollbackState<LexerState>,
+) -> Result<(), Rich<'source, char, ChumskySpan>> {
+    if length > state.max_token_bytes {
+        Err(Rich::custom(
+            span,
+            resource_limit_message(
+                "max_token_bytes",
+                state.max_token_bytes,
+                state.max_token_bytes.saturating_add(1),
+            ),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn enforce_literal_length<'source>(
+    length: usize,
+    span: ChumskySpan,
+    state: &mut RollbackState<LexerState>,
+) -> Result<(), Rich<'source, char, ChumskySpan>> {
+    if length > state.max_literal_bytes {
+        Err(Rich::custom(
+            span,
+            resource_limit_message(
+                "max_literal_bytes",
+                state.max_literal_bytes,
+                state.max_literal_bytes.saturating_add(1),
+            ),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn charge_literal_bytes<'source>(
+    span: ChumskySpan,
+    state: &mut RollbackState<LexerState>,
+) -> Result<(), Rich<'source, char, ChumskySpan>> {
+    state.literal_bytes = state
+        .literal_bytes
+        .saturating_add(span.end.saturating_sub(span.start));
+    if state.literal_bytes > state.max_token_bytes {
+        return Err(Rich::custom(
+            span,
+            resource_limit_message(
+                "max_token_bytes",
+                state.max_token_bytes,
+                state.max_token_bytes.saturating_add(1),
+            ),
+        ));
+    }
+    if state.literal_bytes > state.max_literal_bytes {
+        Err(Rich::custom(
+            span,
+            resource_limit_message(
+                "max_literal_bytes",
+                state.max_literal_bytes,
+                state.max_literal_bytes.saturating_add(1),
+            ),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn parse_number_token(text: &str) -> Result<Token, &'static str> {
@@ -302,11 +627,13 @@ fn parse_number_token(text: &str) -> Result<Token, &'static str> {
                 .map(SourceLiteral::Float)
                 .map(Token::Literal);
         }
-        return number
-            .parse::<i64>()
-            .map(SourceLiteral::Int)
-            .map(Token::Literal)
-            .map_err(|_| "invalid integer literal");
+        return match number.parse::<i64>() {
+            Ok(value) => Ok(Token::Literal(SourceLiteral::Int(value))),
+            Err(_) if number.bytes().all(|byte| byte.is_ascii_digit()) => Ok(Token::Literal(
+                SourceLiteral::IntMagnitude(number.to_owned()),
+            )),
+            Err(_) => Err("invalid integer literal"),
+        };
     }
     if unit == "beat" {
         return parse_beat(number)
@@ -315,9 +642,7 @@ fn parse_number_token(text: &str) -> Result<Token, &'static str> {
     }
     let value = finite_float(number)?;
     if unit == "bpm" {
-        return Bpm::new(value)
-            .map(Token::TempoBpm)
-            .map_err(|_| "invalid bpm literal");
+        return Ok(Token::TempoBpm(SourceBpm::from_value(value)));
     }
     let literal = match unit {
         "ns" => SourceLiteral::Time(value / 1_000_000_000.0),
@@ -400,7 +725,16 @@ fn gcd(mut left: u128, mut right: u128) -> u128 {
     left
 }
 
-fn nesting_limit(tokens: &[SpannedToken], maximum: usize) -> Option<SourceSpan> {
+fn is_forbidden_source_scalar(character: char) -> bool {
+    character == '\0' || is_unicode_noncharacter(character)
+}
+
+fn is_unicode_noncharacter(character: char) -> bool {
+    let scalar = character as u32;
+    (0xfdd0..=0xfdef).contains(&scalar) || scalar & 0xffff >= 0xfffe
+}
+
+fn nesting_limit(tokens: &[SpannedToken], maximum: usize) -> Option<(SourceSpan, usize)> {
     let mut depth = 0usize;
     for (token, span) in tokens {
         match token {
@@ -409,7 +743,7 @@ fn nesting_limit(tokens: &[SpannedToken], maximum: usize) -> Option<SourceSpan> 
             ) => {
                 depth += 1;
                 if depth > maximum {
-                    return Some(source_span(*span));
+                    return Some((source_span(*span), depth));
                 }
             }
             Token::Punctuation(
@@ -434,6 +768,11 @@ fn preserve_custom<'source>(
 
 fn rich_diagnostic(error: Rich<'_, char, ChumskySpan>) -> Diagnostic {
     let span = source_span(*error.span());
+    if let RichReason::Custom(message) = error.reason()
+        && let Some((kind, limit, observed)) = parse_resource_limit_message(message)
+    {
+        return resource_limit(kind, limit, observed, span);
+    }
     match error.reason() {
         RichReason::Custom(message) if message == UNCLOSED_COMMENT => {
             syntax(DiagnosticCode::SYNTAX_UNCLOSED_COMMENT, span)
@@ -441,7 +780,6 @@ fn rich_diagnostic(error: Rich<'_, char, ChumskySpan>) -> Diagnostic {
         RichReason::Custom(message) if message == UNCLOSED_STRING => {
             syntax(DiagnosticCode::SYNTAX_UNCLOSED_STRING, span)
         }
-        RichReason::Custom(message) if message == RESOURCE_LIMIT => resource_limit(span),
         RichReason::Custom(message) if message == "non-finite numeric literal" => {
             syntax(DiagnosticCode::NUMERIC_NON_FINITE, span)
         }
@@ -452,13 +790,29 @@ fn rich_diagnostic(error: Rich<'_, char, ChumskySpan>) -> Diagnostic {
 fn syntax(code: DiagnosticCode, span: SourceSpan) -> Diagnostic {
     Diagnostic::new(code, DiagnosticStage::Parse, "invalid source syntax", span)
 }
-fn resource_limit(span: SourceSpan) -> Diagnostic {
+fn resource_limit_message(kind: &str, limit: usize, observed: usize) -> String {
+    format!("{RESOURCE_LIMIT}|{kind}|{limit}|{observed}")
+}
+
+fn parse_resource_limit_message(message: &str) -> Option<(&str, usize, usize)> {
+    let mut fields = message
+        .strip_prefix(RESOURCE_LIMIT)?
+        .strip_prefix('|')?
+        .split('|');
+    let kind = fields.next()?;
+    let limit = fields.next()?.parse().ok()?;
+    let observed = fields.next()?.parse().ok()?;
+    fields.next().is_none().then_some((kind, limit, observed))
+}
+
+fn resource_limit(kind: &str, limit: usize, observed: usize, span: SourceSpan) -> Diagnostic {
     Diagnostic::new(
         DiagnosticCode::RESOURCE_LIMIT_EXCEEDED,
         DiagnosticStage::Parse,
         "parser resource limit exceeded",
         span,
     )
+    .with_budget(kind, limit, observed)
 }
 
 #[cfg(test)]
@@ -481,6 +835,416 @@ mod tests {
             Token::Punctuation(Punctuation::RangeInclusive)
         ));
     }
+
+    #[test]
+    fn core_envelope_and_resource_words_are_reserved() {
+        for source in [
+            "person",
+            "credit",
+            "scrollTempoMap",
+            "cubicBezier",
+            "extension",
+            "required",
+            "optional",
+            "source",
+            "payload",
+            "audio",
+            "image",
+            "font",
+            "texture",
+            "path",
+            "shader",
+            "binary",
+        ] {
+            assert!(
+                matches!(tokens(source).as_slice(), [(Token::Keyword(_), _)]),
+                "{source} must be a Core reserved word"
+            );
+        }
+    }
+
+    #[test]
+    fn document_structure_words_are_reserved() {
+        for source in ["profile", "features", "tempoMap"] {
+            assert!(
+                matches!(tokens(source).as_slice(), [(Token::Keyword(_), _)]),
+                "{source} must be a Core reserved word"
+            );
+        }
+    }
+
+    #[test]
+    fn closed_enum_spellings_remain_identifiers() {
+        for source in [
+            "custom",
+            "above",
+            "below",
+            "replace",
+            "add",
+            "multiply",
+            "base",
+            "zero",
+            "one",
+            "error",
+            "holdBefore",
+            "holdAfter",
+        ] {
+            assert_eq!(
+                tokens(source).as_slice(),
+                [(
+                    Token::Identifier(source.to_owned()),
+                    ChumskySpan::new((), 0..source.len())
+                )],
+                "{source} is not a Core reserved word"
+            );
+        }
+    }
+
+    #[test]
+    fn standalone_semver_is_one_token_before_float() {
+        assert_eq!(
+            tokens("1.0.0").as_slice(),
+            [(
+                Token::Semver(Version::new(1, 0, 0)),
+                ChumskySpan::new((), 0..5)
+            )]
+        );
+        assert!(matches!(
+            tokens("1.0").as_slice(),
+            [(Token::Literal(SourceLiteral::Float(value)), _)] if *value == 1.0
+        ));
+
+        let source = "65536.0.0";
+        let tokens = tokens(source);
+        assert!(matches!(tokens.as_slice(), [(Token::Semver(_), _)]));
+        let Token::Semver(version) = &tokens[0].0 else {
+            unreachable!()
+        };
+        assert_eq!(version.to_string(), source);
+        assert_eq!(tokens[0].1, ChumskySpan::new((), 0..source.len()));
+    }
+
+    #[test]
+    fn leading_zero_standalone_semver_is_one_invalid_lexeme() {
+        for source in ["01.0.0", "1.00.0", "1.0.00"] {
+            let diagnostics = lex(source, ParseLimits::default()).unwrap_err();
+            assert_eq!(diagnostics[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
+            assert_eq!(
+                diagnostics[0].primary_span(),
+                SourceSpan::new(0, source.len()),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_core_reserved_word_has_one_keyword_token() {
+        for (source, expected) in [
+            ("format", Keyword::Format),
+            ("profile", Keyword::Profile),
+            ("features", Keyword::Features),
+            ("fragment", Keyword::Fragment),
+            ("chart", Keyword::Chart),
+            ("playable", Keyword::Playable),
+            ("renderable", Keyword::Renderable),
+            ("publishable", Keyword::Publishable),
+            ("meta", Keyword::Meta),
+            ("contributors", Keyword::Contributors),
+            ("person", Keyword::Person),
+            ("credits", Keyword::Credits),
+            ("credit", Keyword::Credit),
+            ("resources", Keyword::Resources),
+            ("artwork", Keyword::Artwork),
+            ("sync", Keyword::Sync),
+            ("definitions", Keyword::Definitions),
+            ("const", Keyword::Const),
+            ("let", Keyword::Let),
+            ("fn", Keyword::Fn),
+            ("template", Keyword::Template),
+            ("return", Keyword::Return),
+            ("if", Keyword::If),
+            ("else", Keyword::Else),
+            ("choose", Keyword::Choose),
+            ("when", Keyword::When),
+            ("generate", Keyword::Generate),
+            ("emit", Keyword::Emit),
+            ("in", Keyword::In),
+            ("step", Keyword::Step),
+            ("with", Keyword::With),
+            ("null", Keyword::Null),
+            ("tempoMap", Keyword::TempoMap),
+            ("lines", Keyword::Lines),
+            ("line", Keyword::Line),
+            ("collections", Keyword::Collections),
+            ("notes", Keyword::Notes),
+            ("judgelines", Keyword::Judgelines),
+            ("tracks", Keyword::Tracks),
+            ("track", Keyword::Track),
+            ("segments", Keyword::Segments),
+            ("segment", Keyword::Segment),
+            ("keyframe", Keyword::Keyframe),
+            ("point", Keyword::Point),
+            ("using", Keyword::Using),
+            ("scrollTempoMap", Keyword::ScrollTempoMap),
+            ("cubicBezier", Keyword::CubicBezier),
+            ("render", Keyword::Render),
+            ("extensions", Keyword::Extensions),
+            ("extension", Keyword::Extension),
+            ("required", Keyword::Required),
+            ("optional", Keyword::Optional),
+            ("preserve", Keyword::Preserve),
+            ("source", Keyword::Source),
+            ("payload", Keyword::Payload),
+            ("audio", Keyword::Audio),
+            ("image", Keyword::Image),
+            ("font", Keyword::Font),
+            ("texture", Keyword::Texture),
+            ("path", Keyword::Path),
+            ("shader", Keyword::Shader),
+            ("binary", Keyword::Binary),
+            ("bool", Keyword::Bool),
+            ("int", Keyword::Int),
+            ("float", Keyword::Float),
+            ("string", Keyword::String),
+            ("time", Keyword::Time),
+            ("beat", Keyword::Beat),
+            ("length", Keyword::Length),
+            ("angle", Keyword::Angle),
+            ("color", Keyword::Color),
+            ("vec2", Keyword::Vec2),
+            ("array", Keyword::Array),
+            ("Note", Keyword::Note),
+            ("Line", Keyword::LineType),
+            ("RenderNode", Keyword::RenderNode),
+            ("Track", Keyword::TrackType),
+            ("TrackSegment", Keyword::TrackSegment),
+            ("Keyframe", Keyword::KeyframeType),
+            ("tap", Keyword::Tap),
+            ("hold", Keyword::Hold),
+            ("flick", Keyword::Flick),
+            ("drag", Keyword::Drag),
+        ] {
+            assert_eq!(
+                tokens(source).as_slice(),
+                [(
+                    Token::Keyword(expected),
+                    ChumskySpan::new((), 0..source.len())
+                )],
+                "{source}"
+            );
+        }
+        assert!(matches!(
+            tokens("true").as_slice(),
+            [(Token::Literal(SourceLiteral::Bool(true)), _)]
+        ));
+        assert!(matches!(
+            tokens("false").as_slice(),
+            [(Token::Literal(SourceLiteral::Bool(false)), _)]
+        ));
+    }
+
+    #[test]
+    fn punctuation_and_longest_match_tokens_are_complete() {
+        for (source, expected) in [
+            ("(", Punctuation::LeftParenthesis),
+            (")", Punctuation::RightParenthesis),
+            ("[", Punctuation::LeftBracket),
+            ("]", Punctuation::RightBracket),
+            ("{", Punctuation::LeftBrace),
+            ("}", Punctuation::RightBrace),
+            (",", Punctuation::Comma),
+            (":", Punctuation::Colon),
+            (";", Punctuation::Semicolon),
+            (".", Punctuation::Dot),
+            ("@", Punctuation::At),
+            ("->", Punctuation::Arrow),
+            ("=>", Punctuation::FatArrow),
+            ("..<", Punctuation::RangeExclusive),
+            ("..=", Punctuation::RangeInclusive),
+            ("+", Punctuation::Plus),
+            ("-", Punctuation::Minus),
+            ("*", Punctuation::Star),
+            ("**", Punctuation::Power),
+            ("/", Punctuation::Slash),
+            ("%", Punctuation::Percent),
+            ("!", Punctuation::Bang),
+            ("=", Punctuation::Equal),
+            ("==", Punctuation::EqualEqual),
+            ("!=", Punctuation::BangEqual),
+            ("<", Punctuation::LessThan),
+            ("<=", Punctuation::LessThanOrEqual),
+            (">", Punctuation::GreaterThan),
+            (">=", Punctuation::GreaterThanOrEqual),
+            ("&&", Punctuation::AndAnd),
+            ("||", Punctuation::OrOr),
+        ] {
+            assert_eq!(
+                tokens(source).as_slice(),
+                [(
+                    Token::Punctuation(expected),
+                    ChumskySpan::new((), 0..source.len())
+                )],
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_literal_and_unit_suffix_has_one_token() {
+        for source in ["0", "42"] {
+            assert!(
+                matches!(
+                    tokens(source).as_slice(),
+                    [(Token::Literal(SourceLiteral::Int(_)), _)]
+                ),
+                "{source}"
+            );
+        }
+        for source in ["1.0", "1e2", "1.0e-2"] {
+            assert!(
+                matches!(
+                    tokens(source).as_slice(),
+                    [(Token::Literal(SourceLiteral::Float(_)), _)]
+                ),
+                "{source}"
+            );
+        }
+        for source in ["1ns", "1us", "1ms", "1s", "1min"] {
+            assert!(
+                matches!(
+                    tokens(source).as_slice(),
+                    [(Token::Literal(SourceLiteral::Time(_)), _)]
+                ),
+                "{source}"
+            );
+        }
+        assert!(matches!(
+            tokens("1beat").as_slice(),
+            [(Token::Literal(SourceLiteral::Beat(_)), _)]
+        ));
+        assert!(matches!(
+            tokens("1px").as_slice(),
+            [(Token::Literal(SourceLiteral::Length(_)), _)]
+        ));
+        for source in ["1deg", "1rad", "1turn"] {
+            assert!(
+                matches!(
+                    tokens(source).as_slice(),
+                    [(Token::Literal(SourceLiteral::Angle(_)), _)]
+                ),
+                "{source}"
+            );
+        }
+        for source in ["0bpm", "120bpm"] {
+            assert!(
+                matches!(tokens(source).as_slice(), [(Token::TempoBpm(_), _)]),
+                "{source}"
+            );
+        }
+        assert!(matches!(
+            tokens("\"text\"").as_slice(),
+            [(Token::Literal(SourceLiteral::String(_)), _)]
+        ));
+        assert!(matches!(
+            tokens("#102030").as_slice(),
+            [(Token::Literal(SourceLiteral::Color(_)), _)]
+        ));
+    }
+
+    #[test]
+    fn leading_minus_is_always_a_separate_token() {
+        for source in ["-1", "-1.0", "-1beat", "-120bpm"] {
+            let tokens = tokens(source);
+            assert_eq!(tokens.len(), 2, "{source}");
+            assert_eq!(
+                tokens[0],
+                (
+                    Token::Punctuation(Punctuation::Minus),
+                    ChumskySpan::new((), 0..1)
+                ),
+                "{source}"
+            );
+            assert_eq!(
+                tokens[1].1,
+                ChumskySpan::new((), 1..source.len()),
+                "{source}"
+            );
+        }
+
+        let compact = tokens("a-1")
+            .into_iter()
+            .map(|(token, _)| token)
+            .collect::<Vec<_>>();
+        let spaced = tokens("a - 1")
+            .into_iter()
+            .map(|(token, _)| token)
+            .collect::<Vec<_>>();
+        assert_eq!(compact, spaced);
+    }
+
+    #[test]
+    fn contextual_render_words_and_keyword_fields_keep_core_token_kinds() {
+        for source in [
+            "viewport",
+            "layer",
+            "children",
+            "group",
+            "clipGroup",
+            "rect",
+            "roundedRect",
+            "circle",
+            "ellipse",
+            "polyline",
+            "polygon",
+            "text",
+        ] {
+            assert!(
+                matches!(tokens(source).as_slice(), [(Token::Identifier(_), _)]),
+                "{source} is contextual to Render"
+            );
+        }
+
+        assert_eq!(
+            tokens("value.length,@other").as_slice(),
+            [
+                (
+                    Token::Identifier("value".to_owned()),
+                    ChumskySpan::new((), 0..5)
+                ),
+                (
+                    Token::Punctuation(Punctuation::Dot),
+                    ChumskySpan::new((), 5..6)
+                ),
+                (Token::Keyword(Keyword::Length), ChumskySpan::new((), 6..12)),
+                (
+                    Token::Punctuation(Punctuation::Comma),
+                    ChumskySpan::new((), 12..13)
+                ),
+                (
+                    Token::Punctuation(Punctuation::At),
+                    ChumskySpan::new((), 13..14)
+                ),
+                (
+                    Token::Identifier("other".to_owned()),
+                    ChumskySpan::new((), 14..19)
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn unsupported_standalone_punctuation_is_rejected() {
+        for source in ["&", "|", "?", ".."] {
+            let diagnostics = lex(source, ParseLimits::default()).unwrap_err();
+            assert_eq!(diagnostics[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
+            assert_eq!(
+                diagnostics[0].primary_span(),
+                SourceSpan::new(0, source.len()),
+                "{source}"
+            );
+        }
+    }
+
     #[test]
     fn bare_range_is_not_two_dot_tokens() {
         assert_eq!(

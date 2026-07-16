@@ -36,6 +36,18 @@ fn validate_tempo_map(tempo_map: &TempoMap, span: SourceSpan) -> Result<(), Diag
     }
     if tempo_map
         .points
+        .iter()
+        .any(|point| !point.bpm.get().is_finite() || point.bpm.get() <= 0.0)
+    {
+        return Err(Diagnostic::new(
+            DiagnosticCode::TEMPO_INVALID,
+            DiagnosticStage::Parse,
+            "tempoMap BPM must be finite and greater than zero",
+            span,
+        ));
+    }
+    if tempo_map
+        .points
         .windows(2)
         .any(|points| points[0].beat > points[1].beat)
     {

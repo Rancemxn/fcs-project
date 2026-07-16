@@ -1,9 +1,9 @@
 use fcs_source::ast::SourceSpan;
-use fcs_source::diagnostic::{DiagnosticCode, DiagnosticStage};
+use fcs_source::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticStage};
 use fcs_source::elaborator::{CompileTimeLimits, elaborate};
 use fcs_source::parser::{
-    ParseLimits, parse_document, parse_document_with_limits, parse_expression_with_limits,
-    parse_header, parse_type_with_limits,
+    ParseLimits, parse_document, parse_document_with_limits, parse_expression,
+    parse_expression_with_limits, parse_header, parse_type_with_limits,
 };
 use fcs_source::schema::phase2_schema;
 
@@ -47,6 +47,144 @@ fn bom_diagnostics_keep_original_utf8_byte_offsets() {
 }
 
 #[test]
+fn additional_bom_and_non_ascii_identifier_spans_are_exact() {
+    let second_bom = "\u{feff}\u{feff}#fcs 5.0.0\nformat { profile: fragment; }";
+    let errors = parse_document(second_bom)
+        .into_result()
+        .expect_err("only one leading BOM is allowed");
+    assert_eq!(errors[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
+    assert_eq!(errors[0].primary_span(), SourceSpan::new(3, 6));
+
+    let interior_bom = "1\u{feff}+2";
+    let errors = parse_expression(interior_bom)
+        .into_result()
+        .expect_err("an interior BOM is not expression trivia");
+    assert_eq!(errors[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
+    assert_eq!(errors[0].primary_span(), SourceSpan::new(1, 4));
+
+    parse_expression("\"\u{feff}\"")
+        .into_result()
+        .expect("U+FEFF remains an ordinary string character away from the file start");
+    parse_expression("/*\u{feff}*/ 1")
+        .into_result()
+        .expect("U+FEFF remains an ordinary comment character away from the file start");
+
+    for (source, expected) in [
+        ("\u{53d8}\u{91cf}", SourceSpan::new(0, 3)),
+        ("ascii.\u{503c}", SourceSpan::new(6, 9)),
+        ("\u{e9}clair", SourceSpan::new(0, 2)),
+    ] {
+        let errors = parse_expression(source)
+            .into_result()
+            .expect_err("identifiers are ASCII-only");
+        assert_eq!(errors[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
+        assert_eq!(errors[0].primary_span(), expected, "{source:?}");
+    }
+}
+
+#[test]
+fn nul_and_unicode_noncharacters_obey_the_lexical_boundary() {
+    parse_expression(r#""\0""#)
+        .into_result()
+        .expect("the explicit NUL string escape is valid");
+
+    let raw_cases = [
+        ("\0".to_owned(), SourceSpan::new(0, 1)),
+        ("\"\0\"".to_owned(), SourceSpan::new(1, 2)),
+        ("/*\0*/ 1".to_owned(), SourceSpan::new(2, 3)),
+        (
+            format!("\"{}\"", '\u{fdd0}'),
+            SourceSpan::new(1, 1 + '\u{fdd0}'.len_utf8()),
+        ),
+        (
+            format!("/*{}*/ 1", '\u{10ffff}'),
+            SourceSpan::new(2, 2 + '\u{10ffff}'.len_utf8()),
+        ),
+    ];
+    for (source, expected_span) in raw_cases {
+        let errors = parse_expression(&source)
+            .into_result()
+            .expect_err("forbidden source scalar must fail");
+        assert_eq!(errors[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
+        assert_eq!(errors[0].primary_span(), expected_span, "{source:?}");
+    }
+
+    for source in [r#""\u{FDD0}""#, r#""\u{10FFFF}""#] {
+        let errors = parse_expression(source)
+            .into_result()
+            .expect_err("an escaped noncharacter must fail");
+        assert_eq!(errors[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
+    }
+}
+
+#[test]
+fn invalid_unit_adjacency_is_one_lexical_error() {
+    for source in ["1foo", "1msx", "1beatExtra", "1_bogus"] {
+        let errors = parse_expression(source)
+            .into_result()
+            .expect_err("an unknown adjacent suffix must fail");
+        assert_eq!(errors[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
+        assert_eq!(
+            errors[0].primary_span(),
+            SourceSpan::new(0, source.len()),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn malformed_numeric_candidates_are_one_lexical_error() {
+    for source in ["01", "00.1", "01e2", "1e", "1e+", "1e-"] {
+        let errors = parse_expression(source)
+            .into_result()
+            .expect_err("a malformed decimal candidate must fail");
+        assert_eq!(errors[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
+        assert_eq!(
+            errors[0].primary_span(),
+            SourceSpan::new(0, source.len()),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn malformed_color_string_and_comment_spans_are_stable() {
+    for source in ["#12345", "#GGGGGG", "#123456789"] {
+        let errors = parse_expression(source)
+            .into_result()
+            .expect_err("a malformed color literal must fail");
+        assert_eq!(errors[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
+        assert_eq!(
+            errors[0].primary_span(),
+            SourceSpan::new(0, source.len()),
+            "{source}"
+        );
+    }
+
+    let raw_newline = "\"line\nnext\"";
+    let errors = parse_expression(raw_newline)
+        .into_result()
+        .expect_err("a raw newline cannot continue a string");
+    assert_eq!(errors[0].code(), DiagnosticCode::SYNTAX_UNCLOSED_STRING);
+    assert_eq!(errors[0].primary_span(), SourceSpan::new(5, 6));
+
+    for (source, code) in [
+        ("\"unterminated", DiagnosticCode::SYNTAX_UNCLOSED_STRING),
+        ("/* unterminated", DiagnosticCode::SYNTAX_UNCLOSED_COMMENT),
+    ] {
+        let errors = parse_expression(source)
+            .into_result()
+            .expect_err("an unclosed lexical construct must fail");
+        assert_eq!(errors[0].code(), code);
+        assert_eq!(
+            errors[0].primary_span(),
+            SourceSpan::new(source.len(), source.len()),
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
 fn tempo_diagnostics_point_at_the_tempo_block() {
     let source = "#fcs 5.0.0\nformat { profile: chart; }\n\
                   tempoMap { 4beat -> 180bpm; }";
@@ -71,6 +209,34 @@ fn type_parser_exposes_the_same_bounded_diagnostic_boundary() {
         .into_result()
         .expect_err("type nesting exceeds the limit");
     assert_eq!(errors[0].code(), DiagnosticCode::RESOURCE_LIMIT_EXCEEDED);
+}
+
+#[test]
+fn expression_and_type_depth_limits_report_budget_details() {
+    let limits = ParseLimits {
+        max_nesting_depth: 1,
+        ..ParseLimits::default()
+    };
+    let assert_budget = |diagnostic: &Diagnostic| {
+        let budget = diagnostic.budget().expect("depth limit budget details");
+        assert_eq!(budget.kind(), "max_nesting_depth");
+        assert_eq!(budget.limit(), 1);
+        assert_eq!(budget.observed(), 2);
+    };
+
+    let expression = parse_expression_with_limits("!!1", limits);
+    assert_eq!(
+        expression.diagnostics()[0].code(),
+        DiagnosticCode::RESOURCE_LIMIT_EXCEEDED
+    );
+    assert_budget(&expression.diagnostics()[0]);
+
+    let ty = parse_type_with_limits("vec2<vec2<length>>", limits);
+    assert_eq!(
+        ty.diagnostics()[0].code(),
+        DiagnosticCode::RESOURCE_LIMIT_EXCEEDED
+    );
+    assert_budget(&ty.diagnostics()[0]);
 }
 
 #[test]

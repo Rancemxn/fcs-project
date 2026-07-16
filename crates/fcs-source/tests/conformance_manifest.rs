@@ -142,9 +142,27 @@ struct FcbcMutationPatch {
 struct RenderManifest {
     schema_version: u32,
     render_profile_version: String,
+    fcbc_version: String,
+    execution_abi_version: String,
+    hash_algorithm: String,
+    #[serde(default)]
+    binary_fixture: Vec<RenderBinaryFixtureEntry>,
     fixture: Vec<RenderFixtureEntry>,
     source_fixture: Vec<RenderSourceFixtureEntry>,
     binding_fixture: Vec<RenderBindingFixtureEntry>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RenderBinaryFixtureEntry {
+    id: String,
+    manifest: String,
+    vector: String,
+    mutations: String,
+    semantic_expected: String,
+    raster_expected: String,
+    assets: Vec<String>,
+    clauses: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -649,11 +667,12 @@ fn typed_manifests_load_with_bound_counts() {
     assert_eq!(root.schema_version, 2);
     assert_eq!(fcs.schema_version, 2);
     assert_eq!(fcbc.schema_version, 2);
-    assert_eq!(render.schema_version, 2);
+    assert_eq!(render.schema_version, 3);
     assert_eq!(conversion.schema_version, 2);
     assert_eq!(root.suite.len(), 6);
     assert_eq!(fcs.fixture.len(), 39);
     assert_eq!(fcbc.fixture.len(), 3);
+    assert_eq!(render.binary_fixture.len(), 0);
     assert_eq!(render.fixture.len(), 1);
     assert_eq!(render.source_fixture.len(), 3);
     assert_eq!(render.binding_fixture.len(), 1);
@@ -1044,7 +1063,49 @@ fn manifests_preserve_integrity_invariants() {
     assert_eq!(execution_fixture_count, 1);
 
     assert_eq!(render.render_profile_version, "1.0.0");
+    assert_eq!(render.fcbc_version, "2.0.0");
+    assert_eq!(render.execution_abi_version, "1.0.0");
+    assert_eq!(render.hash_algorithm, "sha256");
     let mut render_ids = HashSet::new();
+    for fixture in &render.binary_fixture {
+        assert!(
+            render_ids.insert(&fixture.id),
+            "duplicate Render binary fixture ID: {}",
+            fixture.id
+        );
+        for (kind, reference) in [
+            ("manifest", fixture.manifest.as_str()),
+            ("vector", fixture.vector.as_str()),
+            ("mutations", fixture.mutations.as_str()),
+            ("semantic expectation", fixture.semantic_expected.as_str()),
+            ("raster expectation", fixture.raster_expected.as_str()),
+        ] {
+            assert_regular_file_below(
+                &render_base,
+                reference,
+                &canonical_conformance,
+                &format!("Render binary fixture {} {kind}", fixture.id),
+            );
+        }
+        assert!(
+            !fixture.assets.is_empty(),
+            "Render binary fixture {} needs fixed assets",
+            fixture.id
+        );
+        for asset in &fixture.assets {
+            assert_regular_file_below(
+                &render_base,
+                asset,
+                &canonical_conformance,
+                &format!("Render binary fixture {} asset", fixture.id),
+            );
+        }
+        assert!(
+            !fixture.clauses.is_empty(),
+            "Render binary fixture {} needs clauses",
+            fixture.id
+        );
+    }
     for fixture in &render.fixture {
         assert!(
             render_ids.insert(&fixture.id),

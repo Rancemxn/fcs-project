@@ -37,8 +37,8 @@ pub struct ExpandedSourceDocument {
 }
 
 impl ExpandedSourceDocument {
-    pub const fn source_version(&self) -> Version {
-        self.source_version
+    pub fn source_version(&self) -> Version {
+        self.source_version.clone()
     }
 
     pub const fn profile(&self) -> DocumentProfile {

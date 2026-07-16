@@ -204,6 +204,8 @@ pub struct LineRecord {
     pub id: u64,
     pub parent_id: u64,
     pub document_order: u32,
+    pub z_order: i32,
+    pub inherit_flags: u32,
     pub line_flags: u32,
     pub position_descriptor: u32,
     pub rotation_descriptor: u32,
@@ -1011,7 +1013,7 @@ fn parse_lines(bytes: &[u8], strings: &[String]) -> Result<Vec<LineRecord>, &'st
         prior_id = Some(id);
         let parent_id = record.u64()?;
         let document_order = record.u32()?;
-        record.i32()?; // zOrder
+        let z_order = record.i32()?;
         let inherit_flags = record.u32()?;
         let line_flags = record.u32()?;
         if inherit_flags & !0x1f != 0 || line_flags & !1 != 0 {
@@ -1021,6 +1023,8 @@ fn parse_lines(bytes: &[u8], strings: &[String]) -> Result<Vec<LineRecord>, &'st
             id,
             parent_id,
             document_order,
+            z_order,
+            inherit_flags,
             line_flags,
             position_descriptor: record.u32()?,
             rotation_descriptor: record.u32()?,
@@ -1817,11 +1821,8 @@ fn validate_canonical_reachability(
             .then_with(|| left.1.cmp(&right.1))
     });
     for (path, _, root) in &roots {
-        if (path.starts_with("line.") || *path == "note.presentation.scrollFactor")
-            && descriptor_uses_env_d(*root, descriptors, expressions, 0)?
-        {
-            return Err("fcbc.invalid-expression");
-        }
+        validate_descriptor_env_p_context(*root, descriptors, expressions)?;
+        validate_descriptor_environment_for_target(path, *root, descriptors, expressions)?;
     }
 
     fn visit_descriptor(
@@ -1923,12 +1924,36 @@ fn validate_canonical_reachability(
     Ok(())
 }
 
-fn descriptor_uses_env_d(
+const ENV_S: u8 = 1 << 0;
+const ENV_B: u8 = 1 << 1;
+const ENV_Q: u8 = 1 << 2;
+const ENV_D: u8 = 1 << 3;
+
+pub fn validate_descriptor_environment_for_target(
+    target_path: &str,
+    root: u32,
+    descriptors: &[PropertyDescriptor],
+    expressions: &[ExpressionNode],
+) -> Result<(), &'static str> {
+    let allowed = match target_path {
+        "line.scrollTempo" => ENV_S | ENV_B,
+        path if path.starts_with("line.") => ENV_S | ENV_B | ENV_Q,
+        "note.presentation.scrollFactor" => ENV_S | ENV_B | ENV_Q,
+        path if path.starts_with("note.presentation.") => ENV_S | ENV_B | ENV_Q | ENV_D,
+        _ => return Err("fcbc.invalid-expression"),
+    };
+    let dependencies = descriptor_environment_dependencies(root, descriptors, expressions, 0)?;
+    (dependencies & !allowed == 0)
+        .then_some(())
+        .ok_or("fcbc.invalid-expression")
+}
+
+fn descriptor_environment_dependencies(
     index: u32,
     descriptors: &[PropertyDescriptor],
     expressions: &[ExpressionNode],
     depth: usize,
-) -> Result<bool, &'static str> {
+) -> Result<u8, &'static str> {
     if depth > descriptors.len() + expressions.len() {
         return Err("fcbc.invalid-expression");
     }
@@ -1936,44 +1961,109 @@ fn descriptor_uses_env_d(
         .get(index as usize)
         .ok_or("fcbc.dangling-reference")?;
     match &descriptor.kind {
-        DescriptorKind::Constant(_) | DescriptorKind::SegmentTrack(_) => Ok(false),
+        DescriptorKind::Constant(_) | DescriptorKind::SegmentTrack(_) => Ok(0),
         DescriptorKind::Piecewise(pieces) => {
+            let mut dependencies = 0;
             for piece in pieces {
-                if descriptor_uses_env_d(
+                dependencies |= descriptor_environment_dependencies(
                     piece.descriptor_index,
                     descriptors,
                     expressions,
                     depth + 1,
-                )? {
-                    return Ok(true);
-                }
+                )?;
             }
-            Ok(false)
+            Ok(dependencies)
         }
-        DescriptorKind::Expression(root) => expression_uses_env_d(*root, expressions, depth + 1),
+        DescriptorKind::Expression(root) => {
+            expression_environment_dependencies(*root, expressions, depth + 1)
+        }
     }
 }
 
-fn expression_uses_env_d(
+fn expression_environment_dependencies(
     index: u32,
     expressions: &[ExpressionNode],
     depth: usize,
-) -> Result<bool, &'static str> {
+) -> Result<u8, &'static str> {
     if depth > expressions.len() {
         return Err("fcbc.invalid-expression");
     }
     let node = expressions
         .get(index as usize)
         .ok_or("fcbc.invalid-expression")?;
-    if node.opcode == 5 {
-        return Ok(true);
-    }
+    let mut dependencies = match node.opcode {
+        2 => ENV_S,
+        3 => ENV_B,
+        4 => ENV_Q,
+        5 => ENV_D,
+        _ => 0,
+    };
     for operand in &node.operands[..node.arity as usize] {
-        if expression_uses_env_d(*operand, expressions, depth + 1)? {
-            return Ok(true);
+        dependencies |= expression_environment_dependencies(*operand, expressions, depth + 1)?;
+    }
+    Ok(dependencies)
+}
+
+pub fn validate_descriptor_env_p_context(
+    root: u32,
+    descriptors: &[PropertyDescriptor],
+    expressions: &[ExpressionNode],
+) -> Result<(), &'static str> {
+    fn visit_descriptor(
+        index: u32,
+        descriptors: &[PropertyDescriptor],
+        expressions: &[ExpressionNode],
+        has_piece_context: bool,
+        depth: usize,
+    ) -> Result<(), &'static str> {
+        if depth > descriptors.len() + expressions.len() {
+            return Err("fcbc.invalid-expression");
+        }
+        let descriptor = descriptors
+            .get(index as usize)
+            .ok_or("fcbc.dangling-reference")?;
+        match &descriptor.kind {
+            DescriptorKind::Constant(_) | DescriptorKind::SegmentTrack(_) => Ok(()),
+            DescriptorKind::Piecewise(pieces) => {
+                for piece in pieces {
+                    visit_descriptor(
+                        piece.descriptor_index,
+                        descriptors,
+                        expressions,
+                        true,
+                        depth + 1,
+                    )?;
+                }
+                Ok(())
+            }
+            DescriptorKind::Expression(root) => {
+                visit_expression(*root, expressions, has_piece_context, depth + 1)
+            }
         }
     }
-    Ok(false)
+
+    fn visit_expression(
+        index: u32,
+        expressions: &[ExpressionNode],
+        has_piece_context: bool,
+        depth: usize,
+    ) -> Result<(), &'static str> {
+        if depth > expressions.len() + 1 {
+            return Err("fcbc.invalid-expression");
+        }
+        let node = expressions
+            .get(index as usize)
+            .ok_or("fcbc.invalid-expression")?;
+        if node.opcode == 6 && !has_piece_context {
+            return Err("fcbc.invalid-expression");
+        }
+        for operand in &node.operands[..node.arity as usize] {
+            visit_expression(*operand, expressions, has_piece_context, depth + 1)?;
+        }
+        Ok(())
+    }
+
+    visit_descriptor(root, descriptors, expressions, false, 0)
 }
 
 fn expression_structural_key(

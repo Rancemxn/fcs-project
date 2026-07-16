@@ -21,6 +21,7 @@ pub use header::parse_header;
 pub struct ParseLimits {
     pub max_source_bytes: usize,
     pub max_tokens: usize,
+    pub max_token_bytes: usize,
     pub max_nesting_depth: usize,
     pub max_comment_depth: usize,
     pub max_literal_bytes: usize,
@@ -31,6 +32,7 @@ impl Default for ParseLimits {
         Self {
             max_source_bytes: 16 * 1024 * 1024,
             max_tokens: 1_000_000,
+            max_token_bytes: 1024 * 1024,
             max_nesting_depth: 512,
             max_comment_depth: 256,
             max_literal_bytes: 1024 * 1024,

@@ -13,9 +13,13 @@ mod fcbc_reference_loader;
 #[path = "support/fcbc_reference_writer.rs"]
 mod fcbc_reference_writer;
 
-use fcbc_reference_evaluator::{EvaluationEnvironment, query_descriptor, query_distance};
+use fcbc_reference_evaluator::{
+    EvaluationEnvironment, query_descriptor, query_distance, query_scroll_coordinate,
+};
 use fcbc_reference_loader::{
-    DescriptorKind, DistanceClassification, RuntimeValue, ValueType, load,
+    DescriptorKind, DistanceClassification, Domain, ExpressionNode, Piece, PropertyDescriptor,
+    RuntimeValue, ValueType, load, validate_descriptor_env_p_context,
+    validate_descriptor_environment_for_target,
 };
 
 #[derive(Debug, serde::Deserialize)]
@@ -590,4 +594,133 @@ fn nonempty_execution_mutations_return_stable_categories() {
             mutation.id
         );
     }
+}
+
+#[test]
+fn piecewise_rebinds_env_p_and_direct_env_p_is_rejected() {
+    let mut chart = load(&fcbc_reference_writer::write_nonempty_execution())
+        .expect("reviewed Execution fixture");
+    let env_p_root = chart.expressions.len() as u32;
+    chart.expressions.push(ExpressionNode {
+        opcode: 6,
+        result_type: ValueType::Float,
+        operands: [u32::MAX; 3],
+        arity: 0,
+        immediate: 0,
+    });
+    let inner = chart.descriptors.len() as u32;
+    chart.descriptors.push(PropertyDescriptor {
+        property_type: ValueType::Float,
+        domain: Domain {
+            start: 0.0,
+            end: 4.0,
+            unbounded_before: false,
+            unbounded_after: false,
+        },
+        kind: DescriptorKind::Expression(env_p_root),
+    });
+    let outer = chart.descriptors.len() as u32;
+    chart.descriptors.push(PropertyDescriptor {
+        property_type: ValueType::Float,
+        domain: Domain {
+            start: 0.0,
+            end: 4.0,
+            unbounded_before: false,
+            unbounded_after: false,
+        },
+        kind: DescriptorKind::Piecewise(vec![Piece {
+            start: 0.0,
+            end: 4.0,
+            descriptor_index: inner,
+            flags: 1,
+        }]),
+    });
+
+    assert_eq!(
+        validate_descriptor_env_p_context(inner, &chart.descriptors, &chart.expressions),
+        Err("fcbc.invalid-expression")
+    );
+    validate_descriptor_env_p_context(outer, &chart.descriptors, &chart.expressions)
+        .expect("EnvP behind Piecewise must be contextual");
+
+    let result = query_descriptor(
+        &chart,
+        outer,
+        1.0,
+        EvaluationEnvironment {
+            s: 1.0,
+            b: 1.0,
+            q: 0.0,
+            d: 0.0,
+            p: 0.875,
+        },
+    )
+    .expect("Piecewise EnvP query");
+    assert_eq!(
+        result.value,
+        RuntimeValue::Scalar {
+            ty: ValueType::Float,
+            value: 0.25,
+        }
+    );
+    assert_eq!(result.visited_nodes, [env_p_root]);
+}
+
+#[test]
+fn line_scroll_coordinate_is_direct_seek_and_anchored_at_zero() {
+    let chart = load(&fcbc_reference_writer::write_nonempty_execution())
+        .expect("reviewed Execution fixture");
+    for line in &chart.lines {
+        assert_eq!(
+            query_scroll_coordinate(&chart, line.scroll_tempo_descriptor, 0.0)
+                .expect("q at anchor")
+                .to_bits(),
+            0.0f64.to_bits()
+        );
+        assert_eq!(
+            query_scroll_coordinate(&chart, line.scroll_tempo_descriptor, 2.0)
+                .expect("q after anchor")
+                .to_bits(),
+            2.0f64.to_bits()
+        );
+        assert_eq!(
+            query_scroll_coordinate(&chart, line.scroll_tempo_descriptor, -1.0)
+                .expect("q before anchor")
+                .to_bits(),
+            (-1.0f64).to_bits()
+        );
+    }
+}
+
+#[test]
+fn scroll_tempo_rejects_env_q_while_scroll_speed_accepts_it() {
+    let descriptors = [PropertyDescriptor {
+        property_type: ValueType::Float,
+        domain: Domain {
+            start: 0.0,
+            end: 0.0,
+            unbounded_before: true,
+            unbounded_after: true,
+        },
+        kind: DescriptorKind::Expression(0),
+    }];
+    let expressions = [ExpressionNode {
+        opcode: 4,
+        result_type: ValueType::Float,
+        operands: [u32::MAX; 3],
+        arity: 0,
+        immediate: 0,
+    }];
+
+    assert_eq!(
+        validate_descriptor_environment_for_target(
+            "line.scrollTempo",
+            0,
+            &descriptors,
+            &expressions,
+        ),
+        Err("fcbc.invalid-expression")
+    );
+    validate_descriptor_environment_for_target("line.scrollSpeed", 0, &descriptors, &expressions)
+        .expect("line.scrollSpeed may depend on q");
 }

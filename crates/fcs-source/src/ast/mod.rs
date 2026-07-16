@@ -10,10 +10,10 @@ pub use entity::{
     EntityField, ExpandedCollection, ExpandedEntity, ExpandedField, ExpandedSourceDocument,
     FieldPath, Generator, GeneratorItem, NoteVariant, SourceRange, WithExpression,
 };
-pub use time::{Beat, BeatError, Bpm, InvalidBpm};
+pub use time::{Beat, BeatError, Bpm, InvalidBpm, SourceBpm};
 pub use types::{
-    BinaryOperator, SourceExpression, SourceLiteral, SourceSpan, Type, TypedExpression,
-    TypedExpressionKind, TypedValue, UnaryOperator,
+    BinaryOperator, SourceExpression, SourceLiteral, SourceSpan, SourceType, SourceTypeKind, Type,
+    TypedExpression, TypedExpressionKind, TypedValue, UnaryOperator,
 };
 
 use crate::version::Version;
@@ -44,7 +44,7 @@ pub struct TempoMap {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TempoPoint {
     pub beat: Beat,
-    pub bpm: Bpm,
+    pub bpm: SourceBpm,
 }
 pub use definitions::{
     ConstDeclaration, Definition, DefinitionsBlock, FunctionDeclaration, FunctionParameter,

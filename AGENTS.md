@@ -18,9 +18,11 @@
 - `docs/specification-governance.md` 是规范候选版本、当前状态、变更流程和冻结条件的唯一当前
   入口；不要在本文件复制容易过期的完整状态表。旧 freeze/review 文件只保存其发生时的审计
   事实，不覆盖治理文件中的当前状态。
-- I1 Rust 实现使用客观阶段门：S15 五个相关版本域均为 Frozen、独立复审没有未关闭的
-  Critical/Important finding、I1 阶段计划与最终规范一致，且 I0/前置阶段质量门通过。四项条件
-  全部满足后自动进入 I1，无需再次取得用户确认；I1–I10 的阶段衔接同理。Source grammar closure
+- I1–I9 使用 ADR 0010 定义的阶段范围化 Reviewed Implementation Baseline：当前阶段的规范依赖
+  closure、绑定 fixture/hash 和独立复审不得有未关闭的 Critical/Important finding，阶段计划必须与
+  绑定条款一致，且前置质量门通过。满足后自动进入对应阶段，无需再次取得用户确认。该 baseline
+  不是新的版本状态，也不把 Draft 提升为 Reviewed/Frozen；I10 conformance RC 仍要求五个版本域
+  全部 Frozen、最终联合独立复审和完整 executable conformance 通过。Source grammar closure
   的已审范围和历史证据见
   `docs/reviews/2026-07-15-fcs5-source-grammar-closure-review.md`；当前 authoring/canonical
   closure 的 delta 与跨规范 gate 见
@@ -38,9 +40,11 @@
   `docs/reviews/2026-07-15-conversion1-semantic-profile-closure-review.md`。四规范联合候选自检及其
   dated amendment、当前 hash/test evidence、仍开放的 Render/Conversion/Core fixture blocker 与最终
   联合独立复审要求统一见 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md`；该文件及
-  ABI blocker 的单域关闭都不表示重新 Frozen。
+  ABI blocker 的单域关闭都不表示重新 Frozen。I1 source AST/parser 的阶段 dependency closure、
+  corrected forward-slash fixture-tree hash、0/0/0 独立复审与自动实施许可见
+  `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`；当前已进入 I1 Task 1。
 - `docs/plans/fcs5-roadmap.md` 是唯一总实施路线图；最近完成阶段的详细记录为
-  `docs/plans/i0-source-cutover.md`。I1 的独立阶段计划草案为
+  `docs/plans/i0-source-cutover.md`。当前活动 I1 的独立阶段计划为
   `docs/plans/i1-source-ast-parser.md`。计划只能安排工作，不能创造格式语义。
 - `examples/` 保存各格式输入样例；I0 删除活动 FCS 4 examples，但保留 PGR/RPE/PEC 与版权
   输入，供未来 converter 重建时复用。旧 converter 测试由归档分支保存，不迁移到 source crate。
@@ -60,8 +64,8 @@
   规范性行为和 conformance 要求。
 - `docs/decisions/` 中 Accepted ADR 是已经接受的设计约束、架构边界和规范修订方向，但不是
   source grammar、二进制布局或执行语义的替代文本。Accepted ADR 与现行规范冲突时，不得任选
-  一方直接实现；必须重开受影响规范，更新规范、fixture、manifest、review 和状态记录，重新
-  Frozen 后再实现。
+  一方直接实现；必须重开受影响规范，更新规范、fixture、manifest、review 和状态记录。依赖该
+  语义的 I1–I9 工作只能在受影响的阶段 baseline 重新独立复审后恢复；I10/发布仍须重新 Frozen。
 - Accepted ADR 是历史记录。后续决定改变它时，新建 ADR 并把旧记录标为 `Superseded` 或
   `Partially superseded`；勘误或治理补充必须以明确的 dated amendment 记录，不得静默改写历史
   背景和原决定。
@@ -160,7 +164,8 @@
 
 ### Domain docs
 
-本仓库采用 single-context 布局，使用根目录的 `CONTEXT.md` 和 `docs/adr/`。详见 `docs/agents/domain.md`。
+本仓库采用 single-context 阅读约定；存在根目录 `CONTEXT.md` 时读取它，Accepted ADR 的实际位置
+始终是 `docs/decisions/`，不要创建第二套 `docs/adr/`。详见 `docs/agents/domain.md`。
 
 ### Matt Pocock skills
 

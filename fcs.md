@@ -417,7 +417,7 @@ approxEq, toFloat, seconds, radians
 字段访问可以逐层读取静态 schema 中存在的字段：
 
 ```fcs
-note.presentation.visibility.from
+note.presentation.visibleFrom
 currentLine.transform.inherit.rotation
 ```
 
@@ -1092,6 +1092,11 @@ dq_i/dt = scrollBpm_i(t) / 60
 Scroll BPM 必须有限且大于零。默认 `scrollTempoMap` 等于 global tempoMap 在 chartTime 域
 的 BPM，但 line 可以显式覆盖。覆盖只改变 q，不改变 chartBeat 或判定时间。
 
+`scrollBpm_i(t)` 只能依赖 canonical `s`、global `b` 和常量，不能依赖该 Line 的 `q` 或任何 Note
+distance `d`。`q_i` 正是由 `scrollBpm_i` 积分得到；允许 `scrollTempo -> q` 会把定义变成无初始
+固定点规则的跨语义自循环。Compiler 必须在 exact lowering 前拒绝任何直接或 transitive
+`scrollTempo -> EnvQ/EnvD` dependency。
+
 Source override 使用：
 
 ```fcs
@@ -1107,7 +1112,7 @@ key 先通过 global tempoMap 映射 chartTime；time key 直接使用。相邻 
 
 ### 10.2 Speed multiplier
 
-`scrollSpeed` 是相对于 q 的无量纲 multiplier：
+`scrollSpeed` 是相对于 q 的无量纲 multiplier，可以依赖 `s/b/q` 和常量，但不能依赖 Note `d`：
 
 ```text
 floor_i(t) = initialFloorPosition
@@ -1389,7 +1394,15 @@ presentation.render.enabled: true;
 `gameplay.judgment.enabled`、`presentation.render.enabled`、`visibleFrom` 和 `visibleUntil` 必须
 编译期确定；visibility interval 必须满足 end>start。Position、offset、alpha、scale、rotation、
 color 可以动态。`scrollFactor` 可以依赖常量及 `s/b/q`，不得依赖 `d`，因为 `d` 本身使用
-scrollFactor。Line transform、scrollTempo 和 scrollSpeed 同样不得依赖 Note `d`。
+scrollFactor。Line transform 和 scrollSpeed 可以依赖 `s/b/q` 但不得依赖 Note `d`；scrollTempo
+只能依赖 `s/b`，不得依赖 `q/d`。
+
+Canonical Note 仍有一个 runtime `presentation.visibility: bool` property，供 FCBC/Render 查询；它
+不是可由 source 直接赋值的第二套 field。Compiler 将 `visibleFrom`/`visibleUntil` 的 compile-time
+interval 精确 lowering 为该 property 的 Constant 或 Piecewise descriptor：在半开区间
+`[visibleFrom, visibleUntil)` 内为 `true`，区间外为 `false`，缺失 boundary 表示对应方向无界。
+该 descriptor 只依赖 canonical chartTime `s`，不依赖 `b/q/d/p`；因此 visibility boundary 不会被
+Note distance 或渲染采样改变。
 
 `presentation.texture` 是 null 或静态 image/texture resource reference；resource identity 不能
 动态变化。缺失/null 表示使用 Render/game host 对该 Note kind 的默认 visual，不产生外部资源
@@ -1443,8 +1456,14 @@ d: length  Note 到判定线的有符号 logical distance
 p: float   当前 Track segment normalized progress，范围 [0,1]
 ```
 
-Core 不定义多义 `t` 别名。环境可用性由 target schema 限制：scrollSpeed 只能依赖 `s/b/q`
-和常量，不能依赖 Note `d`、Render 或外部输入。Gameplay 结构 field 不允许 runtime expression。
+Core 不定义多义 `t` 别名。`p` 只在一个 Track segment/Canonical Piece 已经选中、并且该 Piece
+正在求值其 inner descriptor 时存在；它等于该 Piece 的 normalized progress。普通 direct-root
+查询没有隐式 `p`。Compiler 必须把 source 中依赖 `p` 的表达式放入相应 Segment/Piece context；
+没有此 context 的 `p` 依赖是 static/capability error，不能让 runtime 以 `0` 或上一帧值猜测。
+环境可用性由 target schema 限制：scrollTempo 只能依赖 `s/b` 和常量，不能依赖 `q/d`；scrollSpeed
+只能依赖 `s/b/q` 和常量，不能依赖 Note `d`、Render 或外部输入。Gameplay 结构 field 不允许
+runtime expression。共享 descriptor 必须满足所有 direct/transitive target schema 的环境交集，不能
+因另一个 owner 允许更多环境而放宽限制。
 
 ### 13.2 Expression 分类
 
@@ -1482,6 +1501,10 @@ analytic boundary lowering
 finite PiecewiseDescriptor
 typed Expression DAG
 ```
+
+当 exact lowering 选择 Piecewise/SegmentTrack 时，selected Piece 向其 inner descriptor 传递上述
+`p`；嵌套 Piece 以最内层选中的 Piece 重新绑定 `p`。离开 Piece context 后 `p` 不会泄漏到 direct
+root、Line/Note/Render attachment 或另一个 sibling descriptor。
 
 该列表只选择语义等价的 exact representation，不是逐级降低精度的 fallback。任何合法 Core runtime
 expression 都必须能够保留为 typed Expression DAG；表达式不能静态化为 Track/Piecewise 不是错误，

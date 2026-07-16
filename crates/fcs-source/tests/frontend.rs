@@ -22,6 +22,83 @@ fn parses_exact_fcs5_header() {
 }
 
 #[test]
+fn header_immediately_follows_the_optional_bom() {
+    parse_document("\u{feff}#fcs 5.0.0\nformat { profile: fragment; }")
+        .into_result()
+        .expect("a leading BOM may immediately precede the header");
+
+    for source in [
+        " #fcs 5.0.0\nformat { profile: fragment; }",
+        "// before\n#fcs 5.0.0\nformat { profile: fragment; }",
+        "\u{feff}/* before */#fcs 5.0.0\nformat { profile: fragment; }",
+    ] {
+        assert_eq!(
+            parse_document(source)
+                .into_result()
+                .expect_err("trivia cannot precede the source header")[0]
+                .code(),
+            DiagnosticCode::VERSION_MISSING_HEADER,
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
+fn header_uses_exact_spacing_semver_and_line_ending() {
+    for source in ["#fcs 5.0.0", "#fcs 5.0.0\n", "#fcs 5.0.0\r\n"] {
+        assert_eq!(
+            parse_header(source)
+                .into_result()
+                .expect("valid header boundary"),
+            FCS_SOURCE_VERSION,
+            "{source:?}"
+        );
+    }
+
+    for source in [
+        "#fcs\t5.0.0\n",
+        "#fcs/* comment */ 5.0.0\n",
+        "#fcs  5.0.0\n",
+        "#fcs 05.0.0\n",
+        "#fcs 5.00.0\n",
+        "#fcs 5.0.00\n",
+        "#fcs 5.0\n",
+        "#fcs 5.0.0 trailing\n",
+        "#fcs 5.0.0\r",
+    ] {
+        assert_eq!(
+            parse_header(source)
+                .into_result()
+                .expect_err("malformed header must fail")[0]
+                .code(),
+            DiagnosticCode::VERSION_INVALID,
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
+fn header_semver_components_preserve_unbounded_uint_magnitudes() {
+    let patch = "9".repeat(256);
+    let supported_source = format!("#fcs 5.0.{patch}\n");
+    let version = parse_header(&supported_source)
+        .into_result()
+        .expect("patch magnitude does not change 5.0 source compatibility");
+    assert_eq!(version.to_string(), format!("5.0.{patch}"));
+
+    for source in ["#fcs 65536.0.0\n", "#fcs 5.65536.0\n"] {
+        let errors = parse_header(source)
+            .into_result()
+            .expect_err("a well-formed unsupported version must fail compatibility");
+        assert_eq!(
+            errors[0].code(),
+            DiagnosticCode::VERSION_UNSUPPORTED,
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
 fn rejects_missing_or_wrong_major_header() {
     assert_eq!(
         parse_header("format { profile: fragment; }")
@@ -53,17 +130,15 @@ fn parses_fragment_profile() {
 }
 
 #[test]
-fn i0_retained_tempo_parser_accepts_mixed_beat_pending_i1_removal() {
-    let document = parse_document(
-        "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap {\n  0beat -> 180bpm;\n  4.5beat -> 200bpm;\n  [8,1,3]beat -> 220bpm;\n}",
-    )
-    .into_result()
-    .expect("valid chart");
+fn rejects_removed_mixed_beat_literal() {
+    let source = "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap {\n  0beat -> 180bpm;\n  [8,1,3]beat -> 220bpm;\n}";
+    let errors = parse_document(source)
+        .into_result()
+        .expect_err("FCS 5 has no mixed Beat source syntax");
 
-    let tempo_map = document.tempo_map.unwrap();
-    assert_eq!(tempo_map.points[0].beat, Beat::new(0, 1).unwrap());
-    assert_eq!(tempo_map.points[1].beat, Beat::new(9, 2).unwrap());
-    assert_eq!(tempo_map.points[2].beat, Beat::new(25, 3).unwrap());
+    assert_eq!(errors[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
+    let start = source.find("[8,1,3]beat").unwrap();
+    assert_eq!(errors[0].primary_span(), SourceSpan::new(start, start + 1));
 }
 
 #[test]
@@ -169,11 +244,20 @@ fn i0_retained_tempo_parser_rejects_bad_mixed_beat_and_bpm() {
     let bad_fraction = parse_document(
         "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { [8,1,0]beat -> 220bpm; }",
     );
-    let bad_bpm =
-        parse_document("#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { 0beat -> 0.0bpm; }");
-
     assert!(bad_fraction.into_result().is_err());
-    assert!(bad_bpm.into_result().is_err());
+    for source in [
+        "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { 0beat -> 0.0bpm; }",
+        "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { 0beat -> -1bpm; }",
+    ] {
+        assert_eq!(
+            parse_document(source)
+                .into_result()
+                .expect_err("non-positive BPM is a tempo validation error")[0]
+                .code(),
+            DiagnosticCode::TEMPO_INVALID,
+            "{source}"
+        );
+    }
 }
 
 #[test]

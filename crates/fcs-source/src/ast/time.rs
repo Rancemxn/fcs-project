@@ -91,3 +91,16 @@ impl Bpm {
         self.0
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SourceBpm(f64);
+
+impl SourceBpm {
+    pub const fn from_value(value: f64) -> Self {
+        Self(value)
+    }
+
+    pub const fn get(self) -> f64 {
+        self.0
+    }
+}

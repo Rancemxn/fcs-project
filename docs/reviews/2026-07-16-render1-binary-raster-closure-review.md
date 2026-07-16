@@ -155,3 +155,16 @@ Artifact 必须覆盖八张非空 table、所有 Core geometry/path/paint/stroke
 kinds 1–4 与 kind 5 rejection、项目自制内嵌资源、no-source-text 和 stable diagnostic precedence。
 完成该 artifact 及其独立复审前，Render Profile、FCBC Container 和其他版本域均保持 Draft；I1 gate
 不因此开启。
+
+## 9. 2026-07-16 dated amendment：executable-vector audit 重新打开规范 gate
+
+后续 executable-vector 准备没有改变本文第 1–8 节在固定 hash 时的历史审计事实，但发现本文独立
+复审未覆盖的 `REN-I08–I10`：Arc/EllipseArc 与此前当前点的连接语义、Core Line/Note exact
+descriptor root matrix，以及 Paint/Stroke/Clip/composite 与 descriptor execution 的稳定诊断分层。
+这些都是第三方 writer/loader/evaluator/rasterizer 不能自行选择的公开 contract。
+
+因此本文第 9–11 行“规范选择已闭合”和第 140 行“只关闭 prose 前置 gate”的结论从当前 gate 角度
+撤回；旧 hash 和 finding ledger 仅保留为当时快照证据。新修订、用户确认的语义选择、conformance
+增量和独立复审入口统一记录在
+`docs/reviews/2026-07-16-render1-normative-amendment-review.md`。该 amendment 完成独立复审前，不得
+在旧固定 hash 上继续生成 normative executable golden，也不得把本文的 0-finding ledger用于 Frozen。

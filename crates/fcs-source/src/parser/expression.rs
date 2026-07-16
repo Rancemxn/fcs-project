@@ -5,7 +5,9 @@ use chumsky::{
 };
 
 use crate::{
-    ast::{BinaryOperator, SourceExpression, SourceSpan, Type, UnaryOperator},
+    ast::{
+        BinaryOperator, SourceExpression, SourceSpan, SourceType, SourceTypeKind, UnaryOperator,
+    },
     diagnostic::{Diagnostic, DiagnosticCode, DiagnosticStage, ParseOutput},
 };
 
@@ -29,8 +31,14 @@ pub fn parse_expression_with_limits<L: Into<ParseLimits>>(
     let limits = limits.into();
     match lex(input, limits) {
         Ok(tokens) => {
-            if let Some(span) = expression_limit_span(&tokens, limits.max_nesting_depth) {
-                return resource_limit_output(span);
+            if let Some((span, observed)) = expression_limit_span(&tokens, limits.max_nesting_depth)
+            {
+                return resource_limit_output(
+                    span,
+                    "max_nesting_depth",
+                    limits.max_nesting_depth,
+                    observed,
+                );
             }
             parse_expression_tokens(input, &tokens)
         }
@@ -39,17 +47,25 @@ pub fn parse_expression_with_limits<L: Into<ParseLimits>>(
 }
 
 /// Parses one complete compile-time type.
-pub fn parse_type(input: &str) -> ParseOutput<Type> {
+pub fn parse_type(input: &str) -> ParseOutput<SourceType> {
     parse_type_with_limits(input, ParseLimits::default())
 }
 
 /// Parses one complete compile-time type with explicit resource limits.
-pub fn parse_type_with_limits<L: Into<ParseLimits>>(input: &str, limits: L) -> ParseOutput<Type> {
+pub fn parse_type_with_limits<L: Into<ParseLimits>>(
+    input: &str,
+    limits: L,
+) -> ParseOutput<SourceType> {
     let limits = limits.into();
     match lex(input, limits) {
         Ok(tokens) => {
-            if let Some(span) = type_limit_span(&tokens, limits.max_nesting_depth) {
-                return resource_limit_output(span);
+            if let Some((span, observed)) = type_limit_span(&tokens, limits.max_nesting_depth) {
+                return resource_limit_output(
+                    span,
+                    "max_nesting_depth",
+                    limits.max_nesting_depth,
+                    observed,
+                );
             }
             parse_type_tokens(input, &tokens)
         }
@@ -61,28 +77,7 @@ pub(super) fn parse_expression_tokens(
     source: &str,
     tokens: &[SpannedToken],
 ) -> ParseOutput<SourceExpression> {
-    let pressure = expression_stack_pressure(tokens);
-    if pressure <= 32 {
-        return parse_expression_tokens_inline(source.len(), tokens);
-    }
-    let stack_size = 2usize
-        .saturating_mul(1024 * 1024)
-        .saturating_add(pressure.saturating_mul(128 * 1024))
-        .min(32 * 1024 * 1024);
-    std::thread::scope(|scope| {
-        let parser = std::thread::Builder::new()
-            .name("fcs-source-expression-parser".to_owned())
-            .stack_size(stack_size)
-            .spawn_scoped(scope, || {
-                parse_expression_tokens_inline(source.len(), tokens)
-            });
-        match parser {
-            Ok(parser) => parser
-                .join()
-                .unwrap_or_else(|_| resource_limit_output(SourceSpan::new(0, source.len()))),
-            Err(_) => resource_limit_output(SourceSpan::new(0, source.len())),
-        }
-    })
+    parse_expression_tokens_inline(source.len(), tokens)
 }
 
 fn parse_expression_tokens_inline(
@@ -98,11 +93,11 @@ fn parse_expression_tokens_inline(
     parse_output(output, errors)
 }
 
-pub(super) fn parse_type_tokens(source: &str, tokens: &[SpannedToken]) -> ParseOutput<Type> {
+pub(super) fn parse_type_tokens(source: &str, tokens: &[SpannedToken]) -> ParseOutput<SourceType> {
     parse_type_tokens_inline(source.len(), tokens)
 }
 
-fn parse_type_tokens_inline(source_len: usize, tokens: &[SpannedToken]) -> ParseOutput<Type> {
+fn parse_type_tokens_inline(source_len: usize, tokens: &[SpannedToken]) -> ParseOutput<SourceType> {
     let end_span = ChumskySpan::new((), source_len..source_len);
     let input = tokens.map(end_span, |(token, span)| (token, span));
     let (output, errors) = type_parser()
@@ -125,15 +120,23 @@ fn parser_diagnostic(error: Rich<'_, Token, ChumskySpan>) -> Diagnostic {
     )
 }
 
-fn resource_limit_output<T>(span: SourceSpan) -> ParseOutput<T> {
+fn resource_limit_output<T>(
+    span: SourceSpan,
+    kind: &str,
+    limit: usize,
+    observed: usize,
+) -> ParseOutput<T> {
     ParseOutput::new(
         None,
-        vec![Diagnostic::new(
-            DiagnosticCode::RESOURCE_LIMIT_EXCEEDED,
-            DiagnosticStage::Parse,
-            "parser resource limit exceeded",
-            span,
-        )],
+        vec![
+            Diagnostic::new(
+                DiagnosticCode::RESOURCE_LIMIT_EXCEEDED,
+                DiagnosticStage::Parse,
+                "parser resource limit exceeded",
+                span,
+            )
+            .with_budget(kind, limit, observed),
+        ],
     )
 }
 
@@ -364,67 +367,72 @@ where
 }
 
 pub(super) fn type_parser<'tokens, I>()
--> impl Parser<'tokens, I, Type, ParserExtra<'tokens>> + Clone
+-> impl Parser<'tokens, I, SourceType, ParserExtra<'tokens>> + Clone
 where
     I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
 {
-    let constructor = choice((
-        just(Token::Keyword(Keyword::Vec2)).to(TypeConstructor::Vec2),
-        just(Token::Keyword(Keyword::TrackSegment)).to(TypeConstructor::TrackSegment),
-        just(Token::Keyword(Keyword::KeyframeType)).to(TypeConstructor::Keyframe),
-    ))
-    .then_ignore(just(Token::Punctuation(Punctuation::LessThan)));
-    let scalar = select! {
-        Token::Keyword(Keyword::Bool) => Type::Bool,
-        Token::Keyword(Keyword::Int) => Type::Int,
-        Token::Keyword(Keyword::Float) => Type::Float,
-        Token::Keyword(Keyword::String) => Type::String,
-        Token::Keyword(Keyword::Time) => Type::Time,
-        Token::Keyword(Keyword::Beat) => Type::Beat,
-        Token::Keyword(Keyword::Length) => Type::Length,
-        Token::Keyword(Keyword::Angle) => Type::Angle,
-        Token::Keyword(Keyword::Color) => Type::Color,
-        Token::Keyword(Keyword::Note) => Type::Note,
-        Token::Keyword(Keyword::LineType) => Type::Line,
-        Token::Keyword(Keyword::RenderNode) => Type::RenderNode,
-    };
-    constructor
-        .repeated()
-        .collect::<Vec<_>>()
-        .then(scalar)
-        .then(
-            just(Token::Punctuation(Punctuation::GreaterThan))
-                .repeated()
-                .count(),
-        )
-        .try_map(|((constructors, scalar), closing_count), span| {
-            if constructors.len() != closing_count {
-                return Err(Rich::custom(span, "unbalanced generic type"));
-            }
-            Ok(constructors.into_iter().rev().fold(
-                scalar,
-                |element, constructor| match constructor {
-                    TypeConstructor::Vec2 => Type::Vec2(Box::new(element)),
-                    TypeConstructor::TrackSegment => Type::TrackSegment(Box::new(element)),
-                    TypeConstructor::Keyframe => Type::Keyframe(Box::new(element)),
-                },
+    recursive(|source_type| {
+        let scalar = select! {
+            Token::Keyword(Keyword::Bool) => SourceTypeKind::Bool,
+            Token::Keyword(Keyword::Int) => SourceTypeKind::Int,
+            Token::Keyword(Keyword::Float) => SourceTypeKind::Float,
+            Token::Keyword(Keyword::String) => SourceTypeKind::String,
+            Token::Keyword(Keyword::Time) => SourceTypeKind::Time,
+            Token::Keyword(Keyword::Beat) => SourceTypeKind::Beat,
+            Token::Keyword(Keyword::Length) => SourceTypeKind::Length,
+            Token::Keyword(Keyword::Angle) => SourceTypeKind::Angle,
+            Token::Keyword(Keyword::Color) => SourceTypeKind::Color,
+        }
+        .map_with(|kind, extra| SourceType::new(kind, source_span(extra.span())));
+
+        let entity = select! {
+            Token::Keyword(Keyword::Note) => SourceTypeKind::Note,
+            Token::Keyword(Keyword::LineType) => SourceTypeKind::Line,
+            Token::Keyword(Keyword::RenderNode) => SourceTypeKind::RenderNode,
+        }
+        .map_with(|kind, extra| SourceType::new(kind, source_span(extra.span())));
+
+        let generic = |keyword, constructor: fn(Box<SourceType>) -> SourceTypeKind| {
+            just(Token::Keyword(keyword))
+                .ignore_then(source_type.clone().delimited_by(
+                    just(Token::Punctuation(Punctuation::LessThan)),
+                    just(Token::Punctuation(Punctuation::GreaterThan)),
+                ))
+                .map_with(move |element, extra| {
+                    SourceType::new(constructor(Box::new(element)), source_span(extra.span()))
+                })
+        };
+
+        let vector = just(Token::Keyword(Keyword::Vec2))
+            .ignore_then(scalar.clone().delimited_by(
+                just(Token::Punctuation(Punctuation::LessThan)),
+                just(Token::Punctuation(Punctuation::GreaterThan)),
             ))
-        })
+            .map_with(|element, extra| {
+                SourceType::new(
+                    SourceTypeKind::Vec2(Box::new(element)),
+                    source_span(extra.span()),
+                )
+            });
+
+        choice((
+            vector,
+            generic(Keyword::Array, SourceTypeKind::Array),
+            generic(Keyword::TrackType, SourceTypeKind::Track),
+            generic(Keyword::TrackSegment, SourceTypeKind::TrackSegment),
+            generic(Keyword::KeyframeType, SourceTypeKind::Keyframe),
+            scalar,
+            entity,
+        ))
         .labelled("type")
         .as_context()
+    })
 }
 
 #[derive(Debug)]
 enum Postfix {
     Call(Vec<SourceExpression>, SourceSpan),
     Field(String, SourceSpan),
-}
-
-#[derive(Debug, Clone, Copy)]
-enum TypeConstructor {
-    Vec2,
-    TrackSegment,
-    Keyframe,
 }
 
 fn binary(
@@ -477,7 +485,7 @@ fn with_span(expression: SourceExpression, span: SourceSpan) -> SourceExpression
     }
 }
 
-fn expression_limit_span(tokens: &[SpannedToken], maximum: usize) -> Option<SourceSpan> {
+fn expression_limit_span(tokens: &[SpannedToken], maximum: usize) -> Option<(SourceSpan, usize)> {
     let mut unary_run = 0usize;
     let mut group_depth = 0usize;
     let mut power_depth = 0usize;
@@ -505,59 +513,24 @@ fn expression_limit_span(tokens: &[SpannedToken], maximum: usize) -> Option<Sour
             }
             _ => unary_run = 0,
         }
-        if group_depth
+        let observed = group_depth
             .saturating_add(unary_run)
-            .saturating_add(power_depth)
-            > maximum
-        {
-            return Some(source_span(*span));
+            .saturating_add(power_depth);
+        if observed > maximum {
+            return Some((source_span(*span), observed));
         }
     }
     None
 }
 
-fn expression_stack_pressure(tokens: &[SpannedToken]) -> usize {
-    let mut unary_run = 0usize;
-    let mut group_depth = 0usize;
-    let mut power_depth = 0usize;
-    let mut maximum = 0usize;
-    for (token, _) in tokens {
-        match token {
-            Token::Punctuation(Punctuation::Minus | Punctuation::Bang) => unary_run += 1,
-            Token::Punctuation(Punctuation::LeftParenthesis) => group_depth += 1,
-            Token::Punctuation(Punctuation::RightParenthesis) => {
-                group_depth = group_depth.saturating_sub(1);
-            }
-            Token::Punctuation(Punctuation::Power) => {
-                power_depth += 1;
-                unary_run = 0;
-            }
-            Token::Literal(_) | Token::Identifier(_) | Token::Keyword(Keyword::Vec2) => {
-                unary_run = 0;
-            }
-            Token::Punctuation(_) => {
-                unary_run = 0;
-                power_depth = 0;
-            }
-            _ => unary_run = 0,
-        }
-        maximum = maximum.max(
-            group_depth
-                .saturating_add(unary_run)
-                .saturating_add(power_depth),
-        );
-    }
-    maximum
-}
-
-fn type_limit_span(tokens: &[SpannedToken], maximum: usize) -> Option<SourceSpan> {
+fn type_limit_span(tokens: &[SpannedToken], maximum: usize) -> Option<(SourceSpan, usize)> {
     let mut depth = 0usize;
     for (token, span) in tokens {
         match token {
             Token::Punctuation(Punctuation::LessThan) => {
                 depth += 1;
                 if depth > maximum {
-                    return Some(source_span(*span));
+                    return Some((source_span(*span), depth));
                 }
             }
             Token::Punctuation(Punctuation::GreaterThan) => depth = depth.saturating_sub(1),

@@ -1281,6 +1281,66 @@ fn parses_scalar_and_unit_literals() {
 }
 
 #[test]
+fn integer_magnitude_preserves_i64_min_until_static_validation() {
+    let magnitude = "9223372036854775808";
+    let magnitude_span = SourceSpan::new(0, magnitude.len());
+    let expected_magnitude = SourceExpression::Literal {
+        literal: SourceLiteral::IntMagnitude(magnitude.to_owned()),
+        span: magnitude_span,
+    };
+    assert_eq!(
+        parse_expression(magnitude).into_result().unwrap(),
+        expected_magnitude
+    );
+
+    let negative = format!("-{magnitude}");
+    assert_eq!(
+        parse_expression(&negative).into_result().unwrap(),
+        SourceExpression::Unary {
+            operator: UnaryOperator::Negate,
+            operand: Box::new(SourceExpression::Literal {
+                literal: SourceLiteral::IntMagnitude(magnitude.to_owned()),
+                span: SourceSpan::new(1, negative.len()),
+            }),
+            span: SourceSpan::new(0, negative.len()),
+        }
+    );
+
+    elaborate_source(&format!(
+        "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ const MIN: int = -{magnitude}; }}"
+    ))
+    .expect("direct unary minus must produce i64::MIN");
+
+    for value in [magnitude, "-9223372036854775809"] {
+        assert_code(
+            elaborate_source(&format!(
+                "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ const VALUE: int = {value}; }}"
+            )),
+            DiagnosticCode::NUMERIC_OVERFLOW,
+        );
+    }
+
+    let huge_magnitude = "9".repeat(4096);
+    assert_eq!(
+        parse_expression(&huge_magnitude).into_result().unwrap(),
+        SourceExpression::Literal {
+            literal: SourceLiteral::IntMagnitude(huge_magnitude.clone()),
+            span: SourceSpan::new(0, huge_magnitude.len()),
+        }
+    );
+    let huge_source = format!(
+        "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ const HUGE: int = {huge_magnitude}; }}"
+    );
+    let errors = elaborate_source(&huge_source).expect_err("the huge integer is out of range");
+    assert_eq!(errors[0].code(), DiagnosticCode::NUMERIC_OVERFLOW);
+    let start = huge_source.find(&huge_magnitude).unwrap();
+    assert_eq!(
+        errors[0].primary_span(),
+        SourceSpan::new(start, start + huge_magnitude.len())
+    );
+}
+
+#[test]
 fn unit_literals_must_remain_finite_after_conversion() {
     for source in ["1e309s", "1e309px"] {
         assert_eq!(
@@ -1346,7 +1406,7 @@ fn string_escapes_match_the_documented_table() {
         (r#""\\""#, "\\"),
         (r#""\"""#, "\""),
         (r#""\u{0}""#, "\0"),
-        (r#""\u{10FFFF}""#, "\u{10ffff}"),
+        (r#""\u{10FFFD}""#, "\u{10fffd}"),
     ];
     for (source, expected) in accepted {
         assert_eq!(

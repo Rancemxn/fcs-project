@@ -59,9 +59,11 @@ pub enum Type {
     Angle,
     Color,
     Vec2(Box<Type>),
+    Array(Box<Type>),
     Note,
     Line,
     RenderNode,
+    Track(Box<Type>),
     TrackSegment(Box<Type>),
     Keyframe(Box<Type>),
 }
@@ -79,13 +81,103 @@ impl fmt::Display for Type {
             Self::Angle => formatter.write_str("angle"),
             Self::Color => formatter.write_str("color"),
             Self::Vec2(element) => write!(formatter, "vec2<{element}>"),
+            Self::Array(element) => write!(formatter, "array<{element}>"),
             Self::Note => formatter.write_str("Note"),
             Self::Line => formatter.write_str("Line"),
             Self::RenderNode => formatter.write_str("RenderNode"),
+            Self::Track(element) => write!(formatter, "Track<{element}>"),
             Self::TrackSegment(element) => write!(formatter, "TrackSegment<{element}>"),
             Self::Keyframe(element) => write!(formatter, "Keyframe<{element}>"),
         }
     }
+}
+
+/// A fully spanned type as written in FCS source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceType {
+    kind: SourceTypeKind,
+    span: SourceSpan,
+}
+
+impl SourceType {
+    pub(crate) const fn new(kind: SourceTypeKind, span: SourceSpan) -> Self {
+        Self { kind, span }
+    }
+
+    /// Returns the grammar shape of this source type.
+    pub const fn kind(&self) -> &SourceTypeKind {
+        &self.kind
+    }
+
+    /// Returns the complete half-open UTF-8 byte span of this type production.
+    pub const fn span(&self) -> SourceSpan {
+        self.span
+    }
+
+    /// Returns whether this type is accepted by the `constructibleType` production.
+    pub const fn is_constructible(&self) -> bool {
+        matches!(
+            self.kind,
+            SourceTypeKind::Note
+                | SourceTypeKind::Line
+                | SourceTypeKind::RenderNode
+                | SourceTypeKind::TrackSegment(_)
+                | SourceTypeKind::Keyframe(_)
+        )
+    }
+
+    /// Projects source syntax into the unspanned type shape used by static semantics.
+    pub fn to_type(&self) -> Type {
+        match &self.kind {
+            SourceTypeKind::Bool => Type::Bool,
+            SourceTypeKind::Int => Type::Int,
+            SourceTypeKind::Float => Type::Float,
+            SourceTypeKind::String => Type::String,
+            SourceTypeKind::Time => Type::Time,
+            SourceTypeKind::Beat => Type::Beat,
+            SourceTypeKind::Length => Type::Length,
+            SourceTypeKind::Angle => Type::Angle,
+            SourceTypeKind::Color => Type::Color,
+            SourceTypeKind::Vec2(element) => Type::Vec2(Box::new(element.to_type())),
+            SourceTypeKind::Array(element) => Type::Array(Box::new(element.to_type())),
+            SourceTypeKind::Note => Type::Note,
+            SourceTypeKind::Line => Type::Line,
+            SourceTypeKind::RenderNode => Type::RenderNode,
+            SourceTypeKind::Track(element) => Type::Track(Box::new(element.to_type())),
+            SourceTypeKind::TrackSegment(element) => {
+                Type::TrackSegment(Box::new(element.to_type()))
+            }
+            SourceTypeKind::Keyframe(element) => Type::Keyframe(Box::new(element.to_type())),
+        }
+    }
+}
+
+impl fmt::Display for SourceType {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.to_type().fmt(formatter)
+    }
+}
+
+/// The grammar shape of a source type. Generic children retain their own spans.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceTypeKind {
+    Bool,
+    Int,
+    Float,
+    String,
+    Time,
+    Beat,
+    Length,
+    Angle,
+    Color,
+    Vec2(Box<SourceType>),
+    Array(Box<SourceType>),
+    Note,
+    Line,
+    RenderNode,
+    Track(Box<SourceType>),
+    TrackSegment(Box<SourceType>),
+    Keyframe(Box<SourceType>),
 }
 
 /// A literal as it appears in source before expression elaboration.
@@ -96,6 +188,7 @@ impl fmt::Display for Type {
 pub enum SourceLiteral {
     Bool(bool),
     Int(i64),
+    IntMagnitude(String),
     Float(f64),
     String(String),
     Time(f64),

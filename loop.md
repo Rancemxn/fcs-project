@@ -31,12 +31,12 @@
 - `docs/community/` 是外部格式证据综合，`refer/chart/` 是固定快照下的一手证据。外部格式结论
   必须遵守仓库阅读路由、固定 commit/hash 和多来源冲突规则；单个参考实现不得成为社区规范。
 - 当前实现、example、fixture、reference harness 和外部项目都不能静默成为新规范。实现暴露规范
-  缺口时，先按治理流程修订 Draft/重开的规范、fixture、manifest 和 review，经独立复审重新 Frozen
-  后再让依赖该语义的产品实现继续。
-- 用户已授权取消“I1 必须再次由用户确认计划”这一特殊历史门禁。执行者应将 `AGENTS.md`、治理
-  文件、路线图和 I1 计划中的旧文字改成客观 gate：相关规范 Frozen、独立复审无未关闭
-  Critical/Important、阶段计划与最终条款一致、前置质量门通过。满足后可自动开始 I1；I1–I10
-  亦按相同原则自动衔接。
+  缺口时，先按治理流程修订 Draft/重开的规范、fixture、manifest 和 review；I1–I9 只有在受影响的
+  Reviewed Implementation Baseline 重新独立复审后才能继续，I10/发布仍须受影响版本重新 Frozen。
+- 用户已接受 ADR 0010 并取消“I1 必须再次由用户确认计划”这一特殊历史门禁。I1–I9 的客观 gate
+  是阶段完整 normative dependency closure、绑定 fixture/hash、独立复审无未关闭
+  Critical/Important、阶段计划与条款一致、前置质量门通过；满足后自动衔接。该 baseline 不是版本
+  状态。I10 conformance RC 仍要求五个版本域全部 Frozen 和最终联合 executable conformance。
 - 精确表达式、FCS authoring workspace、自包含单谱面 FCBC、原始资源 bytes、版本化 conversion
   semantic profile、无默认 baking、无 FCBC source snapshot/player cache 等已接受边界必须保持；
   改变这些边界需要 HUMAN routing，而不是由实现便利性决定。
@@ -66,6 +66,9 @@
 - **Bounded quantity that must advance:** 当前 active work unit 在选定时必须拥有一个有限且编号的
   acceptance-criteria ledger。任何非终止迭代都必须使其中至少一个未满足 criterion 变为由
   domain-matched artifact 证明的 satisfied；迭代预算同时从 160 单调递减。
+- **Persistent handoff invariant:** 每次执行都必须能从仓库维护的有限 ledger 识别当前 work unit、
+  已满足 criteria、剩余 blocker、绑定 hash 与下一 frontier，并在结束前更新这些事实。本合同只规定
+  可观察状态要求，不规定执行器、循环代码或状态存储机制。
 - **How each path advances or exits:** LOCAL 路径关闭至少一个 criterion；PLANNER 路径只能把工作
   改写为严格更小、各自有限且保持原验收覆盖的单元，并在本次迭代结束前选择可执行单元或终止；
   HUMAN 路径记录证据后退出受阻范围，并继续所有可分离工作，直到只剩 HUMAN residual 时终止。
@@ -117,7 +120,7 @@
 | Residual / failure | Route: LOCAL / PLANNER / HUMAN | Action |
 |---|---|---|
 | Clippy、test、fmt、hash、链接、manifest、golden、round-trip 或 raster 不一致 | LOCAL | 找到最先失败的真实原因，补匹配测试/证据，修复并重跑对应 gate |
-| 规范缺口但权威规范、Accepted ADR 和固定证据能唯一决定结果 | LOCAL | 修订受影响规范、fixture、manifest、review 与治理记录，再独立复审 |
+| 规范缺口但权威规范、Accepted ADR 和固定证据能唯一决定结果 | LOCAL | 修订受影响规范、fixture、manifest、review 与治理记录；重建受影响阶段 baseline，I10/发布再完成 Frozen gate |
 | 实现与规范冲突且证据表明是实现缺陷 | LOCAL | 修实现和回归测试，不让实现反向定义规范 |
 | 工作单元过大、验收耦合、计划顺序错误或 measurement domain 不匹配 | PLANNER | 保留原验收覆盖，拆成更小有限单元或调整顺序/测量方法 |
 | 同一 LOCAL 方案连续两次失败但存在其他技术路线 | PLANNER | 建立最小复现，替换方案；不得仅重复同一动作 |
@@ -135,7 +138,8 @@
 
 ## Dispatch Point: Independent Review
 
-- **Trigger:** 规范重新 Frozen、阶段完成、重大二进制/转换/渲染 contract 或重大实现准备通过 gate。
+- **Trigger:** 阶段 baseline 建立/重开、规范重新 Frozen、阶段完成、重大二进制/转换/渲染 contract
+  或重大实现准备通过 gate。
 - **Role capability:** 未参与被审修改的只读独立 reviewer。
 - **Tool boundary:** 只读规范、diff、fixture、manifest、hash、测试输出和固定参考资料；不得编辑、
   stage、commit、改变状态或接受作者结论代替复现。

@@ -46,3 +46,17 @@ fn lexer_has_no_raw_text_preparser() {
         "Chumsky lexer must enforce recursive limits through parser state"
     );
 }
+
+#[test]
+fn expression_parser_uses_chumsky_stacker_without_a_fixed_thread() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let parser = fs::read_to_string(crate_dir.join("src/parser/expression.rs"))
+        .expect("expression parser source must be readable");
+
+    for forbidden in ["std::thread::Builder", "spawn_scoped", ".stack_size("] {
+        assert!(
+            !parser.contains(forbidden),
+            "fixed parser-thread mechanism remains: {forbidden}"
+        );
+    }
+}

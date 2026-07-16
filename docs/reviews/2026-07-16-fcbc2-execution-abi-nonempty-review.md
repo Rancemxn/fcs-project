@@ -183,3 +183,21 @@ byte/evaluation vector” blocker 由本 artifact 和独立复审关闭。这个
 
 因此当前可以自动进入 S15 的 RenderSection blocker，但不能开始 I1，也不能把 test-only harness
 描述为 FCBC/ABI 产品实现或完整 conformance implementation。
+
+## 8. 2026-07-16 dated amendment：owner-environment delta 与阶段边界
+
+本文第 7 节“不能开始 I1”是固定快照时的全局治理结论，已由 ADR 0010 的阶段范围化 Reviewed
+Implementation Baseline 取代；I10 的五域 Frozen 与最终联合 conformance gate 不变。历史复审结果
+仍只证明本文固定 bytes 和当时声明的检查范围。
+
+后续 REN-I12/RNR 修订把 `note.presentation.visibility` 的 direct-root environment 固定为只允许 `s`。
+本文复审的 nonempty static golden 中，该 visibility expression 仍读取 EnvB。为避免在 Render 修订中
+静默重写已经复审的 ABI bytes，当前 test-only
+`validate_descriptor_environment_for_target` 没有把 visibility 的 `s`-only 特例应用到这份历史
+artifact；它仍执行 `line.scrollTempo -> s,b` 等新增 Core root 检查。这是明确的 pre-stage partial
+exception，不是规范变更，也不能把该 loader 称为完整 conforming product loader。
+
+在 I7 建立产品 baseline 前，或任何文档再次把该 nonempty golden 当作当前完整 owner-environment
+vector 前，必须重新生成 static golden、vector 和 mutation corpus，启用 visibility `s`-only 验证并
+完成新的独立复审。该差异不改变 I1 source lexer/AST/parser/parse-diagnostic 的公开行为，因此不进入
+I1 normative dependency closure；它保持为 I7/最终 RC blocker。

@@ -305,3 +305,104 @@ Minor 0。
 loader/evaluator、decoder/shaper、semantic/raster expected 或 mutation corpus。因此第 7.3 项仍开放，
 Render Profile 1.0.0 和其他四个版本域仍为 Draft。下一 Render gate 是在上述固定规范上实现并独立
 复审 executable binary/decoder/shaping/raster artifact。
+
+## 12. 2026-07-16 dated amendment：Render normative gate reopened
+
+在实现第 7.3 项 executable vector 时，新一轮只读审计发现 `REN-I08–I10` 三个 Important finding：
+
+- Arc/EllipseArc 在此前当前点不同于参数起点时缺少连接语义；
+- Core Line/Note descriptor root 缺少完整 exact path/owner/type/domain/environment matrix；
+- Paint/Stroke/Clip/composite 非法值，以及 descriptor evaluator failure 与 owner-invalid value，缺少
+  稳定、互斥的 parent category。
+
+用户已确认采用概念性连接 LineTo 和 owner-specific diagnostic 分层；`fcbc.md` 的 16-entry Core
+descriptor root matrix 由现有 schema/canonical traversal 补齐。规范 delta 与当前复审入口见
+`docs/reviews/2026-07-16-render1-normative-amendment-review.md`。第 11 节记录的旧 hash、10-entry
+Render category count 和 0-finding ledger 均继续作为当时快照的历史事实，但不再证明当前规范文字
+gate 闭合。
+
+因此第 7.3 项仍开放，且下一顺序恢复为：先对 REN-I08–I10 的新规范 bytes完成独立只读复审，再
+继续 static FCBC、independent loader/evaluator、decoder/shaper、semantic/raster 和 mutation artifact。
+五个版本域均保持 Draft；该重开不回退已经独立复审关闭的第 7.2 Execution ABI artifact。
+
+## 13. 2026-07-16 dated amendment：Render/Core follow-up closure delta
+
+重新审计又发现并已写入候选规范的 `REN-I11–I16`：Text GlyphRun size 与 Core `>0` domain 矛盾、
+Note visible interval 到 visibility descriptor 的 lowering 缺失、EnvP 的 Piece context 缺失、Path
+open-subpath fill closure 缺失、RadialGradient 负 radius 缺失，以及 Note/Line attachment 的
+transitive Core query error category 缺失。相应修订同时涉及 `fcs.md`、`fcbc.md` 与 `fcs-render.md`，
+因此当前候选 hash 必须重新计算，旧第 11/12 节 hash 只保留历史审计事实。
+
+当前治理结论不变：五个版本域全部保持 Draft；在新 hash 上完成未参与修改 reviewer 的全量复审、
+Render executable binary/semantic/raster/mutation artifact、Conversion round-trip、Core fixture
+validator 和最终联合复审前，不得启动 I1 或声称 Render prose closure。
+
+## 14. 2026-07-16 dated amendment：Render fixed-snapshot review failed
+
+第 13 节修订后的独立只读复审固定了以下输入：
+
+| 文件 | SHA-256 |
+|---|---|
+| `fcs.md` | `37CFF422B6CFBA64E7A0E5541A366A7E93D2E89A2EB18F069186AB28452D41F5` |
+| `fcbc.md` | `BDC9C19D4C4F4C7EDB2A57A38A45B91244F9E07D24B168CB9ED6FC92CB5708BB` |
+| `fcs-render.md` | `B066E7F403B9B04761261AB254C46A39462700DA9E221D1C42C76001D4357FC8` |
+
+结果为 **FAIL**：Critical 2、Important 8、Minor 0。Critical finding 是 `line.scrollTempo` 的
+`q` dependency 自循环和 inactive Node query order 矛盾；Important finding 涉及 Render/FCBC
+diagnostic ownership、generic/profile validation precedence、TrueType limit、viewport/Layer/Node parent
+category、glyph 0、attachment matrix/style、零长度 stroke segment，以及 shared descriptor 的完整
+owner/environment intersection。reviewer 摘要中的 Important 7 是计数笔误；逐项 `RNR-I01`–`RNR-I08`
+共 8 项。完整 ledger 与用户已确认的 disposition 见
+`docs/reviews/2026-07-16-render1-normative-amendment-review.md` 第 8 节。
+
+因此 Render normative gate 继续开放，且旧第 11–13 节的任何“closure delta”都不能单独证明当前
+candidate 已闭合。该失败不回退第 7.2 项 Execution ABI 非空 artifact，但在新的规范、fixture、实现
+修订和独立复审关闭全部 `RNR-*` finding 前，不得把 Render 相关阶段标记 Reviewed/Frozen。
+
+## 15. 2026-07-16 dated amendment：stage-scoped implementation baseline
+
+第 9、13 节中“全部五域重新 Frozen 前不得启动 I1”的文字是其写入时的治理结论。用户随后接受
+ADR 0010，明确区分阶段实现输入与完整发布冻结：I1–I9 只需其完整 normative dependency closure
+建立 Reviewed Implementation Baseline；I10 conformance RC 仍要求五个版本域全部 Frozen、所有
+executable blocker 与最终联合独立复审关闭。
+
+该变更不把本文、第 7.2 项 artifact、S14 grammar review 或任何 Draft 条款提升为 Reviewed/Frozen，
+也不关闭第 7.1、7.3、7.4 项。I1 只有在 source syntax/AST/parser/diagnostic/limit 及其实际读取的
+profile envelope 范围固定 hash、绑定 fixture、独立复审无 Critical/Important、计划一致且 I0 质量门
+通过后才能自动开始。Render raster、Conversion round-trip 和 Core canonical execution 等域外
+artifact 保留其后续 owner；若其中 finding 能改变 I1 的公开 AST/parser 行为，则必须重新纳入 I1
+dependency closure。
+
+## 16. 2026-07-16 dated amendment：RNR candidate remediation 与诚实 manifest
+
+第 14 节失败后，`RNR-C01`–`RNR-I08` 已在新的候选规范中逐项得到单值 disposition；这只表示
+resolved-by-candidate，尚未独立关闭。当前固定候选输入为：
+
+| 文件 | Candidate SHA-256 |
+|---|---|
+| `fcs.md` | `2A2882E60AEEF4D96FDB9F7C3CD65B143EA9D9C61F971ECE24A8B2791627DC58` |
+| `fcbc.md` | `245E1E41EBB20C94BAF644D284994820487C3CC2DF7C75463F37C3DB04B6F99A` |
+| `fcs-render.md` | `848D9AB581529179FC91047737B846A04EE0469AFFAAB43377F47C66C20DB4C3` |
+
+Render manifest 已撤下不存在的 nonempty binary/vector/mutation/semantic/raster paths，当前
+`binary_fixture` 为 0；项目自制 PNG/WebP/TTF、test-only writer/independent loader、restricted
+decoder/shaper 和 focused CRC-aware mutation仍保留。完整 Render executable artifact 明确归 I9，
+不再作为 I1 的全局前置门。`image`/`serde_json` 的提前激活只是 dev-only conformance 例外，不改变
+I3/I6/I9 产品 ownership。
+
+另一个已知残留是历史 nonempty ABI golden 的 `note.presentation.visibility` expression 仍读取 EnvB，
+而当前规范要求该 root 只依赖 `s`。当前 test-only loader 为保留已复审 bytes 明确不把该单一特例
+当作完整 owner validator；I7 前必须重建 golden/vector/mutations 并独立复审。该残留不改变 I1
+source lexer/AST/parser/parse-stage diagnostic contract。
+
+本候选上 Clippy、focused 16-test lane、全 workspace nextest 149/149、rustfmt、diff、UTF-8/NUL、
+本地 Markdown link 与 dependency topology audit 均通过。新的独立 reviewer 仍须固定上述 hash，复核
+全部 RNR finding 及其 I1 dependency-closure 影响；在该记录完成前，第 7.3 项和 Render normative gate
+仍开放，五个版本域保持 Draft。
+
+随后未参与修订的只读 reviewer 复算上述三个 hash 并逐项复核 `RNR-C01`–`RNR-I08`，结果为
+Critical 0、Important 0、Minor 0；Render normative RNR gate 由
+`docs/reviews/2026-07-16-render1-normative-amendment-review.md` 第 11 节关闭。Reviewer 同时确认 legacy
+visibility EnvB golden 仍是 I7/RC artifact blocker，完整 Render semantic/raster/mutation artifact 仍是
+I9 blocker，二者均不改变 I1 source parser contract。第 7.3 项的完整 executable blocker和五域 Draft
+状态不因此关闭或提升。

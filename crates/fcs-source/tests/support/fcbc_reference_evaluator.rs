@@ -150,6 +150,23 @@ pub fn query_distance(
     }
 }
 
+/// Direct-seek Line scroll coordinate with the Core anchor `q(0s) = 0`.
+pub fn query_scroll_coordinate(
+    chart: &DecodedChart,
+    scroll_tempo_descriptor: u32,
+    time: f64,
+) -> Result<f64, &'static str> {
+    if !time.is_finite() {
+        return Err(EXECUTION_ERROR);
+    }
+    let integral = integrate_descriptor(chart, scroll_tempo_descriptor, 0.0, time, 0)?;
+    let coordinate = integral / 60.0;
+    coordinate
+        .is_finite()
+        .then_some(coordinate)
+        .ok_or(EXECUTION_ERROR)
+}
+
 fn evaluate_descriptor_inner(
     chart: &DecodedChart,
     descriptor_index: u32,
@@ -185,11 +202,13 @@ fn evaluate_descriptor_inner(
                             || (piece.flags & 1 != 0 && time.to_bits() == piece.end.to_bits()))
                 })
                 .ok_or(EXECUTION_ERROR)?;
+            let mut piece_environment = environment;
+            piece_environment.p = piece_progress(piece, time)?;
             evaluate_descriptor_inner(
                 chart,
                 piece.descriptor_index,
                 time,
-                environment,
+                piece_environment,
                 visited_nodes,
                 depth + 1,
             )?
@@ -202,6 +221,23 @@ fn evaluate_descriptor_inner(
         return Err(EXECUTION_ERROR);
     }
     Ok(value)
+}
+
+fn piece_progress(
+    piece: &super::fcbc_reference_loader::Piece,
+    time: f64,
+) -> Result<f64, &'static str> {
+    let unbounded_before = piece.flags & 0b010 != 0;
+    let unbounded_after = piece.flags & 0b100 != 0;
+    let progress = match (unbounded_before, unbounded_after) {
+        (false, false) => (time - piece.start) / (piece.end - piece.start),
+        (true, false) => 0.0,
+        (false, true) => 1.0,
+        (true, true) => 0.0,
+    };
+    (progress.is_finite() && (0.0..=1.0).contains(&progress))
+        .then_some(progress)
+        .ok_or(EXECUTION_ERROR)
 }
 
 fn evaluate_segment_track(

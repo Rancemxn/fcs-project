@@ -1,5 +1,8 @@
-schema_version = 2
+schema_version = 3
 render_profile_version = "1.0.0"
+fcbc_version = "2.0.0"
+execution_abi_version = "1.0.0"
+hash_algorithm = "sha256"
 
 [[fixture]]
 id = "render.solid-rect-4x4"

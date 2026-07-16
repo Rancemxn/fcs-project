@@ -432,7 +432,7 @@ fn require_type(expected: &Type, actual: &Type, span: SourceSpan) -> Result<(), 
 fn literal_type(literal: &SourceLiteral) -> Type {
     match literal {
         SourceLiteral::Bool(_) => Type::Bool,
-        SourceLiteral::Int(_) => Type::Int,
+        SourceLiteral::Int(_) | SourceLiteral::IntMagnitude(_) => Type::Int,
         SourceLiteral::Float(_) => Type::Float,
         SourceLiteral::String(_) => Type::String,
         SourceLiteral::Time(_) => Type::Time,
@@ -508,7 +508,7 @@ fn evaluate_expression(
 ) -> Result<TypedValue, Diagnostic> {
     budget.node(expression.span())?;
     match expression {
-        SourceExpression::Literal { literal, .. } => Ok(literal_value(literal)),
+        SourceExpression::Literal { literal, span } => literal_value(literal, *span),
         SourceExpression::Name { name, span } => {
             if let Some(value) = scope.lookup(name).and_then(|binding| binding.value.clone()) {
                 Ok(value)
@@ -527,6 +527,19 @@ fn evaluate_expression(
             span,
         } => {
             budget.operation(*span)?;
+            if *operator == UnaryOperator::Negate
+                && let SourceExpression::Literal {
+                    literal: SourceLiteral::IntMagnitude(magnitude),
+                    span: operand_span,
+                } = operand.as_ref()
+            {
+                budget.node(*operand_span)?;
+                return if magnitude == "9223372036854775808" {
+                    Ok(TypedValue::Int(i64::MIN))
+                } else {
+                    Err(Diagnostic::NumericOverflow { span: *span })
+                };
+            }
             let value =
                 evaluate_expression(operand, scope, constants, functions, const_values, budget)?;
             evaluate_unary(*operator, value, *span)
@@ -881,10 +894,11 @@ fn evaluate_block(
     Ok(None)
 }
 
-fn literal_value(literal: &SourceLiteral) -> TypedValue {
-    match literal {
+fn literal_value(literal: &SourceLiteral, span: SourceSpan) -> Result<TypedValue, Diagnostic> {
+    Ok(match literal {
         SourceLiteral::Bool(value) => TypedValue::Bool(*value),
         SourceLiteral::Int(value) => TypedValue::Int(*value),
+        SourceLiteral::IntMagnitude(_) => return Err(Diagnostic::NumericOverflow { span }),
         SourceLiteral::Float(value) => TypedValue::Float(*value),
         SourceLiteral::String(value) => TypedValue::String(value.clone()),
         SourceLiteral::Time(value) => TypedValue::Time(*value),
@@ -892,7 +906,7 @@ fn literal_value(literal: &SourceLiteral) -> TypedValue {
         SourceLiteral::Length(value) => TypedValue::Length(*value),
         SourceLiteral::Angle(value) => TypedValue::Angle(*value),
         SourceLiteral::Color(value) => TypedValue::Color(*value),
-    }
+    })
 }
 
 fn evaluate_unary(
