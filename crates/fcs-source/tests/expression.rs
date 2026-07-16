@@ -209,3 +209,13 @@ fn parser_rejects_object_keys_that_are_not_string_literals() {
         .expect_err("object keys must use string literals");
     assert_eq!(diagnostics[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
 }
+
+#[test]
+fn parser_keeps_unresolved_schema_enum_words_as_name_references() {
+    let expression = parse_expression("above").into_result().unwrap();
+    assert!(matches!(
+        expression,
+        SourceExpression::Name { name, span }
+            if name == "above" && span == SourceSpan::new(0, 5)
+    ));
+}
