@@ -168,3 +168,44 @@ fn parser_limits_array_object_and_choose_nesting_before_parsing() {
         DiagnosticCode::RESOURCE_LIMIT_EXCEEDED
     );
 }
+
+#[test]
+fn parser_accepts_empty_array_source_nodes() {
+    let expression = parse_expression("[]").into_result().unwrap();
+    assert!(matches!(
+        expression,
+        SourceExpression::Array { elements, span }
+            if elements.is_empty() && span == SourceSpan::new(0, 2)
+    ));
+}
+
+#[test]
+fn parser_accepts_empty_object_source_nodes() {
+    let expression = parse_expression("{}").into_result().unwrap();
+    assert!(matches!(
+        expression,
+        SourceExpression::Object { entries, span }
+            if entries.is_empty() && span == SourceSpan::new(0, 2)
+    ));
+}
+
+#[test]
+fn parser_accepts_trailing_call_arguments() {
+    let expression = parse_expression("factory(1,)").into_result().unwrap();
+    let SourceExpression::Call {
+        arguments, span, ..
+    } = expression
+    else {
+        panic!("expected call expression");
+    };
+    assert_eq!(arguments.len(), 1);
+    assert_eq!(span, SourceSpan::new(0, 11));
+}
+
+#[test]
+fn parser_rejects_object_keys_that_are_not_string_literals() {
+    let diagnostics = parse_expression("{key: 1}")
+        .into_result()
+        .expect_err("object keys must use string literals");
+    assert_eq!(diagnostics[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
+}
