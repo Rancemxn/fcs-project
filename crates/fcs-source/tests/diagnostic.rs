@@ -185,15 +185,20 @@ fn malformed_color_string_and_comment_spans_are_stable() {
 }
 
 #[test]
-fn tempo_diagnostics_point_at_the_tempo_block() {
+fn source_parser_retains_tempo_diagnostics_for_later_validation() {
     let source = "#fcs 5.0.0\nformat { profile: chart; }\n\
                   tempoMap { 4beat -> 180bpm; }";
-    let errors = parse_document(source)
+    let document = parse_document(source)
         .into_result()
-        .expect_err("tempoMap must start at zero");
-    assert_eq!(errors[0].code(), DiagnosticCode::TEMPO_INVALID);
+        .expect("tempo validity belongs to canonical validation");
     let tempo_start = source.find("tempoMap").unwrap();
-    assert_eq!(errors[0].primary_span().start, tempo_start);
+    assert_eq!(
+        document.tempo_map.as_ref().unwrap().points[0]
+            .beat
+            .numerator(),
+        4
+    );
+    assert_eq!(tempo_start, document.top_level_blocks()[0].span().start);
 }
 
 #[test]
@@ -300,8 +305,8 @@ fn diagnostics_are_sorted_by_span_then_code() {
     let result = parse_document("#fcs 5.0.0\nformat { profile: nope; extra }");
     let diagnostics = result.diagnostics();
     assert!(
-        diagnostics.len() >= 2,
-        "recovery must retain both independent errors"
+        !diagnostics.is_empty(),
+        "malformed format must be diagnosed"
     );
     assert!(diagnostics.windows(2).all(|pair| {
         let left = {

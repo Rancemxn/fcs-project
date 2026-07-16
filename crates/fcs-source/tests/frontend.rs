@@ -142,7 +142,7 @@ fn rejects_removed_mixed_beat_literal() {
 }
 
 #[test]
-fn rejects_tempo_maps_without_zero_start() {
+fn source_parser_retains_tempo_maps_for_later_validation() {
     let negative_decimal =
         "#fcs 5.0.0\nformat { profile: fragment; }\ntempoMap { -0.5beat -> 180bpm; }";
     let negative_integer =
@@ -150,13 +150,9 @@ fn rejects_tempo_maps_without_zero_start() {
     let empty = "#fcs 5.0.0\nformat { profile: fragment; }\ntempoMap { }";
 
     for source in [negative_decimal, negative_integer, empty] {
-        assert_eq!(
-            parse_document(source)
-                .into_result()
-                .expect_err("invalid tempo start")[0]
-                .code(),
-            DiagnosticCode::TEMPO_INVALID
-        );
+        parse_document(source)
+            .into_result()
+            .expect("tempo/profile validity belongs to a later phase");
     }
 }
 
@@ -197,35 +193,23 @@ fn accepts_trailing_comments_without_tempo_map() {
 }
 
 #[test]
-fn chart_profile_requires_tempo_starting_at_zero() {
+fn source_parser_does_not_validate_profile_tempo_requirements() {
     let missing = "#fcs 5.0.0\nformat { profile: chart; }";
     let non_zero = "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { 1beat -> 120bpm; }";
-    assert_eq!(
-        parse_document(missing)
-            .into_result()
-            .expect_err("tempoMap is required")[0]
-            .code(),
-        DiagnosticCode::PROFILE_REQUIREMENT_MISSING
-    );
-    assert_eq!(
-        parse_document(non_zero)
-            .into_result()
-            .expect_err("tempoMap must start at zero")[0]
-            .code(),
-        DiagnosticCode::TEMPO_INVALID
-    );
+    parse_document(missing)
+        .into_result()
+        .expect("profile requirements belong to canonical validation");
+    parse_document(non_zero)
+        .into_result()
+        .expect("tempo ordering belongs to canonical validation");
 }
 
 #[test]
-fn tempo_points_must_be_non_decreasing() {
+fn source_parser_retains_tempo_point_order_for_later_validation() {
     let source = "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { 0beat -> 120bpm; 4beat -> 180bpm; 3beat -> 200bpm; }";
-    assert_eq!(
-        parse_document(source)
-            .into_result()
-            .expect_err("tempo points must be ordered")[0]
-            .code(),
-        DiagnosticCode::TEMPO_NON_MONOTONIC
-    );
+    parse_document(source)
+        .into_result()
+        .expect("tempo ordering belongs to canonical validation");
 }
 
 #[test]
@@ -240,7 +224,7 @@ fn rejects_unclosed_trailing_block_comment() {
 }
 
 #[test]
-fn i0_retained_tempo_parser_rejects_bad_mixed_beat_and_bpm() {
+fn source_parser_rejects_removed_mixed_beat_but_retains_bpm_values() {
     let bad_fraction = parse_document(
         "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { [8,1,0]beat -> 220bpm; }",
     );
@@ -249,14 +233,9 @@ fn i0_retained_tempo_parser_rejects_bad_mixed_beat_and_bpm() {
         "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { 0beat -> 0.0bpm; }",
         "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { 0beat -> -1bpm; }",
     ] {
-        assert_eq!(
-            parse_document(source)
-                .into_result()
-                .expect_err("non-positive BPM is a tempo validation error")[0]
-                .code(),
-            DiagnosticCode::TEMPO_INVALID,
-            "{source}"
-        );
+        parse_document(source)
+            .into_result()
+            .expect("BPM validity belongs to canonical validation");
     }
 }
 
@@ -283,14 +262,18 @@ fn rejects_profile_without_statement_terminator() {
 }
 
 #[test]
-fn format_features_are_rejected_until_i1_adds_the_source_node() {
+fn format_features_are_retained_in_the_source_ast() {
     let source = "#fcs 5.0.0\nformat { profile: fragment; features: []; }";
-    assert_eq!(
-        parse_document(source)
-            .into_result()
-            .expect_err("I0 format does not include features")[0]
-            .code(),
-        DiagnosticCode::SYNTAX_INVALID_TOKEN
+    let document = parse_document(source)
+        .into_result()
+        .expect("format features");
+    assert!(
+        document
+            .format
+            .features
+            .expect("features")
+            .features
+            .is_empty()
     );
 }
 

@@ -1,5 +1,6 @@
 mod color;
 mod definitions;
+mod document;
 mod entity;
 mod time;
 mod types;
@@ -18,26 +19,6 @@ pub use types::{
     UnaryOperator,
 };
 
-use crate::version::Version;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DocumentProfile {
-    Fragment,
-    Chart,
-    Playable,
-    Renderable,
-    Publishable,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Document {
-    pub source_version: Version,
-    pub profile: DocumentProfile,
-    pub tempo_map: Option<TempoMap>,
-    pub definitions: Option<DefinitionsBlock>,
-    pub collections: Vec<CollectionBlock>,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct TempoMap {
     pub points: Vec<TempoPoint>,
@@ -52,4 +33,9 @@ pub use definitions::{
     ConstDeclaration, Definition, DefinitionsBlock, FunctionDeclaration, FunctionParameter,
     FunctionStatement, IfStatement, LetStatement, ReturnEntityStatement, ReturnStatement,
     TemplateDeclaration, TemplateIfStatement, TemplateParameter, TemplateStatement,
+};
+pub use document::{
+    Document, DocumentProfile, FeatureList, FormatBlock, FormatFeature, FormatField, FormatProfile,
+    ProfileFeature, RenderBlock, SourceBlock, SourceElement, SourceGroup, TempoMapBlock,
+    TopLevelBlock, TopLevelBlockKind,
 };
