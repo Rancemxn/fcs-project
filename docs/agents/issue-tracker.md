@@ -8,6 +8,8 @@ For transient network failures only (DNS, timeout/reset, interrupted TLS, or HTT
 
 After ten retries, preserve the exact payload, stable identity, last error, and a `pending remote sync` marker, then continue safe local work that does not depend on the remote action succeeding. This local record is a transport outbox, not a second Issue tracker. At the next meaningful checkpoint, and before handoff, PR Ready, review, merge, or another transition that depends on remote state, query first and retry synchronization under the same duplicate-prevention rule. Never claim that a deferred action happened remotely. If the missing remote state is itself a prerequisite for an irreversible or externally visible transition, defer that transition rather than the local work.
 
+Use event- or state-only headings for Issue and PR progress messages. Do not manually add calendar dates such as `YYYY-MM-DD`; the GitHub message timestamp is the time record.
+
 ## Issue contract
 
 Before implementation, ensure the Issue records:

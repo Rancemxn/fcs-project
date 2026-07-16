@@ -53,7 +53,9 @@ Issue/PR 的便利性也可能模糊资料权威：Issue 中的验收条件、PR
 edit 同一个消息。每条消息仍包含 Completed、Evidence、Decisions、Blockers 和 Next；若旧消息需要
 更正，发送明确指出被替代内容的 superseding comment，保留原消息作为历史。delivery-ready 与
 final merged checkpoint 也分别使用新消息。该决定取代第 5 节关于正文持续维护当前摘要、评论不能
-替代正文的要求；commit 列表仍不能替代进度叙事。
+替代正文的要求；commit 列表仍不能替代进度叙事。GitHub Progress 消息标题只写事件或状态，不
+手写日历日期；时间由消息自带的 timestamp 记录。治理文件自身的 dated amendment 不受此消息格式
+规则影响。
 
 瞬时网络失败仍每隔 5 秒重试，但首次失败后最多再试 10 次，取代第 2 节的 5 次上限。每次重试写
 操作以及稍后补同步前，都必须先按稳定身份查询远端，避免重复创建、评论、review 或 merge。10 次

@@ -23,7 +23,7 @@ Explain the checked items and name affected files or gates.
 
 ## Progress
 
-### YYYY-MM-DD — Initial reviewable checkpoint
+### Initial reviewable checkpoint
 
 - Completed: <!-- meaningful commit/change group and resulting capability -->
 - Evidence: <!-- commits, tests, fixtures, review, or inspected output -->
@@ -31,7 +31,7 @@ Explain the checked items and name affected files or gates.
 - Blockers: <!-- exact blocker/owner, or none -->
 - Next: <!-- next bounded action or ready-for-review disposition -->
 
-Keep this initial checkpoint in the body. After each material push, blocker change, and before marking the PR ready, send a new PR comment with the same five fields. Do not append to or repeatedly edit this message; use a new explicitly superseding comment for corrections. The latest message must match the current diff and commit set, and a raw commit list is not progress.
+Keep this initial checkpoint in the body. After each material push, blocker change, and before marking the PR ready, send a new PR comment with the same five fields. Do not append to or repeatedly edit this message; use a new explicitly superseding comment for corrections. Use an event- or state-only heading without a manually written date; GitHub supplies the timestamp. The latest message must match the current diff and commit set, and a raw commit list is not progress.
 
 ## Verification
 

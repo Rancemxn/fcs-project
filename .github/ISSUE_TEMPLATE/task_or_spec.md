@@ -37,7 +37,7 @@ Identify ambiguity, technical debt, interfaces that must remain stable, and temp
 
 ## Progress
 
-### YYYY-MM-DD — Contract established
+### Contract established
 
 - Completed: captured scope, authority inputs, acceptance criteria, and dependencies.
 - Evidence: <!-- relevant docs, Issue relationships, inspected code, or fixture -->
@@ -45,4 +45,4 @@ Identify ambiguity, technical debt, interfaces that must remain stable, and temp
 - Blockers: <!-- exact missing fact/owner, or none -->
 - Next: <!-- next bounded action -->
 
-Keep this initial checkpoint in the body. Send every later meaningful checkpoint as a new Issue comment with the same five fields; do not append to or repeatedly edit this message.
+Keep this initial checkpoint in the body. Send every later meaningful checkpoint as a new Issue comment with the same five fields; do not append to or repeatedly edit this message. Use an event- or state-only heading without a manually written date; GitHub supplies the timestamp.
