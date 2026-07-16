@@ -1,32 +1,104 @@
-# Issue tracker: Local Markdown
+# GitHub Issues and Pull Requests
 
-Issues and specs (you may know a spec as a PRD) for this repo live as markdown files in `.scratch/`.
+GitHub Issues are the repository's work contracts. Pull Requests deliver one reviewable implementation unit and its verification evidence. ADR 0011 accepts this workflow. Neither surface has normative authority: specifications, governance, Accepted ADRs, conformance artifacts, and dated reviews retain the responsibilities defined by `AGENTS.md`.
 
-## Conventions
+Use the authenticated `gh` CLI for repository operations. Prefer `--json` plus `jq` over parsing human-readable tables.
 
-- One feature per directory: `.scratch/<feature-slug>/`
-- The spec is `.scratch/<feature-slug>/spec.md`
-- Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01` — never a single combined tickets file
-- Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
-- Comments and conversation history append to the bottom of the file under a `## Comments` heading
+## Issue contract
 
-## When a skill says "publish to the issue tracker"
+Before implementation, ensure the Issue records:
 
-Create a new file under `.scratch/<feature-slug>/` (creating the directory if needed).
+- goal and observable acceptance criteria;
+- scope and explicit non-goals;
+- owning specification clauses, governance state, Accepted ADRs, current plan/review, and fixtures when applicable;
+- dependencies and blocked-by/blocking relationships;
+- expected implementation and public-interface impact;
+- verification commands and required conformance evidence;
+- unresolved semantic questions and their owner.
 
-## When a skill says "fetch the relevant ticket"
+An Issue may arrange specification work but cannot decide format or runtime semantics. If two materially different behaviors remain valid, stop implementation and route the choice through specification governance.
 
-Read the file at the referenced path. The user will normally pass the path or the issue number directly.
+Use parent/sub-issues for a large effort and dependency links for sequencing:
 
-## Wayfinding operations
+```text
+gh issue create --title "..." --body-file issue.md --label needs-triage
+gh issue create --title "..." --body-file child.md --parent 12 --blocked-by 10,11
+gh issue edit 12 --add-sub-issue 13 --add-blocked-by 9
+```
 
-Used by `/wayfinder`. The **map** is a file with one child file per ticket.
+## Triage
 
-- **Map**: `.scratch/<effort>/map.md` — the Notes / Decisions-so-far / Fog body.
-- **Child ticket**: `.scratch/<effort>/issues/NN-<slug>.md`, numbered from `01`, with the question in the body. A `Type:` line records the ticket type (`research`/`prototype`/`grilling`/`task`); a `Status:` line records `claimed`/`resolved`.
-- **Blocking**: a `Blocked by: NN, NN` line near the top. A ticket is unblocked when every file it lists is `resolved`.
-- **Frontier**: scan `.scratch/<effort>/issues/` for files that are open, unblocked, and unclaimed; first by number wins.
-- **Claim**: set `Status: claimed` and save before any work.
-- **Resolve**: append the answer under an `## Answer` heading, set `Status: resolved`, then append a context pointer (gist + link) to the map's Decisions-so-far in `map.md`.
+Apply exactly one workflow-state label to each open Issue:
 
-PRs as a request surface: off.
+```text
+needs-triage -> needs-info | ready-for-agent | ready-for-human | wontfix
+needs-info   -> needs-triage
+```
+
+After new information resolves the gap, return the Issue to `needs-triage` before declaring it ready. Type labels such as `bug`, `documentation`, and `enhancement` may coexist with one state label. See `triage-labels.md`.
+
+## Inspect with gh and jq
+
+Use structured output for automation and audit checks:
+
+```text
+gh issue list --state open --limit 200 \
+  --json number,title,labels,assignees,blockedBy,updatedAt |
+  jq -r '.[] | {number, title, labels: [.labels[].name], blocked_by: [.blockedBy[].number]}'
+
+gh issue view 42 --json number,title,body,state,labels,assignees,subIssues,blockedBy,url |
+  jq -S '.'
+
+gh pr view 17 --json state,isDraft,mergeable,reviewDecision,statusCheckRollup,closingIssuesReferences |
+  jq -e '.state == "OPEN" and (.isDraft | not) and .mergeable != "CONFLICTING"'
+```
+
+Use `jq -r` for plain strings, `jq -S` for stable key ordering, and `jq -e` when a filter is a gate. Pass dynamic data with `--arg` or `--argjson`. For APIs beyond built-in `gh --json`, use `gh api`; combine all pages with `--paginate --slurp` before aggregation.
+
+## Branch and implementation
+
+Start from current `origin/main`. Use `codex/<issue>-<slug>` and keep one reviewable unit per branch. `gh issue develop <number> --base main --name <branch> --checkout` may create and link the branch when the working tree is clean.
+
+Before editing:
+
+1. Read `AGENTS.md` and any closer instructions.
+2. Follow the applicable specification/ADR/conformance/review reading route.
+3. Reconfirm that the Issue is consistent with the current normative dependency closure.
+4. Preserve unrelated worktree changes.
+
+During implementation, append new scope to the Issue or open a follow-up Issue; do not silently expand the PR.
+
+## Pull Request contract
+
+Open a draft PR when early CI or interface feedback is useful. Mark it ready only after the intended scope and local gates are complete.
+
+The PR body records:
+
+- `Closes #<n>` when merge should close the Issue, otherwise `Refs #<n>`;
+- summary and non-goals;
+- specification, ADR, conformance, review, and version-state impact;
+- tests and exact commands run;
+- skipped/unavailable gates and reason;
+- residual risk and follow-up Issues.
+
+Useful commands:
+
+```text
+gh pr create --draft --base main --title "..." --body-file pr.md
+gh pr diff <number>
+gh pr checks <number> --required
+gh pr view <number> --json reviewDecision,mergeable,statusCheckRollup,files |
+  jq -S '.'
+gh pr ready <number>
+```
+
+Do not merge until required checks pass, review requirements are satisfied, the branch is mergeable, and all Critical/Important findings in the applicable gate are closed. Never use `gh pr merge --admin` to bypass protection. Merge only when the user has authorized it.
+
+## Completion
+
+After merge:
+
+1. Confirm the linked Issue closed as intended.
+2. Record residual work as linked Issues rather than hidden PR notes.
+3. Update plans, implementation matrix, conformance manifests, or dated reviews only when their owning process requires it.
+4. Do not rewrite historical review evidence to match the merged implementation.

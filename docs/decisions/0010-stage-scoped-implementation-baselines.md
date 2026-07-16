@@ -1,6 +1,6 @@
 # 0010：使用阶段范围化 Reviewed Implementation Baseline 启动实现
 
-状态：Accepted
+状态：Partially superseded by ADR 0011（仅工作流追踪介质）
 
 日期：2026-07-16
 

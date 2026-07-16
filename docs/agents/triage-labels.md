@@ -1,15 +1,31 @@
-# Triage Labels
+# GitHub Triage Labels
 
-The skills speak in terms of five canonical triage roles. This file maps those roles to the actual label strings used in this repo's issue tracker.
+Workflow state is represented by exactly one of these GitHub labels on each open Issue:
 
-| Label in mattpocock/skills | Label in our tracker | Meaning |
-| -------------------------- | -------------------- | ------- |
-| `needs-triage`              | `needs-triage`       | Maintainer needs to evaluate this issue |
-| `needs-info`               | `needs-info`         | Waiting on reporter for more information |
-| `ready-for-agent`           | `ready-for-agent`    | Fully specified, ready for an AFK agent |
-| `ready-for-human`           | `ready-for-human`    | Requires human implementation |
-| `wontfix`                   | `wontfix`            | Will not be actioned |
+| Label | Meaning | Normal exit |
+|---|---|---|
+| `needs-triage` | Maintainer must classify scope, authority, readiness, and owner | another state label |
+| `needs-info` | Work is blocked on information from the reporter or an external owner | `needs-triage` |
+| `ready-for-agent` | Scope, authority inputs, acceptance criteria, and verification are sufficient for an agent | linked PR or re-triage |
+| `ready-for-human` | A human decision, credential, environment, or implementation is required | `needs-triage` or linked PR |
+| `wontfix` | The request will not be actioned | close Issue with rationale |
 
-When a skill mentions a role, use the corresponding label string from this table.
+Type labels such as `bug`, `documentation`, `enhancement`, and `question` are orthogonal and may coexist with one state label.
 
-Edit the right-hand column to match whatever vocabulary you actually use.
+## State changes
+
+Use `gh issue edit` to remove the old state and add the new one atomically in one command:
+
+```text
+gh issue edit 42 --remove-label needs-triage --add-label ready-for-agent
+gh issue edit 42 --remove-label needs-info --add-label needs-triage
+```
+
+Before `ready-for-agent`, verify that the Issue identifies:
+
+- the owning specification or confirms the work is internal-only;
+- relevant Accepted ADRs, conformance artifacts, reviews, and stage baseline;
+- acceptance criteria, non-goals, dependencies, and verification commands;
+- any action that still requires human authority.
+
+When using `needs-info`, comment with the exact missing facts and the consequence of each possible answer. When using `wontfix`, comment with the durable reason and close the Issue; do not modify specifications or historical reviews merely to match the triage decision.

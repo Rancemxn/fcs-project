@@ -4,7 +4,7 @@
 
 ## 仓库结构与规范入口
 
-- 当前活动开发分支是 `master`，workspace 只有唯一、无版本前缀的
+- 当前默认开发分支是 `main`，workspace 只有唯一、无版本前缀的
   `crates/fcs-source`。`archive/fcs4-pre-cutover` 保存完整切换前工作树；FCS 4 core、旧
   converter、旧 CLI、VM 和 bytecode 仅可从该归档分支读取，不属于活动实现。I0 决策由
   `docs/decisions/0006-unversioned-source-cutover.md` 定义，逐步执行和当前状态见
@@ -120,6 +120,19 @@
   rg -n 'parse_document|nextest|Context7' crates docs
   ```
 
+- 用 `jq` 处理 `gh --json` 或 `gh api` 输出，不要解析面向人的表格文本：
+
+  ```text
+  gh issue list --state open --json number,title,labels |
+    jq -r '.[] | "#\(.number)\t\(.title)\t\([.labels[].name] | join(","))"'
+  gh pr view 42 --json state,isDraft,mergeable,reviewDecision,statusCheckRollup |
+    jq -e '.state == "OPEN" and (.isDraft | not) and .mergeable != "CONFLICTING"'
+  ```
+
+  简单投影可直接用 `gh --jq`；需要复用 filter、组合多个输入或使用 `jq -e`
+  作为门禁时使用独立 `jq`。动态值用 `--arg`/`--argjson` 传入，不要拼接 filter；
+  对分页 API 使用 `gh api --paginate --slurp` 后再聚合。
+
 - 用 `sg`（ast-grep）搜索 Rust 的语法结构；当空格、换行或具体变量名不应影响匹配时，优先于纯文本搜索：
 
   ```text
@@ -156,11 +169,20 @@
 
 ### Issue tracker
 
-本仓库使用本地 Markdown 文件记录 issue 和 spec，位置为 `.scratch/<feature-slug>/`。详见 `docs/agents/issue-tracker.md`。
+本仓库使用 GitHub Issues 记录工作契约、依赖和验收条件，使用 Pull Requests 交付修改与验证证据。使用 `gh` 读写 Issue/PR，使用 `jq` 处理结构化 JSON。完整流程见 `docs/agents/issue-tracker.md`，接受的决策见 ADR 0011。Issue、PR 及其评论只能安排或证明工作，不能创造规范语义。
 
 ### Triage labels
 
-使用默认的五个 triage label：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human` 和 `wontfix`。详见 `docs/agents/triage-labels.md`。
+使用五个 GitHub 状态 label：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human` 和 `wontfix`。一个 open Issue 同时只保留一个状态 label；`bug`、`documentation`、`enhancement` 等是正交的类型 label。详见 `docs/agents/triage-labels.md`。
+
+### GitHub delivery workflow
+
+- 只读检查使用 `gh issue list/view`、`gh pr list/view/diff/checks` 和 `gh api`。创建、编辑、评论、关闭、push、review 或 merge 是外部状态变更，只在用户明确要求对应工作流时执行。
+- 开始非机械工作前，确保有一个写明范围、权威输入、验收条件、非目标、依赖和验证方法的 Issue。大型工作用 parent/sub-issue 和 blocked-by/blocking 关系，不在一个 Issue 中堆放不可独立验收的横向任务。
+- 从最新 `origin/main` 创建 `codex/<issue>-<slug>` 分支；一个分支和 PR 只交付一个可审查工作单元。不要将工作区中与 Issue 无关的改动带入提交。
+- PR 正文必须链接 Issue；只有 PR 合并即应关闭 Issue 时才使用 `Closes #<n>`，否则使用 `Refs #<n>`。正文同时记录规范/ADR/conformance/review 影响、实际验证命令、未执行门禁和剩余风险。
+- push 前审查 staged diff；PR 合并前检查 `gh pr checks --required`、review decision、mergeability 和未解决评论。不得用 `--admin` 绕过 branch protection，也不得为了变绿而降低测试、fixture 或 review gate。
+- 合并后确认 Issue 状态和后续 blocker，必要时在 Issue 中留下最终验证、未完成项与后续 Issue 链接。
 
 ### Domain docs
 
