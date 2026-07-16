@@ -3,16 +3,21 @@ mod definitions;
 mod document;
 mod entity;
 mod time;
+mod track;
 mod types;
 
 pub use color::Color;
 pub use entity::{
     CollectionBlock, CollectionItem, CollectionsBlock, EntityConstructor, EntityExpression,
     EntityField, ExpandedCollection, ExpandedEntity, ExpandedField, ExpandedSourceDocument,
-    FieldPath, Generator, GeneratorItem, GeneratorOwner, NoteVariant, SourceEntityConstructor,
-    SourceEntityConstructorKind, SourceRange, WithExpression,
+    FieldPath, Generator, GeneratorItem, GeneratorOwner, NoteVariant, SchemaField, SchemaValue,
+    SourceEntityConstructor, SourceEntityConstructorKind, SourceRange, WithExpression,
 };
 pub use time::{Beat, BeatError, Bpm, InvalidBpm, SourceBpm};
+pub use track::{
+    DirectPoint, DirectSegment, HalfOpenInterval, Interpolation, LineBodyItem, LineDeclaration,
+    LinesBlock, SegmentsBlock, TrackDeclaration, TrackSegmentItem, TrackSetting, TracksBlock,
+};
 pub use types::{
     BinaryOperator, SourceChooseArm, SourceExpression, SourceLiteral, SourceObjectEntry,
     SourceSpan, SourceType, SourceTypeKind, Type, TypedExpression, TypedExpressionKind, TypedValue,

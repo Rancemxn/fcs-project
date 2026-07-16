@@ -7,6 +7,7 @@ mod input;
 mod lexer;
 mod tempo;
 mod token;
+mod tracks;
 
 pub(super) const NESTED_GENERATOR_ERROR: &str = "compile-time.nested-generator";
 pub(super) const MISPLACED_GENERATOR_ERROR: &str = "compile-time.misplaced-generator";

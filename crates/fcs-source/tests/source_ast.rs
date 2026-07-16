@@ -1,8 +1,9 @@
 use fcs_source::diagnostic::{DiagnosticCode, DiagnosticStage};
 use fcs_source::{
     ast::{
-        CollectionItem, Definition, DocumentProfile, FunctionStatement, GeneratorOwner, SourceSpan,
-        SourceTypeKind, TopLevelBlockKind, Type,
+        CollectionItem, Definition, DocumentProfile, FunctionStatement, GeneratorOwner,
+        LineBodyItem, SchemaValue, SourceEntityConstructorKind, SourceSpan, SourceTypeKind,
+        TopLevelBlockKind, TrackSegmentItem, Type,
     },
     parser::parse_document,
     parser::parse_type,
@@ -391,5 +392,78 @@ fn collection_generators_retain_their_owner_context() {
         &GeneratorOwner::Collection {
             name: "notes".to_owned()
         }
+    );
+}
+
+#[test]
+fn track_ast_retains_settings_direct_segments_points_and_spans() {
+    let source = include_str!("../../../conformance/fcs5/source/valid/track-boundaries.fcs");
+    let document = parse_document(source)
+        .into_result()
+        .expect("Track source grammar is valid");
+    assert_eq!(document.lines.len(), 1);
+    let LineBodyItem::Tracks(tracks) = &document.lines[0].items[1] else {
+        panic!("expected nested tracks block");
+    };
+    let track = &tracks.tracks[0];
+    assert_eq!(track.name, "fade");
+    assert_eq!(track.target.segments, ["alpha"]);
+    assert_eq!(track.value_type, Type::Float);
+    assert_eq!(track.settings.len(), 5);
+    assert_eq!(track.segments.items.len(), 2);
+    assert!(matches!(
+        track.segments.items[0],
+        TrackSegmentItem::DirectSegment(_)
+    ));
+    assert!(matches!(
+        track.segments.items[1],
+        TrackSegmentItem::DirectPoint(_)
+    ));
+    assert_eq!(track.segments.span.start, source.find("segments").unwrap());
+    assert!(track.segments.span.end <= source.len());
+}
+
+#[test]
+fn track_generators_retain_track_owner_and_schema_cubic_values() {
+    let source = include_str!("../../../conformance/fcs5/source/valid/complete-source-grammar.fcs");
+    let document = parse_document(source)
+        .into_result()
+        .expect("complete Track source grammar is valid");
+    let LineBodyItem::Tracks(tracks) = &document.lines[0].items[1] else {
+        panic!("expected nested tracks block");
+    };
+    let track = &tracks.tracks[0];
+    let TrackSegmentItem::Generator(generator) = &track.segments.items[1] else {
+        panic!("expected Track segment generator");
+    };
+    let GeneratorOwner::TrackSegments {
+        track: owner_track,
+        target: owner_target,
+        span: owner_span,
+    } = generator.owner.as_ref()
+    else {
+        panic!("expected Track segment generator owner");
+    };
+    assert_eq!(owner_track, "fade");
+    assert_eq!(owner_target, &track.target);
+    assert_eq!(
+        *owner_span,
+        SourceSpan::new(track.name_span.start, track.span.end,)
+    );
+    let TrackSegmentItem::Generator(generator) = &track.segments.items[1] else {
+        unreachable!();
+    };
+    let fcs_source::ast::GeneratorItem::Emit(expression) = &generator.body[0] else {
+        panic!("expected generated segment emit");
+    };
+    let fcs_source::ast::EntityExpression::SourceConstructor(constructor) = expression else {
+        panic!("expected source segment constructor");
+    };
+    assert_eq!(constructor.kind, SourceEntityConstructorKind::Segment);
+    assert!(
+        constructor
+            .fields
+            .iter()
+            .any(|field| matches!(&field.value, SchemaValue::CubicBezier { .. }))
     );
 }
