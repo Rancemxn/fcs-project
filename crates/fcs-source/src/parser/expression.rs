@@ -6,7 +6,8 @@ use chumsky::{
 
 use crate::{
     ast::{
-        BinaryOperator, SourceExpression, SourceSpan, SourceType, SourceTypeKind, UnaryOperator,
+        BinaryOperator, SourceChooseArm, SourceExpression, SourceLiteral, SourceObjectEntry,
+        SourceSpan, SourceType, SourceTypeKind, UnaryOperator,
     },
     diagnostic::{Diagnostic, DiagnosticCode, DiagnosticStage, ParseOutput},
 };
@@ -152,6 +153,11 @@ where
                 span: source_span(extra.span()),
             })
             .labelled("literal");
+        let null =
+            just(Token::Keyword(Keyword::Null)).map_with(|_, extra| SourceExpression::Literal {
+                literal: SourceLiteral::Null,
+                span: source_span(extra.span()),
+            });
         let identifier = select! { Token::Identifier(identifier) => identifier }
             .map_with(|name, extra| SourceExpression::Name {
                 name,
@@ -186,7 +192,98 @@ where
                 span: source_span(extra.span()),
             });
 
-        let primary = literal.or(vec2).or(identifier).or(grouped).boxed();
+        let reference = just(Token::Punctuation(Punctuation::At))
+            .ignore_then(select! { Token::Identifier(identifier) => identifier })
+            .map_with(|name, extra| SourceExpression::Reference {
+                name,
+                span: source_span(extra.span()),
+            })
+            .labelled("reference");
+
+        let array = expression
+            .clone()
+            .separated_by(just(Token::Punctuation(Punctuation::Comma)))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .delimited_by(
+                just(Token::Punctuation(Punctuation::LeftBracket)),
+                just(Token::Punctuation(Punctuation::RightBracket)),
+            )
+            .map_with(|elements, extra| SourceExpression::Array {
+                elements,
+                span: source_span(extra.span()),
+            })
+            .labelled("array");
+
+        let object_entry = select! {
+            Token::Literal(SourceLiteral::String(key)) => key,
+        }
+        .map_with(|key, extra| (key, source_span(extra.span())))
+        .then_ignore(just(Token::Punctuation(Punctuation::Colon)))
+        .then(expression.clone())
+        .map_with(|((key, key_span), value), extra| SourceObjectEntry {
+            key,
+            key_span,
+            value,
+            span: source_span(extra.span()),
+        });
+        let object = object_entry
+            .separated_by(just(Token::Punctuation(Punctuation::Comma)))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .delimited_by(
+                just(Token::Punctuation(Punctuation::LeftBrace)),
+                just(Token::Punctuation(Punctuation::RightBrace)),
+            )
+            .map_with(|entries, extra| SourceExpression::Object {
+                entries,
+                span: source_span(extra.span()),
+            })
+            .labelled("object");
+
+        let choose_arm = just(Token::Keyword(Keyword::When))
+            .ignore_then(expression.clone())
+            .then_ignore(just(Token::Punctuation(Punctuation::FatArrow)))
+            .then(expression.clone())
+            .then_ignore(just(Token::Punctuation(Punctuation::Semicolon)))
+            .map_with(|(condition, value), extra| SourceChooseArm {
+                condition,
+                value,
+                span: source_span(extra.span()),
+            });
+        let choose_body = choose_arm
+            .repeated()
+            .at_least(1)
+            .collect::<Vec<_>>()
+            .then(
+                just(Token::Keyword(Keyword::Else))
+                    .ignore_then(just(Token::Punctuation(Punctuation::FatArrow)))
+                    .ignore_then(expression.clone())
+                    .then_ignore(just(Token::Punctuation(Punctuation::Semicolon))),
+            )
+            .delimited_by(
+                just(Token::Punctuation(Punctuation::LeftBrace)),
+                just(Token::Punctuation(Punctuation::RightBrace)),
+            );
+        let choose = just(Token::Keyword(Keyword::Choose))
+            .then(choose_body)
+            .map_with(|(_, (arms, else_value)), extra| SourceExpression::Choose {
+                arms,
+                else_value: Box::new(else_value),
+                span: source_span(extra.span()),
+            })
+            .labelled("choose expression");
+
+        let primary = choose
+            .or(literal)
+            .or(null)
+            .or(reference)
+            .or(array)
+            .or(object)
+            .or(vec2)
+            .or(identifier)
+            .or(grouped)
+            .boxed();
 
         let arguments = expression
             .clone()
@@ -201,22 +298,38 @@ where
             .map_with(|arguments, extra| Postfix::Call(arguments, source_span(extra.span())))
             .labelled("argument list");
         let field = just(Token::Punctuation(Punctuation::Dot))
-            .ignore_then(select! { Token::Identifier(identifier) => identifier })
+            .ignore_then(field_name_parser())
             .map_with(|field, extra| Postfix::Field(field, source_span(extra.span())))
             .labelled("field access");
+        let index = expression
+            .clone()
+            .delimited_by(
+                just(Token::Punctuation(Punctuation::LeftBracket)),
+                just(Token::Punctuation(Punctuation::RightBracket)),
+            )
+            .map_with(|index, extra| Postfix::Index(index, source_span(extra.span())))
+            .labelled("index expression");
         let postfix = primary
-            .foldl_with(call.or(field).repeated(), |base, suffix, _| match suffix {
-                Postfix::Call(arguments, suffix_span) => SourceExpression::Call {
-                    span: SourceSpan::new(base.span().start, suffix_span.end),
-                    callee: Box::new(base),
-                    arguments,
+            .foldl_with(
+                call.or(field).or(index).repeated(),
+                |base, suffix, _| match suffix {
+                    Postfix::Call(arguments, suffix_span) => SourceExpression::Call {
+                        span: SourceSpan::new(base.span().start, suffix_span.end),
+                        callee: Box::new(base),
+                        arguments,
+                    },
+                    Postfix::Field(field, suffix_span) => SourceExpression::FieldAccess {
+                        span: SourceSpan::new(base.span().start, suffix_span.end),
+                        base: Box::new(base),
+                        field,
+                    },
+                    Postfix::Index(index, suffix_span) => SourceExpression::Index {
+                        span: SourceSpan::new(base.span().start, suffix_span.end),
+                        base: Box::new(base),
+                        index: Box::new(index),
+                    },
                 },
-                Postfix::Field(field, suffix_span) => SourceExpression::FieldAccess {
-                    span: SourceSpan::new(base.span().start, suffix_span.end),
-                    base: Box::new(base),
-                    field,
-                },
-            })
+            )
             .boxed();
 
         let unary_operator = choice((
@@ -404,7 +517,7 @@ where
         };
 
         let vector = just(Token::Keyword(Keyword::Vec2))
-            .ignore_then(scalar.clone().delimited_by(
+            .ignore_then(scalar.delimited_by(
                 just(Token::Punctuation(Punctuation::LessThan)),
                 just(Token::Punctuation(Punctuation::GreaterThan)),
             ))
@@ -433,6 +546,17 @@ where
 enum Postfix {
     Call(Vec<SourceExpression>, SourceSpan),
     Field(String, SourceSpan),
+    Index(SourceExpression, SourceSpan),
+}
+
+fn field_name_parser<'tokens, I>() -> impl Parser<'tokens, I, String, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    select! {
+        Token::Identifier(identifier) => identifier,
+        Token::Keyword(keyword) => keyword.as_str().to_owned(),
+    }
 }
 
 fn binary(
@@ -452,6 +576,9 @@ fn binary(
 fn with_span(expression: SourceExpression, span: SourceSpan) -> SourceExpression {
     match expression {
         SourceExpression::Literal { literal, .. } => SourceExpression::Literal { literal, span },
+        SourceExpression::Array { elements, .. } => SourceExpression::Array { elements, span },
+        SourceExpression::Object { entries, .. } => SourceExpression::Object { entries, span },
+        SourceExpression::Reference { name, .. } => SourceExpression::Reference { name, span },
         SourceExpression::Name { name, .. } => SourceExpression::Name { name, span },
         SourceExpression::Unary {
             operator, operand, ..
@@ -481,6 +608,16 @@ fn with_span(expression: SourceExpression, span: SourceSpan) -> SourceExpression
         SourceExpression::FieldAccess { base, field, .. } => {
             SourceExpression::FieldAccess { base, field, span }
         }
+        SourceExpression::Index { base, index, .. } => {
+            SourceExpression::Index { base, index, span }
+        }
+        SourceExpression::Choose {
+            arms, else_value, ..
+        } => SourceExpression::Choose {
+            arms,
+            else_value,
+            span,
+        },
         SourceExpression::Vec2 { x, y, .. } => SourceExpression::Vec2 { x, y, span },
     }
 }
@@ -494,10 +631,14 @@ fn expression_limit_span(tokens: &[SpannedToken], maximum: usize) -> Option<(Sou
             Token::Punctuation(Punctuation::Minus | Punctuation::Bang) => {
                 unary_run += 1;
             }
-            Token::Punctuation(Punctuation::LeftParenthesis) => {
+            Token::Punctuation(
+                Punctuation::LeftParenthesis | Punctuation::LeftBracket | Punctuation::LeftBrace,
+            ) => {
                 group_depth += 1;
             }
-            Token::Punctuation(Punctuation::RightParenthesis) => {
+            Token::Punctuation(
+                Punctuation::RightParenthesis | Punctuation::RightBracket | Punctuation::RightBrace,
+            ) => {
                 group_depth = group_depth.saturating_sub(1);
             }
             Token::Punctuation(Punctuation::Power) => {

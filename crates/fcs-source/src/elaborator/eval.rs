@@ -268,7 +268,22 @@ fn infer_expression(
     functions: &BTreeMap<String, &FunctionDeclaration>,
 ) -> Result<Type, Diagnostic> {
     match expression {
-        SourceExpression::Literal { literal, .. } => Ok(literal_type(literal)),
+        SourceExpression::Literal { literal, span } => {
+            literal_type(literal).map(Ok).unwrap_or_else(|| {
+                Err(Diagnostic::FeatureUnavailable {
+                    feature: "null source literal",
+                    span: *span,
+                })
+            })
+        }
+        SourceExpression::Array { span, .. }
+        | SourceExpression::Object { span, .. }
+        | SourceExpression::Reference { span, .. }
+        | SourceExpression::Index { span, .. }
+        | SourceExpression::Choose { span, .. } => Err(Diagnostic::FeatureUnavailable {
+            feature: "extended source expression",
+            span: *span,
+        }),
         SourceExpression::Name { name, span } => scope
             .lookup(name)
             .map(|binding| binding.ty.clone())
@@ -429,9 +444,10 @@ fn require_type(expected: &Type, actual: &Type, span: SourceSpan) -> Result<(), 
     }
 }
 
-fn literal_type(literal: &SourceLiteral) -> Type {
-    match literal {
+fn literal_type(literal: &SourceLiteral) -> Option<Type> {
+    Some(match literal {
         SourceLiteral::Bool(_) => Type::Bool,
+        SourceLiteral::Null => return None,
         SourceLiteral::Int(_) | SourceLiteral::IntMagnitude(_) => Type::Int,
         SourceLiteral::Float(_) => Type::Float,
         SourceLiteral::String(_) => Type::String,
@@ -440,7 +456,7 @@ fn literal_type(literal: &SourceLiteral) -> Type {
         SourceLiteral::Length(_) => Type::Length,
         SourceLiteral::Angle(_) => Type::Angle,
         SourceLiteral::Color(_) => Type::Color,
-    }
+    })
 }
 
 fn is_scalar(ty: &Type) -> bool {
@@ -509,6 +525,14 @@ fn evaluate_expression(
     budget.node(expression.span())?;
     match expression {
         SourceExpression::Literal { literal, span } => literal_value(literal, *span),
+        SourceExpression::Array { span, .. }
+        | SourceExpression::Object { span, .. }
+        | SourceExpression::Reference { span, .. }
+        | SourceExpression::Index { span, .. }
+        | SourceExpression::Choose { span, .. } => Err(Diagnostic::FeatureUnavailable {
+            feature: "extended source expression",
+            span: *span,
+        }),
         SourceExpression::Name { name, span } => {
             if let Some(value) = scope.lookup(name).and_then(|binding| binding.value.clone()) {
                 Ok(value)
@@ -897,6 +921,12 @@ fn evaluate_block(
 fn literal_value(literal: &SourceLiteral, span: SourceSpan) -> Result<TypedValue, Diagnostic> {
     Ok(match literal {
         SourceLiteral::Bool(value) => TypedValue::Bool(*value),
+        SourceLiteral::Null => {
+            return Err(Diagnostic::FeatureUnavailable {
+                feature: "null source literal",
+                span,
+            });
+        }
         SourceLiteral::Int(value) => TypedValue::Int(*value),
         SourceLiteral::IntMagnitude(_) => return Err(Diagnostic::NumericOverflow { span }),
         SourceLiteral::Float(value) => TypedValue::Float(*value),

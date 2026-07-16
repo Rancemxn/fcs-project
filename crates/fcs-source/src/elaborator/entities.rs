@@ -181,6 +181,12 @@ impl<'a> ExpansionContext<'a> {
             EntityExpression::Constructor(constructor) => {
                 self.expand_constructor(constructor, expected_type, bindings)
             }
+            EntityExpression::SourceConstructor(constructor) => {
+                Err(Diagnostic::FeatureUnavailable {
+                    feature: "source entity constructor",
+                    span: constructor.span,
+                })
+            }
             EntityExpression::Source(SourceExpression::Call {
                 callee,
                 arguments,

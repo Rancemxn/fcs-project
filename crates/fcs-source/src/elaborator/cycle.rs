@@ -126,6 +126,11 @@ fn collect_template_calls_in_entity(
                 collect_template_calls(&field.value, names, output);
             }
         }
+        EntityExpression::SourceConstructor(constructor) => {
+            for field in &constructor.fields {
+                collect_template_calls(&field.value, names, output);
+            }
+        }
         EntityExpression::Source(expression) => collect_template_calls(expression, names, output),
         EntityExpression::With(expression) => {
             collect_template_calls_in_entity(&expression.base, names, output);
@@ -167,7 +172,32 @@ fn collect_template_calls(
             collect_template_calls(left, names, output);
             collect_template_calls(right, names, output);
         }
-        SourceExpression::Literal { .. } | SourceExpression::Name { .. } => {}
+        SourceExpression::Array { elements, .. } => {
+            for element in elements {
+                collect_template_calls(element, names, output);
+            }
+        }
+        SourceExpression::Object { entries, .. } => {
+            for entry in entries {
+                collect_template_calls(&entry.value, names, output);
+            }
+        }
+        SourceExpression::Index { base, index, .. } => {
+            collect_template_calls(base, names, output);
+            collect_template_calls(index, names, output);
+        }
+        SourceExpression::Choose {
+            arms, else_value, ..
+        } => {
+            for arm in arms {
+                collect_template_calls(&arm.condition, names, output);
+                collect_template_calls(&arm.value, names, output);
+            }
+            collect_template_calls(else_value, names, output);
+        }
+        SourceExpression::Literal { .. }
+        | SourceExpression::Reference { .. }
+        | SourceExpression::Name { .. } => {}
     }
 }
 
@@ -235,6 +265,29 @@ fn collect_const_names(
             collect_const_names(left, names, output);
             collect_const_names(right, names, output);
         }
+        SourceExpression::Array { elements, .. } => {
+            for element in elements {
+                collect_const_names(element, names, output);
+            }
+        }
+        SourceExpression::Object { entries, .. } => {
+            for entry in entries {
+                collect_const_names(&entry.value, names, output);
+            }
+        }
+        SourceExpression::Index { base, index, .. } => {
+            collect_const_names(base, names, output);
+            collect_const_names(index, names, output);
+        }
+        SourceExpression::Choose {
+            arms, else_value, ..
+        } => {
+            for arm in arms {
+                collect_const_names(&arm.condition, names, output);
+                collect_const_names(&arm.value, names, output);
+            }
+            collect_const_names(else_value, names, output);
+        }
         SourceExpression::Call {
             callee, arguments, ..
         } => {
@@ -245,7 +298,7 @@ fn collect_const_names(
                 collect_const_names(argument, names, output);
             }
         }
-        SourceExpression::Literal { .. } => {}
+        SourceExpression::Literal { .. } | SourceExpression::Reference { .. } => {}
     }
 }
 
@@ -302,7 +355,32 @@ fn collect_function_calls(
             collect_function_calls(left, names, output);
             collect_function_calls(right, names, output);
         }
-        SourceExpression::Literal { .. } | SourceExpression::Name { .. } => {}
+        SourceExpression::Array { elements, .. } => {
+            for element in elements {
+                collect_function_calls(element, names, output);
+            }
+        }
+        SourceExpression::Object { entries, .. } => {
+            for entry in entries {
+                collect_function_calls(&entry.value, names, output);
+            }
+        }
+        SourceExpression::Index { base, index, .. } => {
+            collect_function_calls(base, names, output);
+            collect_function_calls(index, names, output);
+        }
+        SourceExpression::Choose {
+            arms, else_value, ..
+        } => {
+            for arm in arms {
+                collect_function_calls(&arm.condition, names, output);
+                collect_function_calls(&arm.value, names, output);
+            }
+            collect_function_calls(else_value, names, output);
+        }
+        SourceExpression::Literal { .. }
+        | SourceExpression::Reference { .. }
+        | SourceExpression::Name { .. } => {}
     }
 }
 

@@ -2,8 +2,8 @@ use fcs_source::ast::Color;
 use fcs_source::ast::{
     Beat, BinaryOperator, CollectionBlock, CollectionItem, Definition, EntityConstructor,
     EntityExpression, ExpandedEntity, ExpandedField, FunctionStatement, GeneratorItem, NoteVariant,
-    SourceExpression, SourceLiteral, SourceSpan, Type, TypedExpression, TypedExpressionKind,
-    TypedValue, UnaryOperator, WithExpression,
+    SourceEntityConstructorKind, SourceExpression, SourceLiteral, SourceSpan, Type,
+    TypedExpression, TypedExpressionKind, TypedValue, UnaryOperator, WithExpression,
 };
 use fcs_source::diagnostic::{Diagnostic, DiagnosticCode};
 use fcs_source::elaborator::{CompileTimeLimits, elaborate};
@@ -110,6 +110,51 @@ definitions {
 }"#;
     let document = parse_document(source).into_result().unwrap();
     assert_eq!(document.definitions.as_ref().unwrap().declarations.len(), 2);
+}
+
+#[test]
+fn source_entity_constructor_kinds_remain_spanned_until_static_validation() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections {
+  notes {
+    RenderNode { render.kind: "rect"; };
+    segment { start: 0beat; end: 1beat; };
+    keyframe { value: 1; };
+  }
+}"#;
+    let document = parse_document(source).into_result().unwrap();
+    let items = &document.collections[0].items;
+    assert_eq!(items.len(), 3);
+    for (item, (expected, field_count)) in items.iter().zip([
+        (SourceEntityConstructorKind::RenderNode, 1),
+        (SourceEntityConstructorKind::Segment, 2),
+        (SourceEntityConstructorKind::Keyframe, 1),
+    ]) {
+        let CollectionItem::Expression(EntityExpression::SourceConstructor(constructor)) = item
+        else {
+            panic!("expected source entity constructor");
+        };
+        assert_eq!(constructor.kind, expected);
+        assert!(constructor.span.start < constructor.span.end);
+        assert_eq!(constructor.fields.len(), field_count);
+    }
+}
+
+#[test]
+fn extended_source_nodes_stop_at_the_pre_i2_elaborator_boundary() {
+    let null_source =
+        "#fcs 5.0.0\nformat { profile: fragment; }\ndefinitions { const value: string = null; }";
+    assert_code(
+        elaborate_source(null_source),
+        DiagnosticCode::IMPLEMENTATION_FEATURE_UNAVAILABLE,
+    );
+
+    let entity_source = "#fcs 5.0.0\nformat { profile: fragment; }\ncollections { notes { RenderNode { render.kind: \"rect\"; }; } }";
+    assert_code(
+        elaborate_source(entity_source),
+        DiagnosticCode::IMPLEMENTATION_FEATURE_UNAVAILABLE,
+    );
 }
 
 #[test]
@@ -1184,7 +1229,7 @@ fn parses_typed_phase2_expression_shape() {
 #[test]
 fn parses_nested_type_syntax() {
     assert_eq!(
-        parse_type("vec2<length>").into_result().unwrap(),
+        parse_type("vec2<length>").into_result().unwrap().to_type(),
         Type::Vec2(Box::new(Type::Length))
     );
 }
@@ -1643,13 +1688,17 @@ fn parses_scalar_and_recursive_track_types() {
         ("RenderNode", Type::RenderNode),
     ];
     for (source, expected) in scalar_cases {
-        assert_eq!(parse_type(source).into_result().unwrap(), expected);
+        assert_eq!(
+            parse_type(source).into_result().unwrap().to_type(),
+            expected
+        );
     }
 
     assert_eq!(
         parse_type("TrackSegment<Keyframe<vec2<beat>>>")
             .into_result()
-            .unwrap(),
+            .unwrap()
+            .to_type(),
         Type::TrackSegment(Box::new(Type::Keyframe(Box::new(Type::Vec2(Box::new(
             Type::Beat
         ))))))
@@ -1657,7 +1706,8 @@ fn parses_scalar_and_recursive_track_types() {
     assert_eq!(
         parse_type("Keyframe<TrackSegment<length>>")
             .into_result()
-            .unwrap(),
+            .unwrap()
+            .to_type(),
         Type::Keyframe(Box::new(Type::TrackSegment(Box::new(Type::Length))))
     );
 }
@@ -1666,7 +1716,7 @@ fn parses_scalar_and_recursive_track_types() {
 fn parser_rejects_nesting_beyond_the_shared_limit() {
     const LIMIT: usize = 128;
 
-    let nested_type = |depth: usize| format!("{}int{}", "vec2<".repeat(depth), ">".repeat(depth));
+    let nested_type = |depth: usize| format!("{}int{}", "array<".repeat(depth), ">".repeat(depth));
     let limits = ParseLimits {
         max_nesting_depth: LIMIT,
         ..ParseLimits::default()

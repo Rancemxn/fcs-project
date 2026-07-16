@@ -8,12 +8,14 @@ pub use color::Color;
 pub use entity::{
     CollectionBlock, CollectionItem, CollectionsBlock, EntityConstructor, EntityExpression,
     EntityField, ExpandedCollection, ExpandedEntity, ExpandedField, ExpandedSourceDocument,
-    FieldPath, Generator, GeneratorItem, NoteVariant, SourceRange, WithExpression,
+    FieldPath, Generator, GeneratorItem, NoteVariant, SourceEntityConstructor,
+    SourceEntityConstructorKind, SourceRange, WithExpression,
 };
 pub use time::{Beat, BeatError, Bpm, InvalidBpm, SourceBpm};
 pub use types::{
-    BinaryOperator, SourceExpression, SourceLiteral, SourceSpan, SourceType, SourceTypeKind, Type,
-    TypedExpression, TypedExpressionKind, TypedValue, UnaryOperator,
+    BinaryOperator, SourceChooseArm, SourceExpression, SourceLiteral, SourceObjectEntry,
+    SourceSpan, SourceType, SourceTypeKind, Type, TypedExpression, TypedExpressionKind, TypedValue,
+    UnaryOperator,
 };
 
 use crate::version::Version;
