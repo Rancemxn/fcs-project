@@ -141,6 +141,20 @@
   不能替用户选择多个合法解释。只有 package/profile 明确声明、用户显式选择，或所有候选对当前
   输入 canonical-semantic-equivalent 时，才能无询问继续；假设和潜在影响必须进入交付说明与报告设计。
 
+## Agent skills
+
+### Issue tracker
+
+本仓库使用本地 Markdown 文件记录 issue 和 spec，位置为 `.scratch/<feature-slug>/`。详见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+使用默认的五个 triage label：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human` 和 `wontfix`。详见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+本仓库采用 single-context 布局，使用根目录的 `CONTEXT.md` 和 `docs/adr/`。详见 `docs/agents/domain.md`。
+
 ## 依赖、库/API 文档与 Context7
 
 当 `refer/dependencies/` 中没有与项目引用版本匹配的源码时，以下场景必须使用 Context7 查询
