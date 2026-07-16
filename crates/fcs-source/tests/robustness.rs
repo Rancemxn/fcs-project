@@ -155,6 +155,26 @@ fn every_parser_limit_has_a_bounded_failure() {
         assert!(budget.observed() > limit);
         assert_spans_are_bounded(&output, source.as_bytes(), true);
     }
+
+    let token_source = "identifier";
+    let token_output = parse_expression_with_limits(
+        token_source,
+        ParseLimits {
+            max_token_bytes: token_source.len() - 1,
+            ..ParseLimits::default()
+        },
+    );
+    assert_eq!(
+        token_output.diagnostics()[0].code(),
+        DiagnosticCode::RESOURCE_LIMIT_EXCEEDED
+    );
+    let token_budget = token_output.diagnostics()[0]
+        .budget()
+        .expect("token payload resource diagnostics carry structured budget details");
+    assert_eq!(token_budget.kind(), "max_token_bytes");
+    assert_eq!(token_budget.limit(), token_source.len() - 1);
+    assert_eq!(token_budget.observed(), token_source.len());
+    assert_spans_are_bounded(&token_output, token_source.as_bytes(), true);
 }
 
 #[test]
