@@ -90,6 +90,24 @@ fn complete_source_grammar_fixture_parses_with_all_top_level_kinds() {
 }
 
 #[test]
+fn parse_success_conformance_fixtures_are_accepted_at_frontend_boundary() {
+    for (id, source) in [
+        (
+            "source.valid.minimal-fragment",
+            include_str!("../../../conformance/fcs5/source/valid/minimal-fragment.fcs"),
+        ),
+        (
+            "source.valid.escaped-nul-string",
+            include_str!("../../../conformance/fcs5/source/valid/escaped-nul-string.fcs"),
+        ),
+    ] {
+        parse_document(source)
+            .into_result()
+            .unwrap_or_else(|errors| panic!("{id} must parse at the I1 boundary: {errors:?}"));
+    }
+}
+
+#[test]
 fn later_phase_conformance_sources_are_not_rejected_by_the_parser() {
     let sources = [
         include_str!("../../../conformance/fcs5/source/valid/minimal-chart.fcs"),
