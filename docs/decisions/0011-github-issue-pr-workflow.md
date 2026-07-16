@@ -39,3 +39,9 @@ Issue/PR 的便利性也可能模糊资料权威：Issue 中的验收条件、PR
 - 不得为了合并而删除失败 fixture、降低测试、改写历史 finding 或隐藏 open blocker。
 - 不得使用 `gh pr merge --admin` 绕过 branch protection 或 required checks。
 - 不得解析 `gh` 的面向人表格作为自动化接口；必须使用结构化 JSON。
+
+## 5. 2026-07-17 dated amendment：Issue/PR 进度叙事
+
+用户补充接受：Issue 和 PR 不得只保留初始对话、空模板、零散评论或原始 commit 列表。非机械 Issue 必须在正文中以 `Progress` 记录工作契约、有意义检查点、证据、决定、阻塞与下一步；PR 必须按 commit/变更组解释完成内容与原因，并在重要 push 后和转 Ready 前保持正文与当前 diff 一致。
+
+进度以有意义工作单元为粒度，不强制每个 commit 一条。评论可以保留讨论时序，但不能替代正文中的当前可信摘要。Issue/PR 进度仍只是工作流证据，不得替代根规范、conformance artifact、dated review 或 implementation baseline。

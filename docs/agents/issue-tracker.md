@@ -20,6 +20,22 @@ Before implementation, ensure the Issue records:
 
 An Issue may arrange specification work but cannot decide format or runtime semantics. If two materially different behaviors remain valid, stop implementation and route the choice through specification governance.
 
+## Issue progress narrative
+
+The Issue body is the current work contract and must contain an append-only `Progress` section for every non-mechanical unit. Do not leave the body as an initial conversation, an unfilled template, or a pointer to comments.
+
+Add a checkpoint when the contract is established, scope or a decision changes, a meaningful work unit completes, a blocker appears or clears, verification produces a decision-relevant result, a PR opens, or delivery state changes. One entry covers a meaningful checkpoint; do not mirror every commit.
+
+Each entry contains:
+
+- **Completed**: the work unit or state transition;
+- **Evidence**: commits, PR, tests, fixtures, review, or inspected output;
+- **Decisions**: why the chosen direction or change group exists;
+- **Blockers**: current blockers or `none`;
+- **Next**: the next bounded action or final disposition.
+
+Comments may preserve discussion and notifications, but they do not replace the body. Before merge or an explicit close, append a delivery-ready checkpoint. After delivery, append a final checkpoint with the merged/delivered result, final verification, residual work, and follow-up Issues even if `Closes #<n>` has already closed the Issue.
+
 Use parent/sub-issues for a large effort and dependency links for sequencing:
 
 ```text
@@ -85,6 +101,8 @@ The PR body records:
 - skipped/unavailable gates and reason;
 - residual risk and follow-up Issues.
 
+It also maintains a `Progress` section. Group commits by meaningful outcome and explain what the group changed, why it was necessary, the evidence and decisions it produced, current blockers, and the next step. A raw commit list is not progress. Update the body after every material push and before marking the PR ready so the narrative matches the current diff and commit set. A single-checkpoint PR still needs one substantive entry; it does not need one entry per commit.
+
 Select focused and full validation according to the risk-based rules in `AGENTS.md`. A documentation/workflow-only PR does not trigger Rust Clippy, nextest, or cargo fmt. A Rust/build/dependency/test/executable-fixture change must reach one full Rust checkpoint before the PR is ready or merged.
 
 Useful commands:
@@ -104,7 +122,7 @@ Do not merge until required checks pass, review requirements are satisfied, the 
 
 After merge:
 
-1. Confirm the linked Issue closed as intended.
+1. Append the final merged/delivered Issue progress checkpoint, then confirm the linked Issue closed as intended.
 2. Record residual work as linked Issues rather than hidden PR notes.
 3. Update plans, implementation matrix, conformance manifests, or dated reviews only when their owning process requires it.
 4. Do not rewrite historical review evidence to match the merged implementation.
