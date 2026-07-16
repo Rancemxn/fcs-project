@@ -167,9 +167,9 @@
 本仓库采用 single-context 阅读约定；存在根目录 `CONTEXT.md` 时读取它，Accepted ADR 的实际位置
 始终是 `docs/decisions/`，不要创建第二套 `docs/adr/`。详见 `docs/agents/domain.md`。
 
-### Matt Pocock skills
+### Personal engineering skills
 
-本仓库可以使用 `~/.codex/skills` 中已安装的 Matt Pocock 工程 skills。它们是协作流程和推理纪律，不是 FCS、FCBC、Render 或 Conversion 规范的替代品；skill 的建议与本文件、根规范、治理文件或 Accepted ADR 冲突时，必须按“资料职责、权威与冲突处理”中的流程处理，不能直接以 skill 的默认做法覆盖项目约束。
+本仓库只使用 `~/.codex/skills` 中的最小个人 skill 集合：`diagnose`、`tdd`、`zoom-out`、`grill-me`、`grill-with-docs`、`improve-codebase-architecture` 和 `agent-loop`。它们是协作流程和推理纪律，不是 FCS、FCBC、Render 或 Conversion 规范的替代品；skill 的建议与本文件、根规范、治理文件或 Accepted ADR 冲突时，必须按“资料职责、权威与冲突处理”中的流程处理，不能直接以 skill 的默认做法覆盖项目约束。
 
 #### 调用时机
 
@@ -179,13 +179,11 @@
 - 需要对方案、决定或计划进行逐项压力测试时，使用 `grill-me`。若压力测试还应同步维护领域文档，使用 `grill-with-docs`；该 skill 必须使用根目录 `CONTEXT.md` 和 `docs/decisions/`，不得创建 `docs/adr/`。
 - 设计模块接口、边界、seam、可测试性或 AI 可导航性时，使用 `improve-codebase-architecture`；其领域术语和 ADR 阅读同样必须遵守 `docs/agents/domain.md` 的单一上下文约定。
 - 用户要求设计 agent/automation loop 的 Markdown 契约时，使用 `agent-loop`；该 skill 只能产出 `loop.md`，不得执行 loop 或生成运行时机制。
-- 需要创建或编辑新的 agent skill 时，使用 `write-a-skill`。
 
 #### 调用边界
 
-- 简单问答、单文件的机械编辑、只读检查或与上述场景无关的任务不必强行调用 Matt Pocock skill。
+- 简单问答、单文件的机械编辑、只读检查或与上述场景无关的任务不必强行调用个人 skill。
 - `grill-me` 和 `grill-with-docs` 会持续追问或修改领域文档，只有在用户明确要求，或任务描述已经明确要求对应流程时才调用；不要仅凭“看起来可能有帮助”启动它们。
-- `github-triage`、`to-issues` 和 `to-prd` 默认操作 GitHub，与本仓库的 `.scratch/<feature-slug>/` 本地 issue tracker 冲突；在它们完成本地适配前不得调用。
 - 先阅读本文件及目标路径更近的 `AGENTS.md`，再按“阅读路由”读取相关规范、ADR、fixture 和现有 docs；skill 不能免除这些前置阅读。
 - skill 产出的计划、术语、假设和 issue 只能记录或安排工作，不能创造新的规范语义。凡是规范未定义的边界，记录为候选并报告影响；不得用 skill 的默认推断替代显式 semantic profile、规范修订或用户选择。
 - 任务结束时按本文件的 Rust 验证要求执行检查；若 skill 自带的验证或写作流程与仓库命令、目录职责或提交范围冲突，以本文件为准，并在交付说明中标明未执行的步骤及原因。
