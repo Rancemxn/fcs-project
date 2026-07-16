@@ -60,3 +60,34 @@ fn expression_parser_uses_chumsky_stacker_without_a_fixed_thread() {
         );
     }
 }
+
+#[test]
+fn document_parser_uses_bounded_recovery_and_consumes_trailing_input() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let parser = fs::read_to_string(crate_dir.join("src/parser/document.rs"))
+        .expect("document parser source must be readable");
+
+    assert!(
+        parser.contains("skip_then_retry_until"),
+        "document parser must use parser-owned Chumsky recovery"
+    );
+    assert!(
+        parser.contains("nested_delimiters"),
+        "document recovery must skip balanced groups before one-token fallback"
+    );
+    assert!(
+        parser.contains("then_ignore(end())"),
+        "document parser must consume the complete token stream"
+    );
+    for forbidden in [
+        "source.find(",
+        "source.as_bytes()",
+        "fn scan_top_level",
+        "fn rescan_diagnostic",
+    ] {
+        assert!(
+            !parser.contains(forbidden),
+            "document parser must not add a raw-source recovery path: {forbidden}"
+        );
+    }
+}

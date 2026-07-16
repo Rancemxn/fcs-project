@@ -291,8 +291,22 @@ fn document_parser<'tokens, I>()
 where
     I: chumsky::input::ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
 {
+    // Recovery skips a complete balanced group whenever possible, then retries the owning
+    // declaration parser at the next token boundary. The one-token fallback guarantees progress
+    // for truncated groups without introducing a second source scanner.
+    let balanced_group = nested_delimiters(
+        left_brace(),
+        right_brace(),
+        [
+            (left_parenthesis(), right_parenthesis()),
+            (left_bracket(), right_bracket()),
+        ],
+        |_| (),
+    );
+    let recovery_skip = balanced_group.or(any().ignored());
+    let item = top_level_item_parser().recover_with(skip_then_retry_until(recovery_skip, end()));
     header_parser()
-        .then(top_level_item_parser().repeated().collect::<Vec<_>>())
+        .then(item.repeated().collect::<Vec<_>>())
         .map(|(source_version, items)| ParsedDocument {
             source_version,
             items,

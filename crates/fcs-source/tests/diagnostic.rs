@@ -83,6 +83,68 @@ fn bound_parse_error_fixtures_keep_stable_categories_and_spans() {
 }
 
 #[test]
+fn document_recovery_reports_independent_errors_without_partial_output() {
+    let source = "#fcs 5.0.0\n\
+format { profile: fragment; }\n\
+meta { title: \"prè missing terminator\" }\n\
+tempoMap { 0beat -> ; }\n\
+meta { title: \"valid sibling\"; }";
+
+    let output = parse_document(source);
+    assert!(
+        output.output().is_none(),
+        "errors must suppress partial AST"
+    );
+    assert_eq!(
+        output.diagnostics().len(),
+        2,
+        "independent malformed declarations should both be reported once: {:?}",
+        output.diagnostics()
+    );
+    assert!(
+        output
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.code() == DiagnosticCode::SYNTAX_INVALID_TOKEN)
+    );
+    let second_error_start = output.diagnostics()[1].primary_span().start;
+    assert!(second_error_start >= source.find("tempoMap").unwrap());
+    assert!(
+        output
+            .diagnostics()
+            .windows(2)
+            .all(|pair| { pair[0].primary_span().start <= pair[1].primary_span().start })
+    );
+}
+
+#[test]
+fn document_recovery_skips_unclosed_groups_before_the_next_declaration() {
+    let source = "#fcs 5.0.0\n\
+format { profile: fragment; }\n\
+meta { title: \"unterminated group\";\n\
+tempoMap { 0beat -> ; }\n\
+meta { title: \"valid sibling\"; }";
+
+    let output = parse_document(source);
+    assert!(
+        output.output().is_none(),
+        "errors must suppress partial AST"
+    );
+    assert_eq!(
+        output.diagnostics().len(),
+        2,
+        "unclosed group and malformed sibling should both be diagnosed: {:?}",
+        output.diagnostics()
+    );
+    assert!(
+        output
+            .diagnostics()
+            .windows(2)
+            .all(|pair| { pair[0].primary_span().start < pair[1].primary_span().start })
+    );
+}
+
+#[test]
 fn parser_resource_limits_use_the_stable_resource_code() {
     let result = parse_expression_with_limits(
         "1",
