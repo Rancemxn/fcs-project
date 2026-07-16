@@ -4,7 +4,7 @@
 
 ## 仓库结构与规范入口
 
-- 当前活动开发分支是 `master`，workspace 只有唯一、无版本前缀的
+- 当前默认开发分支是 `main`，workspace 只有唯一、无版本前缀的
   `crates/fcs-source`。`archive/fcs4-pre-cutover` 保存完整切换前工作树；FCS 4 core、旧
   converter、旧 CLI、VM 和 bytecode 仅可从该归档分支读取，不属于活动实现。I0 决策由
   `docs/decisions/0006-unversioned-source-cutover.md` 定义，逐步执行和当前状态见
@@ -120,6 +120,19 @@
   rg -n 'parse_document|nextest|Context7' crates docs
   ```
 
+- 用 `jq` 处理 `gh --json` 或 `gh api` 输出，不要解析面向人的表格文本：
+
+  ```text
+  gh issue list --state open --json number,title,labels |
+    jq -r '.[] | "#\(.number)\t\(.title)\t\([.labels[].name] | join(","))"'
+  gh pr view 42 --json state,isDraft,mergeable,reviewDecision,statusCheckRollup |
+    jq -e '.state == "OPEN" and (.isDraft | not) and .mergeable != "CONFLICTING"'
+  ```
+
+  简单投影可直接用 `gh --jq`；需要复用 filter、组合多个输入或使用 `jq -e`
+  作为门禁时使用独立 `jq`。动态值用 `--arg`/`--argjson` 传入，不要拼接 filter；
+  对分页 API 使用 `gh api --paginate --slurp` 后再聚合。
+
 - 用 `sg`（ast-grep）搜索 Rust 的语法结构；当空格、换行或具体变量名不应影响匹配时，优先于纯文本搜索：
 
   ```text
@@ -135,17 +148,30 @@
 
 - 日常编译和测试不要使用 `--release`。
 - 项目使用 `cargo-nextest` 运行测试，不要把普通 `cargo test` 当作默认测试命令。
-- 每次运行测试前先执行 Clippy；推荐使用：
+- 验证遵循“足以发现当前错误的最小反馈”：在编辑循环中优先运行受影响 crate、模块、测试或
+  fixture 的 focused check。不要在每个文件、patch 或 focused test 后运行全 workspace Clippy/nextest，
+  也不要把全量 Clippy 作为每次 focused test 的前置条件。
+- 只在 Rust 源码、build/dependency 配置、测试或可执行 fixture 发生变更，且到达一个可交付检查点时
+  运行全量门禁。检查点包括：一个完整工作单元完成、PR 从 draft 转 ready、交接给其他实施者，或变更涉及
+  公开接口、workspace/dependency、conformance 行为。用户明确要求全量验证时也应执行。
+- 全量 Rust 检查点的默认顺序是：
 
   ```text
+  cargo fmt --all -- --check
   cargo clippy --workspace --all-targets -- -D warnings
   cargo nextest run --workspace
   ```
 
-- 任务结束时运行 `cargo fmt --all` 统一 Rust 代码格式。若只需检查格式，可使用 `cargo fmt --all -- --check`。
-- 修改 source parser 或 elaborator 时先补充失败测试；converter、VM 和旧 bytecode 已不在活动
+  若格式检查只发现本次 Rust 改动的差异，运行 `cargo fmt --all` 并审查它的 diff；若失败来自与任务无关的
+  既有文件，不要顺带格式化，应记录为既有门禁问题。一个检查点的全量门禁通过后，只有后续改动可能使结果
+  失效时才重跑。
+- 只修改 Markdown、AGENTS、Issue/PR 模板、评论、label 或其他不参与 Rust 构建的元数据时，不运行 Clippy、
+  nextest 或 cargo fmt；改用 diff、链接、Markdown/YAML/JSON schema 和相关 CLI smoke check。
+- 修改 source parser 或 elaborator 时先补充失败测试，并在 red→green 循环中只运行能复现当前行为的
+  focused test；完成该工作单元后再进全量 Rust 检查点。converter、VM 和旧 bytecode 已不在活动
   workspace。未来跨格式语义变化必须针对 canonical model、ConversionReport、
   round-trip fixture 和 `examples/` 验证，converter 不得直接消费 source AST。
+- 交付说明必须列出实际运行的 focused/full 检查、未运行的门禁及原因。不得将“未适用”写成“已通过”。
 - 使用校验脚本或外部模拟器验证解析逻辑时，先确认校验脚本与模拟器的代码逻辑一致，不能用有问题的校验脚本得出结论。
 - 遇到规范未定义的外部谱面边界时，研究阶段可以记录候选假设，但规范性实现不得发明“通用
   语义”。Strict mode 必须失败或要求显式 semantic profile；repair 只能修复非法或矛盾输入，
@@ -156,38 +182,44 @@
 
 ### Issue tracker
 
-本仓库使用本地 Markdown 文件记录 issue 和 spec，位置为 `.scratch/<feature-slug>/`。详见 `docs/agents/issue-tracker.md`。
+本仓库使用 GitHub Issues 记录工作契约、依赖和验收条件，使用 Pull Requests 交付修改与验证证据。使用 `gh` 读写 Issue/PR，使用 `jq` 处理结构化 JSON。完整流程见 `docs/agents/issue-tracker.md`，接受的决策见 ADR 0011。Issue、PR 及其评论只能安排或证明工作，不能创造规范语义。
 
 ### Triage labels
 
-使用默认的五个 triage label：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human` 和 `wontfix`。详见 `docs/agents/triage-labels.md`。
+使用五个 GitHub 状态 label：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human` 和 `wontfix`。一个 open Issue 同时只保留一个状态 label；`bug`、`documentation`、`enhancement` 等是正交的类型 label。详见 `docs/agents/triage-labels.md`。
+
+### GitHub delivery workflow
+
+- 只读检查使用 `gh issue list/view`、`gh pr list/view/diff/checks` 和 `gh api`。创建、编辑、评论、关闭、push、review 或 merge 是外部状态变更，只在用户明确要求对应工作流时执行。
+- `gh` 因 DNS、连接超时/重置、TLS 中断或 HTTP 502/503/504 等瞬时网络问题失败时，每隔 5 秒重试同一操作，最多重试 5 次。写操作在重试前必须先查询远程是否已生效，避免重复创建 Issue/PR、重复评论或重复 merge。不得重试认证/权限失败、参数/校验错误、not found、合并冲突或门禁失败；应立即报告。五次重试耗尽后停止并报告最后一次错误。
+- 开始非机械工作前，确保有一个写明范围、权威输入、验收条件、非目标、依赖和验证方法的 Issue。大型工作用 parent/sub-issue 和 blocked-by/blocking 关系，不在一个 Issue 中堆放不可独立验收的横向任务。
+- 从最新 `origin/main` 创建 `codex/<issue>-<slug>` 分支；一个分支和 PR 只交付一个可审查工作单元。不要将工作区中与 Issue 无关的改动带入提交。
+- PR 正文必须链接 Issue；只有 PR 合并即应关闭 Issue 时才使用 `Closes #<n>`，否则使用 `Refs #<n>`。正文同时记录规范/ADR/conformance/review 影响、实际验证命令、未执行门禁和剩余风险。
+- push 前审查 staged diff；PR 合并前检查 `gh pr checks --required`、review decision、mergeability 和未解决评论。不得用 `--admin` 绕过 branch protection，也不得为了变绿而降低测试、fixture 或 review gate。
+- 合并后确认 Issue 状态和后续 blocker，必要时在 Issue 中留下最终验证、未完成项与后续 Issue 链接。
 
 ### Domain docs
 
 本仓库采用 single-context 阅读约定；存在根目录 `CONTEXT.md` 时读取它，Accepted ADR 的实际位置
 始终是 `docs/decisions/`，不要创建第二套 `docs/adr/`。详见 `docs/agents/domain.md`。
 
-### Matt Pocock skills
+### Personal engineering skills
 
-本仓库可以使用 `C:\Users\Admin\.agents\skills` 中的 Matt Pocock 工程 skills。它们是协作流程和推理纪律，不是 FCS、FCBC、Render 或 Conversion 规范的替代品；skill 的建议与本文件、根规范、治理文件或 Accepted ADR 冲突时，必须按“资料职责、权威与冲突处理”中的流程处理，不能直接以 skill 的默认做法覆盖项目约束。
+本仓库只使用 `~/.codex/skills` 中的最小个人 skill 集合：`diagnose`、`tdd`、`zoom-out`、`grill-me`、`grill-with-docs`、`improve-codebase-architecture` 和 `agent-loop`。它们是协作流程和推理纪律，不是 FCS、FCBC、Render 或 Conversion 规范的替代品；skill 的建议与本文件、根规范、治理文件或 Accepted ADR 冲突时，必须按“资料职责、权威与冲突处理”中的流程处理，不能直接以 skill 的默认做法覆盖项目约束。
 
 #### 调用时机
 
 - 当任务明确匹配某个 skill 的描述时调用对应 skill；用户直接点名 skill 或 slash command 时，按用户指定的 skill 执行。
-- 在开始实现前，若需求来自 spec、issue 或一组 tickets，使用 `implement`；若需求尚未足够清晰、规模超过单次会话，使用 `wayfinder` 先建立决策地图。
-- 用户要求把已有讨论整理成 spec、tickets 或 triage 操作时，分别使用 `to-spec`、`to-tickets` 或 `triage`；这些会读写已配置的 `.scratch/<feature-slug>/` issue tracker，不能擅自改用 GitHub/GitLab。
-- 用户要求 review 某个分支、提交点或工作区变更时，使用 `code-review`，同时检查仓库 Standards 与 originating spec 两个维度。
-- 用户报告 bug、异常、失败或性能回归并要求诊断时，使用 `diagnosing-bugs`；用户要求 test-first、red-green-refactor 或 integration tests 时，使用 `tdd`。
-- 设计模块接口、边界、seam、可测试性或 AI 可导航性时，使用 `codebase-design`；需要构建或修订领域术语、`CONTEXT.md` 或 ADR 时，使用 `domain-modeling`。
-- 需要外部事实、依赖/API 资料或高可信来源调查并沉淀 Markdown 证据时，使用 `research`，并遵守本仓库对 `refer/`、固定 commit/hash 和 `refer/dependencies/` 的阅读路由。
-- 需要验证状态模型或逻辑是否可行、且产物明确是一次性探索时，使用 `prototype`；需要对方案、决定或计划进行逐项压力测试时，使用 `grilling`。若压力测试还应同步维护领域文档，使用 `grill-with-docs`。
-- 需要解决正在进行的 merge/rebase 冲突时，使用 `resolving-merge-conflicts`；需要把当前会话交给下一次 agent 时，使用 `handoff`。
-- 需要了解应选哪个工程 skill 时，使用 `ask-matt`；需要创建或编辑 skill 时，使用 `writing-great-skills`。
+- 用户报告 bug、异常、失败或性能回归并要求诊断时，使用 `diagnose`；用户要求 test-first、red-green-refactor 或 integration tests 时，使用 `tdd`。
+- 对陌生代码区域需要先了解更高层的模块、调用方与系统边界时，使用 `zoom-out`。
+- 需要对方案、决定或计划进行逐项压力测试时，使用 `grill-me`。若压力测试还应同步维护领域文档，使用 `grill-with-docs`；该 skill 必须使用根目录 `CONTEXT.md` 和 `docs/decisions/`，不得创建 `docs/adr/`。
+- 设计模块接口、边界、seam、可测试性或 AI 可导航性时，使用 `improve-codebase-architecture`；其领域术语和 ADR 阅读同样必须遵守 `docs/agents/domain.md` 的单一上下文约定。
+- 用户要求设计 agent/automation loop 的 Markdown 契约时，使用 `agent-loop`；该 skill 只能产出 `loop.md`，不得执行 loop 或生成运行时机制。
 
 #### 调用边界
 
-- 简单问答、单文件的机械编辑、只读检查或与上述场景无关的任务不必强行调用 Matt Pocock skill。
-- `implement`、`to-spec`、`to-tickets`、`triage`、`wayfinder`、`grilling` 等会改变工作流状态或持续追问的 skill，只有在用户明确要求，或任务描述已经明确要求对应流程时才调用；不要仅凭“看起来可能有帮助”启动它们。
+- 简单问答、单文件的机械编辑、只读检查或与上述场景无关的任务不必强行调用个人 skill。
+- `grill-me` 和 `grill-with-docs` 会持续追问或修改领域文档，只有在用户明确要求，或任务描述已经明确要求对应流程时才调用；不要仅凭“看起来可能有帮助”启动它们。
 - 先阅读本文件及目标路径更近的 `AGENTS.md`，再按“阅读路由”读取相关规范、ADR、fixture 和现有 docs；skill 不能免除这些前置阅读。
 - skill 产出的计划、术语、假设和 issue 只能记录或安排工作，不能创造新的规范语义。凡是规范未定义的边界，记录为候选并报告影响；不得用 skill 的默认推断替代显式 semantic profile、规范修订或用户选择。
 - 任务结束时按本文件的 Rust 验证要求执行检查；若 skill 自带的验证或写作流程与仓库命令、目录职责或提交范围冲突，以本文件为准，并在交付说明中标明未执行的步骤及原因。
