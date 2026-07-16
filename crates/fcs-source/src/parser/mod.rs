@@ -8,6 +8,9 @@ mod lexer;
 mod tempo;
 mod token;
 
+pub(super) const NESTED_GENERATOR_ERROR: &str = "compile-time.nested-generator";
+pub(super) const MISPLACED_GENERATOR_ERROR: &str = "compile-time.misplaced-generator";
+
 pub use document::{
     parse_document, parse_document_bytes, parse_document_bytes_with_limits,
     parse_document_with_limits,

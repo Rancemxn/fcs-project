@@ -1,4 +1,4 @@
-use chumsky::{input::Input as _, prelude::*};
+use chumsky::{error::RichReason, input::Input as _, prelude::*};
 
 use crate::ast::{
     Document, DocumentProfile, FeatureList, FormatBlock, FormatFeature, FormatField, FormatProfile,
@@ -10,7 +10,7 @@ use crate::diagnostic::{
 };
 
 use super::{
-    ParseLimits,
+    MISPLACED_GENERATOR_ERROR, ParseLimits,
     definitions::definitions_block_parser,
     entities::collections_block_parser,
     header::{header_parser, parse_header_tokens},
@@ -79,20 +79,32 @@ pub(crate) fn parse_document_tokens(
     if !errors.is_empty() {
         let diagnostics = errors
             .into_iter()
-            .map(|error| {
-                Diagnostic::new(
-                    DiagnosticCode::SYNTAX_INVALID_TOKEN,
-                    DiagnosticStage::Parse,
-                    "invalid document syntax",
-                    source_span(*error.span()),
-                )
-            })
+            .map(parse_error_diagnostic)
             .collect::<Vec<_>>();
         return ParseOutput::new(None, diagnostics);
     }
 
     let parsed = parsed.expect("document parser produces output when it has no errors");
     finish_document(source.len(), parsed)
+}
+
+fn parse_error_diagnostic(error: Rich<'_, Token, ChumskySpan>) -> Diagnostic {
+    let span = source_span(*error.span());
+    let (code, message) = match error.reason() {
+        RichReason::Custom(kind) if kind == super::NESTED_GENERATOR_ERROR => (
+            DiagnosticCode::COMPILE_TIME_NESTED_GENERATOR,
+            "nested generator is not allowed in a generator body",
+        ),
+        RichReason::Custom(kind) if kind == MISPLACED_GENERATOR_ERROR => (
+            DiagnosticCode::COMPILE_TIME_MISPLACED_GENERATOR,
+            "generator is not allowed in this owner",
+        ),
+        _ => (
+            DiagnosticCode::SYNTAX_INVALID_TOKEN,
+            "invalid document syntax",
+        ),
+    };
+    Diagnostic::new(code, DiagnosticStage::Parse, message, span)
 }
 
 fn finish_document(source_len: usize, parsed: ParsedDocument) -> ParseOutput<Document> {
@@ -255,6 +267,10 @@ fn diagnostic_for_unknown(kind: UnknownKind, span: SourceSpan) -> Diagnostic {
         UnknownKind::Misplaced => (
             DiagnosticCode::SYNTAX_MISPLACED_BLOCK,
             "block is not valid in the current top-level context",
+        ),
+        UnknownKind::MisplacedGenerator => (
+            DiagnosticCode::COMPILE_TIME_MISPLACED_GENERATOR,
+            "generator is not allowed in this owner",
         ),
         UnknownKind::Trailing => (
             DiagnosticCode::SYNTAX_TRAILING_INPUT,
@@ -553,10 +569,12 @@ where
 {
     any()
         .filter(is_unknown_start)
-        .map_with(|_, extra| source_span(extra.span()))
+        .map_with(|token, extra| (token, source_span(extra.span())))
         .then(source_group_parser(true).or_not())
-        .map(|(span, body)| DocumentItem::Unknown {
-            kind: if body.is_some() {
+        .map(|((token, span), body)| DocumentItem::Unknown {
+            kind: if matches!(token, Token::Keyword(Keyword::Generate)) {
+                UnknownKind::MisplacedGenerator
+            } else if body.is_some() {
                 UnknownKind::Unknown
             } else {
                 UnknownKind::Trailing
@@ -711,6 +729,7 @@ impl DocumentItem {
 enum UnknownKind {
     Unknown,
     Misplaced,
+    MisplacedGenerator,
     Trailing,
 }
 

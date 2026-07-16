@@ -2,11 +2,13 @@ use chumsky::{input::ValueInput, prelude::*};
 
 use crate::ast::{
     CollectionBlock, CollectionItem, CollectionsBlock, EntityConstructor, EntityExpression,
-    EntityField, FieldPath, Generator, GeneratorItem, NoteVariant, SourceEntityConstructor,
-    SourceEntityConstructorKind, SourceExpression, SourceRange, SourceSpan, Type, WithExpression,
+    EntityField, FieldPath, Generator, GeneratorItem, GeneratorOwner, NoteVariant,
+    SourceEntityConstructor, SourceEntityConstructorKind, SourceExpression, SourceRange,
+    SourceSpan, Type, WithExpression,
 };
 
 use super::{
+    MISPLACED_GENERATOR_ERROR, NESTED_GENERATOR_ERROR,
     definitions::{identifier_with_span, let_statement_parser},
     expression::expression_parser,
     input::{ChumskySpan, ParserExtra, source_span},
@@ -43,11 +45,35 @@ where
                 .collect::<Vec<_>>()
                 .delimited_by(just(left_brace()), just(right_brace())),
         )
-        .map_with(|(collection_name, items), extra| CollectionBlock {
-            collection_name,
-            items,
-            span: source_span(extra.span()),
+        .map_with(|(collection_name, mut items), extra| {
+            assign_collection_generator_owners(&mut items, &collection_name);
+            CollectionBlock {
+                collection_name,
+                items,
+                span: source_span(extra.span()),
+            }
         })
+}
+
+fn assign_collection_generator_owners(items: &mut [CollectionItem], collection_name: &str) {
+    for item in items {
+        match item {
+            CollectionItem::Generator(generator) => {
+                *generator.owner = GeneratorOwner::Collection {
+                    name: collection_name.to_owned(),
+                };
+            }
+            CollectionItem::Conditional {
+                then_items,
+                else_items,
+                ..
+            } => {
+                assign_collection_generator_owners(then_items, collection_name);
+                assign_collection_generator_owners(else_items, collection_name);
+            }
+            CollectionItem::Constructor(_) | CollectionItem::Expression(_) => {}
+        }
+    }
 }
 
 fn collection_item_parser<'tokens, I>()
@@ -126,6 +152,9 @@ where
              extra| {
                 let range_span = SourceSpan::new(start.span().start, step.span().end);
                 Generator {
+                    owner: Box::new(GeneratorOwner::Collection {
+                        name: String::new(),
+                    }),
                     variable,
                     variable_span,
                     variable_type,
@@ -170,7 +199,10 @@ where
                     span: source_span(extra.span()),
                 },
             );
+        let nested_generator = just(Token::Keyword(Keyword::Generate))
+            .try_map(|_, span| Err(chumsky::error::Rich::custom(span, NESTED_GENERATOR_ERROR)));
         choice((
+            nested_generator,
             let_statement_parser().map(GeneratorItem::Let),
             just(Token::Keyword(Keyword::Emit))
                 .ignore_then(entity_expression_parser())
@@ -328,7 +360,16 @@ where
             span: source_span(extra.span()),
         })
         .then_ignore(just(colon()))
-        .then(expression_parser())
+        .then(
+            just(Token::Keyword(Keyword::Generate))
+                .try_map(|_, span| {
+                    Err(chumsky::error::Rich::custom(
+                        span,
+                        MISPLACED_GENERATOR_ERROR,
+                    ))
+                })
+                .or(expression_parser()),
+        )
         .then_ignore(just(semicolon()))
         .map_with(|(path, value), extra| EntityField {
             path,
