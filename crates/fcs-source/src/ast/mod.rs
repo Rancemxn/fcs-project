@@ -9,7 +9,7 @@ pub use color::Color;
 pub use entity::{
     CollectionBlock, CollectionItem, CollectionsBlock, EntityConstructor, EntityExpression,
     EntityField, ExpandedCollection, ExpandedEntity, ExpandedField, ExpandedSourceDocument,
-    FieldPath, Generator, GeneratorItem, NoteVariant, SourceEntityConstructor,
+    FieldPath, Generator, GeneratorItem, GeneratorOwner, NoteVariant, SourceEntityConstructor,
     SourceEntityConstructorKind, SourceRange, WithExpression,
 };
 pub use time::{Beat, BeatError, Bpm, InvalidBpm, SourceBpm};

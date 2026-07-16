@@ -600,11 +600,12 @@ fn rejects_generator_variable_types_outside_int_and_beat() {
 
 #[test]
 fn rejects_return_and_nested_generate_in_generator_body() {
-    for (statement, description) in [
-        ("return i;", "return"),
+    for (statement, description, expected_code) in [
+        ("return i;", "return", DiagnosticCode::SYNTAX_INVALID_TOKEN),
         (
             "generate j: int in 0..=1 step 1 { emit tap { gameplay.time: 0beat; }; }",
             "nested generator",
+            DiagnosticCode::COMPILE_TIME_NESTED_GENERATOR,
         ),
     ] {
         let source = format!(
@@ -617,11 +618,7 @@ fn rejects_return_and_nested_generate_in_generator_body() {
         let errors = parse_document(&source)
             .into_result()
             .expect_err("unsupported generator body statement must be rejected");
-        assert_eq!(
-            errors[0].code(),
-            DiagnosticCode::SYNTAX_INVALID_TOKEN,
-            "{description}"
-        );
+        assert_eq!(errors[0].code(), expected_code, "{description}");
     }
 }
 

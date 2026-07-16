@@ -7,6 +7,7 @@ use crate::ast::{
 };
 
 use super::{
+    MISPLACED_GENERATOR_ERROR,
     entities::strict_entity_expression_parser,
     expression::{expression_parser, type_parser},
     input::{ChumskySpan, ParserExtra, source_span},
@@ -151,7 +152,14 @@ where
                     span: source_span(extra.span()),
                 })
             });
+        let misplaced_generator = just(Token::Keyword(Keyword::Generate)).try_map(|_, span| {
+            Err(chumsky::error::Rich::custom(
+                span,
+                MISPLACED_GENERATOR_ERROR,
+            ))
+        });
         choice((
+            misplaced_generator,
             let_statement_parser().map(FunctionStatement::Let),
             just(Token::Keyword(Keyword::Return))
                 .ignore_then(expression_parser())
@@ -274,7 +282,14 @@ where
                     span: source_span(extra.span()),
                 })
             });
+        let misplaced_generator = just(Token::Keyword(Keyword::Generate)).try_map(|_, span| {
+            Err(chumsky::error::Rich::custom(
+                span,
+                MISPLACED_GENERATOR_ERROR,
+            ))
+        });
         choice((
+            misplaced_generator,
             let_statement_parser().map(TemplateStatement::Let),
             just(Token::Keyword(Keyword::Return))
                 .ignore_then(strict_entity_expression_parser())

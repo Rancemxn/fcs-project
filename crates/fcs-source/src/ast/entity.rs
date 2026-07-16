@@ -134,12 +134,28 @@ pub struct SourceRange {
 /// A compile-time generator contained in a collection block.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Generator {
+    /// The syntactic owner of this generator. The owner is retained without
+    /// resolving its registered entity type; later phases own that binding.
+    pub owner: Box<GeneratorOwner>,
     pub variable: String,
     pub variable_span: SourceSpan,
     pub variable_type: Type,
     pub range: SourceRange,
     pub body: Vec<GeneratorItem>,
     pub span: SourceSpan,
+}
+
+/// A source-level owner context for a generator.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GeneratorOwner {
+    /// A generator directly or conditionally contained by a named collection.
+    Collection { name: String },
+    /// A generator contained by a Track's `segments` collection.
+    TrackSegments {
+        track: String,
+        target: FieldPath,
+        span: SourceSpan,
+    },
 }
 
 /// A source item emitted by a compile-time generator.

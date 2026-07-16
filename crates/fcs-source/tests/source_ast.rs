@@ -1,8 +1,8 @@
-use fcs_source::diagnostic::DiagnosticCode;
+use fcs_source::diagnostic::{DiagnosticCode, DiagnosticStage};
 use fcs_source::{
     ast::{
-        Definition, DocumentProfile, FunctionStatement, SourceSpan, SourceTypeKind,
-        TopLevelBlockKind, Type,
+        CollectionItem, Definition, DocumentProfile, FunctionStatement, GeneratorOwner, SourceSpan,
+        SourceTypeKind, TopLevelBlockKind, Type,
     },
     parser::parse_document,
     parser::parse_type,
@@ -276,10 +276,19 @@ fn template_returns_reject_value_only_expression_forms() {
 
 #[test]
 fn definition_bodies_reject_owner_invalid_generator_and_entity_statements() {
-    for body in [
-        "emit tap { gameplay.time: 0beat; };",
-        "generate i: int in 0..<1 step 1 { emit tap { gameplay.time: 0beat; }; }",
-        "return tap { gameplay.time: 0beat; };",
+    for (body, expected_code) in [
+        (
+            "emit tap { gameplay.time: 0beat; };",
+            DiagnosticCode::SYNTAX_INVALID_TOKEN,
+        ),
+        (
+            "generate i: int in 0..<1 step 1 { emit tap { gameplay.time: 0beat; }; }",
+            DiagnosticCode::COMPILE_TIME_MISPLACED_GENERATOR,
+        ),
+        (
+            "return tap { gameplay.time: 0beat; };",
+            DiagnosticCode::SYNTAX_INVALID_TOKEN,
+        ),
     ] {
         let source = format!(
             "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ fn invalid() -> int {{ {body} }} }}"
@@ -287,11 +296,7 @@ fn definition_bodies_reject_owner_invalid_generator_and_entity_statements() {
         let errors = parse_document(&source)
             .into_result()
             .expect_err("function bodies only accept let/if/value-return statements");
-        assert_eq!(
-            errors[0].code(),
-            fcs_source::diagnostic::DiagnosticCode::SYNTAX_INVALID_TOKEN,
-            "{body}"
-        );
+        assert_eq!(errors[0].code(), expected_code, "{body}");
     }
 }
 
@@ -314,5 +319,77 @@ fn malformed_definition_body_does_not_swallow_following_declaration() {
         errors
             .iter()
             .all(|error| error.primary_span().end <= following_start)
+    );
+}
+
+#[test]
+fn generator_placement_errors_use_stable_categories_and_keyword_spans() {
+    let cases = [
+        (
+            include_str!("../../../conformance/fcs5/source/invalid/nested-generator.fcs"),
+            DiagnosticCode::COMPILE_TIME_NESTED_GENERATOR,
+        ),
+        (
+            include_str!("../../../conformance/fcs5/source/invalid/misplaced-generator.fcs"),
+            DiagnosticCode::COMPILE_TIME_MISPLACED_GENERATOR,
+        ),
+        (
+            "#fcs 5.0.0\nformat { profile: fragment; }\ndefinitions {\n\
+                fn bad() -> int { generate i: int in 0..<1 step 1 { } }\n\
+            }",
+            DiagnosticCode::COMPILE_TIME_MISPLACED_GENERATOR,
+        ),
+        (
+            "#fcs 5.0.0\nformat { profile: fragment; }\ndefinitions {\n\
+                template Note bad() { generate i: int in 0..<1 step 1 { } }\n\
+            }",
+            DiagnosticCode::COMPILE_TIME_MISPLACED_GENERATOR,
+        ),
+        (
+            "#fcs 5.0.0\nformat { profile: fragment; }\ncollections {\n\
+                notes { tap { gameplay.time: generate; }; }\n\
+            }",
+            DiagnosticCode::COMPILE_TIME_MISPLACED_GENERATOR,
+        ),
+    ];
+
+    for (source, expected_code) in cases {
+        let errors = parse_document(source)
+            .into_result()
+            .expect_err("generator placement must be rejected");
+        let start = if expected_code == DiagnosticCode::COMPILE_TIME_NESTED_GENERATOR {
+            source.rfind("generate").expect("nested generator keyword")
+        } else {
+            source.find("generate").expect("generator keyword")
+        };
+        assert_eq!(errors[0].code(), expected_code, "{source}");
+        assert_eq!(errors[0].stage(), DiagnosticStage::Parse);
+        assert_eq!(
+            errors[0].primary_span(),
+            SourceSpan::new(start, start + "generate".len()),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn collection_generators_retain_their_owner_context() {
+    let source = "#fcs 5.0.0\nformat { profile: fragment; }\ncollections {\n\
+        notes { if true { generate i: int in 0..<1 step 1 { } } }\n\
+    }";
+    let document = parse_document(source)
+        .into_result()
+        .expect("collection generator is valid source syntax");
+    let CollectionItem::Conditional { then_items, .. } = &document.collections[0].items[0] else {
+        panic!("expected collection conditional");
+    };
+    let CollectionItem::Generator(generator) = &then_items[0] else {
+        panic!("expected nested collection generator");
+    };
+    assert_eq!(
+        generator.owner.as_ref(),
+        &GeneratorOwner::Collection {
+            name: "notes".to_owned()
+        }
     );
 }
