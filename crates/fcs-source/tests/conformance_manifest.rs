@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use crc::{CRC_32_ISO_HDLC, Crc};
+use fcs_source::parser::parse_document;
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 
@@ -676,6 +677,75 @@ fn typed_manifests_load_with_bound_counts() {
     assert_eq!(render.fixture.len(), 1);
     assert_eq!(render.source_fixture.len(), 3);
     assert_eq!(render.binding_fixture.len(), 1);
+}
+
+#[test]
+fn fcs_source_fixtures_execute_at_the_declared_frontend_boundary() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("conformance/fcs5");
+    let mut parse_success = 0;
+    let mut parse_error = 0;
+    let mut later_stage = 0;
+
+    for fixture in &fcs.fixture {
+        let path = fcs_base.join(&fixture.path);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+        let output = parse_document(&source);
+
+        match fixture.stage {
+            FixtureStage::Parse => match fixture.expect {
+                FixtureExpectation::Success => {
+                    parse_success += 1;
+                    output.into_result().unwrap_or_else(|errors| {
+                        panic!("{} must parse successfully: {errors:?}", fixture.id)
+                    });
+                }
+                FixtureExpectation::Error => {
+                    parse_error += 1;
+                    assert!(
+                        output.output().is_none(),
+                        "{} must not expose a partial AST",
+                        fixture.id
+                    );
+                    let errors = output
+                        .into_result()
+                        .expect_err("fixture must fail to parse");
+                    let expected = fixture
+                        .diagnostic
+                        .as_deref()
+                        .expect("parse-error fixture has a manifest category");
+                    assert!(
+                        errors
+                            .iter()
+                            .any(|diagnostic| diagnostic.code().as_str() == expected),
+                        "{} expected {expected}, got {errors:?}",
+                        fixture.id
+                    );
+                    assert!(errors.iter().all(|diagnostic| {
+                        let span = diagnostic.primary_span();
+                        span.start <= span.end
+                            && span.end <= source.len()
+                            && source.is_char_boundary(span.start)
+                            && source.is_char_boundary(span.end)
+                    }));
+                }
+            },
+            FixtureStage::Elaborate | FixtureStage::Canonical | FixtureStage::Evaluate => {
+                later_stage += 1;
+                output.into_result().unwrap_or_else(|errors| {
+                    panic!(
+                        "{} ({:?}) must be accepted by the I1 parser: {errors:?}",
+                        fixture.id, fixture.stage
+                    )
+                });
+            }
+        }
+    }
+
+    assert_eq!(parse_success, 3);
+    assert_eq!(parse_error, 9);
+    assert_eq!(later_stage, 27);
 }
 
 #[test]
