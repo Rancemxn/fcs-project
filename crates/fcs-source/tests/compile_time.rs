@@ -1,9 +1,10 @@
 use fcs_source::ast::Color;
 use fcs_source::ast::{
     Beat, BinaryOperator, CollectionBlock, CollectionItem, Definition, EntityConstructor,
-    EntityExpression, ExpandedEntity, ExpandedField, FunctionStatement, GeneratorItem, NoteVariant,
-    SourceEntityConstructorKind, SourceExpression, SourceLiteral, SourceSpan, Type,
-    TypedExpression, TypedExpressionKind, TypedValue, UnaryOperator, WithExpression,
+    EntityExpression, ExpandedEntity, ExpandedField, ExpandedSourceDocument, FunctionStatement,
+    GeneratorItem, NoteVariant, SourceEntityConstructorKind, SourceExpression, SourceLiteral,
+    SourceSpan, Type, TypedExpression, TypedExpressionKind, TypedValue, UnaryOperator,
+    WithExpression,
 };
 use fcs_source::diagnostic::{Diagnostic, DiagnosticCode, ExpansionTraceKind};
 use fcs_source::elaborator::{
@@ -15,6 +16,9 @@ use fcs_source::parser::{
 };
 use fcs_source::schema::{FieldConstraint, phase2_schema};
 use std::{fs, path::PathBuf};
+
+type SemanticEntity = (Type, Option<NoteVariant>, Vec<(String, TypedValue)>);
+type SemanticExpandedOutput = Vec<(String, Vec<SemanticEntity>)>;
 
 fn example(name: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -28,6 +32,30 @@ fn elaborate_source(source: &str) -> Result<(), Vec<Diagnostic>> {
         .into_result()
         .expect("valid source syntax");
     elaborate(&document, phase2_schema(), CompileTimeLimits::default()).map(|_| ())
+}
+
+fn semantic_expanded_output(document: &ExpandedSourceDocument) -> SemanticExpandedOutput {
+    document
+        .collections()
+        .map(|collection| {
+            (
+                collection.name().to_owned(),
+                collection
+                    .entities()
+                    .map(|entity| {
+                        (
+                            entity.entity_type().clone(),
+                            entity.variant(),
+                            entity
+                                .fields()
+                                .map(|field| (field.path().to_owned(), field.value().clone()))
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 fn assert_code(result: Result<(), Vec<Diagnostic>>, expected: DiagnosticCode) {
@@ -900,6 +928,106 @@ fn expanded_ir_exposes_only_read_accessors() {
 }
 
 #[test]
+fn expanded_output_exposes_and_validates_only_concrete_values() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections { notes {
+  tap { gameplay.time: 0beat; };
+} }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
+    expanded
+        .validate_invariants()
+        .expect("elaborated output must satisfy its invariant boundary");
+    for collection in expanded.collections() {
+        for entity in collection.entities() {
+            assert!(entity.entity_type().is_entity_type());
+            for field in entity.fields() {
+                assert!(field.value().is_concrete());
+            }
+        }
+    }
+}
+
+#[test]
+fn malformed_typed_composites_cannot_cross_the_concrete_boundary() {
+    let heterogeneous_vec = TypedValue::Vec2(
+        Box::new(TypedValue::Int(1)),
+        Box::new(TypedValue::String("not-a-number".into())),
+    );
+    assert!(!heterogeneous_vec.is_concrete());
+
+    let mismatched_array = TypedValue::Array {
+        element_type: Box::new(Type::Int),
+        values: vec![TypedValue::Bool(true)],
+    };
+    assert!(!mismatched_array.is_concrete());
+
+    let compile_time_only_array = TypedValue::Array {
+        element_type: Box::new(Type::GeneratorRange(Box::new(Type::Int))),
+        values: Vec::new(),
+    };
+    assert!(!compile_time_only_array.is_concrete());
+
+    assert!(!TypedValue::Float(f64::NAN).is_concrete());
+    assert!(!TypedValue::Line(String::new()).is_concrete());
+}
+
+#[test]
+fn reordering_forward_definitions_preserves_expanded_output() {
+    let first = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const WHEN: beat = 2beat;
+  template Note generated(whichLine: Line) {
+    return tap { line: whichLine; gameplay.time: WHEN; };
+  }
+}
+lines { line main {} }
+collections { notes { generated(@main); } }"#;
+    let reordered = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  template Note generated(whichLine: Line) {
+    return tap { line: whichLine; gameplay.time: WHEN; };
+  }
+  const WHEN: beat = 2beat;
+}
+lines { line main {} }
+collections { notes { generated(@main); } }"#;
+    let first = elaborate(
+        &parse_document(first).into_result().unwrap(),
+        phase2_schema(),
+        CompileTimeLimits::default(),
+    )
+    .unwrap();
+    let reordered = elaborate(
+        &parse_document(reordered).into_result().unwrap(),
+        phase2_schema(),
+        CompileTimeLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        semantic_expanded_output(&first),
+        semantic_expanded_output(&reordered)
+    );
+}
+
+#[test]
+fn invalid_expansion_never_returns_partial_output() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections { notes {
+  tap { gameplay.time: 0beat; };
+  tap { gameplay.time: 1beat; presentation.notAField: 1.0; };
+} }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let errors = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect_err("invalid later entity must fail the whole expanded document");
+    assert_eq!(errors[0].code(), DiagnosticCode::SCHEMA_UNKNOWN_FIELD);
+}
+
+#[test]
 fn entity_expressions_compose_constructor_with_nested_with_blocks() {
     let constructor_span = SourceSpan::new(0, 8);
     let first_with_span = SourceSpan::new(0, 20);
@@ -1110,7 +1238,7 @@ fn rejects_return_and_nested_generate_in_generator_body() {
 #[test]
 fn bare_range_uses_the_frozen_syntax_category() {
     let output = parse_document(include_str!(
-        "../../../conformance/fcs5/source/invalid/bare-range.fcs"
+        "../../../docs/conformance/fcs5/source/invalid/bare-range.fcs"
     ));
     let errors = output.into_result().expect_err("bare range must fail");
     assert_eq!(errors[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
@@ -1152,7 +1280,8 @@ fn generator_zero_step_is_rejected_at_the_static_boundary() {
 
 #[test]
 fn evaluates_descending_integer_ranges_with_exact_metadata_and_values() {
-    let source = include_str!("../../../conformance/fcs5/source/valid/int-range-descending.fcs");
+    let source =
+        include_str!("../../../docs/conformance/fcs5/source/valid/int-range-descending.fcs");
     let document = parse_document(source).into_result().unwrap();
     let CollectionItem::Generator(generator) = &document.collections[0].items[0] else {
         panic!("expected generator collection item");
@@ -1407,7 +1536,8 @@ collections { notes {
 
 #[test]
 fn bound_compile_time_generator_fixture_expands_concrete_notes() {
-    let source = include_str!("../../../conformance/fcs5/source/valid/compile-time-generator.fcs");
+    let source =
+        include_str!("../../../docs/conformance/fcs5/source/valid/compile-time-generator.fcs");
     let document = parse_document(source).into_result().unwrap();
     let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
         .expect("bound compile-time generator fixture should elaborate");
@@ -1434,7 +1564,8 @@ fn bound_compile_time_generator_fixture_expands_concrete_notes() {
 
 #[test]
 fn generator_iteration_budget_is_shared_across_expansion() {
-    let source = include_str!("../../../conformance/fcs5/source/valid/compile-time-generator.fcs");
+    let source =
+        include_str!("../../../docs/conformance/fcs5/source/valid/compile-time-generator.fcs");
     let document = parse_document(source).into_result().unwrap();
     let limits = CompileTimeLimits {
         max_generator_iterations: 2,
@@ -1885,7 +2016,7 @@ fn parses_and_elaborates_the_public_template_fixture() {
 
 #[test]
 fn bound_template_if_with_fixture_expands_selected_branch_and_overlay() {
-    let source = include_str!("../../../conformance/fcs5/source/valid/template-if-with.fcs");
+    let source = include_str!("../../../docs/conformance/fcs5/source/valid/template-if-with.fcs");
     let document = parse_document(source).into_result().unwrap();
     let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
     let entity = expanded
