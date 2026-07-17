@@ -42,7 +42,9 @@
   联合独立复审要求统一见 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md`；该文件及
   ABI blocker 的单域关闭都不表示重新 Frozen。I1 source AST/parser 的阶段 dependency closure、
   corrected forward-slash fixture-tree hash、0/0/0 独立复审与自动实施许可见
-  `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`；当前已进入 I1 Task 1。
+  `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`；I1.1–I1.8 implementation evidence 已合并，
+  当前按 `docs/plans/i1-source-ast-parser.md` Task 9 进行 governance、最终门禁和独立复审；完成后 I2 才能
+  作为下一未开始阶段。
 - `docs/plans/fcs5-roadmap.md` 是唯一总实施路线图；最近完成阶段的详细记录为
   `docs/plans/i0-source-cutover.md`。当前活动 I1 的独立阶段计划为
   `docs/plans/i1-source-ast-parser.md`。计划只能安排工作，不能创造格式语义。

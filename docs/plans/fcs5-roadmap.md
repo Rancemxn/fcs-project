@@ -381,32 +381,35 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 - **I1.1 Lexer 完整性（2026-07-16 完成）**：补齐 I0 Chumsky lexer 的全部 Appendix B token、UTF-8/BOM、nested
   comment、重开后的 keyword、string escape/NUL/noncharacter、Color、unsigned decimal/unit 和
   byte span conformance；负号只作为 unary token。
-- **I1.2 Grammar AST**：按附录 B 建立 document、definition、statement、schema block、entity、
-  Track、metadata/resource/sync/extension source node；source node 保留完整半开 span。
-- **I1.3 顶级 parser**：强制 format，拒绝 duplicate/unknown block，允许规范声明的顺序无关和
-  source-order collection。
-- **I1.4 Definitions parser**：统一 `const/fn/template` 到 definitions，template/function 使用
- 不同 statement 类型或一个不能表示非法语句的 typed source enum。
-- **I1.5 Generator parser**：保持 I0 的 `..<`/`..=`、裸 `..` 拒绝和 local let；补齐
+- **I1.2 Grammar AST（已完成）**：按附录 B 建立 document、definition、statement、schema block、entity、
+  Track、metadata/resource/sync/extension source node；source node 保留完整半开 span。表达式/type
+  AST 与 parser evidence 已合并。
+- **I1.3 顶级 parser（已完成）**：强制 format，拒绝 duplicate/unknown block，允许规范声明的顺序无关和
+  source-order collection；全部 39 个 FCS source manifest entry 已在 parser boundary 执行。
+- **I1.4 Definitions parser（已完成）**：统一 `const/fn/template` 到 definitions，template/function 使用
+  不同 statement 类型或一个不能表示非法语句的 typed source enum。
+- **I1.5 Generator parser（已完成）**：保持 I0 的 `..<`/`..=`、裸 `..` 拒绝和 local let；补齐
   nested/misplaced generate 的 Frozen category 以及 segment/track owner grammar；zero step
   统一留给 elaborator 求值。
-- **I1.6 Schema parser**：解析 Line/Note/Track/meta/credits/resources/sync、ordered extension
+- **I1.6 Schema parser（已完成）**：解析 Line/Note/Track/meta/credits/resources/sync、ordered extension
   object、preserve envelope 和 balanced Render payload；closed enum 的直接 spelling 是 string，
   bare identifier 仍作为名称 expression 保留给 static phase，parser 只识别结构。
-- **I1.7 Diagnostic**：所有 parser error 映射附录 C category，保留 primary/related span；不得
+- **I1.7 Diagnostic（已完成）**：所有 parser error 映射附录 C category，保留 primary/related span；不得
   panic 或接受 trailing garbage。
-- **I1.8 Robustness 扩展**：在 I0 byte/property gate 上覆盖全部 grammar production、comment、
+- **I1.8 Robustness 扩展（已完成）**：在 I0 byte/property gate 上覆盖全部 grammar production、comment、
   delimiter、expression precedence 和长合法输入，并增加独立 fuzz lane。
 
 测试：每个 EBNF production 至少一个 valid/invalid fixture；所有 `fcs.md` source example parse。
+I1.8 的生产覆盖 ledger、parser limits、deterministic property 与独立 fuzz smoke 证据分别见
+`docs/conformance/fcs5-source-production-coverage.md` 和 `docs/conformance/fcs5-fuzz-lane.md`。
 
 交付：完整、带 span 的 Core source AST，Appendix B parser、parse-stage conformance runner、
 production coverage ledger、独立 fuzz lane 和 I1 条款矩阵证据。逐步执行草案见
 `docs/plans/i1-source-ast-parser.md`；I1 只有在其完整 normative dependency closure、绑定 fixture/hash
 建立 Reviewed Implementation Baseline，独立复审无未关闭的 Critical/Important finding，该计划与
-绑定规范一致，且 I0 质量门通过后才自动开始 Rust 实现。该 gate 已于 2026-07-16 通过，固定输入与
-0/0/0 独立复审见 `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`；I1.1 已通过 175-test
-workspace gate，当前实施单元为 I1.2。
+绑定规范一致，且 I0 质量门通过后才自动开始 Rust 实现。该 gate 已通过，固定输入与 0/0/0 独立复审见
+`docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`；I1.1–I1.8 的实现与证据已合并，当前
+进入 Task 9 governance、最终门禁和独立复审；I2 仍未开始。
 
 ### I2：Static semantics 与编译期展开
 
