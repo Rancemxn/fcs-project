@@ -1086,6 +1086,48 @@ collections { notes { selected(2beat); } }"#;
 }
 
 #[test]
+fn detects_mixed_const_function_cycles_before_evaluation() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const seed: int = bridge();
+  fn bridge() -> int { return seed; }
+}"#;
+    let errors = elaborate_source(source).expect_err("mixed dependency cycle");
+    assert_eq!(errors[0].code(), DiagnosticCode::NAME_CYCLE);
+    assert_eq!(
+        errors[0]
+            .expansion_trace()
+            .iter()
+            .map(|frame| frame.subject().unwrap())
+            .collect::<Vec<_>>(),
+        ["seed", "bridge", "seed"]
+    );
+}
+
+#[test]
+fn dependency_cycle_selection_is_shortest_and_declaration_order_independent() {
+    for declarations in [
+        "const a: int = b; const b: int = c; const c: int = a; const x: int = y; const y: int = x;",
+        "const y: int = x; const x: int = y; const c: int = a; const b: int = c; const a: int = b;",
+    ] {
+        let source = format!(
+            "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ {declarations} }}"
+        );
+        let errors = elaborate_source(&source).expect_err("dependency cycle");
+        assert_eq!(errors[0].code(), DiagnosticCode::NAME_CYCLE);
+        assert_eq!(
+            errors[0]
+                .expansion_trace()
+                .iter()
+                .map(|frame| frame.subject().unwrap())
+                .collect::<Vec<_>>(),
+            ["x", "y", "x"]
+        );
+    }
+}
+
+#[test]
 fn template_cycle_detection_scans_template_bodies_before_expansion() {
     let cases = [
         (
