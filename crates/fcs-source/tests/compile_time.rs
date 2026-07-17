@@ -684,6 +684,17 @@ definitions {
 }
 
 #[test]
+fn empty_array_expected_type_flows_through_indexed_array_bases() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const nested: array<array<int>> = [[]][0];
+}"#;
+
+    assert!(elaborate_source(source).is_ok());
+}
+
+#[test]
 fn empty_array_expected_type_flows_through_template_parameters_and_locals() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }

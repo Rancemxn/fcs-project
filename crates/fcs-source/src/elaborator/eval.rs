@@ -1104,8 +1104,16 @@ fn evaluate_expression_with_expected(
             }
         }
         SourceExpression::Index { base, index, span } => {
-            let value =
-                evaluate_expression(base, scope, constants, functions, const_values, budget)?;
+            let expected_array = expected.map(|element| Type::Array(Box::new(element.clone())));
+            let value = evaluate_expression_with_expected(
+                base,
+                scope,
+                constants,
+                functions,
+                const_values,
+                budget,
+                expected_array.as_ref(),
+            )?;
             let index =
                 evaluate_expression(index, scope, constants, functions, const_values, budget)?;
             let TypedValue::Array { values, .. } = value else {
