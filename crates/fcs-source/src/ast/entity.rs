@@ -6,6 +6,30 @@ use super::{DocumentProfile, LetStatement, TempoMap};
 use super::{SourceExpression, SourceSpan, Type, TypedValue};
 use crate::version::Version;
 
+/// A violation detected while constructing or auditing expanded output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpandedInvariantViolation {
+    EmptyCollectionName,
+    DuplicateCollectionName,
+    NonConcreteEntity,
+    EmptyFieldPath,
+    FieldPathKeyMismatch,
+    NonConcreteFieldValue,
+}
+
+impl ExpandedInvariantViolation {
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::EmptyCollectionName => "expanded collection name must not be empty",
+            Self::DuplicateCollectionName => "expanded collection names must be unique",
+            Self::NonConcreteEntity => "expanded output contains a non-concrete entity",
+            Self::EmptyFieldPath => "expanded field path must not be empty",
+            Self::FieldPathKeyMismatch => "expanded field map key must match its field path",
+            Self::NonConcreteFieldValue => "expanded output contains a non-concrete field value",
+        }
+    }
+}
+
 /// A concrete named collection produced by compile-time expansion.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExpandedCollection {
@@ -53,18 +77,37 @@ impl ExpandedSourceDocument {
         self.collections.iter()
     }
 
-    pub(crate) fn from_collections(
+    pub(crate) fn try_from_collections(
         source_version: Version,
         profile: DocumentProfile,
         tempo_map: Option<TempoMap>,
         collections: Vec<ExpandedCollection>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, ExpandedInvariantViolation> {
+        let document = Self {
             source_version,
             profile,
             tempo_map,
             collections,
+        };
+        document.validate_invariants()?;
+        Ok(document)
+    }
+
+    /// Audits the expanded-output boundary for concrete, typed, source-free data.
+    pub fn validate_invariants(&self) -> Result<(), ExpandedInvariantViolation> {
+        let mut names = std::collections::BTreeSet::new();
+        for collection in &self.collections {
+            if collection.name.is_empty() {
+                return Err(ExpandedInvariantViolation::EmptyCollectionName);
+            }
+            if !names.insert(&collection.name) {
+                return Err(ExpandedInvariantViolation::DuplicateCollectionName);
+            }
+            for entity in &collection.entities {
+                entity.validate_invariants()?;
+            }
         }
+        Ok(())
     }
 }
 
@@ -378,6 +421,24 @@ impl ExpandedEntity {
     pub const fn is_lowered(&self) -> bool {
         true
     }
+
+    fn validate_invariants(&self) -> Result<(), ExpandedInvariantViolation> {
+        if !self.entity_type.is_entity_type() {
+            return Err(ExpandedInvariantViolation::NonConcreteEntity);
+        }
+        for (key, field) in &self.fields {
+            if field.path.is_empty() {
+                return Err(ExpandedInvariantViolation::EmptyFieldPath);
+            }
+            if key != &field.path {
+                return Err(ExpandedInvariantViolation::FieldPathKeyMismatch);
+            }
+            if !field.value.is_concrete() {
+                return Err(ExpandedInvariantViolation::NonConcreteFieldValue);
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -418,5 +479,139 @@ mod tests {
         assert_eq!(time.path(), "gameplay.time");
         assert_eq!(time.value().ty(), Type::Beat);
         assert_eq!(time.span(), first_span);
+    }
+
+    #[test]
+    fn expanded_document_validation_rejects_structural_leaks() {
+        let span = SourceSpan::new(0, 1);
+        let invalid_value = ExpandedField {
+            path: "gameplay.time".into(),
+            value: TypedValue::Vec2(
+                Box::new(TypedValue::Int(0)),
+                Box::new(TypedValue::String("runtime".into())),
+            ),
+            span,
+        };
+        let invalid_field_entity = ExpandedEntity {
+            entity_type: Type::Note,
+            note_variant: Some(NoteVariant::Tap),
+            fields: [(invalid_value.path.clone(), invalid_value)]
+                .into_iter()
+                .collect(),
+            span,
+        };
+        let invalid_field = ExpandedSourceDocument::try_from_collections(
+            Version::new(5, 0, 0),
+            DocumentProfile::Fragment,
+            None,
+            vec![ExpandedCollection::new(
+                "notes".into(),
+                vec![invalid_field_entity],
+            )],
+        );
+        assert_eq!(
+            invalid_field,
+            Err(ExpandedInvariantViolation::NonConcreteFieldValue)
+        );
+
+        let empty_path_entity = ExpandedEntity {
+            entity_type: Type::Note,
+            note_variant: Some(NoteVariant::Tap),
+            fields: [(
+                String::new(),
+                ExpandedField {
+                    path: String::new(),
+                    value: TypedValue::Int(0),
+                    span,
+                },
+            )]
+            .into_iter()
+            .collect(),
+            span,
+        };
+        let empty_path = ExpandedSourceDocument::try_from_collections(
+            Version::new(5, 0, 0),
+            DocumentProfile::Fragment,
+            None,
+            vec![ExpandedCollection::new(
+                "notes".into(),
+                vec![empty_path_entity],
+            )],
+        );
+        assert_eq!(empty_path, Err(ExpandedInvariantViolation::EmptyFieldPath));
+
+        let mismatched_key_entity = ExpandedEntity {
+            entity_type: Type::Note,
+            note_variant: Some(NoteVariant::Tap),
+            fields: [(
+                "wrong.key".into(),
+                ExpandedField {
+                    path: "gameplay.time".into(),
+                    value: TypedValue::Int(0),
+                    span,
+                },
+            )]
+            .into_iter()
+            .collect(),
+            span,
+        };
+        let mismatched_key = ExpandedSourceDocument::try_from_collections(
+            Version::new(5, 0, 0),
+            DocumentProfile::Fragment,
+            None,
+            vec![ExpandedCollection::new(
+                "notes".into(),
+                vec![mismatched_key_entity],
+            )],
+        );
+        assert_eq!(
+            mismatched_key,
+            Err(ExpandedInvariantViolation::FieldPathKeyMismatch)
+        );
+
+        let invalid_entity = ExpandedEntity {
+            entity_type: Type::Bool,
+            note_variant: None,
+            fields: BTreeMap::new(),
+            span,
+        };
+        let invalid_type = ExpandedSourceDocument::try_from_collections(
+            Version::new(5, 0, 0),
+            DocumentProfile::Fragment,
+            None,
+            vec![ExpandedCollection::new(
+                "notes".into(),
+                vec![invalid_entity],
+            )],
+        );
+        assert_eq!(
+            invalid_type,
+            Err(ExpandedInvariantViolation::NonConcreteEntity)
+        );
+    }
+
+    #[test]
+    fn expanded_document_validation_rejects_empty_and_duplicate_collections() {
+        let empty = ExpandedSourceDocument::try_from_collections(
+            Version::new(5, 0, 0),
+            DocumentProfile::Fragment,
+            None,
+            vec![ExpandedCollection::new(String::new(), Vec::new())],
+        );
+        assert_eq!(empty, Err(ExpandedInvariantViolation::EmptyCollectionName));
+
+        let duplicate = ExpandedSourceDocument::try_from_collections(
+            Version::new(5, 0, 0),
+            DocumentProfile::Fragment,
+            None,
+            vec![
+                ExpandedCollection::new("notes".into(), Vec::new()),
+                ExpandedCollection::new("notes".into(), Vec::new()),
+            ],
+        );
+        assert_eq!(
+            duplicate,
+            Err(ExpandedInvariantViolation::DuplicateCollectionName)
+        );
     }
 }

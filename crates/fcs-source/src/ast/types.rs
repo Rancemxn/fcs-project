@@ -95,6 +95,16 @@ impl fmt::Display for Type {
     }
 }
 
+impl Type {
+    /// Returns whether this type denotes a concrete entity rather than a scalar/container.
+    pub const fn is_entity_type(&self) -> bool {
+        matches!(
+            self,
+            Self::Note | Self::Line | Self::RenderNode | Self::TrackSegment(_) | Self::Keyframe(_)
+        )
+    }
+}
+
 /// A fully spanned type as written in FCS source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceType {
@@ -367,6 +377,23 @@ pub enum TypedValue {
 }
 
 impl TypedValue {
+    /// Returns whether this value is concrete enough to cross the expanded-output boundary.
+    pub fn is_concrete(&self) -> bool {
+        match self {
+            Self::GeneratorRange(_) => false,
+            Self::Vec2(x, y) => self.checked_type().is_some() && x.is_concrete() && y.is_concrete(),
+            Self::Array {
+                values,
+                element_type: _,
+            } => self.checked_type().is_some() && values.iter().all(TypedValue::is_concrete),
+            Self::Float(value) | Self::Time(value) | Self::Length(value) | Self::Angle(value) => {
+                value.is_finite()
+            }
+            Self::Line(name) => !name.is_empty(),
+            Self::Bool(_) | Self::Int(_) | Self::String(_) | Self::Beat(_) | Self::Color(_) => true,
+        }
+    }
+
     /// Constructs a vector when both components are valid values of the same type.
     ///
     /// Returns `None` for heterogeneous components or components containing an invalid

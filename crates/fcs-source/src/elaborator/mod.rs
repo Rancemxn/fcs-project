@@ -289,12 +289,16 @@ fn elaborate_inner(
         eval::check_and_evaluate_with_context(definitions, &context)?;
     }
     let collections = entities::expand_collections(document, schema, context)?;
-    Ok(ExpandedSourceDocument::from_collections(
+    ExpandedSourceDocument::try_from_collections(
         document.source_version.clone(),
         document.profile,
         document.tempo_map.clone(),
         collections,
-    ))
+    )
+    .map_err(|violation| ElaboratorError::InvalidOperation {
+        message: violation.message(),
+        span: SourceSpan::new(0, 0),
+    })
 }
 
 fn preflight_names(document: &Document) -> Result<(), ElaboratorError> {

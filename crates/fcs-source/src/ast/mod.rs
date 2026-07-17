@@ -11,9 +11,10 @@ mod types;
 pub use color::Color;
 pub use entity::{
     CollectionBlock, CollectionItem, CollectionsBlock, EntityConstructor, EntityExpression,
-    EntityField, ExpandedCollection, ExpandedEntity, ExpandedField, ExpandedSourceDocument,
-    FieldPath, Generator, GeneratorItem, GeneratorOwner, NoteVariant, SchemaField, SchemaValue,
-    SourceEntityConstructor, SourceEntityConstructorKind, SourceRange, WithExpression,
+    EntityField, ExpandedCollection, ExpandedEntity, ExpandedField, ExpandedInvariantViolation,
+    ExpandedSourceDocument, FieldPath, Generator, GeneratorItem, GeneratorOwner, NoteVariant,
+    SchemaField, SchemaValue, SourceEntityConstructor, SourceEntityConstructorKind, SourceRange,
+    WithExpression,
 };
 pub use extension::{
     ExtensionDeclaration, ExtensionHeader, ExtensionRequirement, ExtensionsBlock, OrderedObject,
