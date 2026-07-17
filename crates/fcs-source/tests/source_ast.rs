@@ -60,7 +60,8 @@ render profile 1.0.0 { }";
 
 #[test]
 fn complete_source_grammar_fixture_parses_with_all_top_level_kinds() {
-    let source = include_str!("../../../conformance/fcs5/source/valid/complete-source-grammar.fcs");
+    let source =
+        include_str!("../../../docs/conformance/fcs5/source/valid/complete-source-grammar.fcs");
     let document = parse_document(source)
         .into_result()
         .expect("all Appendix B top-level envelopes are syntactically valid");
@@ -94,11 +95,11 @@ fn parse_success_conformance_fixtures_are_accepted_at_frontend_boundary() {
     for (id, source) in [
         (
             "source.valid.minimal-fragment",
-            include_str!("../../../conformance/fcs5/source/valid/minimal-fragment.fcs"),
+            include_str!("../../../docs/conformance/fcs5/source/valid/minimal-fragment.fcs"),
         ),
         (
             "source.valid.escaped-nul-string",
-            include_str!("../../../conformance/fcs5/source/valid/escaped-nul-string.fcs"),
+            include_str!("../../../docs/conformance/fcs5/source/valid/escaped-nul-string.fcs"),
         ),
     ] {
         parse_document(source)
@@ -110,32 +111,38 @@ fn parse_success_conformance_fixtures_are_accepted_at_frontend_boundary() {
 #[test]
 fn later_phase_conformance_sources_are_not_rejected_by_the_parser() {
     let sources = [
-        include_str!("../../../conformance/fcs5/source/valid/minimal-chart.fcs"),
-        include_str!("../../../conformance/fcs5/source/valid/compile-time-generator.fcs"),
-        include_str!("../../../conformance/fcs5/source/valid/track-boundaries.fcs"),
-        include_str!("../../../conformance/fcs5/source/valid/time-scroll-note.fcs"),
-        include_str!("../../../conformance/fcs5/source/valid/runtime-choose.fcs"),
-        include_str!("../../../conformance/fcs5/source/valid/canonical-equivalent-direct.fcs"),
-        include_str!("../../../conformance/fcs5/source/valid/canonical-equivalent-template.fcs"),
-        include_str!("../../../conformance/fcs5/source/valid/exact-expression-dag.fcs"),
-        include_str!("../../../conformance/fcs5/source/valid/note-policies.fcs"),
-        include_str!("../../../conformance/fcs5/source/valid/template-if-with.fcs"),
-        include_str!("../../../conformance/fcs5/source/valid/int-range-descending.fcs"),
-        include_str!("../../../conformance/fcs5/source/valid/parent-transform.fcs"),
-        include_str!("../../../conformance/fcs5/source/valid/metadata-credits-resources-sync.fcs"),
-        include_str!("../../../conformance/fcs5/source/invalid/unresolved-schema-enum.fcs"),
-        include_str!("../../../conformance/fcs5/source/invalid/generator-zero-step.fcs"),
-        include_str!("../../../conformance/fcs5/source/invalid/shadowing.fcs"),
-        include_str!("../../../conformance/fcs5/source/invalid/template-missing-line.fcs"),
-        include_str!("../../../conformance/fcs5/source/invalid/hold-end.fcs"),
-        include_str!("../../../conformance/fcs5/source/invalid/track-overlap.fcs"),
-        include_str!("../../../conformance/fcs5/source/invalid/parent-cycle.fcs"),
-        include_str!("../../../conformance/fcs5/source/invalid/runtime-gameplay.fcs"),
-        include_str!("../../../conformance/fcs5/source/invalid/note-policy-disabled-sound.fcs"),
-        include_str!("../../../conformance/fcs5/source/invalid/unknown-resource.fcs"),
-        include_str!("../../../conformance/fcs5/source/invalid/resource-path-escape.fcs"),
-        include_str!("../../../conformance/fcs5/source/invalid/resource-hash-mismatch.fcs"),
-        include_str!("../../../conformance/fcs5/source/invalid/custom-duplicate-key.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/valid/minimal-chart.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/valid/compile-time-generator.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/valid/track-boundaries.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/valid/time-scroll-note.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/valid/runtime-choose.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/valid/canonical-equivalent-direct.fcs"),
+        include_str!(
+            "../../../docs/conformance/fcs5/source/valid/canonical-equivalent-template.fcs"
+        ),
+        include_str!("../../../docs/conformance/fcs5/source/valid/exact-expression-dag.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/valid/note-policies.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/valid/template-if-with.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/valid/int-range-descending.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/valid/parent-transform.fcs"),
+        include_str!(
+            "../../../docs/conformance/fcs5/source/valid/metadata-credits-resources-sync.fcs"
+        ),
+        include_str!("../../../docs/conformance/fcs5/source/invalid/unresolved-schema-enum.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/invalid/generator-zero-step.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/invalid/shadowing.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/invalid/template-missing-line.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/invalid/hold-end.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/invalid/track-overlap.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/invalid/parent-cycle.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/invalid/runtime-gameplay.fcs"),
+        include_str!(
+            "../../../docs/conformance/fcs5/source/invalid/note-policy-disabled-sound.fcs"
+        ),
+        include_str!("../../../docs/conformance/fcs5/source/invalid/unknown-resource.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/invalid/resource-path-escape.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/invalid/resource-hash-mismatch.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/invalid/custom-duplicate-key.fcs"),
     ];
 
     for source in sources {
@@ -346,11 +353,11 @@ fn malformed_definition_body_does_not_swallow_following_declaration() {
 fn generator_placement_errors_use_stable_categories_and_keyword_spans() {
     let cases = [
         (
-            include_str!("../../../conformance/fcs5/source/invalid/nested-generator.fcs"),
+            include_str!("../../../docs/conformance/fcs5/source/invalid/nested-generator.fcs"),
             DiagnosticCode::COMPILE_TIME_NESTED_GENERATOR,
         ),
         (
-            include_str!("../../../conformance/fcs5/source/invalid/misplaced-generator.fcs"),
+            include_str!("../../../docs/conformance/fcs5/source/invalid/misplaced-generator.fcs"),
             DiagnosticCode::COMPILE_TIME_MISPLACED_GENERATOR,
         ),
         (
@@ -416,7 +423,7 @@ fn collection_generators_retain_their_owner_context() {
 
 #[test]
 fn track_ast_retains_settings_direct_segments_points_and_spans() {
-    let source = include_str!("../../../conformance/fcs5/source/valid/track-boundaries.fcs");
+    let source = include_str!("../../../docs/conformance/fcs5/source/valid/track-boundaries.fcs");
     let document = parse_document(source)
         .into_result()
         .expect("Track source grammar is valid");
@@ -444,7 +451,8 @@ fn track_ast_retains_settings_direct_segments_points_and_spans() {
 
 #[test]
 fn track_generators_retain_track_owner_and_schema_cubic_values() {
-    let source = include_str!("../../../conformance/fcs5/source/valid/complete-source-grammar.fcs");
+    let source =
+        include_str!("../../../docs/conformance/fcs5/source/valid/complete-source-grammar.fcs");
     let document = parse_document(source)
         .into_result()
         .expect("complete Track source grammar is valid");
@@ -489,8 +497,9 @@ fn track_generators_retain_track_owner_and_schema_cubic_values() {
 
 #[test]
 fn metadata_schema_ast_retains_ordered_declarations_and_spans() {
-    let source =
-        include_str!("../../../conformance/fcs5/source/valid/metadata-credits-resources-sync.fcs");
+    let source = include_str!(
+        "../../../docs/conformance/fcs5/source/valid/metadata-credits-resources-sync.fcs"
+    );
     let document = parse_document(source)
         .into_result()
         .expect("metadata/resource/sync source grammar is valid");
@@ -553,7 +562,7 @@ fn metadata_schema_ast_retains_ordered_declarations_and_spans() {
     assert_eq!(resources.resources[0].name, "empty");
 
     let complete_source =
-        include_str!("../../../conformance/fcs5/source/valid/complete-source-grammar.fcs");
+        include_str!("../../../docs/conformance/fcs5/source/valid/complete-source-grammar.fcs");
     let complete_document = parse_document(complete_source)
         .into_result()
         .expect("complete schema source is valid");
@@ -574,7 +583,8 @@ fn metadata_schema_ast_retains_ordered_declarations_and_spans() {
 
 #[test]
 fn metadata_custom_object_duplicate_keys_remain_source_ordered() {
-    let source = include_str!("../../../conformance/fcs5/source/invalid/custom-duplicate-key.fcs");
+    let source =
+        include_str!("../../../docs/conformance/fcs5/source/invalid/custom-duplicate-key.fcs");
     let document = parse_document(source)
         .into_result()
         .expect("duplicate custom keys are a later semantic error");
@@ -628,7 +638,8 @@ fn every_core_resource_kind_has_a_typed_source_node() {
 
 #[test]
 fn extension_preserve_and_render_envelopes_retain_order_and_balanced_spans() {
-    let source = include_str!("../../../conformance/fcs5/source/valid/complete-source-grammar.fcs");
+    let source =
+        include_str!("../../../docs/conformance/fcs5/source/valid/complete-source-grammar.fcs");
     let document = parse_document(source)
         .into_result()
         .expect("extension, preserve, and Render envelopes are valid Core source");

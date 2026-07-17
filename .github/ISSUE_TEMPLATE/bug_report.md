@@ -26,11 +26,20 @@ Record commit, platform, tool versions, and relevant configuration.
 
 List affected fixtures, manifests, public interfaces, stages, or version domains. Do not include secrets or private input.
 
+## Classification and routing
+
+- Stage:
+- Parent Issue:
+- Blocked by / blocking:
+- Owner or decision owner:
+- Is this a specification ambiguity? If yes, record the competing interpretations and route the choice through governance.
+
 ## Acceptance criteria
 
 - [ ] A deterministic failing test or fixture reproduces the issue.
 - [ ] The cause is distinguished from any specification ambiguity.
-- [ ] The fix passes the repository quality gates.
+- [ ] Applicable focused/full gates and independent review requirements are identified.
+- [ ] The fix has a regression test, fixture, or documented reason why one is not applicable.
 
 ## Progress
 

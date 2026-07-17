@@ -157,7 +157,7 @@ fn repository_root() -> PathBuf {
 }
 
 fn suite_base() -> PathBuf {
-    repository_root().join("conformance/fcbc")
+    repository_root().join("docs/conformance/fcbc")
 }
 
 fn load_toml<T: DeserializeOwned>(path: &Path) -> T {

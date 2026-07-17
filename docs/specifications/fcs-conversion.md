@@ -90,7 +90,7 @@ profileSelectionMode: strict | compatible
 
 Parser dialect 只定义 token/JSON shape、字段别名、换行边界、unknown field retention 和遗留语法
 接受范围。它不得定义 Note 物理时刻、坐标单位、speed/distance、parent transform 或 runtime 行为。
-Conversion 1.0 内建 dialect 位于 `conformance/conversion/parser-dialects.toml`；其
+Conversion 1.0 内建 dialect 位于 `docs/conformance/conversion/parser-dialects.toml`；其
 `contentHash=SHA-256(UTF-8(contract))`，不包含 TOML 引号或换行。
 
 - `strict` syntax mode 只接受 dialect 明确列出的规范形状；
@@ -145,7 +145,7 @@ schema。`format_version_policy` 只能是 `exact`、`evidence-only` 或 `absent
 字段验证 binding，不能解析 `contract` 人类文本来猜参数类型。Descriptor 的 `report_categories`
 列出该 profile 可能按触发条件产生的稳定 category，不表示每次转换都必须无条件生成全部 entry。
 
-内建 profile registry 位于 `conformance/conversion/profile-registry.toml`。每个 entry 指向一个
+内建 profile registry 位于 `docs/conformance/conversion/profile-registry.toml`。每个 entry 指向一个
 UTF-8 descriptor 文件，`contentHash` 是该文件原始 bytes 的 SHA-256；BOM、换行和空白变化都会
 改变 hash。Resolved `ProfileBinding` 必须保存完整 ID、exact version 和 content hash。Selector
 只写 ID 时，仅当当前 registry 中恰好有一个可用版本才可解析；否则必须要求 `id@version`。
@@ -602,7 +602,7 @@ MappingRuleRef {
 }
 ```
 
-本版本 rule 的 normative descriptor 位于 `conformance/conversion/mapping-rules.toml`，其中
+本版本 rule 的 normative descriptor 位于 `docs/conformance/conversion/mapping-rules.toml`，其中
 `contentHash=SHA-256(UTF-8(contract))`，不包含 TOML 引号或换行。Rule 公式变化必须改变 version
 或 content hash。Report 不得只保存人类可读公式。
 
@@ -1103,6 +1103,6 @@ conversion.suffix-association-loss
 `conversion.approximation-budget-exceeded`、`conversion.drop-not-authorized`、
 `conversion.distance-mismatch`、`conversion.resource-missing` 和 `conversion.roundtrip-mismatch` 可以
 同时作为失败 diagnostic 与 report entry。完整 usage/domain 绑定在
-`conformance/conversion/diagnostic-categories.toml`；profile/vector 不得引用未登记 category。
+`docs/conformance/conversion/diagnostic-categories.toml`；profile/vector 不得引用未登记 category。
 Registry 的 `cross-domain` 表示该 category 可以和 entry 自己声明的任一第 7.2 节具体 domain 组合，
 不是 `ConversionEntry.domain` 的新取值。

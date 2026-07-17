@@ -45,7 +45,7 @@ Before implementing a task, read the relevant files completely:
 - `AGENTS.md`;
 - `fcs.md`, especially sections 1.4, 2.1–2.10, 3–9, 11–13, 15–18, Appendix B, and Appendix C;
 - `fcs-render.md` section 2 only to establish the ownership boundary of `renderBlock`;
-- `docs/specification-governance.md`;
+- `docs/specifications/governance.md`;
 - `docs/decisions/0010-stage-scoped-implementation-baselines.md`;
 - `docs/reviews/2026-07-15-fcs5-source-grammar-closure-review.md` 作为 grammar closure 历史证据，
   `docs/reviews/2026-07-15-fcs5-authoring-canonical-closure-review.md` 作为当前 Core delta/gate，
@@ -57,8 +57,8 @@ Before implementing a task, read the relevant files completely:
 - `docs/plans/fcs5-roadmap.md`, I1 and its quality gates;
 - `docs/plans/i0-source-cutover.md`, especially the final parser/diagnostic/robustness state;
 - `docs/conformance/fcs5-implementation-matrix.md`;
-- `conformance/manifest.toml` and `conformance/fcs5/manifest.toml`;
-- every `conformance/fcs5/source/**/*.fcs` input before writing the fixture runner;
+- `docs/conformance/manifest.toml` and `docs/conformance/fcs5/manifest.toml`;
+- every `docs/conformance/fcs5/source/**/*.fcs` input before writing the fixture runner;
 - the current `crates/fcs-source/src/{ast,parser}` implementation and their callers/tests;
 - the checked-out Chumsky 0.11 source under `refer/dependencies/chumsky` when an API detail is
   uncertain. Do not query Context7 for Chumsky while that audited source is available locally.
@@ -76,7 +76,7 @@ must include:
   and parse-conformance clauses consumed by Tasks 1–8, including Appendix B and the applicable Appendix C
   categories;
 - `fcs-render.md` section 2 only for the balanced Core `renderBlock` ownership/envelope boundary;
-- every `conformance/fcs5` source input and manifest expectation that I1 will parse or reject;
+- every `docs/conformance/fcs5` source input and manifest expectation that I1 will parse or reject;
 - ADR 0006/0008/0010 architecture constraints that keep source AST separate from canonical/runtime and
   forbid compatibility/path-dependency shortcuts.
 

@@ -10,6 +10,11 @@ assignees: ""
 
 State one observable outcome.
 
+## Stage and routing
+
+- Stage:
+- Owner:
+
 ## Authority and current state
 
 List governing specification clauses, Accepted ADRs, governance status, plans, reviews, fixtures, and implementation evidence.
@@ -23,9 +28,14 @@ List governing specification clauses, Accepted ADRs, governance status, plans, r
 
 - [ ]
 
+Observable success signal:
+
 ## Dependencies
 
-List parent, sub-issues, blocked-by/blocking relationships, and external decisions.
+- Parent Issue:
+- Sub-issues:
+- Blocked by / blocking:
+- External decisions or owners:
 
 ## Verification
 
@@ -34,6 +44,9 @@ List exact commands, fixtures, hashes, and review gates.
 ## Risks and prohibited shortcuts
 
 Identify ambiguity, technical debt, interfaces that must remain stable, and tempting shortcuts that must not be used.
+
+If this is specification work, record unresolved alternatives and the decision owner. This Issue may arrange the
+governance work but cannot choose new format or runtime semantics by itself.
 
 ## Progress
 

@@ -453,7 +453,7 @@ fn load_manifest<T: DeserializeOwned>(path: &Path) -> T {
 }
 
 fn load_manifests() -> (RootManifest, FcsManifest) {
-    let conformance = repository_root().join("conformance");
+    let conformance = repository_root().join("docs/conformance");
     (
         load_manifest(&conformance.join("manifest.toml")),
         load_manifest(&conformance.join("fcs5/manifest.toml")),
@@ -461,15 +461,15 @@ fn load_manifests() -> (RootManifest, FcsManifest) {
 }
 
 fn load_render_manifest() -> RenderManifest {
-    load_manifest(&repository_root().join("conformance/render/manifest.toml"))
+    load_manifest(&repository_root().join("docs/conformance/render/manifest.toml"))
 }
 
 fn load_fcbc_manifest() -> FcbcManifest {
-    load_manifest(&repository_root().join("conformance/fcbc/manifest.toml"))
+    load_manifest(&repository_root().join("docs/conformance/fcbc/manifest.toml"))
 }
 
 fn load_conversion_manifest() -> ConversionManifest {
-    load_manifest(&repository_root().join("conformance/conversion/manifest.toml"))
+    load_manifest(&repository_root().join("docs/conformance/conversion/manifest.toml"))
 }
 
 fn sha256_lower(bytes: &[u8]) -> String {
@@ -682,7 +682,7 @@ fn typed_manifests_load_with_bound_counts() {
 #[test]
 fn fcs_source_fixtures_execute_at_the_declared_frontend_boundary() {
     let (_, fcs) = load_manifests();
-    let fcs_base = repository_root().join("conformance/fcs5");
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
     let mut parse_success = 0;
     let mut parse_error = 0;
     let mut later_stage = 0;
@@ -754,7 +754,7 @@ fn manifests_preserve_integrity_invariants() {
     let fcbc = load_fcbc_manifest();
     let render = load_render_manifest();
     let conversion = load_conversion_manifest();
-    let conformance = repository_root().join("conformance");
+    let conformance = repository_root().join("docs/conformance");
     let canonical_conformance = conformance
         .canonicalize()
         .expect("conformance directory must exist");

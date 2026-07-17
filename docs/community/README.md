@@ -19,8 +19,9 @@ Specification 的替代品。外部格式本身存在版本漂移、播放器差
 
 ### 1.1 FCS 项目的规范权威
 
-1. `docs/specification-governance.md` 决定候选版本、状态、变更与冻结流程；
-2. `fcs.md`、`fcbc.md`、`fcs-render.md`、`fcs-conversion.md` 在各自版本域内决定 FCS/FCBC 的
+1. `docs/specifications/governance.md` 决定候选版本、状态、变更与冻结流程；
+2. `docs/specifications/fcs.md`、`docs/specifications/fcbc.md`、`docs/specifications/fcs-render.md`、
+   `docs/specifications/fcs-conversion.md` 在各自版本域内决定 FCS/FCBC 的
    规范行为；
 3. `docs/decisions/` 中 Accepted ADR 记录已接受的设计约束和规范修订方向，但不直接替代规范
    条款；

@@ -87,12 +87,12 @@ I10 的 conformance release candidate gate 不使用局部 baseline 替代全局
 
 ## 3. 阶段记录职责
 
-- `docs/specification-governance.md` 定义 baseline 与版本状态的关系和通用 gate；
+- `docs/specifications/governance.md` 定义 baseline 与版本状态的关系和通用 gate；
 - `docs/plans/fcs5-roadmap.md` 为每个阶段列出 normative dependency closure、排除范围和完成条件；
 - 独立阶段计划记录具体 clause/fixture/hash checklist；
 - `docs/reviews/` 保存不可静默改写的 baseline review、finding 和失效 amendment；
 - `docs/conformance/fcs5-implementation-matrix.md` 记录条款 owner、阶段、实现和可执行证据；
-- `.scratch/` 可以保存当前有限工作单元与 frontier，但不能获得规范权威。
+- `docs/scratch/` 可以保存当前有限工作单元与 frontier，但不能获得规范权威。
 
 历史 review 中“必须五域 Frozen 才能开始 I1”的结论保留为当时治理事实；新 dated amendment 应指出
 其已由本 ADR 和当前治理规则取代，不得重写历史 hash、finding 或当时状态。

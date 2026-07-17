@@ -13,7 +13,7 @@ resource hash mismatch。Root/FCS manifest schema 升为 2：root 使用 `candid
 fixture 可以声明 `workspace_root`，resolver 只能在该目录内读取 opaque member bytes。原 32 项
 grammar baseline 继续作为 Reviewed 范围的历史证据；当前 39 项
 candidate 仍随五个 Draft/联合重审版本域审查，不是 Frozen baseline。当前状态和后续 re-freeze gate
-以 `docs/specification-governance.md`、路线图与
+以 `docs/specifications/governance.md`、路线图与
 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md` 为准；后者是联合候选自检，不是独立
 review 或 Frozen 声明。
 

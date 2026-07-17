@@ -106,14 +106,14 @@ Core 可以进入独立 review 前，至少必须：
 fcs.md
 caafe4c91d46f6015060b83d1a5f82ddf3c435f52cf19756dc1c1d3b6ac4cd7d
 
-conformance/fcs5/manifest.toml
+docs/conformance/fcs5/manifest.toml
 4d8dfb7ba2d636cd94a02f39807c7a0da6185b73213f50dd77e8f2a69c5b25f4
 
-conformance/manifest.toml
+docs/conformance/manifest.toml
 2563bb91f450a04075689b87bdb9ce6155cad929fb3468a7b45e32e6eb389c1c
 ```
 
-Conformance tree 使用相对于 `conformance/`、以 `/` 分隔的 ordinal path order，并对每个文件依次
+Conformance tree 使用相对于 `docs/conformance/`、以 `/` 分隔的 ordinal path order，并对每个文件依次
 输入 `UTF-8(path) + NUL + bytes + NUL`：
 
 ```text

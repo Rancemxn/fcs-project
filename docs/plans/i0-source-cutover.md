@@ -54,11 +54,11 @@ Before executing any task, read these files completely:
 - `AGENTS.md`
 - `docs/decisions/0006-unversioned-source-cutover.md`
 - `docs/plans/fcs5-roadmap.md`
-- `docs/specification-governance.md`
+- `docs/specifications/governance.md`
 - `docs/reviews/2026-07-14-fcs5-freeze-review.md`
 - `fcs.md`, especially sections 2–6, 16, Appendix B, and Appendix C
-- `conformance/manifest.toml`
-- `conformance/fcs5/manifest.toml`
+- `docs/conformance/manifest.toml`
+- `docs/conformance/fcs5/manifest.toml`
 - `refer/dependencies/chumsky/Cargo.toml`
 - Chumsky tag `0.11` versions of `examples/nano_rust.rs`, `src/input.rs`, and
   `guide/error_and_recovery.md`, read with `git -C refer/dependencies/chumsky show 0.11:<path>`
@@ -183,7 +183,7 @@ elaborator state is allowed in this archival commit and is fixed in Task 2.
 Run:
 
 ```powershell
-git add -A -- AGENTS.md fcs.md fcbc.md fcs-render.md fcs-conversion.md conformance docs
+git add -A -- AGENTS.md docs/specifications docs/conformance docs/CONTEXT.md docs/loops docs/agents docs/plans docs/reviews docs/decisions docs/community docs/scratch
 git diff --cached --check
 git commit -m "docs: freeze specifications and plan the source cutover"
 git status --short
@@ -1875,8 +1875,8 @@ git commit -m "refactor(parser): compose FCS document grammar with Chumsky"
 - Modify: `crates/fcs-source/src/ast/definitions.rs`
 - Modify: `crates/fcs-source/src/ast/entity.rs`
 - Modify: `crates/fcs-source/tests/compile_time.rs`
-- Read: `conformance/fcs5/source/invalid/bare-range.fcs`
-- Read: `conformance/fcs5/source/invalid/generator-zero-step.fcs`
+- Read: `docs/conformance/fcs5/source/invalid/bare-range.fcs`
+- Read: `docs/conformance/fcs5/source/invalid/generator-zero-step.fcs`
 
 - [x] **Step 1: Add final public diagnostic tests**
 
@@ -1884,7 +1884,7 @@ git commit -m "refactor(parser): compose FCS document grammar with Chumsky"
 #[test]
 fn bare_range_uses_the_frozen_syntax_category() {
     let output = parse_document(include_str!(
-        "../../../conformance/fcs5/source/invalid/bare-range.fcs"
+        "../../../docs/conformance/fcs5/source/invalid/bare-range.fcs"
     ));
     let errors = output.into_result().expect_err("bare range must fail");
     assert_eq!(errors[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
@@ -2163,7 +2163,7 @@ and `FixtureEntry`) in the actual code. The first test must load both manifests 
 `toml::from_str`, assert schema version 1, assert the root has six suites, and assert the current
 FCS fixture count is 22.
 Resolve the repository root from `Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")`; read
-`conformance/manifest.toml` and `conformance/fcs5/manifest.toml` as UTF-8, and never use the
+`docs/conformance/manifest.toml` and `docs/conformance/fcs5/manifest.toml` as UTF-8, and never use the
 process current directory as the base for fixture paths.
 
 - [x] **Step 2: Confirm the cataloged test dependencies are active**
@@ -2192,9 +2192,9 @@ Tests must assert:
 
 - suite and fixture IDs are nonempty and unique;
 - root `freeze_baseline` is `2026-07-14`, and the FCS manifest `fcs_version` is `5.0.0`;
-- root suite manifest paths resolve relative to `conformance/`, FCS fixture paths and their
-  `expected`/vector references resolve relative to `conformance/fcs5/`, and every resolved path
-  stays below the canonical `conformance/` directory after component checking;
+- root suite manifest paths resolve relative to `docs/conformance/`, FCS fixture paths and their
+  `expected`/vector references resolve relative to `docs/conformance/fcs5/`, and every resolved path
+  stays below the canonical `docs/conformance/` directory after component checking;
 - every referenced file exists and is a regular file;
 - stages are one of `parse`, `elaborate`, `canonical`, `evaluate`;
 - expectations are `success` or `error`;

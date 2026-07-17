@@ -29,9 +29,9 @@ The implementation and tests must read these inputs as a single closure:
   generators, `emit`, and the six shared budgets;
 - `fcs.md` 12.1–12.3 only for the construction-schema boundary needed to type and validate static
   constructors; canonical Note identity and presentation/runtime behavior remain later-stage work;
-- `docs/specification-governance.md` and ADR 0003, 0008, 0009, 0010;
+- `docs/specifications/governance.md` and ADR 0003, 0008, 0009, 0010;
 - `docs/plans/fcs5-roadmap.md`, `docs/plans/i1-source-ast-parser.md`, and the merged I1 baseline review;
-- `conformance/manifest.toml`, `conformance/fcs5/manifest.toml`, the I2 fixture sources, and their expected
+- `docs/conformance/manifest.toml`, `docs/conformance/fcs5/manifest.toml`, the I2 fixture sources, and their expected
   outputs;
 - the current `crates/fcs-source` AST, schema, elaborator, diagnostic API, callers, and tests.
 
