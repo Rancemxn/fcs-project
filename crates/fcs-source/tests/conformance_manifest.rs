@@ -4,7 +4,11 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use crc::{CRC_32_ISO_HDLC, Crc};
+use fcs_source::ast::{Beat, ExpandedSourceDocument, Type, TypedValue};
+use fcs_source::diagnostic::{Diagnostic, DiagnosticStage, ExpansionTraceKind};
+use fcs_source::elaborator::{CompileTimeLimits, elaborate};
 use fcs_source::parser::parse_document;
+use fcs_source::schema::phase2_schema;
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 
@@ -658,6 +662,52 @@ fn fixture<'a>(manifest: &'a FcsManifest, id: &str) -> &'a FixtureEntry {
         .unwrap_or_else(|| panic!("missing bound fixture {id}"))
 }
 
+fn fixture_limits(fixture: &FixtureEntry) -> CompileTimeLimits {
+    let mut limits = CompileTimeLimits::default();
+    if let Some(fixture_limits) = &fixture.limits
+        && let Some(max_generator_iterations) = fixture_limits.max_generator_iterations
+    {
+        limits.max_generator_iterations = max_generator_iterations;
+    }
+    limits
+}
+
+fn elaborate_fixture(
+    fcs_base: &Path,
+    fixture: &FixtureEntry,
+) -> Result<ExpandedSourceDocument, Vec<Diagnostic>> {
+    let source_path = fcs_base.join(&fixture.path);
+    let source = fs::read_to_string(&source_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", source_path.display()));
+    let document = parse_document(&source)
+        .into_result()
+        .unwrap_or_else(|errors| {
+            panic!("{} must parse before elaboration: {errors:?}", fixture.id)
+        });
+    elaborate(&document, phase2_schema(), fixture_limits(fixture))
+}
+
+fn expected_json(fcs_base: &Path, fixture: &FixtureEntry) -> serde_json::Value {
+    let expected = fixture
+        .expected
+        .as_deref()
+        .unwrap_or_else(|| panic!("{} must bind an expected output", fixture.id));
+    let path = fcs_base.join(expected);
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    serde_json::from_str(&source)
+        .unwrap_or_else(|error| panic!("failed to parse {} as JSON: {error}", path.display()))
+}
+
+fn note_entities(document: &ExpandedSourceDocument) -> Vec<&fcs_source::ast::ExpandedEntity> {
+    document
+        .collections()
+        .find(|collection| collection.name() == "notes")
+        .unwrap_or_else(|| panic!("expanded output must contain notes collection"))
+        .entities()
+        .collect()
+}
+
 #[test]
 fn typed_manifests_load_with_bound_counts() {
     let (root, fcs) = load_manifests();
@@ -746,6 +796,202 @@ fn fcs_source_fixtures_execute_at_the_declared_frontend_boundary() {
     assert_eq!(parse_success, 3);
     assert_eq!(parse_error, 9);
     assert_eq!(later_stage, 27);
+}
+
+#[test]
+fn i2_public_conformance_fixtures_execute_through_the_elaborator() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+
+    let generator_fixture = fixture(&fcs, "source.valid.compile-time-generator");
+    let generator = elaborate_fixture(&fcs_base, generator_fixture)
+        .expect("compile-time generator fixture must elaborate");
+    generator
+        .validate_invariants()
+        .expect("generator output must satisfy the expanded boundary");
+    let generator_expected = expected_json(&fcs_base, generator_fixture);
+    assert_eq!(generator_expected["collection"], "notes");
+    assert_eq!(generator_expected["entityType"], "Note");
+    assert_eq!(
+        generator_expected["forbiddenExpandedNodes"],
+        serde_json::json!([
+            "const", "let", "fn", "template", "with", "if", "generate", "emit", "range", "index"
+        ])
+    );
+    let generator_entities = note_entities(&generator);
+    assert_eq!(
+        generator_expected["count"].as_u64(),
+        Some(generator_entities.len() as u64)
+    );
+    let expected_times = generator_expected["times"]
+        .as_array()
+        .expect("generator expected times must be an array");
+    assert_eq!(expected_times.len(), generator_entities.len());
+    for (entity, expected_time) in generator_entities.iter().zip(expected_times) {
+        assert_eq!(entity.entity_type(), &Type::Note);
+        assert!(entity.is_lowered());
+        let numerator = expected_time
+            .get("beatNumerator")
+            .and_then(serde_json::Value::as_i64)
+            .expect("generator beat numerator must be an integer");
+        let denominator = expected_time
+            .get("beatDenominator")
+            .and_then(serde_json::Value::as_i64)
+            .expect("generator beat denominator must be an integer");
+        assert_eq!(
+            entity.field("gameplay.time").expect("time field").value(),
+            &TypedValue::Beat(Beat::new(numerator, denominator).unwrap())
+        );
+    }
+
+    let template_fixture = fixture(&fcs, "source.valid.template-if-with");
+    let template = elaborate_fixture(&fcs_base, template_fixture)
+        .expect("template-if-with fixture must elaborate");
+    template
+        .validate_invariants()
+        .expect("template output must satisfy the expanded boundary");
+    let template_expected = expected_json(&fcs_base, template_fixture);
+    let template_entities = note_entities(&template);
+    assert_eq!(
+        template_expected["noteCount"].as_u64(),
+        Some(template_entities.len() as u64)
+    );
+    assert_eq!(
+        template_entities[0]
+            .field("gameplay.judgment.enabled")
+            .expect("judgment field")
+            .value(),
+        &TypedValue::Bool(
+            template_expected["judgmentEnabled"]
+                .as_bool()
+                .expect("judgmentEnabled must be bool")
+        )
+    );
+    assert_eq!(
+        template_entities[0]
+            .field("presentation.alpha")
+            .expect("alpha field")
+            .value(),
+        &TypedValue::Float(
+            template_expected["alpha"]
+                .as_f64()
+                .expect("alpha must be a number")
+        )
+    );
+    assert_eq!(
+        template_expected["forbiddenExpandedNodes"],
+        serde_json::json!(["template", "if", "with"])
+    );
+
+    let descending_fixture = fixture(&fcs, "source.valid.int-range-descending");
+    let descending = elaborate_fixture(&fcs_base, descending_fixture)
+        .expect("descending range fixture must elaborate");
+    descending
+        .validate_invariants()
+        .expect("descending output must satisfy the expanded boundary");
+    let descending_expected = expected_json(&fcs_base, descending_fixture);
+    let descending_entities = note_entities(&descending);
+    assert_eq!(
+        descending_expected["iterationCount"].as_u64(),
+        Some(descending_entities.len() as u64)
+    );
+    let expected_indices = descending_expected["indices"]
+        .as_array()
+        .expect("descending indices must be an array");
+    let expected_values = descending_expected["values"]
+        .as_array()
+        .expect("descending values must be an array");
+    let expected_positions = descending_expected["positionXPx"]
+        .as_array()
+        .expect("descending positions must be an array");
+    assert_eq!(expected_indices.len(), descending_entities.len());
+    assert_eq!(expected_values.len(), descending_entities.len());
+    assert_eq!(expected_positions.len(), descending_entities.len());
+    for (index, entity) in descending_entities.iter().enumerate() {
+        assert_eq!(expected_indices[index].as_i64(), Some(index as i64));
+        assert_eq!(
+            entity.field("gameplay.time").expect("time field").value(),
+            &TypedValue::Beat(Beat::new(0, 1).unwrap())
+        );
+        let expected_position = expected_positions[index]
+            .as_f64()
+            .expect("position must be a number");
+        assert_eq!(
+            entity
+                .field("presentation.positionX")
+                .expect("position field")
+                .value(),
+            &TypedValue::Length(expected_position)
+        );
+        assert_eq!(expected_values[index].as_i64(), Some(4 - index as i64));
+    }
+}
+
+#[test]
+fn i2_elaborate_error_fixtures_keep_static_diagnostics_and_budget_trace() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+    let ids = [
+        "source.invalid.unresolved-schema-enum",
+        "source.invalid.generator-zero-step",
+        "source.invalid.shadowing",
+        "source.invalid.template-missing-line",
+        "source.invalid.runtime-gameplay",
+        "source.invalid.generator-budget",
+    ];
+
+    for id in ids {
+        let fixture = fixture(&fcs, id);
+        assert_eq!(fixture.stage, FixtureStage::Elaborate, "{id}");
+        assert_eq!(fixture.expect, FixtureExpectation::Error, "{id}");
+        let expected = fixture
+            .diagnostic
+            .as_deref()
+            .expect("elaborate error fixture must bind a diagnostic");
+        let source = fs::read_to_string(fcs_base.join(&fixture.path))
+            .unwrap_or_else(|error| panic!("failed to read fixture {id}: {error}"));
+        let errors = elaborate_fixture(&fcs_base, fixture)
+            .expect_err("invalid I2 fixture must not produce expanded output");
+        assert_eq!(errors[0].code().as_str(), expected, "{id}");
+        assert!(errors.iter().all(|diagnostic| {
+            !matches!(diagnostic.stage(), DiagnosticStage::Parse)
+                && diagnostic.primary_span().end <= source.len()
+                && source.is_char_boundary(diagnostic.primary_span().start)
+                && source.is_char_boundary(diagnostic.primary_span().end)
+        }));
+
+        if id == "source.invalid.generator-budget" {
+            let diagnostic = &errors[0];
+            let budget = diagnostic
+                .budget()
+                .expect("generator budget fixture must expose budget details");
+            assert_eq!(budget.kind(), "max_generator_iterations");
+            assert_eq!(budget.limit(), 2);
+            assert_eq!(budget.observed(), 3);
+            for expected_trace in fixture
+                .trace_contains
+                .as_deref()
+                .expect("budget fixture must bind trace fragments")
+            {
+                match expected_trace.as_str() {
+                    "collection=notes" => {
+                        assert!(diagnostic.expansion_trace().iter().any(|frame| {
+                            frame.kind() == ExpansionTraceKind::Collection
+                                && frame.subject() == Some("notes")
+                        }))
+                    }
+                    "index=2" => assert!(diagnostic.expansion_trace().iter().any(|frame| {
+                        frame.kind() == ExpansionTraceKind::Index && frame.index() == Some(2)
+                    })),
+                    "emit=Note" => assert!(diagnostic.expansion_trace().iter().any(|frame| {
+                        frame.kind() == ExpansionTraceKind::Emit
+                            && frame.emitted_type() == Some("Note")
+                    })),
+                    other => panic!("unhandled bound trace fragment {other}"),
+                }
+            }
+        }
+    }
 }
 
 #[test]
