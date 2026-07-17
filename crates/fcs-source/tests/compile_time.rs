@@ -1128,6 +1128,33 @@ fn dependency_cycle_selection_is_shortest_and_declaration_order_independent() {
 }
 
 #[test]
+fn function_entity_returns_are_rejected_at_the_function_boundary() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { fn invalid() -> Note { return 1; } }"#;
+
+    assert_code(
+        elaborate_source(source),
+        DiagnosticCode::TYPE_INVALID_OPERATION,
+    );
+}
+
+#[test]
+fn functions_cannot_call_templates() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  template Note make() { return tap { gameplay.time: 0beat; }; }
+  fn invalid() -> int { return make(); }
+}"#;
+
+    assert_code(
+        elaborate_source(source),
+        DiagnosticCode::TYPE_INVALID_OPERATION,
+    );
+}
+
+#[test]
 fn template_cycle_detection_scans_template_bodies_before_expansion() {
     let cases = [
         (

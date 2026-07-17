@@ -1,6 +1,6 @@
 //! Pure expression type checking and evaluation.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{
     Beat, BinaryOperator, ConstDeclaration, Definition, DefinitionsBlock, FunctionDeclaration,
@@ -17,6 +17,7 @@ pub(super) fn check_and_evaluate(
 ) -> Result<(), Diagnostic> {
     let mut constants = BTreeMap::new();
     let mut functions = BTreeMap::new();
+    let mut templates = BTreeSet::new();
     let builtin_span = SourceSpan::new(0, 0);
     let mut global_names = BTreeMap::from([
         ("pi".to_owned(), builtin_span),
@@ -48,6 +49,12 @@ pub(super) fn check_and_evaluate(
                     validate_static_type(&parameter.ty, parameter.span)?;
                 }
                 validate_static_type(&declaration.return_type, declaration.span)?;
+                if !is_pure_value_type(&declaration.return_type) {
+                    return Err(Diagnostic::InvalidOperation {
+                        message: "function return type must be a pure compile-time value",
+                        span: declaration.span,
+                    });
+                }
                 functions.insert(declaration.name.clone(), declaration);
             }
             Definition::Template(declaration) => {
@@ -55,9 +62,12 @@ pub(super) fn check_and_evaluate(
                 for parameter in &declaration.parameters {
                     validate_static_type(&parameter.ty, parameter.span)?;
                 }
+                templates.insert(declaration.name.clone());
             }
         }
     }
+
+    reject_function_template_calls(&functions, &templates)?;
 
     let mut root = Scope::root_with_builtins()?;
     for declaration in functions.values() {
@@ -172,6 +182,104 @@ pub(super) fn evaluate_with_bindings(
     )?;
     require_type(&actual, &value.ty(), expression.span())?;
     Ok(value)
+}
+
+fn reject_function_template_calls(
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+    templates: &BTreeSet<String>,
+) -> Result<(), Diagnostic> {
+    for function in functions.values() {
+        reject_function_template_calls_in_block(&function.body, templates)?;
+    }
+    Ok(())
+}
+
+fn reject_function_template_calls_in_block(
+    statements: &[FunctionStatement],
+    templates: &BTreeSet<String>,
+) -> Result<(), Diagnostic> {
+    for statement in statements {
+        match statement {
+            FunctionStatement::Let(statement) => {
+                reject_function_template_calls_in_expression(&statement.initializer, templates)?;
+            }
+            FunctionStatement::Return(statement) => {
+                reject_function_template_calls_in_expression(&statement.value, templates)?;
+            }
+            FunctionStatement::If(statement) => {
+                reject_function_template_calls_in_expression(&statement.condition, templates)?;
+                reject_function_template_calls_in_block(&statement.then_branch, templates)?;
+                reject_function_template_calls_in_block(&statement.else_branch, templates)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reject_function_template_calls_in_expression(
+    expression: &SourceExpression,
+    templates: &BTreeSet<String>,
+) -> Result<(), Diagnostic> {
+    match expression {
+        SourceExpression::Call {
+            callee,
+            arguments,
+            span,
+        } => {
+            if let SourceExpression::Name { name, .. } = callee.as_ref()
+                && templates.contains(name)
+            {
+                return Err(Diagnostic::InvalidOperation {
+                    message: "functions cannot call templates",
+                    span: *span,
+                });
+            }
+            if !matches!(callee.as_ref(), SourceExpression::Name { .. }) {
+                reject_function_template_calls_in_expression(callee, templates)?;
+            }
+            for argument in arguments {
+                reject_function_template_calls_in_expression(argument, templates)?;
+            }
+        }
+        SourceExpression::Unary { operand, .. }
+        | SourceExpression::FieldAccess { base: operand, .. } => {
+            reject_function_template_calls_in_expression(operand, templates)?;
+        }
+        SourceExpression::Binary { left, right, .. }
+        | SourceExpression::Vec2 {
+            x: left, y: right, ..
+        } => {
+            reject_function_template_calls_in_expression(left, templates)?;
+            reject_function_template_calls_in_expression(right, templates)?;
+        }
+        SourceExpression::Array { elements, .. } => {
+            for element in elements {
+                reject_function_template_calls_in_expression(element, templates)?;
+            }
+        }
+        SourceExpression::Object { entries, .. } => {
+            for entry in entries {
+                reject_function_template_calls_in_expression(&entry.value, templates)?;
+            }
+        }
+        SourceExpression::Index { base, index, .. } => {
+            reject_function_template_calls_in_expression(base, templates)?;
+            reject_function_template_calls_in_expression(index, templates)?;
+        }
+        SourceExpression::Choose {
+            arms, else_value, ..
+        } => {
+            for arm in arms {
+                reject_function_template_calls_in_expression(&arm.condition, templates)?;
+                reject_function_template_calls_in_expression(&arm.value, templates)?;
+            }
+            reject_function_template_calls_in_expression(else_value, templates)?;
+        }
+        SourceExpression::Literal { .. }
+        | SourceExpression::Name { .. }
+        | SourceExpression::Reference { .. } => {}
+    }
+    Ok(())
 }
 
 fn check_function(
