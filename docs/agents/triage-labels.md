@@ -12,6 +12,31 @@ Workflow state is represented by exactly one of these GitHub labels on each open
 
 Type labels such as `bug`, `documentation`, `enhancement`, and `question` are orthogonal and may coexist with one state label.
 
+## Orthogonal taxonomy
+
+The repository maintains these additional labels for cross-cutting routing:
+
+| Label family | Labels | Use |
+|---|---|---|
+| Domain | `specification`, `conformance` | Identify normative or executable-conformance work without changing workflow state. |
+| Delivery | `workflow` | Identify repository collaboration and delivery policy work. |
+| Review | `review-finding` | Identify an Issue created from an independent review finding. |
+| Severity | `severity:critical`, `severity:important`, `severity:minor` | Record the supported impact of a review finding; use at most one severity label per finding. |
+
+These labels are additive metadata, not alternative workflow states. An open Issue still has exactly one
+`needs-*`/`ready-*`/`wontfix` state label. Reviewers may apply existing domain, review, and severity labels to finding
+Issues they create, but they must not silently redefine the label taxonomy.
+
+## Milestones
+
+Milestones group work by stage or repository workflow and do not replace a state label, an owner, or a dependency
+relationship. The initial milestones are `I2 Static Semantics` and `Repository Workflow`; they intentionally have no
+due dates. Create later stage milestones only when work for that stage exists.
+
+The primary session owns the milestone and taxonomy for primary Issues. An independent reviewer may assign an existing
+milestone to a finding Issue it created and may propose a new milestone or taxonomy change in a separate Issue/comment;
+the primary session makes the global change and may adjust the primary Issue's milestone.
+
 Do not add an `in-progress` state. For `ready-for-agent`, the assignee and linked branch/PR record that work has started. Keep the state label until the Issue closes through merge or returns to triage.
 
 ## State changes

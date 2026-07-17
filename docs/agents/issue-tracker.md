@@ -4,6 +4,9 @@ GitHub Issues are the repository's work contracts. Pull Requests deliver one rev
 
 Use the authenticated `gh` CLI for repository operations. Prefer `--json` plus `jq` over parsing human-readable tables.
 
+All new GitHub Issue/PR titles, bodies, comments, and review messages must be written in English. Existing messages
+are append-only history and are not rewritten solely for language migration.
+
 For transient network failures only (DNS, timeout/reset, interrupted TLS, or HTTP 502/503/504), wait 5 seconds and retry the same `gh` operation up to ten times after the initial failure. Before every mutation retry, query by stable identity to determine whether the previous attempt already succeeded. Never blindly repeat Issue/PR creation, comments, reviews, or merge. Do not retry authentication/authorization failures, invalid input, not-found responses, merge conflicts, or failed checks; report them immediately.
 
 After ten retries, preserve the exact payload, stable identity, last error, and a `pending remote sync` marker, then continue safe local work that does not depend on the remote action succeeding. This local record is a transport outbox, not a second Issue tracker. At the next meaningful checkpoint, and before handoff, PR Ready, review, merge, or another transition that depends on remote state, query first and retry synchronization under the same duplicate-prevention rule. Never claim that a deferred action happened remotely. If the missing remote state is itself a prerequisite for an irreversible or externally visible transition, defer that transition rather than the local work.
@@ -142,6 +145,10 @@ The review session may:
   `--request-changes`;
 - create a bug/finding Issue containing the discovery SHA, location, normative/ADR/plan clause, reproduction command,
   impact, severity, owner, target stage, dependencies, and acceptance conditions;
+- apply existing orthogonal labels (`review-finding`, domain labels, and at most one `severity:*` label) to finding
+  Issues it creates and assign an existing milestone when the target stage is known;
+- propose, by a new English comment or Issue, changes to the global label or milestone taxonomy without applying those
+  global changes itself;
 - create a corrective PR for a recorded finding, linking `Closes #<finding>` and
   `Refs #<reviewed-issue-or-pr>`.
 
@@ -149,6 +156,7 @@ The review session may not:
 
 - merge a PR, mark a PR Ready, close the primary Issue, change its workflow label, or modify the primary session's
   active implementation branch, `main`, or worktree;
+- create or redefine global labels/milestones, or change the primary Issue's labels or milestone;
 - review or approve a corrective PR that it created. The primary session inspects, reviews, and merges that PR; the
   primary PR's new head SHA must then be independently reviewed again.
 
