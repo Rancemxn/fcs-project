@@ -7,6 +7,8 @@
   其中包含目标身份、head SHA、scope、实际命令、verdict、限制和 Next；所有 Critical/Important finding
   都有 owner、修复路径和最新状态；必要的 corrective PR 已链接 finding Issue，且主会话已经重新审查
   修复后的新 SHA；当前 frontier 没有未审查目标，也没有未分配的 Critical/Important finding。
+- 所有已完成审查的 reviewer worktree 都已从 `/tmp` 安全清理；仍保留的 worktree 都有 owner、固定 SHA、
+  未完成原因和明确的清理条件。
 - 审查 loop 不声明阶段、规范版本域或 FCS 5 RC 完成；它只产生独立审查证据和 finding 路由。最终完成
   仍由主 `docs/loops/loop.md` 根据规范、fixture、baseline、gate 和合并证据判定。
 
@@ -55,6 +57,11 @@
 - **Persistent objective:** root Issue #9 的当前 checkpoint、child Issue dependency graph、开放/已合并
   PR、历史 commit、finding ledger 和审查评论共同形成 frontier。动态远端状态优先于本文件中的示例；不
   把 `docs/scratch/` 或本地猜测当作当前队列。
+- **Review frontier sync:** 每个 review-unit 开始前、完成后、创建 finding/corrective PR 前，以及主会话
+  发送新的 `Review requested`、push、合并或改变 acceptance gate 后，重新读取远端 Issue/PR/finding 状态。
+  固定 `origin/main`、被审 head SHA、开放 corrective PR、workflow/severity label、review thread 和必要
+  checks；通过 `gh --json`/`gh api` 与 `jq` 检查，不依赖另一个会话的即时通知。远端状态无法确认时，不得把
+  审查或 handoff 描述为完成。
 - **Selection order:** 默认从最早仍未审查且不依赖未关闭前置 blocker 的 Issue/PR 选择目标，优先当前
   stage gate 和主会话明确发送的 `Review requested`。对明显影响当前 gate、但主会话尚未请求且已经固定的
   PR，可以主动建立审查目标；不审查仍处于写入中的 PR。
@@ -79,8 +86,10 @@
    严重度必须由影响和可复现证据支持，不以个人偏好升降级。
 5. **Route:** 对 finding 创建或更新 Issue；需要代码/测试/文档修复时创建 corrective PR。审查者不得
    合并、Ready 或批准自己创建的 corrective PR；由主会话审查、合并，再把主 PR 的新 SHA 送回本 loop。
-6. **Comment immediately:** 审查结束后立即在被审 PR（若存在）和关联 Issue 各追加一条 Audit result；即使
-   没有 finding 也必须发送。评论 append-only，不手写日期，不反复 edit 同一消息。
+6. **Cleanup and comment immediately:** 若不再需要本地写入，先按 Worktree Cleanup 安全清理；若必须保留，
+   在 `Audit result` 中记录 owner、固定 SHA 和清理条件。随后立即在被审 PR（若存在）和关联 Issue 各追加一条
+   Audit result；即使没有 finding 也必须发送。评论 append-only，不手写日期，不反复 edit 同一消息；清理未完成
+   且没有 owner/condition 时，review-unit 不得算作完成。
 
 # Finding Contract & Routing
 
@@ -122,13 +131,33 @@
 
 # Corrective Branch & Worktree Isolation
 
-- 创建 corrective PR 必须使用独立 worktree 和独立分支；建议命名为 `codex/<finding>-<slug>`。单独分支
-  不等于工作树隔离，两者都必须满足。
+- 创建 corrective PR 必须使用 `/tmp` 下的独立 worktree 和独立分支；推荐路径为
+  `/tmp/fcs-finding-<finding>-<slug>`，分支命名为 `codex/<finding>-<slug>`。单独分支不等于工作树隔离，
+  两者都必须满足。reviewer loop 不得把 worktree 放在主仓库、主仓库旁、用户 home 或其他任意路径。
+- 纯只读审查也必须使用 `/tmp` 下的快照 worktree，推荐路径为 `/tmp/fcs-review-<target>`；可使用 detached
+  HEAD，不创建实现分支。主实现 worktree 不受本条路径约束。
+- 创建前记录 worktree owner、用途、固定 base/head SHA、分支或 detached 状态和预计清理条件；使用
+  `git worktree list --porcelain` 验证路径确实位于 `/tmp/`，不得用符号链接绕过该约束。每个 session/target
+  使用唯一路径；若路径已存在，先核对 owner 和状态，不得复用或覆盖 dirty worktree。
 - 审查者不得写入当前会话的 dirty worktree、活动实现分支或 `main`；纯审查可在只读固定 commit 上完成。
 - 开放 PR 的 corrective branch 起点是固定 head SHA，PR base 是被审 PR 的活动分支；历史 commit 的
   corrective branch 起点是最新 `origin/main`，PR base 是 `main`。
 - 当前会话负责检查 corrective diff、验证命令、required checks 和 review requirements，并合并 corrective
   PR。审查者不得批准自己的修复；主 PR 只有在修复后新 SHA 通过本 loop 的独立 Audit result 后才能 Ready/merge。
+
+# Worktree Cleanup
+
+- 只读审查在没有未记录 artifact 且不再需要本地写入后结束其 `/tmp/fcs-review-*` worktree；安全条件满足时
+  应在最终 `Audit result` 前清理，以便消息记录 `Worktree: cleaned`。
+- corrective worktree 在分支已 push、PR 已建立且没有待提交修改后，若 reviewer 不再需要本地修改，可以
+  暂时清理；若仍可能需要修复，则保留到 PR 合并/关闭或明确放弃，并记录 owner、原因和下一条件。PR 合并
+  后的最终 re-review handoff 完成时必须清理剩余 worktree。
+- 清理必须由该 worktree 的 owner 执行：先确认
+  `git -C <path> status --porcelain` 为空，再执行 `git worktree remove <path>`、`git worktree prune`，
+  最后用 `git worktree list --porcelain` 确认路径已消失。不得使用 `--force` 删除 dirty worktree，也不得
+  删除未 push 的 commit 或未记录 artifact。
+- 清理失败或 worktree 变脏时，保留现场并追加 residual：包含 path、owner、固定 SHA、阻塞原因和下一清理
+  条件；不得把审查标记为完全交付。主会话不得代替 reviewer 删除其 dirty worktree。
 
 # Audit Comment Contract
 
@@ -145,6 +174,7 @@
 - Findings: <none 或 #finding 列表，含 severity>
 - Gate impact: <当前 stage/PR gate 是否阻塞>
 - Limitations: <未覆盖范围或 none>
+- Worktree: <cleaned，或 retained + owner/condition>
 - Next: <主会话或 finding owner 的下一有界动作>
 ```
 
@@ -156,6 +186,8 @@
 - 审查会话可以使用 `gh issue create`、`gh issue comment`、`gh pr comment`、`gh pr review --request-changes`
   或 `--comment`，以及在独立 worktree/branch 上创建和 push corrective PR；所有 GitHub 网络失败遵守
   `AGENTS.md` 的 5 秒、最多 10 次重试和 pending remote sync 规则。
+- 审查者只清理自己在 `/tmp` 下创建的 worktree，并且必须遵守 Worktree Cleanup；主会话只清理自己创建的
+  临时 worktree，不能删除 reviewer 的 dirty worktree。
 - 审查会话禁止 `gh pr merge`、`gh pr ready`、关闭主 Issue、修改主 Issue workflow label、force-push、
   修改活动实现分支，或把未确认的远端动作描述为成功。
 - 主会话读取 Audit result 和 finding ledger，按严重度和依赖处理 corrective PR；它是唯一可以将 PR 标记
@@ -193,6 +225,7 @@
 | 缺少固定 SHA、scope、命令或 artifact | LOCAL | 请求补齐固定输入；输入未齐前 verdict 为 `needs-info` |
 | 规范/ADR/外部证据冲突 | PLANNER/HUMAN | 保留双方证据，按 specification governance 或新 ADR 路由，不自行选择公开语义 |
 | 审查者角色不独立、被审目标仍在写入或工作树隔离失败 | HUMAN | 停止该 iteration，报告冲突和恢复条件 |
+| reviewer worktree 不在 `/tmp`、变脏、owner/固定 SHA 缺失或无法安全清理 | LOCAL/HUMAN | 停止交付，保留现场并记录清理条件；不得使用 `--force` 或越权删除 |
 | GitHub 瞬时网络失败 | LOCAL | 按重试规则查询稳定身份并重试；耗尽则保存 payload/outbox，继续安全只读审查 |
 | 连续 3 个 review-unit 无进展且无新 frontier | HUMAN | 终止本轮，报告未审目标、证据缺口和解除条件 |
 | 达到 240 review-unit | PLANNER | 终止本轮，保留 finding ledger，产出后继审查 loop 建议 |
