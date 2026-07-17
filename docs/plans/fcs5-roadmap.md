@@ -15,7 +15,7 @@ Reviewed Implementation Baseline 驱动 Rust 参考实现，再在完整 executa
   `template`、`generate` 或 `emit`。
 - 运行时只有一个物理主时钟；判定时间与滚动坐标分离，但不建立 line-local 物理时钟。
 - 不静默修复非法谱面；可选 repair 必须生成机器可读记录。
-- I0-A 用 `archive/fcs4-pre-cutover` 保存完整旧工具链；I0 完成后活动 `master` 只保留一套
+- I0-A 用 `archive/fcs4-pre-cutover` 保存完整旧工具链；I0 完成后活动 `main` 只保留一套
   无版本实现前缀的 FCS source API，不建立 FCS 4 兼容层。
 - 每个实施阶段结束前依次运行 Clippy、nextest、rustfmt check 和 diff check。
 - generator 实现持续以权威编译期语言为准；I0 的 parser/feature-unavailable 边界不反向定义语法。
@@ -236,13 +236,12 @@ snapshot/import report 仍由 I3/I6 激活，Render codec/raster 能力仍由 I9
 
 当前进度：I0.1–I0.9 已完成；活动树只有 `fcs-source`，Chumsky token parser、稳定诊断、
 byte/property robustness、精确 generator parser 边界和强类型 manifest gate 已落地。
-generator 仍按 I0 边界不展开，不能将 retained source subset 的测试通过误记为完整 source
-implementation 已完成。最终结构、依赖、质量、归档拓扑和独立复审 gate 以 135 个通过的
-workspace tests 完成；后续 test-only ABI/Render closure 与 I1.1 lexer evidence 将当前 workspace gate
-扩展到 175 tests，I1 阶段 baseline 已建立，Task 1 已完成并自动进入 Task 2。
+I0 的 135-test 历史证据与 test-only ABI/Render closure 的 175-test checkpoint 保留为审计事实；
+I1.1–I1.8 已交付 source AST/parser、fixture runner、production ledger、parser limits、deterministic
+properties 和独立 fuzz lane，当前 root workspace gate 为 218 tests，I1 Task 9 正在进行最终治理和独立复审。
 
 - 提交完整切换前快照并建立永久 `archive/fcs4-pre-cutover`；
-- fast-forward `master`，删除活动主线中的 FCS 4、旧 converter 和旧 CLI；
+- fast-forward `main`，删除活动主线中的 FCS 4、旧 converter 和旧 CLI；
 - 将 `fcs-core/src/v5` 提升为无版本前缀的独立 `fcs-source` crate；
 - 用 Chumsky 0.11.2 + `stacker` 建立 token/span/parser 和结构化诊断基线；
 - 建立 byte decode API 和固定 seed/case 的 Proptest parser robustness gate；
@@ -349,7 +348,7 @@ workspace tests 完成；后续 test-only ABI/Render closure 与 I1.1 lexer evid
 
 - **I0.1 快照与归档（已完成）**：提交当前 generator、当时 Frozen 的文档、conformance 和项目
   workflow 工作；创建指向精确切换前提交 `148936d17b671bb34968c88969ab748c818f9fc0` 的
-  `archive/fcs4-pre-cutover`，然后 fast-forward `master`。后续 Trellis bookkeeping commits
+  `archive/fcs4-pre-cutover`，然后 fast-forward `main`。后续 Trellis bookkeeping commits
   不移动归档指针。
 - **I0.2 Generator staging（已完成）**：只接受 `..<`/`..=`，拒绝裸 `..`；在 I2 完成展开前
   返回临时 `FeatureUnavailable { feature: "compile-time-generator", .. }`；已消除
@@ -371,9 +370,9 @@ workspace tests 完成；后续 test-only ABI/Render closure 与 I1.1 lexer evid
   public API、实现文件、valid/invalid fixture、状态、下一阶段和已知偏差。
 - **I0.9 基线 gate（已完成）**：workspace 只有 `fcs-source`；结构搜索、依赖/feature 审计、Clippy、
   nextest、fmt、diff 和
-  独立 review 全绿，记录准确 test count 与 archive/master SHA。
+  独立 review 全绿，记录准确 test count 与 archive/main SHA。
 
-交付：精确旧工具链归档、绿色 `master`、唯一 `fcs-source`、条款矩阵、偏差清单和强类型
+交付：精确旧工具链归档、绿色 `main`、唯一 `fcs-source`、条款矩阵、偏差清单和强类型
 manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 
 ### I1：完整 Source AST 与 parser

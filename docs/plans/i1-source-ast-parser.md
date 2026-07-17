@@ -5,8 +5,8 @@
 > framework is required.
 
 > **Current status (2026-07-16):** The I1 Reviewed Implementation Baseline passed and is recorded in
-> `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`; I1 Task 1 passed its implementation
-> gate and Task 2 is active automatically under ADR 0010. The independently reviewed plan snapshot
+> `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`; I1.1–I1.8 implementation and evidence
+> are merged, and Task 9 governance is active automatically under ADR 0010. The independently reviewed plan snapshot
 > hash is retained in that record; this status-only
 > amendment does not change task semantics. Render raster, Conversion round-trip and Core canonical
 > execution remain later-stage blockers unless a finding changes I1's public AST/parser behavior. I0
@@ -120,7 +120,7 @@ cargo fmt --all -- --check
 git diff --check
 ```
 
-Expected baseline: clean `master`; the accepted I0 verification commit is an ancestor of HEAD; the
+Expected baseline: clean `main`; the accepted I0 verification commit is an ancestor of HEAD; the
 confirmed S14 specification/plan commit is HEAD or an ancestor; and the workspace has one package.
 Record the actual pre-I1 test count instead of requiring the historical I0 count of 135. If the user
 has added unrelated changes after this plan was written, preserve them and record the actual baseline
@@ -541,7 +541,7 @@ independent fixed-snapshot review; I1 is not complete until this task gate passe
   AST representability, spans/recovery, limits, all `blocked-by-I1` matrix transitions, dependency
   activation, and the full I1 diff. Fix Critical/Important findings and repeat review before
   acceptance.
-- [ ] **Step 6: Record exact evidence.** Capture the final master SHA, workspace packages,
+- [ ] **Step 6: Record exact evidence.** Capture the final main SHA, workspace packages,
   dependency tree, nextest pass count, parse fixture counts, production coverage, fuzz smoke result,
   remaining partial/blocked matrix rows, review disposition, and confirmation that baseline-bound clauses and
   fixtures were not changed without reopening the baseline.
