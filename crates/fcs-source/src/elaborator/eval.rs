@@ -492,6 +492,12 @@ pub(super) fn infer_expression(
             match infer_expression(base, scope, functions)? {
                 Type::Vec2(element) if matches!(field.as_str(), "x" | "y") => Ok(*element),
                 Type::Array(_) if field == "length" => Ok(Type::Int),
+                Type::GeneratorRange(element)
+                    if matches!(field.as_str(), "start" | "end" | "step") =>
+                {
+                    Ok(*element)
+                }
+                Type::GeneratorRange(_) if field == "count" => Ok(Type::Int),
                 _ => Err(Diagnostic::InvalidOperation {
                     message: "unknown field for compile-time value",
                     span: *span,
@@ -672,6 +678,10 @@ fn validate_static_type(ty: &Type, span: SourceSpan) -> Result<(), Diagnostic> {
         | Type::Track(_)
         | Type::TrackSegment(_)
         | Type::Keyframe(_) => Ok(()),
+        Type::GeneratorRange(_) => Err(Diagnostic::InvalidOperation {
+            message: "generator range type is only available inside a generator frame",
+            span,
+        }),
     }
 }
 
@@ -748,6 +758,7 @@ fn is_pure_value_type(ty: &Type) -> bool {
         | Type::Track(_)
         | Type::TrackSegment(_)
         | Type::Keyframe(_) => false,
+        Type::GeneratorRange(_) => false,
     }
 }
 
@@ -977,6 +988,16 @@ fn evaluate_expression(
                         .map(TypedValue::Int)
                         .map_err(|_| Diagnostic::NumericOverflow { span: *span })
                 }
+                TypedValue::GeneratorRange(range) => match field.as_str() {
+                    "start" => Ok(range.start().clone()),
+                    "end" => Ok(range.end().clone()),
+                    "step" => Ok(range.step().clone()),
+                    "count" => Ok(TypedValue::Int(range.count())),
+                    _ => Err(Diagnostic::InvalidOperation {
+                        message: "unknown generator range field",
+                        span: *span,
+                    }),
+                },
                 _ => Err(Diagnostic::InvalidOperation {
                     message: "unknown field for compile-time value",
                     span: *span,

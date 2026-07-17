@@ -58,6 +58,8 @@ pub enum Type {
     Length,
     Angle,
     Color,
+    /// The typed metadata object exposed only inside a compile-time generator frame.
+    GeneratorRange(Box<Type>),
     Vec2(Box<Type>),
     Array(Box<Type>),
     Note,
@@ -80,6 +82,7 @@ impl fmt::Display for Type {
             Self::Length => formatter.write_str("length"),
             Self::Angle => formatter.write_str("angle"),
             Self::Color => formatter.write_str("color"),
+            Self::GeneratorRange(element) => write!(formatter, "range<{element}>"),
             Self::Vec2(element) => write!(formatter, "vec2<{element}>"),
             Self::Array(element) => write!(formatter, "array<{element}>"),
             Self::Note => formatter.write_str("Note"),
@@ -349,6 +352,8 @@ pub enum TypedValue {
     Color(Color),
     /// A compile-time reference to a named Line entity.
     Line(String),
+    /// Generator range metadata exposed only to generator body evaluation.
+    GeneratorRange(Box<GeneratorRangeValue>),
     /// A representation-level vector value whose components must have equal types.
     Vec2(Box<TypedValue>, Box<TypedValue>),
     /// An immutable homogeneous compile-time array.
@@ -397,6 +402,7 @@ impl TypedValue {
             Self::Angle(_) => Some(Type::Angle),
             Self::Color(_) => Some(Type::Color),
             Self::Line(_) => Some(Type::Line),
+            Self::GeneratorRange(range) => range.checked_type(),
             Self::Vec2(x, y) => {
                 let x_type = x.checked_type()?;
                 let y_type = y.checked_type()?;
@@ -412,6 +418,64 @@ impl TypedValue {
                     .all(|value| value.checked_type().as_ref() == Some(element_type)))
             .then(|| Type::Array(element_type.clone())),
         }
+    }
+}
+
+/// The exact range metadata value bound in a compile-time generator frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeneratorRangeValue {
+    start: TypedValue,
+    end: TypedValue,
+    step: TypedValue,
+    count: i64,
+}
+
+impl GeneratorRangeValue {
+    /// Constructs range metadata after the numeric members have been validated.
+    pub fn new(start: TypedValue, end: TypedValue, step: TypedValue, count: i64) -> Option<Self> {
+        let value_type = start.checked_type()?;
+        if !matches!(value_type, Type::Int | Type::Beat)
+            || end.checked_type().as_ref() != Some(&value_type)
+            || step.checked_type().as_ref() != Some(&value_type)
+            || count < 0
+        {
+            return None;
+        }
+        Some(Self {
+            start,
+            end,
+            step,
+            count,
+        })
+    }
+
+    /// Returns the exact range start value.
+    pub fn start(&self) -> &TypedValue {
+        &self.start
+    }
+
+    /// Returns the exact range end value.
+    pub fn end(&self) -> &TypedValue {
+        &self.end
+    }
+
+    /// Returns the exact range step value.
+    pub fn step(&self) -> &TypedValue {
+        &self.step
+    }
+
+    /// Returns the exact range count.
+    pub const fn count(&self) -> i64 {
+        self.count
+    }
+
+    fn checked_type(&self) -> Option<Type> {
+        let value_type = self.start.checked_type()?;
+        (matches!(value_type, Type::Int | Type::Beat)
+            && self.end.checked_type().as_ref() == Some(&value_type)
+            && self.step.checked_type().as_ref() == Some(&value_type)
+            && self.count >= 0)
+            .then(|| Type::GeneratorRange(Box::new(value_type)))
     }
 }
 
@@ -433,6 +497,7 @@ fn is_pure_value_type(ty: &Type) -> bool {
         | Type::Length
         | Type::Angle
         | Type::Color => true,
+        Type::GeneratorRange(_) => false,
         Type::Vec2(element) => is_vec2_element_type(element),
         Type::Array(element) => is_pure_value_type(element),
         Type::Note

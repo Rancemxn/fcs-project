@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{
     CollectionBlock, CollectionItem, Definition, DefinitionsBlock, Document, EntityConstructor,
-    EntityExpression, ExpandedCollection, ExpandedEntity, ExpandedField, SourceExpression,
-    SourceLiteral, SourceSpan, TemplateDeclaration, TemplateStatement, Type, TypedValue,
-    WithExpression,
+    EntityExpression, ExpandedCollection, ExpandedEntity, ExpandedField, Generator, GeneratorItem,
+    SourceExpression, SourceLiteral, SourceSpan, TemplateDeclaration, TemplateStatement, Type,
+    TypedValue, WithExpression,
 };
 use crate::diagnostic::ExpansionTraceKind;
 use crate::schema::{ConstructionSchema, EntitySchema, FieldConstraint};
@@ -16,6 +16,7 @@ use super::{CompileTimeLimits, DependencyTraceNode, ElaboratorError as Diagnosti
 pub(super) fn validate_static_entities(
     document: &Document,
     schema: &ConstructionSchema,
+    limits: CompileTimeLimits,
 ) -> Result<(), Diagnostic> {
     let templates = template_map(document.definitions.as_ref());
     let functions = function_map(document.definitions.as_ref());
@@ -32,6 +33,7 @@ pub(super) fn validate_static_entities(
         functions,
         root,
         line_names,
+        limits,
     };
     validator.validate_templates(document.definitions.as_ref())?;
     validator.validate_collections()
@@ -83,6 +85,7 @@ struct StaticEntityValidator<'a> {
     functions: BTreeMap<String, &'a crate::ast::FunctionDeclaration>,
     root: Scope,
     line_names: BTreeSet<String>,
+    limits: CompileTimeLimits,
 }
 
 impl<'a> StaticEntityValidator<'a> {
@@ -235,17 +238,135 @@ impl<'a> StaticEntityValidator<'a> {
                     )?;
                 }
                 CollectionItem::Conditional {
+                    condition,
                     then_items,
                     else_items,
                     ..
                 } => {
+                    self.validate_condition(condition, &self.root)?;
                     self.validate_collection_items(then_items, expected_type)?;
                     self.validate_collection_items(else_items, expected_type)?;
                 }
-                CollectionItem::Generator(_) => {}
+                CollectionItem::Generator(generator) => {
+                    let schema = self.schema.entity(expected_type).ok_or_else(|| {
+                        Diagnostic::NonConstructibleEntity {
+                            entity: expected_type.clone(),
+                            span: generator.span,
+                        }
+                    })?;
+                    self.validate_generator(generator, expected_type, schema)?;
+                }
             }
         }
         Ok(())
+    }
+
+    fn validate_generator(
+        &self,
+        generator: &Generator,
+        expected_type: &Type,
+        schema: &EntitySchema,
+    ) -> Result<(), Diagnostic> {
+        super::generator::evaluate_range(self.document, generator, self.limits)?;
+        let mut scope = self.root.child();
+        scope.declare(
+            "index".to_owned(),
+            Binding {
+                ty: Type::Int,
+                value: None,
+                span: generator.variable_span,
+            },
+        )?;
+        scope.declare(
+            "range".to_owned(),
+            Binding {
+                ty: Type::GeneratorRange(Box::new(generator.variable_type.clone())),
+                value: None,
+                span: generator.range.span,
+            },
+        )?;
+        scope.declare(
+            generator.variable.clone(),
+            Binding {
+                ty: generator.variable_type.clone(),
+                value: None,
+                span: generator.variable_span,
+            },
+        )?;
+        self.validate_generator_items(&generator.body, &scope, expected_type, schema)
+    }
+
+    fn validate_generator_items(
+        &self,
+        items: &[GeneratorItem],
+        initial_scope: &Scope,
+        expected_type: &Type,
+        schema: &EntitySchema,
+    ) -> Result<(), Diagnostic> {
+        let mut scope = initial_scope.clone();
+        for item in items {
+            match item {
+                GeneratorItem::Let(statement) => {
+                    let actual = self.validate_expression(&statement.initializer, &scope)?;
+                    require_static_type(&statement.ty, &actual, statement.initializer.span())?;
+                    scope.declare(
+                        statement.name.clone(),
+                        Binding {
+                            ty: statement.ty.clone(),
+                            value: None,
+                            span: statement.name_span,
+                        },
+                    )?;
+                }
+                GeneratorItem::Conditional {
+                    condition,
+                    then_items,
+                    else_items,
+                    ..
+                } => {
+                    self.validate_condition(condition, &scope)?;
+                    self.validate_generator_items(
+                        then_items,
+                        &scope.child(),
+                        expected_type,
+                        schema,
+                    )?;
+                    self.validate_generator_items(
+                        else_items,
+                        &scope.child(),
+                        expected_type,
+                        schema,
+                    )?;
+                }
+                GeneratorItem::Emit(expression) => {
+                    self.validate_entity_expression(
+                        expression,
+                        expected_type,
+                        &scope,
+                        schema,
+                        false,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_condition(
+        &self,
+        condition: &SourceExpression,
+        scope: &Scope,
+    ) -> Result<(), Diagnostic> {
+        let actual = match self.validate_expression(condition, scope) {
+            Ok(actual) => actual,
+            Err(Diagnostic::UnknownName { .. } | Diagnostic::FeatureUnavailable { .. }) => {
+                return Err(Diagnostic::NonConstantStructuralCondition {
+                    span: condition.span(),
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        require_static_type(&Type::Bool, &actual, condition.span())
     }
 
     fn validate_entity_expression(
@@ -564,7 +685,7 @@ pub(super) fn expand_collections(
     schema: &ConstructionSchema,
     limits: CompileTimeLimits,
 ) -> Result<Vec<ExpandedCollection>, Diagnostic> {
-    validate_static_entities(document, schema)?;
+    validate_static_entities(document, schema, limits)?;
     let templates = template_map(document.definitions.as_ref());
     let mut context = ExpansionContext {
         document,
@@ -683,11 +804,113 @@ impl<'a> ExpansionContext<'a> {
                 self.push_collection_entity(entity, expected_type, collection_name, output)?;
             }
             CollectionItem::Generator(generator) => {
-                super::generator::evaluate_range(self.document, generator, self.limits)?;
-                return Err(Diagnostic::FeatureUnavailable {
-                    feature: "compile-time-generator",
-                    span: generator.span,
-                });
+                self.expand_generator(generator, expected_type, collection_name, output)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn expand_generator(
+        &mut self,
+        generator: &Generator,
+        expected_type: &Type,
+        collection_name: &str,
+        output: &mut Vec<ExpandedEntity>,
+    ) -> Result<(), Diagnostic> {
+        let range = super::generator::evaluate_range(self.document, generator, self.limits)?;
+        let mut generated = Vec::new();
+        for index in 0..range.count() {
+            let value = range
+                .value_at(index)
+                .map_err(|_| Diagnostic::NumericOverflow {
+                    span: generator.range.span,
+                })?;
+            let mut bindings = BTreeMap::new();
+            bindings.insert(generator.variable.clone(), value);
+            bindings.insert("index".to_owned(), TypedValue::Int(index));
+            bindings.insert("range".to_owned(), range.frame_value());
+            self.expand_generator_items(
+                &generator.body,
+                expected_type,
+                collection_name,
+                &bindings,
+                &mut generated,
+            )?;
+        }
+        output.extend(generated);
+        Ok(())
+    }
+
+    fn expand_generator_items(
+        &mut self,
+        items: &[GeneratorItem],
+        expected_type: &Type,
+        collection_name: &str,
+        bindings: &BTreeMap<String, TypedValue>,
+        output: &mut Vec<ExpandedEntity>,
+    ) -> Result<(), Diagnostic> {
+        let mut local_bindings = bindings.clone();
+        for item in items {
+            match item {
+                GeneratorItem::Let(statement) => {
+                    let value = evaluate_with_bindings(
+                        &statement.initializer,
+                        self.document.definitions.as_ref(),
+                        &local_bindings,
+                        self.limits,
+                    )?;
+                    if value.ty() != statement.ty {
+                        return Err(Diagnostic::TypeMismatch {
+                            expected: statement.ty.clone(),
+                            actual: value.ty(),
+                            span: statement.initializer.span(),
+                        });
+                    }
+                    if local_bindings
+                        .insert(statement.name.clone(), value)
+                        .is_some()
+                    {
+                        return Err(Diagnostic::DuplicateBinding {
+                            name: statement.name.clone(),
+                            span: statement.name_span,
+                            previous_span: statement.name_span,
+                        });
+                    }
+                }
+                GeneratorItem::Conditional {
+                    condition,
+                    then_items,
+                    else_items,
+                    span,
+                } => {
+                    let condition = evaluate_with_bindings(
+                        condition,
+                        self.document.definitions.as_ref(),
+                        &local_bindings,
+                        self.limits,
+                    )?;
+                    let TypedValue::Bool(selected) = condition else {
+                        return Err(Diagnostic::NonConstantStructuralCondition { span: *span });
+                    };
+                    let branch = if selected { then_items } else { else_items };
+                    self.expand_generator_items(
+                        branch,
+                        expected_type,
+                        collection_name,
+                        &local_bindings,
+                        output,
+                    )?;
+                }
+                GeneratorItem::Emit(expression) => {
+                    let entity = self.expand_expression(
+                        expression,
+                        expected_type,
+                        &local_bindings,
+                        &mut Vec::new(),
+                        0,
+                    )?;
+                    self.push_collection_entity(entity, expected_type, collection_name, output)?;
+                }
             }
         }
         Ok(())

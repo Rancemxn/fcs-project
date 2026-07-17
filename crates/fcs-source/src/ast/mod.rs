@@ -29,9 +29,9 @@ pub use track::{
     LinesBlock, SegmentsBlock, TrackDeclaration, TrackSegmentItem, TrackSetting, TracksBlock,
 };
 pub use types::{
-    BinaryOperator, SourceChooseArm, SourceExpression, SourceLiteral, SourceObjectEntry,
-    SourceSpan, SourceType, SourceTypeKind, Type, TypedExpression, TypedExpressionKind, TypedValue,
-    UnaryOperator,
+    BinaryOperator, GeneratorRangeValue, SourceChooseArm, SourceExpression, SourceLiteral,
+    SourceObjectEntry, SourceSpan, SourceType, SourceTypeKind, Type, TypedExpression,
+    TypedExpressionKind, TypedValue, UnaryOperator,
 };
 
 #[derive(Debug, Clone, PartialEq)]
