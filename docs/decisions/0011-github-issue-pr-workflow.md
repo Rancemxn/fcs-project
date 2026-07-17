@@ -104,8 +104,19 @@ implementation/conformance 审查通过后可以追加架构和文档 advisory p
 `ready-for-human` 的 HUMAN-only Issue，不进入 `loop.md` acceptance ledger，也不自动修复或阻塞 I10。若证据
 实际证明规范矛盾、实现缺陷或当前 conformance 违约，则必须回到标准 finding contract。
 
-每次审查目标完成后，reviewer 先检查 root Issue 的 I10 success signal：若未完成且没有新固定目标，按每次 1 分钟、
-最多 10 次的 Idle wait window 重新同步；新目标出现即恢复，10 次耗尽返回 `waiting-for-main` residual 并结束当前
-reviewer turn。等待不消耗 480 review-unit 预算；该 amendment 与第 7 节关于“独立审查必须在 Ready/merge 前完成”
-的表述冲突之处，以本节、`AGENTS.md`、`docs/agents/issue-tracker.md`、`docs/loops/loop.md` 和
-`docs/loops/review-loop.md` 的新契约为准，其余权限、分支隔离、重试、进度消息和规范权威边界保持不变。
+## 9. 2026-07-17 dated amendment：reviewer 持续等待直到 I10 闭合
+
+用户进一步确认：reviewer 在 FCS5/I10 尚未完成且当前没有固定 review target 时必须持续等待，不得因为空 frontier
+或一个有限等待批次耗尽而标记 `blocked` 或结束持久 reviewer 目标。reviewer 每分钟执行一次 Frontier Sync；每
+10 次只是一个不计预算的观察批次，批次结束后自动继续下一批。新的 `Review requested`、固定 PR/merged commit、
+finding 或 corrective PR 立即打断等待并开始 review-unit。
+
+`blocked` 只适用于固定目标自身缺少 SHA、证据、权限或 worktree 隔离等具体阻塞，不适用于“当前没有目标”。
+reviewer 只有在 root Issue 的 I10 success signal 已满足，并且 Frontier Sync 确认没有新的 review target、未分配的
+Critical/Important finding、待复审的 corrective PR/merged SHA 或 reviewer 自己保留的 worktree 时，才可终止并报告
+frontier 闭合。480 个 review-unit 仍是实际审查预算上限；空闲等待不消耗该预算。达到预算只停止当前预算内的
+review-unit 分配并生成后继审查 handoff，不把空 frontier 标记为 `blocked`，后继 loop 继续按本节等待规则运行。
+
+该 amendment 取代第 8 节关于“最多 10 次后返回 `waiting-for-main` residual 并结束 reviewer turn”的表述；其余
+权限、分支隔离、重试、进度消息、规范权威边界和 I10 success signal 保持不变。具体执行契约以本节、`AGENTS.md`、
+`docs/agents/issue-tracker.md`、`docs/loops/loop.md` 和 `docs/loops/review-loop.md` 的一致文本为准。

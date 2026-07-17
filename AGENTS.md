@@ -195,6 +195,11 @@
 - reviewer 在实现/conformance 审查通过后，可以追加架构和文档 advisory audit。架构优化、文档改善和一般建议必须
   创建 `ready-for-human` 的 HUMAN-only Issue，不进入 `loop.md` acceptance ledger，不自动修复或阻塞 I10；若证据
   实际证明规范矛盾、实现缺陷或当前 conformance 违约，则必须升级为标准 finding 并按严重度路由。
+- reviewer 在 FCS5/I10 尚未完成且当前没有固定 review target 时必须持续轮询远端 Frontier：每分钟重新同步一次，
+  每 10 次只是一个观察批次，批次结束后继续下一批。空 frontier 不得被标记为 `blocked`，也不得结束 reviewer
+  持久目标；只有 I10 success signal 已满足且没有新的 review target、未分配 Critical/Important finding、待复审
+  corrective PR/merged SHA 或 reviewer worktree 时，reviewer 才能终止。480 个 review-unit 只限制实际审查预算，
+  不限制空闲等待；达到预算只生成后继审查 handoff，不改变空 frontier 的持续等待语义。
 - 审查者创建的 corrective PR 必须链接 finding Issue，并使用独立 worktree 和
   `codex/<finding>-<slug>` 分支。开放 PR 的修复分支从被审 PR 的固定 head SHA 建立、目标为活动 PR 分支；
   历史 commit 的修复分支从最新 `origin/main` 建立、目标为 `main`。审查者不得审查或批准自己创建的修复
