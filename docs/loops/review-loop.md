@@ -106,6 +106,20 @@
 - 开放 PR 的 finding 从被审 PR 的固定 head SHA 创建 corrective branch，目标为该活动 PR 的分支。主会话
   在审查期间不推进活动分支；修复 PR 合并后活动 PR 获得新 head SHA，旧 Audit result 失效，必须重新审查。
 
+# Reviewer Metadata Duties
+
+审查者可以管理自己创建的 finding Issue 的既有元数据，但不能借此改变项目的全局治理：
+
+- 创建 finding 时使用已有的 `review-finding` label，并根据证据添加至多一个 `severity:critical`、
+  `severity:important` 或 `severity:minor`；需要时可以添加已有的 `specification` 或 `conformance`
+  等正交 label。一个 open finding 仍必须保持恰好一个 workflow-state label。
+- 当 finding 已能明确归属阶段时，可以给该 finding 分配已有 milestone（例如 `I2 Static Semantics`）；不
+  明确时保留未设置状态，并在 Issue/comment 中写出 milestone 建议及解除条件。
+- 可以用新的英文 comment 或 finding Issue 提议新增/调整 label 或 milestone，但不得直接创建、重命名、删除
+  或改变全局 label/milestone 定义，也不得修改被审主 Issue 的 workflow label 或 milestone。
+- 这些 metadata 只用于路由和审查证据，不能提升规范状态、改变 stage baseline、替代 owner/依赖关系，或把
+  `Minor` finding 自动变成当前 gate 的阻塞项。
+
 # Corrective Branch & Worktree Isolation
 
 - 创建 corrective PR 必须使用独立 worktree 和独立分支；建议命名为 `codex/<finding>-<slug>`。单独分支

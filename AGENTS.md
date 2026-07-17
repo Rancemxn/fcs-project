@@ -154,11 +154,12 @@
 
 ### Triage labels
 
-使用五个 GitHub 状态 label：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human` 和 `wontfix`。一个 open Issue 同时只保留一个状态 label；`bug`、`documentation`、`enhancement` 等是正交的类型 label。详见 `docs/agents/triage-labels.md`。
+使用五个 GitHub 状态 label：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human` 和 `wontfix`。一个 open Issue 同时只保留一个状态 label；`bug`、`documentation`、`enhancement`、`specification`、`conformance`、`review-finding`、`workflow` 以及 `severity:critical`、`severity:important`、`severity:minor` 是正交 label。Milestone 用于阶段或工作流分组，不替代状态 label。详见 `docs/agents/triage-labels.md`。
 
 ### GitHub delivery workflow
 
 - 只读检查使用 `gh issue list/view`、`gh pr list/view/diff/checks` 和 `gh api`。创建、编辑、评论、关闭、push、review 或 merge 是外部状态变更，只在用户明确要求对应工作流时执行。
+- GitHub Issue/PR 的新标题、正文、评论和 review message 必须使用英文；已有历史消息保持 append-only，不为语言迁移改写。
 - `gh` 因 DNS、连接超时/重置、TLS 中断或 HTTP 502/503/504 等瞬时网络问题失败时，每隔 5 秒重试同一操作，首次失败后最多再试 10 次。写操作在每次重试以及稍后补同步前，必须先按稳定身份查询远程是否已生效，避免重复创建 Issue/PR、重复评论、review 或 merge。不得重试认证/权限失败、参数/校验错误、not found、合并冲突或门禁失败；应立即报告。10 次重试耗尽后，记录完整待同步 payload、稳定身份、最后错误和 `pending remote sync` 状态，继续不依赖该远端结果的安全本地工作；在下一个有意义检查点以及 handoff、PR Ready、review 或 merge 等依赖远端状态的动作前再次查询并尝试同步。待同步记录只是 transport outbox，不是第二个 tracker；不得把未确认的远端动作描述为成功。
 - 开始非机械工作前，确保有一个写明范围、权威输入、验收条件、非目标、依赖和验证方法的 Issue。大型工作用 parent/sub-issue 和 blocked-by/blocking 关系，不在一个 Issue 中堆放不可独立验收的横向任务。
 - 非机械 Issue 正文必须写明稳定的初始工作契约和一条实质性的初始 `Progress`，不得只保留初始对话或空模板。之后每个有意义检查点分别发送一条新的 Issue comment，不在正文或旧评论中累计、反复 edit。范围/决定变化、完成工作单元、出现/解除阻塞、获得验证结果、创建 PR 或交付状态变化时发送新消息；每条包含 Completed、Evidence、Decisions、Blockers 和 Next。更正旧消息时发送显式 superseding comment 并指出被替代内容，不静默覆盖历史；不需要为每个 commit 发一条。
