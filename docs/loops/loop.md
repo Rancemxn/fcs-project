@@ -153,6 +153,9 @@
   在不影响当前验收、规范依赖 closure 或阶段 gate，且有明确 owner、目标 Issue 和解除条件时才能延期。
 - 审查会话创建的 corrective PR 仍由当前会话审查其 diff、处理 required checks 并合并；审查者不得
   审查或批准自己创建的 PR。corrective PR 合并后，主 PR 的新 head SHA 必须重新请求审查。
+- reviewer 在 FCS5/I10 尚未完成时不得因 `blocked` finding、等待主会话的 corrective PR、dirty corrective
+  worktree、未确认的远端同步或暂时空 frontier 终止持久目标；reviewer 必须每分钟 Frontier Sync，直到 I10
+  success signal 与 review frontier 闭合的全部条件同时满足。480 个 review-unit 只限制实际审查预算，不限制该等待。
 - 具体审查目标选择、finding Issue 路由、评论格式、历史 commit 审查以及分支/worktree 隔离由
   `docs/loops/review-loop.md` 定义；本 loop 只负责提供固定快照、接收结果、修复 finding 和最终合并。
 
@@ -227,7 +230,7 @@ Routine GitHub delivery 和满足 Authorized Change & Delivery 条件的普通 m
 | 需要推翻 Accepted ADR 或用户已确认的产品边界 | HUMAN | 停止受影响范围，提出新 ADR 候选和迁移影响 |
 | 第三次尝试仍无决定性证据，或外部输入/能力缺失 | HUMAN | 标记 `needs-info` 或 `ready-for-human`，记录最小所需输入并退出受影响路径 |
 | 不可逆动作、凭据、系统配置或版权/许可证分发 | HUMAN | 触发 Approval Gate；拒绝时保留本地安全状态 |
-| 连续 3 次满足全局 no-progress 且无 ready frontier | HUMAN | 终止并提交完整阻塞证据、已尝试路径和解除条件 |
+| 连续 3 次满足全局 no-progress 且无 ready frontier | LOCAL/WAIT | 记录 `waiting-for-main` 并每分钟 Frontier Sync；reviewer 持久目标不得终止或标记 `blocked`，直至 I10 success signal 与 review frontier 闭合 |
 | 达到 240 次上限 | PLANNER | 终止本轮，保留合并证据并产出仍指向 I10 的后继 loop 建议 |
 | Primary audit 发现当前 work-unit 的 Critical/Important finding | LOCAL | 停止 Ready/merge，修复或建立 finding Issue，追加 superseding Primary audit 后再交付 |
 | reviewer 合并后发现当前 stage 的 Critical/Important finding | LOCAL | 冻结受影响 stage claim 和后续依赖，处理 corrective PR 并重新验证；不回滚已合并 PR |
