@@ -367,7 +367,7 @@ fn check_block(
     Ok(false)
 }
 
-fn infer_expression(
+pub(super) fn infer_expression(
     expression: &SourceExpression,
     scope: &Scope,
     functions: &BTreeMap<String, &FunctionDeclaration>,
@@ -381,12 +381,13 @@ fn infer_expression(
                 })
             })
         }
-        SourceExpression::Object { span, .. }
-        | SourceExpression::Reference { span, .. }
-        | SourceExpression::Choose { span, .. } => Err(Diagnostic::FeatureUnavailable {
-            feature: "extended source expression",
-            span: *span,
-        }),
+        SourceExpression::Object { span, .. } | SourceExpression::Choose { span, .. } => {
+            Err(Diagnostic::FeatureUnavailable {
+                feature: "extended source expression",
+                span: *span,
+            })
+        }
+        SourceExpression::Reference { .. } => Ok(Type::Line),
         SourceExpression::Array { elements, span } => {
             let mut element_type = None;
             for element in elements {
@@ -686,6 +687,7 @@ fn literal_type(literal: &SourceLiteral) -> Option<Type> {
         SourceLiteral::Length(_) => Type::Length,
         SourceLiteral::Angle(_) => Type::Angle,
         SourceLiteral::Color(_) => Type::Color,
+        SourceLiteral::Line(_) => Type::Line,
     })
 }
 
@@ -815,12 +817,13 @@ fn evaluate_expression(
     budget.node(expression.span())?;
     match expression {
         SourceExpression::Literal { literal, span } => literal_value(literal, *span),
-        SourceExpression::Object { span, .. }
-        | SourceExpression::Reference { span, .. }
-        | SourceExpression::Choose { span, .. } => Err(Diagnostic::FeatureUnavailable {
-            feature: "extended source expression",
-            span: *span,
-        }),
+        SourceExpression::Object { span, .. } | SourceExpression::Choose { span, .. } => {
+            Err(Diagnostic::FeatureUnavailable {
+                feature: "extended source expression",
+                span: *span,
+            })
+        }
+        SourceExpression::Reference { name, .. } => Ok(TypedValue::Line(name.clone())),
         SourceExpression::Array { elements, span } => {
             if elements.is_empty() {
                 return Err(Diagnostic::InvalidOperation {
@@ -1325,6 +1328,7 @@ fn literal_value(literal: &SourceLiteral, span: SourceSpan) -> Result<TypedValue
         SourceLiteral::Length(value) => TypedValue::Length(*value),
         SourceLiteral::Angle(value) => TypedValue::Angle(*value),
         SourceLiteral::Color(value) => TypedValue::Color(*value),
+        SourceLiteral::Line(value) => TypedValue::Line(value.clone()),
     })
 }
 

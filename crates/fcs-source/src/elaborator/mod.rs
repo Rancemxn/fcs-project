@@ -115,6 +115,10 @@ enum ElaboratorError {
         actual: Type,
         span: SourceSpan,
     },
+    DynamicFieldForbidden {
+        field: String,
+        span: SourceSpan,
+    },
     NonConstantStructuralCondition {
         span: SourceSpan,
     },
@@ -341,6 +345,12 @@ impl ElaboratorError {
                 DiagnosticCode::SCHEMA_COLLECTION_TYPE_MISMATCH,
                 DiagnosticStage::Elaborate,
                 format!("collection {collection} expects {expected}, found {actual}"),
+                span,
+            ),
+            Self::DynamicFieldForbidden { field, span } => Diagnostic::new(
+                DiagnosticCode::SCHEMA_DYNAMIC_FIELD_FORBIDDEN,
+                DiagnosticStage::Elaborate,
+                format!("field {field} cannot depend on a runtime expression"),
                 span,
             ),
             Self::NonConstantStructuralCondition { span } => Diagnostic::new(

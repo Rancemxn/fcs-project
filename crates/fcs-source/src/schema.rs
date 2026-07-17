@@ -110,6 +110,7 @@ fn build_phase2_schema() -> ConstructionSchema {
             NoteVariant::Drag,
         ],
         vec![
+            field("line", Type::Line, false),
             field("gameplay.time", Type::Beat, true),
             field("gameplay.endTime", Type::Beat, false),
             constrained_field(

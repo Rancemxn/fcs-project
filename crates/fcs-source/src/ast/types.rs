@@ -197,6 +197,8 @@ pub enum SourceLiteral {
     Length(f64),
     Angle(f64),
     Color(Color),
+    /// A compile-time reference to a named Line entity.
+    Line(String),
 }
 
 /// An ordered key/value entry in a source object expression.
@@ -345,6 +347,8 @@ pub enum TypedValue {
     Length(f64),
     Angle(f64),
     Color(Color),
+    /// A compile-time reference to a named Line entity.
+    Line(String),
     /// A representation-level vector value whose components must have equal types.
     Vec2(Box<TypedValue>, Box<TypedValue>),
     /// An immutable homogeneous compile-time array.
@@ -392,6 +396,7 @@ impl TypedValue {
             Self::Length(_) => Some(Type::Length),
             Self::Angle(_) => Some(Type::Angle),
             Self::Color(_) => Some(Type::Color),
+            Self::Line(_) => Some(Type::Line),
             Self::Vec2(x, y) => {
                 let x_type = x.checked_type()?;
                 let y_type = y.checked_type()?;

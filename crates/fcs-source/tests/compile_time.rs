@@ -274,6 +274,171 @@ definitions {
 }
 
 #[test]
+fn template_unselected_branch_is_schema_checked_before_instantiation() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  template Note selected() {
+    if true {
+      return tap { line: @main; gameplay.time: 0beat; };
+    } else {
+      return tap { line: @main; gameplay.time: 0beat; presentation.unknown: 1.0; };
+    }
+  }
+}
+lines { line main {} }
+collections { notes { selected(); } }"#;
+
+    assert_code(
+        elaborate_source(source),
+        DiagnosticCode::SCHEMA_UNKNOWN_FIELD,
+    );
+}
+
+#[test]
+fn templates_accept_typed_line_references_and_preserve_them_in_expanded_fields() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  template Note selected(at: beat, whichLine: Line) {
+    return tap {
+      line: whichLine;
+      gameplay.time: at;
+    };
+  }
+}
+lines { line main {} }
+collections { notes { selected(1beat, @main); } }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
+    let entity = expanded
+        .collections()
+        .next()
+        .unwrap()
+        .entities()
+        .next()
+        .unwrap();
+
+    assert_eq!(
+        entity.field("line").unwrap().value(),
+        &TypedValue::Line("main".into())
+    );
+}
+
+#[test]
+fn template_note_returns_require_a_line_binding() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  template Note invalid(at: beat) {
+    return tap { gameplay.time: at; };
+  }
+}
+collections { notes { invalid(0beat); } }"#;
+
+    assert_code(
+        elaborate_source(source),
+        DiagnosticCode::SCHEMA_MISSING_REQUIRED_FIELD,
+    );
+}
+
+#[test]
+fn uninstantiated_templates_must_return_registered_constructible_entities() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  template RenderNode invalid() {
+    return tap { gameplay.time: 0beat; };
+  }
+}"#;
+
+    assert_code(
+        elaborate_source(source),
+        DiagnosticCode::SCHEMA_NON_CONSTRUCTIBLE,
+    );
+}
+
+#[test]
+fn runtime_gameplay_fields_are_rejected_at_the_static_boundary() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+  notes {
+    tap {
+      line: @main;
+      gameplay.time: choose { when s < 1s => 1s; else => 2s; };
+    };
+  }
+}"#;
+
+    assert_code(
+        elaborate_source(source),
+        DiagnosticCode::SCHEMA_DYNAMIC_FIELD_FORBIDDEN,
+    );
+}
+
+#[test]
+fn closed_schema_values_do_not_infer_unresolved_names_as_strings() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections {
+  notes {
+    tap {
+      gameplay.time: 0beat;
+      gameplay.side: above;
+    };
+  }
+}"#;
+
+    assert_code(elaborate_source(source), DiagnosticCode::NAME_UNKNOWN);
+}
+
+#[test]
+fn constant_closed_schema_values_are_checked_before_template_selection() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const SIDE: string = "sideways";
+  template Note selected() {
+    if true {
+      return tap { line: @main; gameplay.time: 0beat; };
+    } else {
+      return tap { line: @main; gameplay.time: 0beat; gameplay.side: SIDE; };
+    }
+  }
+}
+lines { line main {} }
+collections { notes { selected(); } }"#;
+
+    assert_code(
+        elaborate_source(source),
+        DiagnosticCode::TYPE_INVALID_OPERATION,
+    );
+}
+
+#[test]
+fn template_if_without_branch_return_continues_to_following_statement() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  template Note selected(flag: bool) {
+    if flag { let marker: int = 1; } else { let marker: int = 2; }
+    return tap { line: @main; gameplay.time: 0beat; };
+  }
+}
+lines { line main {} }
+collections { notes { selected(true); } }"#;
+
+    let document = parse_document(source).into_result().unwrap();
+    assert!(elaborate(&document, phase2_schema(), CompileTimeLimits::default()).is_ok());
+}
+
+#[test]
 fn generator_variables_cannot_shadow_global_bindings() {
     let source = r#"#fcs 5.0.0
 format { profile: chart; }
@@ -330,7 +495,7 @@ definitions {
     return callee(at);
   }
   template Note callee(at: beat) {
-    return tap { gameplay.time: at; };
+    return tap { line: @main; gameplay.time: at; };
   }
 }
 lines { line main {} }
@@ -1027,11 +1192,14 @@ definitions {
   const X: length = 12px;
   template Note ghost(at: beat, x: length) {
     return tap {
+      line: @main;
       gameplay.time: at;
       presentation.positionX: x;
     };
   }
 }
+
+lines { line main {} }
 
 collections {
   notes { ghost(1beat, X) with { presentation.alpha: 0.5; }; }
@@ -1065,10 +1233,11 @@ tempoMap { 0beat -> 180bpm; }
 definitions {
   template Note selected(at: beat) {
     let offset: beat = 1beat;
-    if true { return tap { gameplay.time: at + offset; }; }
-    else { return tap { gameplay.time: 99beat; }; }
+    if true { return tap { line: @main; gameplay.time: at + offset; }; }
+    else { return tap { line: @main; gameplay.time: 99beat; }; }
   }
 }
+lines { line main {} }
 collections { notes { selected(2beat); } }"#;
     let document = parse_document(source).into_result().unwrap();
     let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
@@ -1310,6 +1479,66 @@ fn parses_and_elaborates_the_public_template_fixture() {
 }
 
 #[test]
+fn bound_template_if_with_fixture_expands_selected_branch_and_overlay() {
+    let source = include_str!("../../../conformance/fcs5/source/valid/template-if-with.fcs");
+    let document = parse_document(source).into_result().unwrap();
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
+    let entity = expanded
+        .collections()
+        .find(|collection| collection.name() == "notes")
+        .unwrap()
+        .entities()
+        .next()
+        .unwrap();
+
+    assert_eq!(
+        entity.field("line").unwrap().value(),
+        &TypedValue::Line("main".into())
+    );
+    assert_eq!(
+        entity.field("gameplay.judgment.enabled").unwrap().value(),
+        &TypedValue::Bool(false)
+    );
+    assert_eq!(
+        entity.field("presentation.alpha").unwrap().value(),
+        &TypedValue::Float(0.5)
+    );
+}
+
+#[test]
+fn note_constructors_materialize_static_schema_defaults() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections { notes { tap { gameplay.time: 0beat; }; } }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
+    let entity = expanded
+        .collections()
+        .next()
+        .unwrap()
+        .entities()
+        .next()
+        .unwrap();
+
+    assert_eq!(
+        entity.field("gameplay.side").unwrap().value(),
+        &TypedValue::String("above".into())
+    );
+    assert_eq!(
+        entity.field("gameplay.judgment.enabled").unwrap().value(),
+        &TypedValue::Bool(true)
+    );
+    assert_eq!(
+        entity.field("presentation.alpha").unwrap().value(),
+        &TypedValue::Float(1.0)
+    );
+    assert_eq!(
+        entity.field("render.enabled").unwrap().value(),
+        &TypedValue::Bool(true)
+    );
+}
+
+#[test]
 fn phase2_schema_requires_note_time_and_types_position() {
     let schema = phase2_schema();
     let note = schema.entity(&Type::Note).unwrap();
@@ -1364,6 +1593,7 @@ fn phase2_note_schema_has_exact_fields_required_flags_and_variants() {
             ("gameplay.judgment.enabled", Type::Bool, false),
             ("gameplay.side", Type::String, false),
             ("gameplay.time", Type::Beat, true),
+            ("line", Type::Line, false),
             ("presentation.alpha", Type::Float, false),
             ("presentation.color", Type::Color, false),
             ("presentation.positionX", Type::Length, false),
