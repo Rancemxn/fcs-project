@@ -69,13 +69,8 @@ enum ElaboratorError {
         name: String,
         span: SourceSpan,
     },
-    RecursiveConst {
-        chain: Vec<String>,
-        span: SourceSpan,
-    },
-    RecursiveFunction {
-        chain: Vec<String>,
-        span: SourceSpan,
+    RecursiveDependency {
+        chain: Vec<DependencyTraceNode>,
     },
     MissingReturn {
         function: String,
@@ -121,10 +116,6 @@ enum ElaboratorError {
         span: SourceSpan,
     },
     NonConstantStructuralCondition {
-        span: SourceSpan,
-    },
-    RecursiveTemplate {
-        chain: Vec<String>,
         span: SourceSpan,
     },
     NumericOverflow {
@@ -259,14 +250,30 @@ impl ElaboratorError {
                 format!("unknown name {name}"),
                 span,
             ),
-            Self::RecursiveConst { chain, span } => {
-                cycle_diagnostic(ExpansionTraceKind::Const, chain, span)
-            }
-            Self::RecursiveFunction { chain, span } => {
-                cycle_diagnostic(ExpansionTraceKind::Function, chain, span)
-            }
-            Self::RecursiveTemplate { chain, span } => {
-                cycle_diagnostic(ExpansionTraceKind::Template, chain, span)
+            Self::RecursiveDependency { chain } => {
+                let primary_span = chain
+                    .first()
+                    .map(|node| node.span)
+                    .unwrap_or(SourceSpan::new(0, 0));
+                let trace = chain
+                    .into_iter()
+                    .map(|node| {
+                        ExpansionTraceFrame::new(
+                            node.kind,
+                            Some(node.name),
+                            None,
+                            None,
+                            Some(node.span),
+                        )
+                    })
+                    .collect();
+                Diagnostic::new(
+                    DiagnosticCode::NAME_CYCLE,
+                    DiagnosticStage::Elaborate,
+                    "cyclic name expansion",
+                    primary_span,
+                )
+                .with_expansion_trace(trace)
             }
             Self::MissingReturn { function, span } => Diagnostic::new(
                 DiagnosticCode::TYPE_MISMATCH,
@@ -388,16 +395,9 @@ impl ElaboratorError {
     }
 }
 
-fn cycle_diagnostic(kind: ExpansionTraceKind, chain: Vec<String>, span: SourceSpan) -> Diagnostic {
-    let trace = chain
-        .into_iter()
-        .map(|subject| ExpansionTraceFrame::new(kind, Some(subject), None, None, Some(span)))
-        .collect();
-    Diagnostic::new(
-        DiagnosticCode::NAME_CYCLE,
-        DiagnosticStage::Elaborate,
-        "cyclic name expansion",
-        span,
-    )
-    .with_expansion_trace(trace)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct DependencyTraceNode {
+    pub(super) kind: ExpansionTraceKind,
+    pub(super) name: String,
+    pub(super) span: SourceSpan,
 }

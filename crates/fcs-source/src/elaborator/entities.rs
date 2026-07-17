@@ -5,10 +5,11 @@ use crate::ast::{
     ExpandedCollection, ExpandedEntity, ExpandedField, SourceExpression, SourceSpan,
     TemplateDeclaration, TemplateStatement, Type, TypedValue, WithExpression,
 };
+use crate::diagnostic::ExpansionTraceKind;
 use crate::schema::{ConstructionSchema, EntitySchema, FieldConstraint};
 
 use super::eval::evaluate_with_bindings;
-use super::{CompileTimeLimits, ElaboratorError as Diagnostic};
+use super::{CompileTimeLimits, DependencyTraceNode, ElaboratorError as Diagnostic};
 
 pub(super) fn expand_collections(
     document: &Document,
@@ -279,9 +280,24 @@ impl<'a> ExpansionContext<'a> {
             })?;
         if stack.iter().any(|entry| entry == name) {
             let start = stack.iter().position(|entry| entry == name).unwrap_or(0);
-            let mut chain = stack[start..].to_vec();
-            chain.push(name.to_owned());
-            return Err(Diagnostic::RecursiveTemplate { chain, span });
+            let mut chain = stack[start..]
+                .iter()
+                .map(|subject| DependencyTraceNode {
+                    kind: ExpansionTraceKind::Template,
+                    name: subject.clone(),
+                    span: self
+                        .templates
+                        .get(subject)
+                        .map(|template| template.name_span)
+                        .unwrap_or(span),
+                })
+                .collect::<Vec<_>>();
+            chain.push(DependencyTraceNode {
+                kind: ExpansionTraceKind::Template,
+                name: name.to_owned(),
+                span: template.name_span,
+            });
+            return Err(Diagnostic::RecursiveDependency { chain });
         }
         if arguments.len() != template.parameters.len() {
             return Err(Diagnostic::WrongArity {
