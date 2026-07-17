@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 mod cycle;
 mod entities;
 mod eval;
+mod resolve;
 mod scope;
 
 use crate::ast::{Definition, Document, ExpandedSourceDocument, SourceSpan, Type};
@@ -164,6 +165,7 @@ fn elaborate_inner(
     limits: CompileTimeLimits,
 ) -> Result<ExpandedSourceDocument, ElaboratorError> {
     preflight_names(document)?;
+    resolve::check_document(document)?;
     if let Some(definitions) = &document.definitions {
         cycle::reject_cycles(definitions)?;
         eval::check_and_evaluate(definitions, limits)?;

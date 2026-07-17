@@ -6,6 +6,11 @@ use crate::ast::{SourceSpan, Type, TypedValue};
 
 use super::ElaboratorError as Diagnostic;
 
+pub(super) const BUILTIN_NAMES: &[&str] = &[
+    "abs", "min", "max", "clamp", "floor", "ceil", "round", "sqrt", "exp", "ln", "pow", "sin",
+    "cos", "tan", "asin", "acos", "atan", "atan2", "approxEq", "toFloat", "seconds", "radians",
+];
+
 #[derive(Debug, Clone)]
 pub(super) struct Binding {
     pub(super) ty: Type,
@@ -25,6 +30,31 @@ impl Scope {
             frames: vec![BTreeMap::new()],
             reserved: BTreeMap::new(),
         }
+    }
+
+    pub(super) fn root_with_builtins() -> Result<Self, Diagnostic> {
+        let builtin_span = SourceSpan::new(0, 0);
+        let mut scope = Self::root();
+        scope.declare(
+            "pi".to_owned(),
+            Binding {
+                ty: Type::Float,
+                value: Some(TypedValue::Float(std::f64::consts::PI)),
+                span: builtin_span,
+            },
+        )?;
+        scope.declare(
+            "tau".to_owned(),
+            Binding {
+                ty: Type::Float,
+                value: Some(TypedValue::Float(std::f64::consts::TAU)),
+                span: builtin_span,
+            },
+        )?;
+        for builtin in BUILTIN_NAMES {
+            scope.reserve((*builtin).to_owned(), builtin_span);
+        }
+        Ok(scope)
     }
 
     pub(super) fn child(&self) -> Self {
@@ -62,6 +92,10 @@ impl Scope {
 
     pub(super) fn lookup(&self, name: &str) -> Option<&Binding> {
         self.frames.iter().rev().find_map(|frame| frame.get(name))
+    }
+
+    pub(super) fn contains(&self, name: &str) -> bool {
+        self.lookup(name).is_some() || self.reserved.contains_key(name)
     }
 
     pub(super) fn reserve(&mut self, name: String, span: SourceSpan) {

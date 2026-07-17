@@ -8,13 +8,8 @@ use crate::ast::{
     UnaryOperator,
 };
 
-use super::scope::{Binding, Scope};
+use super::scope::{BUILTIN_NAMES, Binding, Scope};
 use super::{CompileTimeLimits, ElaboratorError as Diagnostic};
-
-const BUILTIN_NAMES: &[&str] = &[
-    "abs", "min", "max", "clamp", "floor", "ceil", "round", "sqrt", "exp", "ln", "pow", "sin",
-    "cos", "tan", "asin", "acos", "atan", "atan2", "approxEq", "toFloat", "seconds", "radians",
-];
 
 pub(super) fn check_and_evaluate(
     definitions: &DefinitionsBlock,
@@ -64,26 +59,7 @@ pub(super) fn check_and_evaluate(
         }
     }
 
-    let mut root = Scope::root();
-    root.declare(
-        "pi".to_owned(),
-        Binding {
-            ty: Type::Float,
-            value: Some(TypedValue::Float(std::f64::consts::PI)),
-            span: SourceSpan::new(0, 0),
-        },
-    )?;
-    root.declare(
-        "tau".to_owned(),
-        Binding {
-            ty: Type::Float,
-            value: Some(TypedValue::Float(std::f64::consts::TAU)),
-            span: builtin_span,
-        },
-    )?;
-    for builtin in BUILTIN_NAMES {
-        root.reserve((*builtin).to_owned(), builtin_span);
-    }
+    let mut root = Scope::root_with_builtins()?;
     for declaration in functions.values() {
         root.reserve(declaration.name.clone(), declaration.name_span);
     }
@@ -136,27 +112,7 @@ pub(super) fn evaluate_with_bindings(
 ) -> Result<TypedValue, Diagnostic> {
     let mut constants = BTreeMap::new();
     let mut functions = BTreeMap::new();
-    let builtin_span = SourceSpan::new(0, 0);
-    let mut root = Scope::root();
-    root.declare(
-        "pi".to_owned(),
-        Binding {
-            ty: Type::Float,
-            value: Some(TypedValue::Float(std::f64::consts::PI)),
-            span: builtin_span,
-        },
-    )?;
-    root.declare(
-        "tau".to_owned(),
-        Binding {
-            ty: Type::Float,
-            value: Some(TypedValue::Float(std::f64::consts::TAU)),
-            span: builtin_span,
-        },
-    )?;
-    for builtin in BUILTIN_NAMES {
-        root.reserve((*builtin).to_owned(), builtin_span);
-    }
+    let mut root = Scope::root_with_builtins()?;
     if let Some(definitions) = definitions {
         for definition in &definitions.declarations {
             match definition {

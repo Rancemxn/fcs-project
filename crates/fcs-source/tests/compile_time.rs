@@ -257,6 +257,89 @@ fn rejects_unknown_and_runtime_only_names() {
 }
 
 #[test]
+fn resolves_template_conditions_before_template_instantiation() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  template Note never_called(flag: bool) {
+    if missing_flag {
+      return tap { gameplay.time: 0beat; };
+    } else {
+      return tap { gameplay.time: 0beat; };
+    }
+  }
+}"#;
+
+    assert_code(elaborate_source(source), DiagnosticCode::NAME_UNKNOWN);
+}
+
+#[test]
+fn generator_variables_cannot_shadow_global_bindings() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions { const LIMIT: int = 1; }
+lines { line main {} }
+collections {
+  notes {
+    generate LIMIT: int in 0..=0 step 1 { }
+  }
+}"#;
+
+    assert_code(elaborate_source(source), DiagnosticCode::NAME_SHADOWED);
+}
+
+#[test]
+fn generator_body_resolves_its_variable_before_expansion() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+  notes {
+    generate at: beat in 0beat..<1beat step 1beat {
+      if at < missing { }
+    }
+  }
+}"#;
+
+    assert_code(elaborate_source(source), DiagnosticCode::NAME_UNKNOWN);
+}
+
+#[test]
+fn uninstantiated_templates_still_reject_duplicate_locals() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  template Note duplicate(value: int) {
+    let value: int = 1;
+    return tap { gameplay.time: 0beat; };
+  }
+}"#;
+
+    assert_code(elaborate_source(source), DiagnosticCode::NAME_DUPLICATE);
+}
+
+#[test]
+fn resolves_forward_template_calls_after_collecting_all_definitions() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  template Note caller(at: beat) {
+    return callee(at);
+  }
+  template Note callee(at: beat) {
+    return tap { gameplay.time: at; };
+  }
+}
+lines { line main {} }
+collections { notes { caller(0beat); } }"#;
+
+    assert!(elaborate_source(source).is_ok());
+}
+
+#[test]
 fn types_and_evaluates_phase2_pure_operators() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }
