@@ -523,7 +523,7 @@ independent fixed-snapshot review; I1 is not complete until this task gate passe
 - [x] **Step 3: Audit the public/source boundary.** Confirm one source crate, one token path, no
   `v5`/FCS 4 compatibility paths, no canonical/runtime model, no path dependency into `refer/`, no
   accidental activation of future catalog dependencies, and no public Chumsky/token types.
-- [ ] **Step 4: Run final gates in required order.** Run:
+- [x] **Step 4: Run final gates in required order.** Run:
 
   ```powershell
   cargo clippy --workspace --all-targets -- -D warnings
@@ -537,14 +537,31 @@ independent fixed-snapshot review; I1 is not complete until this task gate passe
   ```
 
   Also run the bounded fuzz smoke command and the production-coverage audit defined in Task 8.
-- [ ] **Step 5: Independently review I1.** Review Appendix B coverage, parser/static phase separation,
+- [x] **Step 5: Independently review I1.** Review Appendix B coverage, parser/static phase separation,
   AST representability, spans/recovery, limits, all `blocked-by-I1` matrix transitions, dependency
   activation, and the full I1 diff. Fix Critical/Important findings and repeat review before
-  acceptance.
-- [ ] **Step 6: Record exact evidence.** Capture the final main SHA, workspace packages,
+  acceptance. The fixed-snapshot review is recorded in
+  `docs/reviews/i1-task9-independent-review.md` with Critical 0, Important 0, and Minor 0 open.
+- [x] **Step 6: Record exact evidence.** Capture the final main SHA, workspace packages,
   dependency tree, nextest pass count, parse fixture counts, production coverage, fuzz smoke result,
   remaining partial/blocked matrix rows, review disposition, and confirmation that baseline-bound clauses and
-  fixtures were not changed without reopening the baseline.
+  fixtures were not changed without reopening the baseline. The pre-merge fixed snapshot and all
+  gate evidence are recorded below; the merged `main` SHA is appended in the final delivery checkpoint.
+
+**Task 9 evidence (pre-merge fixed snapshot):** The reviewed branch snapshot is
+`eaea6a0676aaf81e7cf3abfce90a8b3a90b85f68`; the review artifact and subsequent plan-only evidence commit
+do not change Rust or fixture inputs. The sole workspace package is `fcs-source` 0.2.0. Normal dependencies
+contain only Chumsky 0.11.2; dev roots are `crc`, `image`, `proptest`, `serde`, `serde_json`, `sha2`, and
+`toml`, while the pinned `libfuzzer-sys`/cargo-fuzz lane is isolated under `fuzz/`. Workspace Clippy passed
+with `-D warnings`; workspace nextest passed 218/218; `cargo fmt --all`, fmt check, both dependency-tree
+audits, `git diff --check`, and clean status checks passed. The production runner passed all 39 entries
+(3 parse-success, 9 parse-error, 27 later-stage syntax-acceptance); the ledger records 117 productions and
+six public parser limits. The deterministic lane covers 12 properties, and
+`FCS_FUZZ_RUNS=32 scripts/fcs5-fuzz-smoke.sh bounded` completed all three targets over 42 seeds. The matrix
+has no `blocked-by-I1` row; remaining `partial` and future-stage blocked rows retain explicit I2/I3/I4/I5/I6/
+I7/I9 owners. The fixed-snapshot review found no open Critical, Important, or Minor finding. A direct diff
+confirmed that `fcs.md`, `fcbc.md`, `fcs-render.md`, `fcs-conversion.md`, and all bound FCS source/expected
+fixtures were unchanged.
 
 **I1 final gate:** All I1.1–I1.8 tasks are complete; no matrix row remains `blocked-by-I1`; all legal
 Core source fixtures parse; all parser-invalid fixtures have deterministic categories/spans; all
