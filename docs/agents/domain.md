@@ -4,8 +4,7 @@ How the engineering skills should consume this repo's domain documentation when 
 
 ## Before exploring, read these
 
-- **`CONTEXT.md`** at the repo root, or
-- **`CONTEXT-MAP.md`** at the repo root if it exists — it points at one `CONTEXT.md` per context. Read each one relevant to the topic.
+- **`docs/CONTEXT.md`** for the single project context.
 - **`docs/decisions/`** — read Accepted ADRs that touch the area you're about to work in. This is the
   repository's only ADR directory; do not create a parallel `docs/adr/` tree.
 
@@ -17,16 +16,18 @@ Single-context repo:
 
 ```text
 /
-├── CONTEXT.md
-├── docs/decisions/
-│   ├── 0001-single-runtime-clock.md
-│   └── 0010-stage-scoped-implementation-baselines.md
+├── docs/
+│   ├── CONTEXT.md
+│   ├── specifications/
+│   └── decisions/
+│       ├── 0001-single-runtime-clock.md
+│       └── 0010-stage-scoped-implementation-baselines.md
 └── crates/
 ```
 
 ## Use the glossary's vocabulary
 
-When your output names a domain concept, use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
+When your output names a domain concept, use the term as defined in `docs/CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
 
 If the concept you need isn't in the glossary yet, that signals either that you're inventing language the project doesn't use or that there's a real gap; note it for domain modeling.
 
@@ -39,5 +40,5 @@ If your output contradicts an existing ADR, surface it explicitly rather than si
 
 An Accepted ADR constrains design direction but does not replace normative source grammar, binary layout, or
 execution semantics. If it conflicts with a current root specification, follow `AGENTS.md` and
-`docs/specification-governance.md`: reopen and revise the affected specification and conformance evidence before
+`docs/specifications/governance.md`: reopen and revise the affected specification and conformance evidence before
 resuming the impacted implementation baseline.

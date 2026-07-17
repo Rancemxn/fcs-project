@@ -34,7 +34,8 @@ fn generated_fixture() -> Vec<u8> {
     let png = encode_test_png();
     let webp = encode_test_webp();
     let font = build_test_font();
-    let malformed = include_bytes!("../../../conformance/render/binding/assets/opaque-image.bin");
+    let malformed =
+        include_bytes!("../../../docs/conformance/render/binding/assets/opaque-image.bin");
     write_nonempty_render(
         &fcbc_reference_writer::write_nonempty_execution(),
         RenderAssets {
@@ -95,7 +96,7 @@ fn first_node_record_offset(section: &[u8]) -> usize {
 
 #[test]
 fn checked_in_project_assets_match_deterministic_generators() {
-    let assets = repository_root().join("conformance/render/assets");
+    let assets = repository_root().join("docs/conformance/render/assets");
     let generated = [
         ("fcs-test-rgba8.png", encode_test_png()),
         ("fcs-test-lossless.webp", encode_test_webp()),
@@ -130,7 +131,7 @@ fn render_writer_produces_a_core_valid_self_contained_container() {
             .collect::<Vec<_>>(),
         (1..=14).chain(std::iter::once(20)).collect::<Vec<_>>()
     );
-    assert!(repository_root().join("conformance/render").is_dir());
+    assert!(repository_root().join("docs/conformance/render").is_dir());
 
     let identity = query_descriptor(&chart, 8, 0.0, EvaluationEnvironment::at_time(0.0))
         .expect("Render fixture Core identity descriptor");

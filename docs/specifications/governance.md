@@ -4,10 +4,10 @@
 
 FCS 5 规范由下列文件共同组成：
 
-- `fcs.md`：FCS Core Source Specification 与 canonical execution semantics；
-- `fcbc.md`：FCBC Container Format 与 FCS Execution ABI；
-- `fcs-render.md`：独立版本化的 FCS Render Profile；
-- `fcs-conversion.md`：外部格式转换、保真数据与 ConversionReport。
+- `docs/specifications/fcs.md`：FCS Core Source Specification 与 canonical execution semantics；
+- `docs/specifications/fcbc.md`：FCBC Container Format 与 FCS Execution ABI；
+- `docs/specifications/fcs-render.md`：独立版本化的 FCS Render Profile；
+- `docs/specifications/fcs-conversion.md`：外部格式转换、保真数据与 ConversionReport。
 
 上述文件是规范性资料。`docs/decisions/` 只记录设计理由，不能覆盖规范；
 `docs/plans/` 只记录实施顺序，不能创造格式语义。实现、测试或示例与规范冲突时，
@@ -85,7 +85,7 @@ conformance 通过。局部 baseline 不能替代该门槛。
 
 I1 baseline 已于 2026-07-16 建立，固定 Core/Render-envelope 规范、39-entry/38-path source fixture
 tree、ADR 0006/0008/0010 和 I1 计划；独立复审为 Critical 0、Important 0、Minor 0。Fixture tree
-明确使用相对 `conformance/fcs5` 的 forward-slash path，修正了一个在正式绑定前被 reviewer 拒绝的
+明确使用相对 `docs/conformance/fcs5` 的 forward-slash path，修正了一个在正式绑定前被 reviewer 拒绝的
 Windows-separator 预计算值。完整输入、corrected hash、phase routing 和审计结果见
 `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`。因此 I1 Task 1 已自动开始；这不改变本节
 任何版本状态。

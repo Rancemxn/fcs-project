@@ -48,7 +48,7 @@ order 都由独立 loader 重新验证；不得用该 writer 宣称 I7 产品能
 
 ## 3. Static golden 与 manifest
 
-`conformance/fcbc/nonempty-execution.hex` 是 lowercase textual hex；解码后：
+`docs/conformance/fcbc/nonempty-execution.hex` 是 lowercase textual hex；解码后：
 
 ```text
 length  = 3432 bytes
@@ -85,7 +85,7 @@ Descriptor kinds 覆盖 Constant、SegmentTrack、Piecewise 与 Expression；Dis
 
 | 文件 | SHA-256 |
 |---|---|
-| `conformance/fcbc/manifest.toml` | `e435c8d452ec991c6a023cab15ce2a2f819ae0febe68ae7b044af288ba5f8c63` |
+| `docs/conformance/fcbc/manifest.toml` | `e435c8d452ec991c6a023cab15ce2a2f819ae0febe68ae7b044af288ba5f8c63` |
 | `nonempty-execution.toml` | `1c5d208133085a88bb0387f7730712191f5e6670a8770569515919e279c40a74` |
 | `nonempty-execution-vector.toml` | `c5231aad620469b0a654bbc022bb5986e27ff060bde74cdb6f8a1d7b3b8a09e3` |
 | `nonempty-execution-mutations.toml` | `ff6576269a306cab9d7a6a4fdc95fa65dffeb82fcc68a8cd42f87fcdfb56f2b6` |
@@ -93,10 +93,10 @@ Descriptor kinds 覆盖 Constant、SegmentTrack、Piecewise 与 Expression；Dis
 按 ordinal relative path、逐文件输入 `UTF-8(path) + NUL + raw bytes + NUL` 复算：
 
 ```text
-conformance/fcbc/: 11 files
+docs/conformance/fcbc/: 11 files
 tree SHA-256: 1cedf8f6830a2d36a1839c78c9c53c5658bd01d88f1ef44968b35836185ef9c3
 
-conformance/: 92 files
+docs/conformance/: 92 files
 tree SHA-256: 6b40d46536ec1cc7c5b6d4642eae17c8547e8696fca9f95d1f981899dbde4090
 ```
 

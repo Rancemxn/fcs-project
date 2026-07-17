@@ -142,7 +142,7 @@ use fcs_source::elaborator::elaborate;
 use fcs_source::parser::parse_document;
 ```
 
-`conformance/fcs5/` 保留版本名，因为它描述格式版本 corpus；Rust 实现路径、测试文件名和
+`docs/conformance/fcs5/` 保留版本名，因为它描述格式版本 corpus；Rust 实现路径、测试文件名和
 普通 examples 去除 `fcs5` 前缀。FCS 4 examples 从活动 `master` 删除，由归档分支保存。
 
 后续 crate 到对应路线阶段再创建，不在 I0 建立空壳：
@@ -353,14 +353,14 @@ primary span: generator 完整 span
 I0 的 `tests/conformance_manifest.rs` 使用 Serde 与 `toml::from_str` 强类型加载：
 
 ```text
-conformance/manifest.toml
-conformance/fcs5/manifest.toml
+docs/conformance/manifest.toml
+docs/conformance/fcs5/manifest.toml
 ```
 
 测试必须验证：
 
 - suite ID 和 fixture ID 唯一；
-- 引用路径位于 `conformance/` 内，不能使用 `..` 逃逸；
+- 引用路径位于 `docs/conformance/` 内，不能使用 `..` 逃逸；
 - source、expected 和 vector 路径存在且是普通文件；
 - stage、expect 和 profile 只使用 manifest schema 允许值；
 - error fixture 有 diagnostic，success fixture 没有 diagnostic；

@@ -6,7 +6,7 @@
   conformance release candidate。客观 stage gate 满足后自动衔接，不要求逐阶段人工确认。
 - **Observable success signal:** 以下条件同时成立：
   - FCS Core、FCBC Container、Execution ABI、Render Profile 和 Conversion Specification 五个版本域
-    均满足 `docs/specification-governance.md` 的 Frozen 条件；
+    均满足 `docs/specifications/governance.md` 的 Frozen 条件；
   - 路线图 I1–I10 的每个 task 和阶段完成条件都有已合并实现、测试、fixture、review 与治理证据；
   - source、canonical、runtime、FCBC、converter、Render 和 CLI 都是产品实现，不以空壳、manifest
     integrity test 或 test-only oracle 冒充能力；
@@ -17,6 +17,8 @@
     CLI end-to-end、hash、link、UTF-8 和 workspace gate 通过；
   - 最终联合独立复审没有未关闭的 Critical/Important finding；
   - 所有 RC 内工作均通过 PR 合并到 `main`，root Issue 的最终证据与实际 merge/hash/gate 一致并已关闭；
+  - 每个非机械实现 PR 都有独立审查会话针对固定 `Issue/PR + head SHA + scope + commands` 的
+    append-only `Audit result`；审查失效时已重新审查，且 Critical/Important finding 均已关闭；
   - 不存在影响规范、conformance、路线图验收、安全性、正确性或可复现性的 open Issue。只有明确属于
     RC 非目标的 Minor/增强 follow-up 可以继续开放；
   - 未为本 RC 创建公开 tag、GitHub Release，未发布 crate，也未上传公开 release/conformance bundle。
@@ -26,11 +28,16 @@
 
 # Scope & Authority
 
-- `docs/specification-governance.md` 管理版本状态；`fcs.md`、`fcbc.md`、`fcs-render.md` 和
-  `fcs-conversion.md` 在各自版本域定义规范性行为；Accepted ADR 约束设计方向但不替代规范文本；
+- `docs/specifications/governance.md` 管理版本状态；`docs/specifications/fcs.md`、
+  `docs/specifications/fcbc.md`、`docs/specifications/fcs-render.md` 和
+  `docs/specifications/fcs-conversion.md` 在各自版本域定义规范性行为；Accepted ADR 约束设计方向但不替代规范文本；
   `docs/plans/fcs5-roadmap.md` 是唯一总实施路线。
-- `loop.md` 是设计契约，不是执行器或运行时机制；它不产生规范语义、不替代 Issue/PR、计划、复审或
+- `docs/loops/loop.md` 是设计契约，不是执行器或运行时机制；它不产生规范语义、不替代 Issue/PR、计划、复审或
   fixture 证据，也不自行声明阶段完成。
+- 当前会话是主实现会话：它拥有实现分支、主 Issue/PR 的推进权和所有 PR 的最终合并权。独立审查会话
+  使用 `docs/loops/review-loop.md`，是另一个有固定快照输入的审查角色，不是第三个可选实现会话；它可以记录
+  finding、评论和创建 corrective PR，但不能将任何 PR 标记为 Ready、合并 PR、关闭主 Issue 或写入
+  当前会话的工作树。
 - `docs/community/` 是外部格式证据综合，`refer/chart/` 是固定快照下的一手证据。外部格式结论
   必须遵守仓库阅读路由、固定 commit/hash 和多来源冲突规则；单个参考实现不得成为社区规范。
 - Issue、PR、计划、实现、example、fixture、reference harness、skill 和外部项目都不能静默成为新
@@ -59,7 +66,7 @@
   `ready-for-agent` 工作时终止。单纯新建 Issue、重复同一检查或改写说明不算进展。
 - **Worst-case Plan B:** 保留所有已合并 checkpoint 和可复现 artifact，把未完成范围收敛到最早
   blocker，输出有限 backlog、依赖、residual 分类和解除条件。达到预算时由 PLANNER 产出仍指向 I10
-  同一目标的后继 `loop.md`；不得把目标缩到某个阶段或降低 gate。
+  同一目标的后继 `docs/loops/loop.md`；不得把目标缩到某个阶段或降低 gate。
 
 # Progress & Frontier Invariant
 
@@ -67,8 +74,8 @@
   frontier；每个可独立验收的 work unit 使用 bounded child Issue 和一个 linked branch/PR。root Issue
   只在 stage gate、frontier 或重大 blocker 变化时更新，不镜像每个 commit 或 child checkpoint。
 - **Current state authority:** root Issue 的最新有效 checkpoint、child Issue dependency graph、已合并
-  PR 和仓库 gate artifact 共同构成当前状态证据。`.scratch/fcs5-rc` 只保留历史，不得作为当前
-  request surface、iteration count 或 frontier。`loop.md` 不复制瞬时 commit/Issue 状态；若文档与
+  PR、独立审查的 finding ledger 和仓库 gate artifact 共同构成当前状态证据。`docs/scratch/fcs5-rc` 只保留历史，不得作为当前
+  request surface、iteration count 或 frontier。`docs/loops/loop.md` 不复制瞬时 commit/Issue 状态；若文档与
   动态证据冲突，按该 authority 修订文档，不能据此声称完成。
 - **Bounded quantity that must advance:** active child Issue 在开始时拥有有限且编号的 acceptance
   criteria 和未决 decision residual；任何非终止 iteration 必须关闭至少一个 criterion、消除一个
@@ -87,6 +94,21 @@
   measurement；HUMAN 路径保存选择所需证据并退出受影响范围。任何路径若既不前进也不退出，即为
   undeliverable。
 
+# Independent Review Handoff
+
+- 非机械实现 PR 在进入 Ready 或合并前必须经过独立审查会话。当前会话在准备交付时暂停会改变被审
+  快照的写入，发送 `Review requested`，并固定被审 PR、关联 Issue、head SHA、审查 scope、规范/ADR
+  条款、复现命令、已知 residual 和验收 gate。
+- 审查期间若 head SHA、scope、验收命令或依赖证据变化，原审查立即失效；当前会话必须追加新的
+  `Review requested`，审查会话必须追加 `superseding/re-review` 说明并以新快照重新开始。旧评论和
+  finding 不得被编辑或静默覆盖。
+- Critical/Important finding 未关闭时，当前会话不得将主 PR 标记为 Ready 或合并；Minor 只有在不影响
+  当前验收、规范依赖 closure 或阶段 gate，且有明确 owner、目标 Issue 和解除条件时才能延期。
+- 审查会话创建的 corrective PR 仍由当前会话审查其 diff、处理 required checks 并合并；审查者不得
+  审查或批准自己创建的 PR。corrective PR 合并后，主 PR 的新 head SHA 必须重新请求审查。
+- 具体审查目标选择、finding Issue 路由、评论格式、历史 commit 审查以及分支/worktree 隔离由
+  `docs/loops/review-loop.md` 定义；本 loop 只负责提供固定快照、接收结果、修复 finding 和最终合并。
+
 # Authorized Change & Delivery
 
 - 可以自动进行仓库内设计、实现、测试、fixture、计划、review 和治理修改，以及正常的 GitHub
@@ -96,7 +118,11 @@
   不 rebase/reset/checkout 丢弃工作，不清理无关 dirty changes。
 - 普通 merge 已获持续授权，但只有 child Issue acceptance criteria、适用验证和独立复审要求全部满足，
   PR 为 Ready 且 mergeable、required checks 与 review requirements 满足、没有未解决 review thread，
-  并已记录 delivery-ready 证据时才可执行。不得使用 `--admin`、force-push、降低 gate 或隐藏 finding。
+  并已记录 delivery-ready 证据时才可执行。独立审查必须匹配当前 head SHA；任何失效审查都不能作为
+  merge gate。不得使用 `--admin`、force-push、降低 gate 或隐藏 finding。
+- 当前会话是唯一 merge owner，包括主实现 PR 和审查会话创建的 corrective PR。审查会话不得 merge、
+  `gh pr ready`、关闭主 Issue、修改主 Issue workflow label 或写入活动实现分支；其 corrective PR 必须
+  链接 finding Issue，且最终由当前会话合并。
 - stage 的客观 gate 满足后自动进入下一 frontier；不为已经由规范、ADR、fixture 和证据唯一决定的
   普通实现选择反复请求确认。
 - 规范/依赖/API 工作遵守根 `AGENTS.md` 的固定依赖源码和 Context7 路由。添加依赖必须记录版本、
@@ -139,6 +165,9 @@ Routine GitHub delivery 和满足 Authorized Change & Delivery 条件的普通 m
 | Residual / failure | Route: LOCAL / PLANNER / HUMAN | Action |
 |---|---|---|
 | focused/full test、Clippy、fmt、hash、link、manifest、golden、round-trip 或 raster 不一致 | LOCAL | 找到最先失败的原因，补匹配证据，修复并只重跑可能失效的 gate |
+| 独立审查发现 Critical/Important 缺陷 | LOCAL | 建立/链接 finding Issue，修复后让当前会话合并 corrective PR，并对新 head SHA 重新请求审查 |
+| 独立审查发现 later-stage 或不影响当前 gate 的 Minor | PLANNER | 记录 owner、目标 stage、依赖、验收条件和 follow-up Issue；不得伪装为当前阶段完成 |
+| 审查快照的 SHA、scope、命令或验收变化 | LOCAL | 追加 superseding/re-review 记录，废弃旧 verdict，固定新快照后重新审查 |
 | 规范缺口且权威规范、Accepted ADR 和固定证据能唯一决定结果 | LOCAL | 按治理流程更新规范、fixture、manifest、review 与状态记录；重建受影响 baseline，I10/发布再完成 Frozen gate |
 | 实现与规范冲突且证据表明是实现缺陷 | LOCAL | 修实现和回归证据，不让实现反向定义规范 |
 | active unit 过大、验收耦合、顺序错误或 measurement domain 不匹配 | PLANNER | 保留原验收覆盖，拆成严格更小的 bounded Issues，或调整顺序/测量 |
@@ -152,29 +181,29 @@ Routine GitHub delivery 和满足 Authorized Change & Delivery 条件的普通 m
 | 连续 3 次满足全局 no-progress 且无 ready frontier | HUMAN | 终止并提交完整阻塞证据、已尝试路径和解除条件 |
 | 达到 240 次上限 | PLANNER | 终止本轮，保留合并证据并产出仍指向 I10 的后继 loop 建议 |
 
-# Subagent Using Policy
+# Subagent and Session Policy
 
-Subagent 不是每个 work unit 的必需步骤。主执行者与最多三个子任务共享工作区；同一文件集合或规范域
-最多一个写入角色。只读研究可与不相关写入并行；共享文件冲突时相关写入立即停止，由主执行者统一
-审查、验证和交付。子任务不得自行切换 branch、commit、push、创建/修改 Issue/PR 或 merge。
+不创建第三个可选实现会话。主会话是唯一实现者和 merge owner；内部 subagent 不是独立交付角色，最多
+用于只读研究或主会话明确授权的有界本地草稿。它们不得自行切换 branch、commit、push、创建/修改
+Issue/PR、review、`gh pr ready` 或 merge；主会话统一审查共享工作区、验证和交付。审查会话与主会话
+使用不同的 loop 和独立 worktree，不以 subagent 代替。
 
-## Dispatch Point: Independent Review
+## Session Handoff: Independent Review
 
-- **Trigger:** stage baseline 建立/重开、规范重新 Frozen、stage 完成，或重大 binary/conversion/render
-  contract 与实现准备通过 gate。
-- **Role capability:** 未参与被审修改的只读独立 reviewer。
-- **Tool boundary:** 只读固定 commit、规范、diff、fixture、manifest、hash、测试输出和允许的固定证据；
-  不编辑、改变状态或接受作者结论代替复现。
-- **Input contract:** 有限审查范围、权威条款、固定 commit/artifact、验收项、复现命令、已知 residual
-  和禁止依赖的实现假设。
-- **Output contract:** finding ledger；每项含 severity、紧凑位置、违反条款、可复现 artifact、影响和
-  disposition 建议；另列实际复现 gate 与未覆盖范围。
-- **Acceptance check:** Critical/Important 全部关闭并复审；零 finding 也必须给出审查范围、复现
-  artifact 和限制。
-- **Concurrency:** reviewer 不与被审 snapshot 的写入并行；可与不触及该 snapshot 的只读研究并行。
-- **Failure routing:** 缺证据为 LOCAL；范围/测量不匹配为 PLANNER；角色不独立或能力不可用为 HUMAN。
-- **Sub-task termination:** 一个固定审查范围，最多两次证据澄清；连续两次未减少审查 residual 时返回
-  PLANNER，不自行扩大范围。
+- **Trigger:** 非机械实现 PR 准备 Ready/merge，stage baseline 建立或重开、规范重新 Frozen、stage 完成，
+  或重大 binary/conversion/render contract 与实现准备通过 gate。
+- **Role capability:** 未参与被审修改的独立审查会话；权限和审查 loop 见 `docs/loops/review-loop.md`。
+- **Input contract:** 主会话提供有限 scope、权威条款、固定 `Issue/PR 或 commit + head SHA`、验收项、复现命令、
+  已知 residual 和禁止依赖的实现假设。被审快照写入必须暂停。
+- **Output contract:** 审查会话在被审 PR（若存在）和关联 Issue 立即追加 append-only `Audit result`；每项 finding 含
+  severity、位置、违反条款、可复现 artifact、影响、owner/disposition 和是否阻塞当前 gate。零 finding
+  也必须给出范围、命令、artifact、限制和 Next。
+- **Acceptance check:** Critical/Important 全部关闭并在最新 SHA 上复审；Minor 只能按延期规则记录。
+- **Concurrency:** 审查会话不得与被审 snapshot 的写入并行；可与不触及该 snapshot 的只读研究并行。若
+  发现必须修改，审查会话使用独立 worktree/branch 创建 corrective PR，主会话负责审查、合并和重新请求
+  主 PR 审查。
+- **Failure routing:** 缺证据为 LOCAL；scope/measurement 不匹配为 PLANNER；角色不独立或能力不可用为
+  HUMAN。详细终止与 no-progress 规则由 `docs/loops/review-loop.md` 定义。
 
 ## Dispatch Point: External Evidence Research
 
@@ -189,16 +218,19 @@ Subagent 不是每个 work unit 的必需步骤。主执行者与最多三个子
 - **Failure routing:** 可替代来源缺失为 LOCAL；来源冲突为 PLANNER；许可/访问无法解决为 HUMAN。
 - **Sub-task termination:** 一个事实问题，最多两次补证；仍不收敛则返回证据缺口，不猜测结论。
 
-## Dispatch Point: Bounded Implementation or Fixture Work
+## Dispatch Point: Bounded Local Draft Assistance
 
-- **Trigger:** 文件范围互不重叠、规范行为已唯一确定、验收命令明确，且并行能缩短当前 ready work。
-- **Role capability:** 有界写入执行者，可在授权路径内实现代码、文档或 fixture。
+- **Trigger:** 文件范围互不重叠、规范行为已唯一确定、验收命令明确，且主会话明确授权本地草稿能缩短当前
+  ready work；这不是第三个实现会话或独立交付角色。
+- **Role capability:** 受主会话控制的有界本地草稿助手，可在授权路径内编辑代码、文档或 fixture；主会话
+  仍是唯一实现者、提交者、推送者和交付 owner。
 - **Tool boundary:** 只修改 input contract 列出的路径并运行本地非破坏工具；不改变公开语义、规范
-  状态、无关修改、远端状态或提交历史。
+  状态、无关修改、远端状态或提交历史，不切换 branch、不创建 worktree、不创建/修改 Issue/PR。
 - **Input contract:** 一个有限 deliverable、权威条款、允许/禁止路径、dirty-state、失败证据、验证
   命令、residual routing 和终止条件。
 - **Output contract:** 修改路径、关键 diff、命令与精确结果、未解决 residual 和共享文件风险。
-- **Acceptance check:** 主执行者审查完整 diff、确认无越权，并独立运行 domain-matched acceptance gate。
+- **Acceptance check:** 主会话审查完整 diff、确认无越权，并独立运行 domain-matched acceptance gate；草稿
+  助手的结果不构成提交、review 或 merge 证据。
 - **Concurrency:** 同一文件集合或规范域只有一个 writer；全部子任务总数不超过三个。
 - **Failure routing:** 普通实现失败为 LOCAL；两次不同修正不收敛为 PLANNER；语义歧义或越权需求为
   HUMAN。

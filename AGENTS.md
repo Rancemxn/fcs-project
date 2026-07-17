@@ -2,67 +2,33 @@
 
 本文件适用于整个仓库。开始工作前先阅读本文件；如果子目录中出现更具体的 `AGENTS.md`，以距离目标文件更近的规则为准。不要覆盖或回退工作区中已有的、与当前任务无关的修改。
 
-## 仓库结构与规范入口
+## 仓库结构与文档入口
 
-- 当前默认开发分支是 `main`，workspace 只有唯一、无版本前缀的
-  `crates/fcs-source`。`archive/fcs4-pre-cutover` 保存完整切换前工作树；FCS 4 core、旧
-  converter、旧 CLI、VM 和 bytecode 仅可从该归档分支读取，不属于活动实现。I0 决策由
-  `docs/decisions/0006-unversioned-source-cutover.md` 定义，逐步执行和当前状态见
-  `docs/plans/i0-source-cutover.md`。后续 canonical/runtime/FCBC/converter/render/CLI crate
-  只在对应路线阶段按需创建。
-- I0 不保留旧 package/module 名称、feature flag 或兼容 re-export。Cargo 不得使用指向
-  `refer/` 的 path dependency。
-- `fcs.md` 是 FCS 5 Core source、canonical model 和运行时语义的权威规范。
-- `fcbc.md` 是 FCBC 2 容器与 Execution ABI 的权威规范；`fcs-render.md` 和
-  `fcs-conversion.md` 分别定义 Render Profile 与转换/保真行为。
-- `docs/specification-governance.md` 是规范候选版本、当前状态、变更流程和冻结条件的唯一当前
-  入口；不要在本文件复制容易过期的完整状态表。旧 freeze/review 文件只保存其发生时的审计
-  事实，不覆盖治理文件中的当前状态。
-- I1–I9 使用 ADR 0010 定义的阶段范围化 Reviewed Implementation Baseline：当前阶段的规范依赖
-  closure、绑定 fixture/hash 和独立复审不得有未关闭的 Critical/Important finding，阶段计划必须与
-  绑定条款一致，且前置质量门通过。满足后自动进入对应阶段，无需再次取得用户确认。该 baseline
-  不是新的版本状态，也不把 Draft 提升为 Reviewed/Frozen；I10 conformance RC 仍要求五个版本域
-  全部 Frozen、最终联合独立复审和完整 executable conformance 通过。Source grammar closure
-  的已审范围和历史证据见
-  `docs/reviews/2026-07-15-fcs5-source-grammar-closure-review.md`；当前 authoring/canonical
-  closure 的 delta 与跨规范 gate 见
-  `docs/reviews/2026-07-15-fcs5-authoring-canonical-closure-review.md`；FCBC 2/Execution ABI 1 的
-  ResourceData、exact-only 与 schema 2 golden delta 见
-  `docs/reviews/2026-07-15-fcbc2-execution-abi-closure-review.md`；非空 ABI writer→static
-  bytes→independent loader/evaluator、bits/trace/direct-seek 与 mutation 的闭合和独立复审见
-  `docs/reviews/2026-07-16-fcbc2-execution-abi-nonempty-review.md`；Render stable-resource binding、
-  exact descriptor 与 no-source-text delta 见
-  `docs/reviews/2026-07-15-render1-resource-binding-closure-review.md`，RenderSection layout、decoder/
-  shaping、semantic/raster 与 diagnostic 规范文字的历史独立闭合见
-  `docs/reviews/2026-07-16-render1-binary-raster-closure-review.md`；REN-I08–I16 的规范重开与当前复审
-  入口见 `docs/reviews/2026-07-16-render1-normative-amendment-review.md`；Conversion parser/profile/Repair 分层、
-  12-profile registry、mapping/selection vector 与 no-source-snapshot projection 见
-  `docs/reviews/2026-07-15-conversion1-semantic-profile-closure-review.md`。四规范联合候选自检及其
-  dated amendment、当前 hash/test evidence、仍开放的 Render/Conversion/Core fixture blocker 与最终
-  联合独立复审要求统一见 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md`；该文件及
-  ABI blocker 的单域关闭都不表示重新 Frozen。I1 source AST/parser 的阶段 dependency closure、
-  corrected forward-slash fixture-tree hash、0/0/0 独立复审与自动实施许可见
-  `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`；I1.1–I1.8 implementation evidence 已合并，
-  当前按 `docs/plans/i1-source-ast-parser.md` Task 9 进行 governance、最终门禁和独立复审；完成后 I2 才能
-  作为下一未开始阶段。
-- `docs/plans/fcs5-roadmap.md` 是唯一总实施路线图；最近完成阶段的详细记录为
-  `docs/plans/i0-source-cutover.md`。当前活动 I1 的独立阶段计划为
-  `docs/plans/i1-source-ast-parser.md`。计划只能安排工作，不能创造格式语义。
-- `examples/` 保存各格式输入样例；I0 删除活动 FCS 4 examples，但保留 PGR/RPE/PEC 与版权
-  输入，供未来 converter 重建时复用。旧 converter 测试由归档分支保存，不迁移到 source crate。
-- 制订，修改任何文档或者计划时，思考：
-	* 项目最容易在哪些地方踩坑；
-	* 哪些设计可能在后期形成技术债；
-	* 哪些接口和边界需要提前固定；
-	* 后续实现时应该遵循哪些原则；
-	* 哪些看似方便的方案应该明确禁止。
+- 默认开发分支是 `main`；活动 workspace 只有 `crates/fcs-source`。`archive/fcs4-pre-cutover` 仅供
+  阅读旧实现，不能作为活动依赖或兼容层来源；Cargo 不得使用指向 `refer/` 的 path dependency。
+- 根目录只保留本文件作为协作入口。完整文档索引见 `docs/README.md`，常用入口如下：
+  - `docs/CONTEXT.md`：项目术语和 single-context 词汇；
+  - `docs/specifications/`：四份 FCS/FCBC/Render/Conversion 规范及规范治理；
+  - `docs/conformance/`：机器可读 conformance corpus、manifest、golden 和覆盖 ledger；
+  - `docs/decisions/`：Accepted ADR 和治理修订历史；
+  - `docs/plans/`：路线图与阶段计划；
+  - `docs/reviews/`：固定范围、hash 和复审证据；
+  - `docs/agents/`：领域阅读、GitHub 交付和 triage 规则；
+  - `docs/loops/`：主实现 loop 与独立审查 loop；
+  - `docs/community/`：外部格式证据综合；
+  - `docs/scratch/`：历史临时记录，只供追溯，不能作为当前状态入口。
+- `.github/ISSUE_TEMPLATE/` 和 `.github/pull_request_template.md`：Issue/PR 的初始契约模板；后续进度与
+  审查结果按 `docs/agents/issue-tracker.md` 和 `docs/loops/` 追加 comment。
+- `examples/` 保存输入样例；旧 converter、CLI、VM 和 bytecode 仅从归档分支读取，不迁移回活动
+  workspace。
+- 修改文档或计划时，固定权威入口、边界、验收证据和禁止的便利方案；不要把实现状态复制到协作入口。
 
 ## 资料职责、权威与冲突处理
 
 本仓库不使用一条简单的“规范 > ADR > community > refer”总排名。必须区分本项目的规范权威与
 外部格式的证据权威：
 
-- `docs/specification-governance.md` 管理规范状态和流程；四份根规范在五个独立版本域内定义
+- `docs/specifications/governance.md` 管理规范状态和流程；四份根规范在五个独立版本域内定义
   规范性行为和 conformance 要求。
 - `docs/decisions/` 中 Accepted ADR 是已经接受的设计约束、架构边界和规范修订方向，但不是
   source grammar、二进制布局或执行语义的替代文本。Accepted ADR 与现行规范冲突时，不得任选
@@ -83,13 +49,13 @@
 
 ## 阅读路由
 
-- 修改 FCS source、static、canonical 或 runtime 语义前，阅读 `fcs.md`、治理文件、相关 Accepted
+- 修改 FCS source、static、canonical 或 runtime 语义前，阅读 `docs/specifications/fcs.md`、治理文件、相关 Accepted
   ADR、conformance matrix 以及对应 fixture；修改 FCBC/packager/loader/ABI 时同理阅读
-  `fcbc.md` 和 ADR 0004、0005、0008、0009。
-- 修改 Render Profile 或其资源解析时，阅读 `fcs-render.md`、相关 Core/FCBC 条款以及 ADR 0008、
+  `docs/specifications/fcbc.md` 和 ADR 0004、0005、0008、0009。
+- 修改 Render Profile 或其资源解析时，阅读 `docs/specifications/fcs-render.md`、相关 Core/FCBC 条款以及 ADR 0008、
   0009。
 - 修改 Conversion Specification、semantic profile、ConversionReport 或 PGR/RPE/PEC
-  parser/importer/exporter 时，先读 `fcs-conversion.md`、ADR 0001、0002、0005、0007、
+  parser/importer/exporter 时，先读 `docs/specifications/fcs-conversion.md`、ADR 0001、0002、0005、0007、
   `docs/community/README.md` 和对应格式文档，再核对与改动直接相关的固定参考快照。
 - 更新 `docs/community/`、新增外部格式结论、解释歧义或给 fixture 声明 producer/runtime 行为时，
   必须进入 `refer/chart/`；先检查参考仓库自己的规则，再验证 origin、commit/hash、目标路径、
@@ -196,16 +162,39 @@
 - `gh` 因 DNS、连接超时/重置、TLS 中断或 HTTP 502/503/504 等瞬时网络问题失败时，每隔 5 秒重试同一操作，首次失败后最多再试 10 次。写操作在每次重试以及稍后补同步前，必须先按稳定身份查询远程是否已生效，避免重复创建 Issue/PR、重复评论、review 或 merge。不得重试认证/权限失败、参数/校验错误、not found、合并冲突或门禁失败；应立即报告。10 次重试耗尽后，记录完整待同步 payload、稳定身份、最后错误和 `pending remote sync` 状态，继续不依赖该远端结果的安全本地工作；在下一个有意义检查点以及 handoff、PR Ready、review 或 merge 等依赖远端状态的动作前再次查询并尝试同步。待同步记录只是 transport outbox，不是第二个 tracker；不得把未确认的远端动作描述为成功。
 - 开始非机械工作前，确保有一个写明范围、权威输入、验收条件、非目标、依赖和验证方法的 Issue。大型工作用 parent/sub-issue 和 blocked-by/blocking 关系，不在一个 Issue 中堆放不可独立验收的横向任务。
 - 非机械 Issue 正文必须写明稳定的初始工作契约和一条实质性的初始 `Progress`，不得只保留初始对话或空模板。之后每个有意义检查点分别发送一条新的 Issue comment，不在正文或旧评论中累计、反复 edit。范围/决定变化、完成工作单元、出现/解除阻塞、获得验证结果、创建 PR 或交付状态变化时发送新消息；每条包含 Completed、Evidence、Decisions、Blockers 和 Next。更正旧消息时发送显式 superseding comment 并指出被替代内容，不静默覆盖历史；不需要为每个 commit 发一条。
-- 从最新 `origin/main` 创建 `codex/<issue>-<slug>` 分支；一个分支和 PR 只交付一个可审查工作单元。不要将工作区中与 Issue 无关的改动带入提交。
+- 主实现从最新 `origin/main` 创建 `codex/<issue>-<slug>` 分支；一个分支和 PR 只交付一个可审查工作单元。审查会话的 corrective branch 例外见“独立审查会话”。不要将工作区中与 Issue 无关的改动带入提交。
 - PR 正文必须链接 Issue；只有 PR 合并即应关闭 Issue 时才使用 `Closes #<n>`，否则使用 `Refs #<n>`。正文同时记录规范/ADR/conformance/review 影响、实际验证命令、未执行门禁和剩余风险。
 - PR 不得只有空初始说明和一串 commits。正文必须含一条实质性的初始 `Progress`，说明首个可审查 change group、原因、证据、决定和剩余项；之后每次重要 push、阻塞变化和转 Ready 前分别发送新的 PR comment，使最新消息与当前 diff/commits 一致。不得把后续进度反复 edit 到正文或旧评论中；更正使用显式 superseding comment。commit message 不能替代这些进度消息。
 - Issue/PR 的 Progress 消息标题只写事件或状态，不手写 `YYYY-MM-DD` 等日历日期；时间以 GitHub 自带的 timestamp 为准。
 - push 前审查 staged diff；PR 合并前检查 `gh pr checks --required`、review decision、mergeability 和未解决评论。不得用 `--admin` 绕过 branch protection，也不得为了变绿而降低测试、fixture 或 review gate。
 - merge 前分别在 Issue 和 PR 中发送新的 delivery-ready Progress comment；合并后即使 Issue 已由 `Closes` 自动关闭，也要分别发送新的 final merged checkpoint，记录合并 PR/交付结果、最终验证、未完成项与后续 Issue 链接，再确认 Issue 状态和后续 blocker。Issue/PR 的进度消息是工作流证据，不获得规范权威。
 
+#### 独立审查会话
+
+- 主实现会话和独立审查会话只保留两个角色：当前会话是唯一实现者、唯一可以执行 `gh pr ready` 的角色，
+  也是唯一 merge owner；审查会话按 `docs/loops/review-loop.md` 运行，不创建第三个可选实现会话。
+- 审查者可以读取固定 Issue/PR/已合并 commit，引用历史 commit 指出漏洞，comment，提交
+  `gh pr review --comment`/`--request-changes`，创建 bug/finding Issue，以及为已记录 finding 创建
+  corrective PR。审查者不能合并 PR、标记 Ready、关闭主 Issue、修改主 Issue workflow label，或写入当前
+  会话的工作树、活动实现分支和 `main`。
+- 每次审查必须固定 `Issue/PR 或 commit + head SHA + scope + commands + acceptance gate`。当前会话在
+  PR Ready/merge 前发送 `Review requested`；审查结束后审查者立即在 PR 和关联 Issue 各追加一条 append-only
+  `Audit result`（被审 PR 存在时评论 PR，同时评论关联 Issue；仅有 commit 时评论关联 Issue），即使没有
+  finding。消息包含 Target、Head SHA、Scope、Commands、Verdict、Findings、Gate impact、Limitations 和
+  Next，不手写日期、不编辑旧消息。
+- 后续 push、scope、命令、依赖 closure 或验收变化会使旧审查失效；追加 superseding/re-review 消息并对
+  新 SHA 重新审查。Critical/Important finding 阻塞当前 PR Ready/merge；Minor 只有在不影响当前验收且有
+  owner、follow-up Issue、目标 stage 和解除条件时才能延期。
+- 审查者创建的 corrective PR 必须链接 finding Issue，并使用独立 worktree 和
+  `codex/<finding>-<slug>` 分支。开放 PR 的修复分支从被审 PR 的固定 head SHA 建立、目标为活动 PR 分支；
+  历史 commit 的修复分支从最新 `origin/main` 建立、目标为 `main`。审查者不得审查或批准自己创建的修复
+  PR；当前会话检查、合并后，主 PR 的新 SHA 必须重新审查。
+- 本段权限与 `docs/loops/review-loop.md`、`docs/agents/issue-tracker.md` 和 ADR 0011 的 dated amendment 共同构成
+  当前工作流；它们不能赋予 Issue/PR 或审查评论规范权威。
+
 ### Domain docs
 
-本仓库采用 single-context 阅读约定；存在根目录 `CONTEXT.md` 时读取它，Accepted ADR 的实际位置
+本仓库采用 single-context 阅读约定；读取 `docs/CONTEXT.md`，Accepted ADR 的实际位置
 始终是 `docs/decisions/`，不要创建第二套 `docs/adr/`。详见 `docs/agents/domain.md`。
 
 ### Personal engineering skills
@@ -217,9 +206,9 @@
 - 当任务明确匹配某个 skill 的描述时调用对应 skill；用户直接点名 skill 或 slash command 时，按用户指定的 skill 执行。
 - 用户报告 bug、异常、失败或性能回归并要求诊断时，使用 `diagnose`；用户要求 test-first、red-green-refactor 或 integration tests 时，使用 `tdd`。
 - 对陌生代码区域需要先了解更高层的模块、调用方与系统边界时，使用 `zoom-out`。
-- 需要对方案、决定或计划进行逐项压力测试时，使用 `grill-me`。若压力测试还应同步维护领域文档，使用 `grill-with-docs`；该 skill 必须使用根目录 `CONTEXT.md` 和 `docs/decisions/`，不得创建 `docs/adr/`。
+- 需要对方案、决定或计划进行逐项压力测试时，使用 `grill-me`。若压力测试还应同步维护领域文档，使用 `grill-with-docs`；该 skill 必须使用 `docs/CONTEXT.md` 和 `docs/decisions/`，不得创建 `docs/adr/`。
 - 设计模块接口、边界、seam、可测试性或 AI 可导航性时，使用 `improve-codebase-architecture`；其领域术语和 ADR 阅读同样必须遵守 `docs/agents/domain.md` 的单一上下文约定。
-- 用户要求设计 agent/automation loop 的 Markdown 契约时，使用 `agent-loop`；该 skill 只能产出 `loop.md`，不得执行 loop 或生成运行时机制。
+- 用户要求设计 agent/automation loop 的 Markdown 契约时，使用 `agent-loop`；该 skill 只能产出 `docs/loops/loop.md`（或项目已声明的 `docs/loops/` 子路径），不得执行 loop 或生成运行时机制。
 
 #### 调用边界
 

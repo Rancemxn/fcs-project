@@ -28,7 +28,7 @@ fi
 corpus=$(mktemp -d "${TMPDIR:-/tmp}/fcs5-fuzz-corpus.XXXXXX")
 trap 'rm -rf "$corpus"' EXIT
 
-python3 - "$root/conformance/fcs5/manifest.toml" "$root/examples/fcs" "$corpus" <<'PY'
+python3 - "$root/docs/conformance/fcs5/manifest.toml" "$root/examples/fcs" "$corpus" <<'PY'
 import shutil
 import sys
 import tomllib

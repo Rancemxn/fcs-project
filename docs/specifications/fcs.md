@@ -3,7 +3,7 @@
 状态：Draft（2026-07-15；authoring/canonical closure 与联合候选自检已完成，等待完整 fixture validation 与独立复审）
 
 本文是 FCS（Functional Chart Specification）5.0.0 Core 的规范性定义。规范用语、
-版本治理和冻结条件见 `docs/specification-governance.md`。FCBC、Render Profile 和格式转换
+版本治理和冻结条件见 `docs/specifications/governance.md`。FCBC、Render Profile 和格式转换
 分别由 `fcbc.md`、`fcs-render.md` 和 `fcs-conversion.md` 定义。
 
 FCS 5 的目标是用严格、确定、可验证的 canonical semantic model 同时服务制谱、播放、

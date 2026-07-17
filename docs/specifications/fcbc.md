@@ -4,7 +4,7 @@
 blocker 与最终联合独立复审）
 
 本文定义 FCBC 2.0.0 二进制容器和 FCS Execution ABI 1.0.0。规范治理见
-`docs/specification-governance.md`，source/canonical 语义见 `fcs.md`。
+`docs/specifications/governance.md`，source/canonical 语义见 `fcs.md`。
 
 FCBC 是经过验证、完成编译期展开、恰好包含一个谱面及其全部资源的确定性执行包。它是正式
 播放器必须支持的最小自包含输入，不是 source AST dump、外部资源清单或允许任意程序执行的通用

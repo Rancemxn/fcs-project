@@ -53,7 +53,7 @@
 
 ## 绑定 Conformance Baseline
 
-入口：`conformance/manifest.toml`
+入口：`docs/conformance/manifest.toml`
 
 初始 corpus 包含：
 
@@ -89,13 +89,13 @@ bbd44462ce837e81e068bb97308539f5df9d3cec192755e75ef71e4207b635d6
 fcs-conversion.md
 3228471b8c77c01fa9f540264dcf3aeefecfe41d1f84ead36811f81c7cca2565
 
-docs/specification-governance.md
+docs/specifications/governance.md
 e58a1254277c46b5adf7881b653fe17662297acfd6278eef2d69a8dc052f5005
 
 docs/plans/fcs5-roadmap.md
 96c0398165c280c9c923c424c49e6c5e1f4512290f349846908ef6aada7edbf5
 
-conformance tree (39 files; paths relative to conformance/ with / separators; ordinal path order;
+conformance tree (39 files; paths relative to docs/conformance/ with / separators; ordinal path order;
 UTF-8(path) + NUL + bytes + NUL)
 b35a6f0c8c2efbe3136fd07a30e8fe715f6d730fac053017328123964c91b98a
 ```
@@ -293,4 +293,4 @@ evidence baseline，并确认 `fcbc.md` 继续联合定义 FCBC Container 与 Ex
   历史证据，但后续跨规范修订完成前不再代表完整当前候选文件。
 
 本文件保留所有旧结论与 hash 作为按时点审计记录；当前状态只以
-`docs/specification-governance.md` 为准。
+`docs/specifications/governance.md` 为准。

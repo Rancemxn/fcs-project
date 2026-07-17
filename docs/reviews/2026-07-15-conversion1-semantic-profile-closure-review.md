@@ -145,31 +145,31 @@ vector→rule 和 selection→profile 引用。它不执行公式或 converter s
 fcs-conversion.md
 7f8156af94858e25d453a8b25b7f5af3f9cd58f1651cbc235d7115cc7f4e0d72
 
-conformance/manifest.toml
+docs/conformance/manifest.toml
 1378a680d7a593f4156f45646ba263641b5e8198d90f2c79ce3407e9e37eb4ac
 
-conformance/conversion/manifest.toml
+docs/conformance/conversion/manifest.toml
 28cd000589cf2b3d547abaed1f57bd2453267b511b535c3af8375527aae6c7b2
 
-conformance/conversion/profile-registry.toml
+docs/conformance/conversion/profile-registry.toml
 7d33f47b5f2722ecd8e1db510d86b4c285a05c6016e6268044e4ef80805c1b52
 
-conformance/conversion/parser-dialects.toml
+docs/conformance/conversion/parser-dialects.toml
 46aeb45232719b34b2f0f51deaf46a9cb5543315d5784bf43a47cee353d46845
 
-conformance/conversion/mapping-rules.toml
+docs/conformance/conversion/mapping-rules.toml
 47ad0c81c44de3968e4959b8e74ed9f51a1d380773159c24ea2ce9eda856711b
 
-conformance/conversion/diagnostic-categories.toml
+docs/conformance/conversion/diagnostic-categories.toml
 6b216576778e0bf00ffc8c4562f4d22f75ba6771e2228b48c0c9190998f8fd8f
 
-conformance/conversion/mapping-vectors.toml
+docs/conformance/conversion/mapping-vectors.toml
 a65d3eae8f710cb79b667ef205ebddbf8d91fba456084ac8b358294c08844831
 
-conformance/conversion/selection-vectors.toml
+docs/conformance/conversion/selection-vectors.toml
 d36eb78c7246df77c49918226858cb33f908ec03c9b97791d08fd78e1a724b25
 
-conformance/conversion tree (19 files)
+docs/conformance/conversion tree (19 files)
 0d55f3eca638e2188fa8fded1ad1a1afc1865ce0c80f08488aeaf2d69e395b52
 
 conformance tree at this stage (88 files)

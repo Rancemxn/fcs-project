@@ -2,9 +2,10 @@
 
 - <!-- concise summary -->
 
-## Linked Issue
+## Linked work
 
-Closes #
+- Issue: #
+- Relationship keyword (plain text, not code): Closes #<n> only when merge should close the Issue; otherwise use Refs #<n>.
 
 ## Scope and non-goals
 
@@ -20,6 +21,17 @@ Closes #
 - [ ] Any reopened baseline or version-state gate is recorded.
 
 Explain the checked items and name affected files or gates.
+
+## Independent review handoff
+
+- Review required: <!-- yes for non-mechanical implementation; no only with a reason -->
+- Requested scope: <!-- fixed files/behavior/acceptance boundary -->
+- Required commands: <!-- focused/full commands and expected evidence -->
+- Fixed head SHA at request time: <!-- fill in the Review requested comment; do not rewrite history -->
+- Re-review triggers: <!-- any push, scope, command, dependency, or acceptance change -->
+
+The independent reviewer records the verdict in append-only comments on the PR (and associated Issue). Do not
+repeatedly edit this section; follow `docs/loops/review-loop.md`.
 
 ## Progress
 
@@ -52,7 +64,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo nextest run --workspace
 ```
 
-List every skipped or unavailable gate with its reason. Do not report a non-applicable gate as passed.
+List every skipped or unavailable gate with its reason. Do not report a non-applicable gate as passed. The exact
+review/merge gate is defined by `docs/agents/issue-tracker.md` and `docs/loops/loop.md`.
 
 ## Risks and follow-up
 

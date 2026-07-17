@@ -21,15 +21,15 @@ SHA-256 is over raw file bytes:
 | Input | SHA-256 |
 | --- | --- |
 | `fcs.md` | `2a2882e60aeef4d96fdb9f7c3cd65b143ea9d9c61f971ece24a8b2791627dc58` |
-| `docs/specification-governance.md` | `8956fca502df543291eb275da3295b28339c5654750f02ccf0731681fbde72f5` |
+| `docs/specifications/governance.md` | `8956fca502df543291eb275da3295b28339c5654750f02ccf0731681fbde72f5` |
 | `docs/decisions/0003-compile-time-structure-only.md` | `15c24f7d0a220f6acaab3418fe9c2c4b02da380afeb86dddf677e9352a28c1e3` |
 | `docs/decisions/0008-fcs-authoring-fcbc-distribution-boundary.md` | `853b5cc765917a8a103b8027dd66541d1dd1d4c1aa64c4be617be2917ba72e9b` |
 | `docs/decisions/0009-player-local-baking-shared-runtime.md` | `8da3f5e0d0170c2dc181ada12d798b7e827ec66935c1ec42b948e33eca507487` |
 | `docs/decisions/0010-stage-scoped-implementation-baselines.md` | `bd7a0086f5e9b95a4b99fe98eccc2882ff8e3a214f6ec6753010f5d27cd81ad9` |
 | `docs/plans/fcs5-roadmap.md` | `04a5d5513e1ec9a972f51a8e800cf813e1e1e36b68268844d9dacb42cfdb113b` |
 | `docs/plans/i1-source-ast-parser.md` | `c4194edeabb5066efce1f7884b12a113f119a9b26295cf44da89905d3e93a37f` |
-| `conformance/manifest.toml` | `231f4505de29c854201057f97706295756109a98dcc7ac99f08ca21cd3f96fe8` |
-| `conformance/fcs5/manifest.toml` | `4d8dfb7ba2d636cd94a02f39807c7a0da6185b73213f50dd77e8f2a69c5b25f4` |
+| `docs/conformance/manifest.toml` | `231f4505de29c854201057f97706295756109a98dcc7ac99f08ca21cd3f96fe8` |
+| `docs/conformance/fcs5/manifest.toml` | `4d8dfb7ba2d636cd94a02f39807c7a0da6185b73213f50dd77e8f2a69c5b25f4` |
 
 ## Bound clauses and fixtures
 

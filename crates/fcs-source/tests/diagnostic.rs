@@ -25,39 +25,43 @@ fn missing_header_has_the_frozen_code_and_byte_span() {
 fn bound_parse_error_fixtures_keep_stable_categories_and_spans() {
     let cases = [
         (
-            include_str!("../../../conformance/fcs5/source/invalid/missing-header.fcs"),
+            include_str!("../../../docs/conformance/fcs5/source/invalid/missing-header.fcs"),
             DiagnosticCode::VERSION_MISSING_HEADER,
         ),
         (
-            include_str!("../../../conformance/fcs5/source/invalid/header-extra-space.fcs"),
+            include_str!("../../../docs/conformance/fcs5/source/invalid/header-extra-space.fcs"),
             DiagnosticCode::VERSION_INVALID,
         ),
         (
-            include_str!("../../../conformance/fcs5/source/invalid/header-leading-zero.fcs"),
+            include_str!("../../../docs/conformance/fcs5/source/invalid/header-leading-zero.fcs"),
             DiagnosticCode::VERSION_INVALID,
         ),
         (
-            include_str!("../../../conformance/fcs5/source/invalid/duplicate-top-level-block.fcs"),
+            include_str!(
+                "../../../docs/conformance/fcs5/source/invalid/duplicate-top-level-block.fcs"
+            ),
             DiagnosticCode::NAME_DUPLICATE,
         ),
         (
-            include_str!("../../../conformance/fcs5/source/invalid/nested-generator.fcs"),
+            include_str!("../../../docs/conformance/fcs5/source/invalid/nested-generator.fcs"),
             DiagnosticCode::COMPILE_TIME_NESTED_GENERATOR,
         ),
         (
-            include_str!("../../../conformance/fcs5/source/invalid/misplaced-generator.fcs"),
+            include_str!("../../../docs/conformance/fcs5/source/invalid/misplaced-generator.fcs"),
             DiagnosticCode::COMPILE_TIME_MISPLACED_GENERATOR,
         ),
         (
-            include_str!("../../../conformance/fcs5/source/invalid/unclosed-extension-payload.fcs"),
+            include_str!(
+                "../../../docs/conformance/fcs5/source/invalid/unclosed-extension-payload.fcs"
+            ),
             DiagnosticCode::SYNTAX_INVALID_TOKEN,
         ),
         (
-            include_str!("../../../conformance/fcs5/source/invalid/mixed-beat-literal.fcs"),
+            include_str!("../../../docs/conformance/fcs5/source/invalid/mixed-beat-literal.fcs"),
             DiagnosticCode::SYNTAX_INVALID_TOKEN,
         ),
         (
-            include_str!("../../../conformance/fcs5/source/invalid/bare-range.fcs"),
+            include_str!("../../../docs/conformance/fcs5/source/invalid/bare-range.fcs"),
             DiagnosticCode::SYNTAX_INVALID_TOKEN,
         ),
     ];

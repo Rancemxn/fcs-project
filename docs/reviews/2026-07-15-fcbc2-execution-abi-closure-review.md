@@ -85,13 +85,13 @@ bounds/layout/coverage，再计算 resource hash，使 mutation 的 stable categ
 fcbc.md
 957cc9f10702756ea5589c785237528daefd392b038b97db75383536054ad4d6
 
-conformance/manifest.toml
+docs/conformance/manifest.toml
 73c7db2974ae0bf1144b792a2ea57457a6d523cfe23029eac57a80660cd5d76e
 
-conformance/fcbc/manifest.toml
+docs/conformance/fcbc/manifest.toml
 86758355543f59767181be50f329368333eb6ef8436f7668aa138fe2ac1e7b31
 
-conformance/fcbc tree (7 files)
+docs/conformance/fcbc tree (7 files)
 550d26d1683a753e1c1ba430fae7dc8ef8772961c165fac9f94eb7a34398c7dd
 
 conformance tree (70 files; includes the subsequent Render binding fixture)
@@ -117,4 +117,4 @@ conformance tree (70 files; includes the subsequent Render binding fixture)
 - 跨四规范 review、独立 reviewer 和 Frozen 状态。
 
 因此当前 FCBC/ABI 仍为 Draft。下一依赖节点是 `fcs-render.md` resource binding；S15 全部完成、
-统一 conformance/hash 复算且独立 review 关闭 Critical/Important 前，不开始 I1 Rust 实现。
+统一 docs/conformance/hash 复算且独立 review 关闭 Critical/Important 前，不开始 I1 Rust 实现。

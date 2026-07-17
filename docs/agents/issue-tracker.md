@@ -82,7 +82,10 @@ Use `jq -r` for plain strings, `jq -S` for stable key ordering, and `jq -e` when
 
 ## Branch and implementation
 
-Start from current `origin/main`. Use `codex/<issue>-<slug>` and keep one reviewable unit per branch. `gh issue develop <number> --base main --name <branch> --checkout` may create and link the branch when the working tree is clean.
+Start from current `origin/main` for the primary implementation branch. Use `codex/<issue>-<slug>` and keep one
+reviewable unit per branch. `gh issue develop <number> --base main --name <branch> --checkout` may create and link
+the branch when the working tree is clean. Corrective branches created by the independent review session follow the
+fixed-snapshot and worktree rules below and must not write the primary implementation worktree.
 
 Before editing:
 
@@ -125,6 +128,55 @@ gh pr ready <number>
 ```
 
 Do not merge until required checks pass, review requirements are satisfied, the branch is mergeable, and all Critical/Important findings in the applicable gate are closed. Never use `gh pr merge --admin` to bypass protection. Merge only when the user has authorized it.
+
+## Independent review session
+
+The primary implementation session and the independent review session are two roles. The primary session is the sole
+implementer, the sole actor allowed to run `gh pr ready`, and the sole merge owner. The review session uses
+`docs/loops/review-loop.md` and is not a third optional implementation session.
+
+The review session may:
+
+- read a fixed Issue, PR, or merged commit and cite a historical commit to identify a defect;
+- append comments to the PR and associated Issue, and submit `gh pr review --comment` or
+  `--request-changes`;
+- create a bug/finding Issue containing the discovery SHA, location, normative/ADR/plan clause, reproduction command,
+  impact, severity, owner, target stage, dependencies, and acceptance conditions;
+- create a corrective PR for a recorded finding, linking `Closes #<finding>` and
+  `Refs #<reviewed-issue-or-pr>`.
+
+The review session may not:
+
+- merge a PR, mark a PR Ready, close the primary Issue, change its workflow label, or modify the primary session's
+  active implementation branch, `main`, or worktree;
+- review or approve a corrective PR that it created. The primary session inspects, reviews, and merges that PR; the
+  primary PR's new head SHA must then be independently reviewed again.
+
+Every audit binds `Issue/PR or commit + head SHA + scope + commands + acceptance gate`. Before a primary PR is Ready
+or merged, the primary session posts `Review requested`; after the fixed snapshot is audited, the review session
+immediately appends one `Audit result` comment to the reviewed PR (when one exists) and associated Issue, even when
+there are no findings.
+The message includes Target, Head SHA, Scope, Commands, Verdict, Findings, Gate impact, Limitations, and Next. Do
+not hand-write dates or edit old messages. A later push, scope, command, or acceptance change invalidates the old audit;
+append a superseding/re-review message and audit the new SHA.
+
+Finding routing is strict: a Critical/Important finding in the current stage blocks the primary PR from Ready/merge.
+A Minor finding may be deferred only when it cannot affect current acceptance and has an owner, follow-up Issue,
+target stage, and removal condition. A local finding is normally a child/related Issue of the reviewed Issue; only a
+cross-stage or root-level finding is attached directly to root Issue #9.
+
+Every corrective PR uses an isolated worktree and `codex/<finding>-<slug>` branch:
+
+- for an open PR, start from the reviewed PR's fixed head SHA and set the PR base to that active PR branch; the primary
+  session does not advance the active branch during the audit, and the new head is re-audited after the fix merges;
+- for a merged historical commit, start from the latest `origin/main` and set the PR base to `main`; do not reopen the
+  original PR.
+
+A separate branch is not a substitute for an isolated worktree; both are required. Network failure, retry, pending
+remote sync, and duplicate-write prevention continue to follow the `gh` rules at the top of this document.
+
+Use `.github/ISSUE_TEMPLATE/review_finding.md` for reviewer-created findings so the fixed snapshot, severity, gate
+impact, reproduction, owner, target stage, and corrective acceptance conditions are not omitted.
 
 ## Completion
 

@@ -36,7 +36,7 @@ Render resource reference，Render payload 不得覆盖 ResourceRecord metadata/
 
 ## 3. Binding fixture
 
-`render.binding.embedded-image-resource` 使用普通目录 `conformance/render/binding/` 作为 fixture
+`render.binding.embedded-image-resource` 使用普通目录 `docs/conformance/render/binding/` 作为 fixture
 workspace：
 
 ```text
@@ -64,10 +64,10 @@ ff225be16c41a1c38bf05009855659ebabadc4c047f4583d29c6a40cf84f32c4
 fcbc.md（同步 Render binding 后）
 957cc9f10702756ea5589c785237528daefd392b038b97db75383536054ad4d6
 
-conformance/render/manifest.toml
+docs/conformance/render/manifest.toml
 9deafb31ecf7bbd9a992bf7f487364cb274f43e70811013d8f2cc890bfff40aa
 
-conformance/render tree (9 files)
+docs/conformance/render tree (9 files)
 947706cc1ea3ead7c12d9de022dedf55b7aad31b8a66ed1f449fd4e33b0d8f4c
 
 conformance tree (70 files)
