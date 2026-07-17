@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 
 use crate::ast::{Beat, Document, Generator, GeneratorRangeValue, SourceSpan, Type, TypedValue};
 
-use super::eval::evaluate_with_bindings;
-use super::{CompileTimeLimits, ElaboratorError as Diagnostic};
+use super::eval::evaluate_with_context;
+use super::{CompileTimeContext, CompileTimeLimits, ElaboratorError as Diagnostic};
 
 /// A checked, typed generator range ready for body/emit expansion.
 #[derive(Debug, Clone, PartialEq)]
@@ -106,6 +106,7 @@ pub fn evaluate_generator_range(
     generator: &Generator,
     limits: CompileTimeLimits,
 ) -> Result<GeneratorRange, Vec<crate::diagnostic::Diagnostic>> {
+    let context = CompileTimeContext::new(limits);
     if let Err(error) = super::preflight_names(document)
         .and_then(|()| super::resolve::check_document(document))
         .and_then(|()| {
@@ -116,30 +117,35 @@ pub fn evaluate_generator_range(
         })
         .and_then(|()| {
             document.definitions.as_ref().map_or(Ok(()), |definitions| {
-                super::eval::check_and_evaluate(definitions, limits)
+                super::eval::check_and_evaluate_with_context(definitions, &context)
             })
         })
     {
         return Err(vec![error.into_diagnostic()]);
     }
-    evaluate_range(document, generator, limits).map_err(|error| vec![error.into_diagnostic()])
+    evaluate_range_with_context(document, generator, &context)
+        .map_err(|error| vec![error.into_diagnostic()])
 }
 
-pub(super) fn evaluate_range(
+pub(super) fn evaluate_range_with_context(
     document: &Document,
     generator: &Generator,
-    limits: CompileTimeLimits,
+    context: &CompileTimeContext,
 ) -> Result<GeneratorRange, Diagnostic> {
     let definitions = document.definitions.as_ref();
-    let start = evaluate_with_bindings(
+    let start = evaluate_with_context(
         &generator.range.start,
         definitions,
         &BTreeMap::new(),
-        limits,
+        context,
     )?;
-    let end = evaluate_with_bindings(&generator.range.end, definitions, &BTreeMap::new(), limits)?;
-    let step =
-        evaluate_with_bindings(&generator.range.step, definitions, &BTreeMap::new(), limits)?;
+    let end = evaluate_with_context(&generator.range.end, definitions, &BTreeMap::new(), context)?;
+    let step = evaluate_with_context(
+        &generator.range.step,
+        definitions,
+        &BTreeMap::new(),
+        context,
+    )?;
 
     if !matches!(generator.variable_type, Type::Int | Type::Beat)
         || start.ty() != generator.variable_type

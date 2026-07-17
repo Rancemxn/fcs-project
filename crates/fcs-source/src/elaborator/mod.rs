@@ -1,6 +1,8 @@
 //! Type checking and pure compile-time evaluation for FCS 5 definitions.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 mod cycle;
 mod entities;
@@ -28,6 +30,116 @@ pub struct CompileTimeLimits {
     pub max_expression_nodes: usize,
 }
 
+#[derive(Clone)]
+pub(super) struct CompileTimeContext {
+    state: Rc<RefCell<BudgetState>>,
+}
+
+#[derive(Clone)]
+struct BudgetState {
+    limits: CompileTimeLimits,
+    generated_nodes: usize,
+    generator_iterations: usize,
+    template_instances: usize,
+    compile_time_operations: usize,
+    expression_nodes: usize,
+    trace: Vec<ExpansionTraceFrame>,
+}
+
+impl CompileTimeContext {
+    pub(super) fn new(limits: CompileTimeLimits) -> Self {
+        Self {
+            state: Rc::new(RefCell::new(BudgetState {
+                limits,
+                generated_nodes: 0,
+                generator_iterations: 0,
+                template_instances: 0,
+                compile_time_operations: 0,
+                expression_nodes: 0,
+                trace: Vec::new(),
+            })),
+        }
+    }
+
+    pub(super) fn consume(
+        &self,
+        limit: &'static str,
+        span: SourceSpan,
+    ) -> Result<(), ElaboratorError> {
+        let mut state = self.state.borrow_mut();
+        let (observed, bound) = match limit {
+            "max_generated_nodes" => {
+                state.generated_nodes = state.generated_nodes.saturating_add(1);
+                (state.generated_nodes, state.limits.max_generated_nodes)
+            }
+            "max_generator_iterations" => {
+                state.generator_iterations = state.generator_iterations.saturating_add(1);
+                (
+                    state.generator_iterations,
+                    state.limits.max_generator_iterations,
+                )
+            }
+            "max_template_instances" => {
+                state.template_instances = state.template_instances.saturating_add(1);
+                (
+                    state.template_instances,
+                    state.limits.max_template_instances,
+                )
+            }
+            "max_compile_time_operations" => {
+                state.compile_time_operations = state.compile_time_operations.saturating_add(1);
+                (
+                    state.compile_time_operations,
+                    state.limits.max_compile_time_operations,
+                )
+            }
+            "max_expression_nodes" => {
+                state.expression_nodes = state.expression_nodes.saturating_add(1);
+                (state.expression_nodes, state.limits.max_expression_nodes)
+            }
+            _ => return Ok(()),
+        };
+        if observed > bound {
+            Err(ElaboratorError::LimitExceeded {
+                limit,
+                bound,
+                observed,
+                span,
+                trace: state.trace.clone(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(super) fn push_trace(&self, frame: ExpansionTraceFrame) {
+        self.state.borrow_mut().trace.push(frame);
+    }
+
+    pub(super) fn pop_trace(&self) {
+        self.state.borrow_mut().trace.pop();
+    }
+
+    pub(super) fn check_expansion_depth(
+        &self,
+        depth: usize,
+        span: SourceSpan,
+    ) -> Result<(), ElaboratorError> {
+        let state = self.state.borrow();
+        if depth > state.limits.max_expansion_depth {
+            Err(ElaboratorError::LimitExceeded {
+                limit: "max_expansion_depth",
+                bound: state.limits.max_expansion_depth,
+                observed: depth,
+                span,
+                trace: state.trace.clone(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+}
+
 impl Default for CompileTimeLimits {
     fn default() -> Self {
         Self {
@@ -42,7 +154,7 @@ impl Default for CompileTimeLimits {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum ElaboratorError {
+pub(super) enum ElaboratorError {
     FeatureUnavailable {
         feature: &'static str,
         span: SourceSpan,
@@ -152,6 +264,7 @@ enum ElaboratorError {
         bound: usize,
         observed: usize,
         span: SourceSpan,
+        trace: Vec<ExpansionTraceFrame>,
     },
 }
 
@@ -170,11 +283,12 @@ fn elaborate_inner(
 ) -> Result<ExpandedSourceDocument, ElaboratorError> {
     preflight_names(document)?;
     resolve::check_document(document)?;
+    let context = CompileTimeContext::new(limits);
     if let Some(definitions) = &document.definitions {
         cycle::reject_cycles(definitions)?;
-        eval::check_and_evaluate(definitions, limits)?;
+        eval::check_and_evaluate_with_context(definitions, &context)?;
     }
-    let collections = entities::expand_collections(document, schema, limits)?;
+    let collections = entities::expand_collections(document, schema, context)?;
     Ok(ExpandedSourceDocument::from_collections(
         document.source_version.clone(),
         document.profile,
@@ -415,13 +529,15 @@ impl ElaboratorError {
                 bound,
                 observed,
                 span,
+                trace,
             } => Diagnostic::new(
                 DiagnosticCode::COMPILE_TIME_BUDGET_EXCEEDED,
                 DiagnosticStage::Evaluate,
                 format!("compile-time budget {limit} was exceeded"),
                 span,
             )
-            .with_budget(limit, bound, observed),
+            .with_budget(limit, bound, observed)
+            .with_expansion_trace(trace),
         }
     }
 }

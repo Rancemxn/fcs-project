@@ -7,13 +7,14 @@ use crate::ast::{
     FunctionStatement, SourceExpression, SourceLiteral, SourceSpan, Type, TypedValue,
     UnaryOperator,
 };
+use crate::diagnostic::{ExpansionTraceFrame, ExpansionTraceKind};
 
 use super::scope::{BUILTIN_NAMES, Binding, Scope};
-use super::{CompileTimeLimits, ElaboratorError as Diagnostic};
+use super::{CompileTimeContext, ElaboratorError as Diagnostic};
 
-pub(super) fn check_and_evaluate(
+pub(super) fn check_and_evaluate_with_context(
     definitions: &DefinitionsBlock,
-    limits: CompileTimeLimits,
+    context: &CompileTimeContext,
 ) -> Result<(), Diagnostic> {
     let mut constants = BTreeMap::new();
     let mut functions = BTreeMap::new();
@@ -98,7 +99,7 @@ pub(super) fn check_and_evaluate(
     }
 
     let mut values = BTreeMap::new();
-    let mut budget = Budget::new(limits);
+    let mut budget = Budget::new(context.clone());
     for name in constants.keys() {
         evaluate_const(
             name,
@@ -114,11 +115,11 @@ pub(super) fn check_and_evaluate(
 
 /// Evaluate one source expression in the same compile-time environment used by definitions.
 /// Entity expansion supplies template parameters through `bindings`.
-pub(super) fn evaluate_with_bindings(
+pub(super) fn evaluate_with_context(
     expression: &SourceExpression,
     definitions: Option<&DefinitionsBlock>,
     bindings: &BTreeMap<String, TypedValue>,
-    limits: CompileTimeLimits,
+    context: &CompileTimeContext,
 ) -> Result<TypedValue, Diagnostic> {
     let mut constants = BTreeMap::new();
     let mut functions = BTreeMap::new();
@@ -160,7 +161,7 @@ pub(super) fn evaluate_with_bindings(
         )?;
     }
     let mut values = BTreeMap::new();
-    let mut budget = Budget::new(limits);
+    let mut budget = Budget::new(context.clone());
     for name in constants.keys() {
         evaluate_const(
             name,
@@ -961,7 +962,14 @@ fn evaluate_expression(
                 name: name.clone(),
                 span: callee.span(),
             })?;
-            evaluate_function(
+            budget.context.push_trace(ExpansionTraceFrame::new(
+                ExpansionTraceKind::Function,
+                Some(name.clone()),
+                None,
+                None,
+                Some(function.name_span),
+            ));
+            let result = evaluate_function(
                 function,
                 arguments,
                 scope,
@@ -969,7 +977,11 @@ fn evaluate_expression(
                 functions,
                 const_values,
                 budget,
-            )
+            );
+            if result.is_ok() {
+                budget.context.pop_trace();
+            }
+            result
         }
         SourceExpression::FieldAccess { base, field, span } => {
             let value =
@@ -1904,45 +1916,19 @@ fn invalid_binary<T>(span: SourceSpan) -> Result<T, Diagnostic> {
 }
 
 struct Budget {
-    limits: CompileTimeLimits,
-    operations: usize,
-    expression_nodes: usize,
+    context: CompileTimeContext,
 }
 
 impl Budget {
-    const fn new(limits: CompileTimeLimits) -> Self {
-        Self {
-            limits,
-            operations: 0,
-            expression_nodes: 0,
-        }
+    fn new(context: CompileTimeContext) -> Self {
+        Self { context }
     }
 
     fn node(&mut self, span: SourceSpan) -> Result<(), Diagnostic> {
-        self.expression_nodes = self.expression_nodes.saturating_add(1);
-        if self.expression_nodes > self.limits.max_expression_nodes {
-            Err(Diagnostic::LimitExceeded {
-                limit: "max_expression_nodes",
-                bound: self.limits.max_expression_nodes,
-                observed: self.expression_nodes,
-                span,
-            })
-        } else {
-            Ok(())
-        }
+        self.context.consume("max_expression_nodes", span)
     }
 
     fn operation(&mut self, span: SourceSpan) -> Result<(), Diagnostic> {
-        self.operations = self.operations.saturating_add(1);
-        if self.operations > self.limits.max_compile_time_operations {
-            Err(Diagnostic::LimitExceeded {
-                limit: "max_compile_time_operations",
-                bound: self.limits.max_compile_time_operations,
-                observed: self.operations,
-                span,
-            })
-        } else {
-            Ok(())
-        }
+        self.context.consume("max_compile_time_operations", span)
     }
 }

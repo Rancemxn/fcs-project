@@ -6,17 +6,17 @@ use crate::ast::{
     SourceExpression, SourceLiteral, SourceSpan, TemplateDeclaration, TemplateStatement, Type,
     TypedValue, WithExpression,
 };
-use crate::diagnostic::ExpansionTraceKind;
+use crate::diagnostic::{ExpansionTraceFrame, ExpansionTraceKind};
 use crate::schema::{ConstructionSchema, EntitySchema, FieldConstraint};
 
-use super::eval::{evaluate_with_bindings, infer_expression};
+use super::eval::{evaluate_with_context, infer_expression};
 use super::scope::{Binding, Scope};
-use super::{CompileTimeLimits, DependencyTraceNode, ElaboratorError as Diagnostic};
+use super::{CompileTimeContext, DependencyTraceNode, ElaboratorError as Diagnostic};
 
-pub(super) fn validate_static_entities(
+pub(super) fn validate_static_entities_with_context(
     document: &Document,
     schema: &ConstructionSchema,
-    limits: CompileTimeLimits,
+    context: &CompileTimeContext,
 ) -> Result<(), Diagnostic> {
     let templates = template_map(document.definitions.as_ref());
     let functions = function_map(document.definitions.as_ref());
@@ -33,7 +33,7 @@ pub(super) fn validate_static_entities(
         functions,
         root,
         line_names,
-        limits,
+        context: context.clone(),
     };
     validator.validate_templates(document.definitions.as_ref())?;
     validator.validate_collections()
@@ -85,7 +85,7 @@ struct StaticEntityValidator<'a> {
     functions: BTreeMap<String, &'a crate::ast::FunctionDeclaration>,
     root: Scope,
     line_names: BTreeSet<String>,
-    limits: CompileTimeLimits,
+    context: CompileTimeContext,
 }
 
 impl<'a> StaticEntityValidator<'a> {
@@ -267,7 +267,7 @@ impl<'a> StaticEntityValidator<'a> {
         expected_type: &Type,
         schema: &EntitySchema,
     ) -> Result<(), Diagnostic> {
-        super::generator::evaluate_range(self.document, generator, self.limits)?;
+        super::generator::evaluate_range_with_context(self.document, generator, &self.context)?;
         let mut scope = self.root.child();
         scope.declare(
             "index".to_owned(),
@@ -511,11 +511,11 @@ impl<'a> StaticEntityValidator<'a> {
             }
             let actual = self.validate_expression(&field.value, scope)?;
             require_static_type(&field_schema.ty, &actual, field.value.span())?;
-            if let Ok(value) = evaluate_with_bindings(
+            if let Ok(value) = evaluate_with_context(
                 &field.value,
                 self.document.definitions.as_ref(),
                 &BTreeMap::new(),
-                CompileTimeLimits::default(),
+                &self.context,
             ) {
                 validate_field_type(field_schema, &value, field.value.span())?;
             }
@@ -683,16 +683,15 @@ fn is_structural_field(path: &str) -> bool {
 pub(super) fn expand_collections(
     document: &Document,
     schema: &ConstructionSchema,
-    limits: CompileTimeLimits,
+    context: CompileTimeContext,
 ) -> Result<Vec<ExpandedCollection>, Diagnostic> {
-    validate_static_entities(document, schema, limits)?;
+    validate_static_entities_with_context(document, schema, &context)?;
     let templates = template_map(document.definitions.as_ref());
     let mut context = ExpansionContext {
         document,
         schema,
         templates,
-        limits,
-        template_instances: 0,
+        context,
     };
     document
         .collections
@@ -718,8 +717,7 @@ struct ExpansionContext<'a> {
     document: &'a Document,
     schema: &'a ConstructionSchema,
     templates: BTreeMap<String, &'a TemplateDeclaration>,
-    limits: CompileTimeLimits,
-    template_instances: usize,
+    context: CompileTimeContext,
 }
 
 impl<'a> ExpansionContext<'a> {
@@ -727,6 +725,13 @@ impl<'a> ExpansionContext<'a> {
         &mut self,
         collection: &CollectionBlock,
     ) -> Result<ExpandedCollection, Diagnostic> {
+        self.context.push_trace(ExpansionTraceFrame::new(
+            ExpansionTraceKind::Collection,
+            Some(collection.collection_name.clone()),
+            None,
+            None,
+            Some(collection.span),
+        ));
         let collection_schema = self
             .schema
             .collection(&collection.collection_name)
@@ -743,10 +748,9 @@ impl<'a> ExpansionContext<'a> {
                 &mut entities,
             )?;
         }
-        Ok(ExpandedCollection::new(
-            collection.collection_name.clone(),
-            entities,
-        ))
+        let expanded = ExpandedCollection::new(collection.collection_name.clone(), entities);
+        self.context.pop_trace();
+        Ok(expanded)
     }
 
     fn expand_item(
@@ -763,11 +767,11 @@ impl<'a> ExpansionContext<'a> {
                 else_items,
                 span,
             } => {
-                let value = match evaluate_with_bindings(
+                let value = match evaluate_with_context(
                     condition,
                     self.document.definitions.as_ref(),
                     &BTreeMap::new(),
-                    self.limits,
+                    &self.context,
                 ) {
                     Ok(value) => value,
                     Err(Diagnostic::UnknownName { .. }) => {
@@ -817,9 +821,40 @@ impl<'a> ExpansionContext<'a> {
         collection_name: &str,
         output: &mut Vec<ExpandedEntity>,
     ) -> Result<(), Diagnostic> {
-        let range = super::generator::evaluate_range(self.document, generator, self.limits)?;
+        self.context.push_trace(ExpansionTraceFrame::new(
+            ExpansionTraceKind::Generator,
+            Some(generator.variable.clone()),
+            None,
+            None,
+            Some(generator.span),
+        ));
+        self.context.push_trace(ExpansionTraceFrame::new(
+            ExpansionTraceKind::Range,
+            None,
+            None,
+            None,
+            Some(generator.range.span),
+        ));
+        let range =
+            super::generator::evaluate_range_with_context(self.document, generator, &self.context)?;
         let mut generated = Vec::new();
         for index in 0..range.count() {
+            self.context.push_trace(ExpansionTraceFrame::new(
+                ExpansionTraceKind::Index,
+                None,
+                usize::try_from(index).ok(),
+                None,
+                Some(generator.range.span),
+            ));
+            self.context.push_trace(ExpansionTraceFrame::new(
+                ExpansionTraceKind::Emit,
+                None,
+                None,
+                Some(expected_type.to_string()),
+                Some(generator.span),
+            ));
+            self.context
+                .consume("max_generator_iterations", generator.range.span)?;
             let value = range
                 .value_at(index)
                 .map_err(|_| Diagnostic::NumericOverflow {
@@ -836,7 +871,11 @@ impl<'a> ExpansionContext<'a> {
                 &bindings,
                 &mut generated,
             )?;
+            self.context.pop_trace();
+            self.context.pop_trace();
         }
+        self.context.pop_trace();
+        self.context.pop_trace();
         output.extend(generated);
         Ok(())
     }
@@ -853,11 +892,11 @@ impl<'a> ExpansionContext<'a> {
         for item in items {
             match item {
                 GeneratorItem::Let(statement) => {
-                    let value = evaluate_with_bindings(
+                    let value = evaluate_with_context(
                         &statement.initializer,
                         self.document.definitions.as_ref(),
                         &local_bindings,
-                        self.limits,
+                        &self.context,
                     )?;
                     if value.ty() != statement.ty {
                         return Err(Diagnostic::TypeMismatch {
@@ -883,11 +922,11 @@ impl<'a> ExpansionContext<'a> {
                     else_items,
                     span,
                 } => {
-                    let condition = evaluate_with_bindings(
+                    let condition = evaluate_with_context(
                         condition,
                         self.document.definitions.as_ref(),
                         &local_bindings,
-                        self.limits,
+                        &self.context,
                     )?;
                     let TypedValue::Bool(selected) = condition else {
                         return Err(Diagnostic::NonConstantStructuralCondition { span: *span });
@@ -902,6 +941,13 @@ impl<'a> ExpansionContext<'a> {
                     )?;
                 }
                 GeneratorItem::Emit(expression) => {
+                    self.context.push_trace(ExpansionTraceFrame::new(
+                        ExpansionTraceKind::Emit,
+                        None,
+                        None,
+                        Some(expected_type.to_string()),
+                        Some(expression.span()),
+                    ));
                     let entity = self.expand_expression(
                         expression,
                         expected_type,
@@ -910,6 +956,7 @@ impl<'a> ExpansionContext<'a> {
                         0,
                     )?;
                     self.push_collection_entity(entity, expected_type, collection_name, output)?;
+                    self.context.pop_trace();
                 }
             }
         }
@@ -931,6 +978,7 @@ impl<'a> ExpansionContext<'a> {
                 span: entity.span(),
             });
         }
+        self.context.consume("max_generated_nodes", entity.span())?;
         output.push(entity);
         Ok(())
     }
@@ -943,14 +991,8 @@ impl<'a> ExpansionContext<'a> {
         stack: &mut Vec<String>,
         depth: usize,
     ) -> Result<ExpandedEntity, Diagnostic> {
-        if depth > self.limits.max_expansion_depth {
-            return Err(Diagnostic::LimitExceeded {
-                limit: "max_expansion_depth",
-                bound: self.limits.max_expansion_depth,
-                observed: depth,
-                span: expression.span(),
-            });
-        }
+        self.context
+            .check_expansion_depth(depth, expression.span())?;
         match expression {
             EntityExpression::Constructor(constructor) => {
                 self.expand_constructor(constructor, expected_type, bindings)
@@ -1089,22 +1131,21 @@ impl<'a> ExpansionContext<'a> {
                 span,
             });
         }
-        self.template_instances = self.template_instances.saturating_add(1);
-        if self.template_instances > self.limits.max_template_instances {
-            return Err(Diagnostic::LimitExceeded {
-                limit: "max_template_instances",
-                bound: self.limits.max_template_instances,
-                observed: self.template_instances,
-                span,
-            });
-        }
+        self.context.consume("max_template_instances", span)?;
+        self.context.push_trace(ExpansionTraceFrame::new(
+            ExpansionTraceKind::Template,
+            Some(name.to_owned()),
+            None,
+            None,
+            Some(template.span),
+        ));
         let mut local_bindings = bindings.clone();
         for (argument, parameter) in arguments.iter().zip(&template.parameters) {
-            let value = evaluate_with_bindings(
+            let value = evaluate_with_context(
                 argument,
                 self.document.definitions.as_ref(),
                 bindings,
-                self.limits,
+                &self.context,
             )?;
             if value.ty() != parameter.ty {
                 return Err(Diagnostic::TypeMismatch {
@@ -1124,10 +1165,12 @@ impl<'a> ExpansionContext<'a> {
             depth + 1,
         );
         stack.pop();
-        result?.ok_or_else(|| Diagnostic::MissingReturn {
+        let result = result?.ok_or_else(|| Diagnostic::MissingReturn {
             function: template.name.clone(),
             span: template.span,
-        })
+        })?;
+        self.context.pop_trace();
+        Ok(result)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1143,11 +1186,11 @@ impl<'a> ExpansionContext<'a> {
         for statement in statements {
             match statement {
                 TemplateStatement::Let(statement) => {
-                    let value = evaluate_with_bindings(
+                    let value = evaluate_with_context(
                         &statement.initializer,
                         self.document.definitions.as_ref(),
                         &local_bindings,
-                        self.limits,
+                        &self.context,
                     )?;
                     if value.ty() != statement.ty {
                         return Err(Diagnostic::TypeMismatch {
@@ -1166,11 +1209,11 @@ impl<'a> ExpansionContext<'a> {
                     local_bindings.insert(statement.name.clone(), value);
                 }
                 TemplateStatement::If(statement) => {
-                    let condition = evaluate_with_bindings(
+                    let condition = evaluate_with_context(
                         &statement.condition,
                         self.document.definitions.as_ref(),
                         &local_bindings,
-                        self.limits,
+                        &self.context,
                     )?;
                     let TypedValue::Bool(selected) = condition else {
                         return Err(Diagnostic::NonConstantStructuralCondition {
@@ -1242,11 +1285,11 @@ impl<'a> ExpansionContext<'a> {
                         field: path.clone(),
                         span: field.path.span,
                     })?;
-            let value = evaluate_with_bindings(
+            let value = evaluate_with_context(
                 &field.value,
                 self.document.definitions.as_ref(),
                 bindings,
-                self.limits,
+                &self.context,
             )?;
             validate_field_type(field_schema, &value, field.value.span())?;
             entity.replace_field(ExpandedField::new(path, value, field.span));
@@ -1279,11 +1322,11 @@ impl<'a> ExpansionContext<'a> {
                         field: path.clone(),
                         span: field.path.span,
                     })?;
-            let value = evaluate_with_bindings(
+            let value = evaluate_with_context(
                 &field.value,
                 self.document.definitions.as_ref(),
                 bindings,
-                self.limits,
+                &self.context,
             )?;
             validate_field_type(field_schema, &value, field.value.span())?;
             result.insert(path.clone(), ExpandedField::new(path, value, field.span));
