@@ -1,12 +1,14 @@
 # Goal & Success Signal
 
 - **Goal:** 从 GitHub root Issue、child Issue/PR 图和已合并提交中选择最早尚未审查的固定目标，复现其
-  规范、阶段 gate、测试和交付证据，及时记录可复现 finding，并把需要修复的 finding 路由给当前主实现
-  会话，直到当前审查 frontier 闭合。
+  规范、阶段 gate、测试和交付证据，先完成实现/conformance 二审，再对通过目标做有界的架构与文档
+  advisory audit；及时记录可复现 finding，并把需要修复的 finding 路由给当前主实现会话，直到当前审查
+  frontier 闭合。
 - **Observable success signal:** 每个已审查目标都有一条 append-only `Audit result`（即使零 finding），
-  其中包含目标身份、head SHA、scope、实际命令、verdict、限制和 Next；所有 Critical/Important finding
-  都有 owner、修复路径和最新状态；必要的 corrective PR 已链接 finding Issue，且主会话已经重新审查
-  修复后的新 SHA；当前 frontier 没有未审查目标，也没有未分配的 Critical/Important finding。
+  其中包含目标身份、head SHA、scope、实际命令、verdict、限制、advisory 结果和 Next；所有
+  Critical/Important implementation/conformance finding 都有 owner、修复路径和最新状态；必要的 corrective
+  PR 已链接 finding Issue，且主会话已经重新审查修复后的新 SHA；架构/文档建议均已创建 HUMAN-only Issue，
+  不进入主 loop 的 acceptance ledger；当前 frontier 没有未审查目标，也没有未分配的 Critical/Important finding。
 - 所有已完成审查的 reviewer worktree 都已从 `/tmp` 安全清理；仍保留的 worktree 都有 owner、固定 SHA、
   未完成原因和明确的清理条件。
 - 审查 loop 不声明阶段、规范版本域或 FCS 5 RC 完成；它只产生独立审查证据和 finding 路由。最终完成
@@ -29,12 +31,18 @@
 
 # Termination Conditions
 
-- **Max iterations / budget:** 最多 240 个 `review-unit` iterations，与主 loop 的 240 个 work-unit
-  预算独立计算。一次 iteration 只审查一个固定目标，不按命令数、评论数或 commit 数计数，也不得通过
-  拆分同一快照绕过预算。
+- **Max iterations / budget:** 最多 480 个 `review-unit` iterations，与主 loop 的 240 个 work-unit 预算独立
+  计算。一次 iteration 只审查一个固定目标及其通过后的架构/文档 advisory pass，不按命令数、评论数或 commit
+  数计数，也不得通过拆分同一快照绕过预算。等待 frontier 的时间不消耗 review-unit 预算。
 - **Goal-achievement check:** frontier 中每个已分配目标都有最新 Audit result；没有未分配的 Critical/
   Important finding；需要修复的 finding 都已链接 owner、目标 stage、依赖、验收条件和 corrective PR 或
-  明确的 HUMAN/PLANNER residual。仍在写入中的目标不算未完成审查目标，必须等待其固定快照。
+  明确的 HUMAN/PLANNER residual；架构/文档 advisory 都已标为 HUMAN-only 并从主 loop ledger 排除。仍在写入中的
+  目标不算未完成审查目标，必须等待其固定快照。
+- **Idle wait window:** 每次完成一个目标后先检查 root Issue 的 I10 success signal。若 I10 已完成，review loop
+  直接终止；若 I10 未完成且没有新的固定、可审目标，则等待 1 分钟后重新 Frontier Sync，最多 10 次。新目标、
+  新的 `Review requested` 或新的 finding 会立即中断等待并开始下一 review-unit。10 次仍无目标时，结束当前
+  reviewer turn 并返回 `waiting-for-main` residual；这不是通过、失败或 finding，也不消耗预算，下一次 loop
+  启动时重新检查。
 - **Per-target no-progress:** 两次不同的复现/证据路径没有缩小审查 residual 时，缩小 scope 或标记证据
   缺口并转 PLANNER；第三次仍无决定性证据则追加 `needs-info` 或 `ready-for-human` finding，停止扩大
   该目标。
@@ -45,10 +53,11 @@
 
 # Progress Invariant
 
-- 每个非终止 review-unit 必须完成一次固定目标的审查并追加 Audit result，或关闭/重新分类至少一个
-  finding，或把 scope 严格缩小到一个可独立验收的 residual；同时 review-unit 预算严格减少。
-- 只创建 Issue、重复读取同一输出、重复评论或等待远端状态不算进展。若当前目标不能满足 invariant，必须
-  按 no-progress 或 Residual Routing 退出，不得无限扩大 scope。
+- 每个非终止 review-unit 必须完成一次固定目标的实现/conformance 审查并追加 Audit result，或在实现审查通过后
+  完成架构/文档 advisory pass，或关闭/重新分类至少一个 finding，或把 scope 严格缩小到一个可独立验收的
+  residual；同时 review-unit 预算严格减少。
+- 只创建 Issue、重复读取同一输出、重复评论或等待远端状态不算进展；Idle wait window 是明确的有界等待例外。
+  若当前目标不能满足 invariant，必须按 no-progress 或 Residual Routing 退出，不得无限扩大 scope。
 - finding ledger、Issue/PR comments、corrective PR 和 re-review SHA 必须 append-only 可追溯；旧 verdict
   失效时只追加 superseding 记录，不编辑历史消息。
 
@@ -65,9 +74,10 @@
 - **Selection order:** 默认从最早仍未审查且不依赖未关闭前置 blocker 的 Issue/PR 选择目标，优先当前
   stage gate 和主会话明确发送的 `Review requested`。对明显影响当前 gate、但主会话尚未请求且已经固定的
   PR，可以主动建立审查目标；不审查仍处于写入中的 PR。
-- **Review request:** 主会话在 PR Ready/merge 前发送新的 `Review requested`，同时给出 PR number、
-  associated Issue、head SHA、scope、权威条款、commands、验收 gate、已知 residual 和是否暂停写入。
-  审查会话先验证远端 head SHA 与请求一致，再开始 iteration。
+- **Review request:** 主会话在 Primary audit 通过后发送新的 `Review requested`，同时给出 PR number、associated
+  Issue、head SHA、scope、权威条款、commands、验收 gate、已知 residual 和是否暂停写入。主会话可以在 reviewer
+  返回前 Ready/merge；审查会话先验证远端 head SHA 与请求一致，再开始 iteration，并可审查开放 PR 或其合并后的
+  固定 commit。
 - **Invalidation:** 后续 push、scope 扩大/改变、验收命令或 gate 变化、依赖 closure 变化都会使旧 verdict
   失效。审查会话立即追加 `superseding/re-review` comment，指出被替代的 SHA/verdict；主会话固定新
   快照后重新请求，不编辑旧评论。
@@ -82,14 +92,20 @@
    mutation、round-trip、raster 或 workspace gate。每个命令记录实际结果，不把 skipped 当作 passed。
 3. **Inspect:** 对照规范条款、调用方、测试和固定 artifact 检查实现、边界、错误路径、资源/依赖和
    交付声明；可引用已合并 commit 指出历史漏洞。
-4. **Classify:** 每项 finding 标为 `Critical`、`Important` 或 `Minor`，并判断是否阻塞当前 stage/PR gate。
-   严重度必须由影响和可复现证据支持，不以个人偏好升降级。
-5. **Route:** 对 finding 创建或更新 Issue；需要代码/测试/文档修复时创建 corrective PR。审查者不得
-   合并、Ready 或批准自己创建的 corrective PR；由主会话审查、合并，再把主 PR 的新 SHA 送回本 loop。
-6. **Cleanup and comment immediately:** 若不再需要本地写入，先按 Worktree Cleanup 安全清理；若必须保留，
-   在 `Audit result` 中记录 owner、固定 SHA 和清理条件。随后立即在被审 PR（若存在）和关联 Issue 各追加一条
-   Audit result；即使没有 finding 也必须发送。评论 append-only，不手写日期，不反复 edit 同一消息；清理未完成
-   且没有 owner/condition 时，review-unit 不得算作完成。
+4. **Classify:** 实现/conformance finding 标为 `Critical`、`Important` 或 `Minor`，并判断是否阻塞当前 stage/PR
+   gate；严重度必须由影响和可复现证据支持，不以个人偏好升降级。
+5. **Advisory pass:** 只有实现/conformance verdict 为 `pass` 时，检查架构 seam、模块边界、局部性、可测试性、
+   AI 可导航性，以及 docs/CONTEXT、计划、矩阵、loop 和链接的一致性。该 pass 只产生 advisory，不改变规范状态、
+   stage baseline 或当前 acceptance。
+6. **Route:** 实现/conformance finding 创建或更新 finding Issue；需要代码/测试修复时创建 corrective PR。架构/文档
+   优化建议创建 `ready-for-human` 的 HUMAN-only Issue，并在 Audit result 的 `Advisories` 中链接；主 loop 不得自动
+   领取、关闭或据此改变 I10 gate。若 advisory 实际证明规范矛盾、实现缺陷或当前 conformance 违约，必须改分类为
+   标准 finding，按正常 gate 路由。审查者不得合并、Ready 或批准自己创建的 corrective PR；由主会话审查、合并，再
+   把新 SHA 送回本 loop。
+7. **Cleanup and comment immediately:** 若不再需要本地写入，先按 Worktree Cleanup 安全清理；若必须保留，在
+   `Audit result` 中记录 owner、固定 SHA 和清理条件。随后立即在被审 PR（若存在）和关联 Issue 各追加一条 Audit
+   result；即使没有 finding 也必须发送，并列出 `Advisories: none` 或 HUMAN-only Issue 列表。评论 append-only，不
+   手写日期，不反复 edit 同一消息；清理未完成且没有 owner/condition 时，review-unit 不得算作完成。
 
 # Finding Contract & Routing
 
@@ -114,6 +130,13 @@
   目标为 `main`，并保留发现 SHA。主会话审查并合并后，记录历史漏洞的修复 commit。
 - 开放 PR 的 finding 从被审 PR 的固定 head SHA 创建 corrective branch，目标为该活动 PR 的分支。主会话
   在审查期间不推进活动分支；修复 PR 合并后活动 PR 获得新 head SHA，旧 Audit result 失效，必须重新审查。
+
+## HUMAN-only advisory contract
+
+架构和文档 advisory Issue 必须绑定被审目标、head SHA、scope、观察到的证据、建议、影响、人工 owner 和
+建议处理条件，并使用 `ready-for-human` 状态及合适的 `documentation`、`workflow` 或 `enhancement` 标签。
+它们不使用 `review-finding` 或 severity label，不能关闭当前实现 Issue，不能阻塞 I10，也不能被 `loop.md`
+自动选为 work-unit。只有当证据升级为规范矛盾、实现缺陷或当前 conformance 违约时，才转回标准 finding contract。
 
 # Reviewer Metadata Duties
 
@@ -143,7 +166,8 @@
 - 开放 PR 的 corrective branch 起点是固定 head SHA，PR base 是被审 PR 的活动分支；历史 commit 的
   corrective branch 起点是最新 `origin/main`，PR base 是 `main`。
 - 当前会话负责检查 corrective diff、验证命令、required checks 和 review requirements，并合并 corrective
-  PR。审查者不得批准自己的修复；主 PR 只有在修复后新 SHA 通过本 loop 的独立 Audit result 后才能 Ready/merge。
+  PR。审查者不得批准自己的修复；主会话以 Primary Self-Audit 作为 Ready/merge 门禁，合并后的新 SHA
+  仍须送回本 loop 做异步独立二审。
 
 # Worktree Cleanup
 
@@ -172,6 +196,7 @@
 - Commands: `<command>` → <passed/failed/skipped>（列出实际结果）
 - Verdict: `pass` / `blocked` / `needs-info`
 - Findings: <none 或 #finding 列表，含 severity>
+- Advisories: <none 或 HUMAN-only Issue 列表；不改变当前 gate>
 - Gate impact: <当前 stage/PR gate 是否阻塞>
 - Limitations: <未覆盖范围或 none>
 - Worktree: <cleaned，或 retained + owner/condition>
@@ -212,6 +237,8 @@
 | Scope/authority | fixed SHA、规范/ADR/plan clauses、依赖 closure | target binding and limitations |
 | Implementation | diff、调用方、错误路径、资源/依赖边界 | finding location and impact |
 | Tests/conformance | focused/full command output、fixture/golden/hash/raster as applicable | command status and artifact link |
+| Architecture | module boundaries、seams、dependency direction、locality、testability、AI navigability | advisory Issue or `Advisories: none` |
+| Documentation | CONTEXT/spec/ADR/plan/loop links、terminology、scope/authority consistency | advisory Issue or `Advisories: none` |
 | GitHub delivery | Issue/PR linkage、branch/base、review threads、required checks | Audit result and finding ledger |
 | Corrective delivery | isolated worktree、finding link、base/head SHA、主会话 merge evidence | corrective PR and re-review target |
 
@@ -228,4 +255,6 @@
 | reviewer worktree 不在 `/tmp`、变脏、owner/固定 SHA 缺失或无法安全清理 | LOCAL/HUMAN | 停止交付，保留现场并记录清理条件；不得使用 `--force` 或越权删除 |
 | GitHub 瞬时网络失败 | LOCAL | 按重试规则查询稳定身份并重试；耗尽则保存 payload/outbox，继续安全只读审查 |
 | 连续 3 个 review-unit 无进展且无新 frontier | HUMAN | 终止本轮，报告未审目标、证据缺口和解除条件 |
-| 达到 240 review-unit | PLANNER | 终止本轮，保留 finding ledger，产出后继审查 loop 建议 |
+| 无 I10 完成且无固定目标 | LOCAL | 进入 1 分钟一次、最多 10 次的 Idle wait window；目标出现即恢复，耗尽则返回 `waiting-for-main` |
+| 达到 480 review-unit | PLANNER | 终止本轮，保留 finding ledger 和 HUMAN-only advisory，产出后继审查 loop 建议 |
+| 架构/文档优化建议 | HUMAN | 创建 `ready-for-human` HUMAN-only Issue；不进入主 loop、不自动修复、不改变当前 gate |

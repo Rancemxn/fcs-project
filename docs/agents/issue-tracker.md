@@ -130,13 +130,15 @@ gh pr view <number> --json reviewDecision,mergeable,statusCheckRollup,files |
 gh pr ready <number>
 ```
 
-Do not merge until required checks pass, review requirements are satisfied, the branch is mergeable, and all Critical/Important findings in the applicable gate are closed. Never use `gh pr merge --admin` to bypass protection. Merge only when the user has authorized it.
+Do not merge until required checks pass, review requirements are satisfied, the branch is mergeable, a passing `Primary audit result` is recorded, and all Primary-audit Critical/Important findings in the applicable gate are closed. The independent reviewer may still be pending; any reviewer finding that arrives before or after merge follows the routing rules below. Never use `gh pr merge --admin` to bypass protection. Merge only when the user has authorized it.
 
-## Independent review session
+## Primary self-audit and independent review session
 
 The primary implementation session and the independent review session are two roles. The primary session is the sole
-implementer, the sole actor allowed to run `gh pr ready`, and the sole merge owner. The review session uses
-`docs/loops/review-loop.md` and is not a third optional implementation session.
+implementer, the sole actor allowed to run `gh pr ready`, and the sole merge owner. Before Ready/merge, the primary
+session performs a direct Primary Self-Audit without a subagent and records `Primary audit result`; the independent
+review session uses `docs/loops/review-loop.md` as an asynchronous second-pass role and is not a third optional
+implementation session.
 
 The review session may:
 
@@ -160,18 +162,27 @@ The review session may not:
 - review or approve a corrective PR that it created. The primary session inspects, reviews, and merges that PR; the
   primary PR's new head SHA must then be independently reviewed again.
 
-Every audit binds `Issue/PR or commit + head SHA + scope + commands + acceptance gate`. Before a primary PR is Ready
-or merged, the primary session posts `Review requested`; after the fixed snapshot is audited, the review session
-immediately appends one `Audit result` comment to the reviewed PR (when one exists) and associated Issue, even when
-there are no findings.
-The message includes Target, Head SHA, Scope, Commands, Verdict, Findings, Gate impact, Limitations, and Next. Do
-not hand-write dates or edit old messages. A later push, scope, command, or acceptance change invalidates the old audit;
-append a superseding/re-review message and audit the new SHA.
+Every Primary or reviewer audit binds `Issue/PR or commit + head SHA + scope + commands + acceptance gate`. Before a primary
+PR is Ready or merged, the primary session records `Primary audit result` on the PR (when one exists) and associated Issue;
+the primary may continue to Ready/merge after a passing Primary audit without waiting for the reviewer. It then posts
+`Review requested`; after the fixed snapshot is audited, the review session immediately appends one `Audit result` comment
+to the reviewed PR and associated Issue, even when there are no findings. Primary and reviewer messages include Target,
+Head SHA, Scope, Commands, Verdict, Findings, Advisories, Gate impact, Limitations, and Next. Do not hand-write dates or edit old messages.
+A later push, scope, command, or acceptance change invalidates the affected audit; append a superseding/re-review message and
+audit the new SHA.
 
-Finding routing is strict: a Critical/Important finding in the current stage blocks the primary PR from Ready/merge.
-A Minor finding may be deferred only when it cannot affect current acceptance and has an owner, follow-up Issue,
-target stage, and removal condition. A local finding is normally a child/related Issue of the reviewed Issue; only a
-cross-stage or root-level finding is attached directly to root Issue #9.
+Finding routing is strict: a Primary-audit Critical/Important finding in the current stage blocks the primary PR from
+Ready/merge. A reviewer Critical/Important implementation/conformance finding that arrives after merge freezes the
+affected stage claim and dependent work until corrected; it does not require rollback. A Minor finding may be deferred only
+when it cannot affect current acceptance and has an owner, follow-up Issue, target stage, and removal condition. A local
+implementation finding is normally a child/related Issue of the reviewed Issue; only a cross-stage or root-level finding is
+attached directly to root Issue #9.
+
+After implementation/conformance review passes, the reviewer may audit architecture and documentation. An optimization,
+terminology, link, plan, or maintainability suggestion is a HUMAN-only Issue with `ready-for-human` plus an appropriate
+`documentation`, `workflow`, or `enhancement` label. It is not a `review-finding`, does not enter `loop.md`'s acceptance
+ledger, and does not block I10. If evidence shows a normative contradiction, implementation defect, or current conformance
+violation, route it back through the standard finding contract instead.
 
 Every corrective PR uses an isolated worktree and `codex/<finding>-<slug>` branch:
 

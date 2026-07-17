@@ -17,8 +17,9 @@
     CLI end-to-end、hash、link、UTF-8 和 workspace gate 通过；
   - 最终联合独立复审没有未关闭的 Critical/Important finding；
   - 所有 RC 内工作均通过 PR 合并到 `main`，root Issue 的最终证据与实际 merge/hash/gate 一致并已关闭；
-  - 每个非机械实现 PR 都有独立审查会话针对固定 `Issue/PR + head SHA + scope + commands` 的
-    append-only `Audit result`；审查失效时已重新审查，且 Critical/Important finding 均已关闭；
+  - 每个非机械实现 PR 都有主会话针对固定 `Issue/PR + head SHA + scope + commands` 的
+    append-only `Primary audit result`，并在通过后才 Ready/merge；独立 reviewer 可以随后追加
+    `Audit result` 二审，审查失效时已重新审查，且最终 I10 frontier 没有未关闭的 Critical/Important finding；
   - 已结束 work-unit 的临时 worktree 均已安全清理；仍在使用的隔离 worktree 都有 owner、用途、固定
     SHA 和明确的清理条件，不存在无人负责的 stale worktree；
   - 不存在影响规范、conformance、路线图验收、安全性、正确性或可复现性的 open Issue。只有明确属于
@@ -36,10 +37,10 @@
   `docs/plans/fcs5-roadmap.md` 是唯一总实施路线。
 - `docs/loops/loop.md` 是设计契约，不是执行器或运行时机制；它不产生规范语义、不替代 Issue/PR、计划、复审或
   fixture 证据，也不自行声明阶段完成。
-- 当前会话是主实现会话：它拥有实现分支、主 Issue/PR 的推进权和所有 PR 的最终合并权。独立审查会话
-  使用 `docs/loops/review-loop.md`，是另一个有固定快照输入的审查角色，不是第三个可选实现会话；它可以记录
-  finding、评论和创建 corrective PR，但不能将任何 PR 标记为 Ready、合并 PR、关闭主 Issue 或写入
-  当前会话的工作树。
+- 当前会话是主实现会话：它拥有实现分支、主 Issue/PR 的推进权和所有 PR 的最终合并权，也直接执行
+  主会话自审；自审不调用 subagent。独立审查会话使用 `docs/loops/review-loop.md`，是另一个有固定快照输入的
+  异步二审角色，不是第三个可选实现会话；它可以记录 finding、评论和创建 corrective PR，但不能将任何 PR
+  标记为 Ready、合并 PR、关闭主 Issue 或写入当前会话的工作树。
 - `docs/community/` 是外部格式证据综合，`refer/chart/` 是固定快照下的一手证据。外部格式结论
   必须遵守仓库阅读路由、固定 commit/hash 和多来源冲突规则；单个参考实现不得成为社区规范。
 - Issue、PR、计划、实现、example、fixture、reference harness、skill 和外部项目都不能静默成为新
@@ -84,17 +85,18 @@
   等依赖远端状态的动作前，必须执行一次只读 Frontier Sync。Sync 至少核对 `origin/main`、root/child/finding
   Issue、开放 PR、workflow/severity label、PR head SHA、mergeability、review decision、required checks 和
   最新 comments；使用 `gh --json`/`gh api` 与 `jq`，并遵守根 `AGENTS.md` 的重试和 `pending remote sync` 规则。
-- **New finding gate:** Sync 发现新的当前 stage `Critical`/`Important` finding、声明当前 gate 被阻塞的 finding
-  或与当前 dependency closure 不一致的 corrective PR 时，立即冻结受影响 work-unit 的提交、push、PR Ready
-  和 merge。只能保留不触及受影响快照、且明确关闭未来 gate 的安全 look-ahead；主会话先处理 finding、同步
-  corrective PR 并等待最新 SHA 的独立复审。later-stage 或符合延期条件的 Minor 必须追加 owner、目标 stage、
-  解除条件和 Issue 后才可继续。
+- **New finding gate:** 主会话自审或 Sync 在当前 work-unit 合并前发现 `Critical`/`Important` finding、声明当前
+  gate 被阻塞的 finding 或与当前 dependency closure 不一致的 corrective PR 时，立即冻结该 work-unit 的提交、
+  push、PR Ready 和 merge。合并后的异步 reviewer 若发现同等级问题，不回滚已合并提交；主会话冻结受影响的
+  阶段声明和依赖其正确性的后续 work-unit，处理 corrective PR 并重新验证。只能保留不触及受影响快照、且明确
+  关闭未来 gate 的安全 look-ahead；later-stage 或符合延期条件的 Minor 必须追加 owner、目标 stage、解除条件和
+  Issue 后才可继续。
 - **Sync record:** 每次交付检查点记录查询到的 `origin/main` SHA、活动 Issue/PR/finding、阻塞分类和下一
   动作；不要把本地猜测或旧 loop 文本当作 frontier。
 - **Bounded quantity that must advance:** active child Issue 在开始时拥有有限且编号的 acceptance
   criteria 和未决 decision residual；任何非终止 iteration 必须关闭至少一个 criterion、消除一个
-  decision residual、完成保持原验收覆盖的严格缩小拆分，或按 Residual Routing 退出该路径。240 预算
-  同时单调递减。
+  decision residual、完成保持原验收覆盖的严格缩小拆分，或按 Residual Routing 退出该路径。主 loop 的 240 预算
+  同时单调递减；reviewer 的独立 480 review-unit 预算由 `review-loop.md` 单独管理。
 - **Frontier selection:** 默认选择路线图中最早、依赖已满足的 `ready-for-agent` Issue，优先关闭
   当前 stage gate，不以容易的后期任务长期回避关键路径 blocker。
 - **Safe look-ahead:** 当前路径受阻时，可以推进不依赖该 blocker 的后续规范闭包研究、fixture 设计、
@@ -122,16 +124,33 @@
   `docs/loops/review-loop.md` 管理。主会话只在 Frontier Sync 中确认其状态并把 stale/失联 worktree 路由为
   residual。
 
+# Primary Self-Audit
+
+- 主会话自审是每个非机械实现 work-unit 的即时交付门禁；它不调用 subagent，也不把 reviewer 的异步二审冒充为
+  当前 gate 证据。
+- 在 full gate 完成后，主会话暂停该 head 的写入，固定 `Issue/PR + head SHA + scope + commands + acceptance gate`，
+  对照规范、ADR、计划、fixture、调用方、diff 和实际验证 artifact 做 domain-matched 检查。
+- 主会话必须在关联 Issue 和 PR（若存在）分别追加一条 `## Primary audit result`。消息包含 Target、Head SHA、Scope、
+  Commands、Verdict、Findings、Gate impact、Limitations 和 Next；它与 reviewer 的 `## Audit result` 明确区分。
+- `pass` 只表示当前固定快照没有未解决的 Critical/Important finding，适用 gate 已实际通过，且没有越权语义选择；
+  通过后主会话可以 Ready、merge 并继续 frontier，不等待 reviewer。
+- 自审发现问题时，主会话必须在当前分支修复或路由 residual，追加 superseding Primary audit；不能把未解决 finding
+  描述为通过。后续 push、scope、命令或 acceptance 变化会使旧 Primary audit 失效。
+- 主会话在自审通过后发送 `Review requested`，说明 reviewer 是异步二审；合并后若 SHA、scope 或 gate 变化，重新固定
+  合并后的目标供 reviewer 审查。reviewer 的 Critical/Important 结果按 New finding gate 处理，架构/文档建议按 HUMAN-only
+  路由处理。
+
 # Independent Review Handoff
 
-- 非机械实现 PR 在进入 Ready 或合并前必须经过独立审查会话。当前会话在准备交付时暂停会改变被审
-  快照的写入，发送 `Review requested`，并固定被审 PR、关联 Issue、head SHA、审查 scope、规范/ADR
-  条款、复现命令、已知 residual 和验收 gate。
+- 非机械实现 PR 在进入 Ready 或合并前必须完成 Primary Self-Audit；独立审查会话是异步二审，不再是每个
+  work-unit 的前置等待门。主会话在 Primary audit 通过后发送 `Review requested`，固定被审 PR、关联 Issue、head SHA、
+  审查 scope、规范/ADR 条款、复现命令、已知 residual 和验收 gate，并继续不依赖 reviewer 即时返回的安全交付。
 - 审查期间若 head SHA、scope、验收命令或依赖证据变化，原审查立即失效；当前会话必须追加新的
   `Review requested`，审查会话必须追加 `superseding/re-review` 说明并以新快照重新开始。旧评论和
   finding 不得被编辑或静默覆盖。
-- Critical/Important finding 未关闭时，当前会话不得将主 PR 标记为 Ready 或合并；Minor 只有在不影响
-  当前验收、规范依赖 closure 或阶段 gate，且有明确 owner、目标 Issue 和解除条件时才能延期。
+- Primary audit 的 Critical/Important finding 未关闭时，当前会话不得将主 PR 标记为 Ready 或合并；异步 reviewer
+  在合并后发现的同等级 finding 冻结受影响的 stage claim 和后续依赖 work-unit，但不要求回滚已合并 PR。Minor 只有
+  在不影响当前验收、规范依赖 closure 或阶段 gate，且有明确 owner、目标 Issue 和解除条件时才能延期。
 - 审查会话创建的 corrective PR 仍由当前会话审查其 diff、处理 required checks 并合并；审查者不得
   审查或批准自己创建的 PR。corrective PR 合并后，主 PR 的新 head SHA 必须重新请求审查。
 - 具体审查目标选择、finding Issue 路由、评论格式、历史 commit 审查以及分支/worktree 隔离由
@@ -144,10 +163,10 @@
   本文件不复制其操作规则。
 - 每个 branch/PR 只交付一个可审查 work unit。提交和 push 前审查作用域与 diff；不 amend 用户提交，
   不 rebase/reset/checkout 丢弃工作，不清理无关 dirty changes。
-- 普通 merge 已获持续授权，但只有 child Issue acceptance criteria、适用验证和独立复审要求全部满足，
-  PR 为 Ready 且 mergeable、required checks 与 review requirements 满足、没有未解决 review thread，
-  并已记录 delivery-ready 证据时才可执行。独立审查必须匹配当前 head SHA；任何失效审查都不能作为
-  merge gate。不得使用 `--admin`、force-push、降低 gate 或隐藏 finding。
+- 普通 merge 已获持续授权，但只有 child Issue acceptance criteria、适用验证和 Primary audit `pass` 全部满足，
+  PR 为 Ready 且 mergeable、required checks 与 review requirements 满足、没有未解决 review thread，并已记录
+  delivery-ready 证据时才可执行。异步 reviewer 的待审状态不阻塞本次 merge；任何已到达的失效/阻塞 verdict 仍按
+  New finding gate 处理。不得使用 `--admin`、force-push、降低 gate 或隐藏 finding。
 - 当前会话是唯一 merge owner，包括主实现 PR 和审查会话创建的 corrective PR。审查会话不得 merge、
   `gh pr ready`、关闭主 Issue、修改主 Issue workflow label 或写入活动实现分支；其 corrective PR 必须
   链接 finding Issue，且最终由当前会话合并。
@@ -210,11 +229,14 @@ Routine GitHub delivery 和满足 Authorized Change & Delivery 条件的普通 m
 | 不可逆动作、凭据、系统配置或版权/许可证分发 | HUMAN | 触发 Approval Gate；拒绝时保留本地安全状态 |
 | 连续 3 次满足全局 no-progress 且无 ready frontier | HUMAN | 终止并提交完整阻塞证据、已尝试路径和解除条件 |
 | 达到 240 次上限 | PLANNER | 终止本轮，保留合并证据并产出仍指向 I10 的后继 loop 建议 |
+| Primary audit 发现当前 work-unit 的 Critical/Important finding | LOCAL | 停止 Ready/merge，修复或建立 finding Issue，追加 superseding Primary audit 后再交付 |
+| reviewer 合并后发现当前 stage 的 Critical/Important finding | LOCAL | 冻结受影响 stage claim 和后续依赖，处理 corrective PR 并重新验证；不回滚已合并 PR |
+| reviewer 发现架构优化、文档改善或一般建议 | HUMAN | 创建 `ready-for-human` 的 HUMAN-only Issue；不由本 loop 自动处理，也不阻塞 I10 |
 
 # Subagent and Session Policy
 
-不创建第三个可选实现会话。主会话是唯一实现者和 merge owner；内部 subagent 不是独立交付角色，最多
-用于只读研究或主会话明确授权的有界本地草稿。它们不得自行切换 branch、commit、push、创建/修改
+不创建第三个可选实现会话。主会话是唯一实现者和 merge owner；Primary Self-Audit 由主会话直接完成，不调用
+subagent。内部 subagent 不是独立交付角色，最多用于只读研究或主会话明确授权的有界本地草稿。它们不得自行切换 branch、commit、push、创建/修改
 Issue/PR、review、`gh pr ready` 或 merge；主会话统一审查共享工作区、验证和交付。审查会话与主会话
 使用不同的 loop 和独立 worktree，不以 subagent 代替。
 

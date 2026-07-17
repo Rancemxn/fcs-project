@@ -167,7 +167,7 @@
 - PR 正文必须链接 Issue；只有 PR 合并即应关闭 Issue 时才使用 `Closes #<n>`，否则使用 `Refs #<n>`。正文同时记录规范/ADR/conformance/review 影响、实际验证命令、未执行门禁和剩余风险。
 - PR 不得只有空初始说明和一串 commits。正文必须含一条实质性的初始 `Progress`，说明首个可审查 change group、原因、证据、决定和剩余项；之后每次重要 push、阻塞变化和转 Ready 前分别发送新的 PR comment，使最新消息与当前 diff/commits 一致。不得把后续进度反复 edit 到正文或旧评论中；更正使用显式 superseding comment。commit message 不能替代这些进度消息。
 - Issue/PR 的 Progress 消息标题只写事件或状态，不手写 `YYYY-MM-DD` 等日历日期；时间以 GitHub 自带的 timestamp 为准。
-- push 前审查 staged diff；PR 合并前检查 `gh pr checks --required`、review decision、mergeability 和未解决评论。不得用 `--admin` 绕过 branch protection，也不得为了变绿而降低测试、fixture 或 review gate。
+- push 前审查 staged diff；PR 合并前检查 `gh pr checks --required`、mergeability、Primary audit result 和未解决评论。不得用 `--admin` 绕过 branch protection，也不得为了变绿而降低测试、fixture 或 review gate。
 - merge 前分别在 Issue 和 PR 中发送新的 delivery-ready Progress comment；合并后即使 Issue 已由 `Closes` 自动关闭，也要分别发送新的 final merged checkpoint，记录合并 PR/交付结果、最终验证、未完成项与后续 Issue 链接，再确认 Issue 状态和后续 blocker。Issue/PR 的进度消息是工作流证据，不获得规范权威。
 
 #### 独立审查会话
@@ -178,18 +178,27 @@
   `gh pr review --comment`/`--request-changes`，创建 bug/finding Issue，以及为已记录 finding 创建
   corrective PR。审查者不能合并 PR、标记 Ready、关闭主 Issue、修改主 Issue workflow label，或写入当前
   会话的工作树、活动实现分支和 `main`。
-- 每次审查必须固定 `Issue/PR 或 commit + head SHA + scope + commands + acceptance gate`。当前会话在
-  PR Ready/merge 前发送 `Review requested`；审查结束后审查者立即在 PR 和关联 Issue 各追加一条 append-only
-  `Audit result`（被审 PR 存在时评论 PR，同时评论关联 Issue；仅有 commit 时评论关联 Issue），即使没有
-  finding。消息包含 Target、Head SHA、Scope、Commands、Verdict、Findings、Gate impact、Limitations 和
+- 主会话在每个非机械实现 work-unit 的 full gate 后直接执行 Primary Self-Audit，不调用 subagent。它必须固定
+  `Issue/PR 或 commit + head SHA + scope + commands + acceptance gate`，并在 PR（若存在）和关联 Issue 各追加一条
+  `Primary audit result`；只有 `pass` 且无未解决 Critical/Important finding 时，主会话才可 Ready/merge。Primary
+  audit 不是 reviewer 的独立证据，消息包含 Target、Head SHA、Scope、Commands、Verdict、Findings、Gate impact、
+  Limitations 和 Next，不手写日期、不编辑旧消息。
+- Primary audit 通过后，当前会话发送 `Review requested`；独立审查会话异步审查开放 PR 或其合并后的固定 commit，
+  不再是每个 work-unit 的前置等待门。审查结束后审查者立即在 PR 和关联 Issue 各追加一条 append-only `Audit result`
+  （被审 PR 存在时评论 PR，同时评论关联 Issue；仅有 commit 时评论关联 Issue），即使没有 finding。reviewer 的
+  `Audit result` 仍必须包含 Target、Head SHA、Scope、Commands、Verdict、Findings、Advisories、Gate impact、Limitations 和
   Next，不手写日期、不编辑旧消息。
-- 后续 push、scope、命令、依赖 closure 或验收变化会使旧审查失效；追加 superseding/re-review 消息并对
-  新 SHA 重新审查。Critical/Important finding 阻塞当前 PR Ready/merge；Minor 只有在不影响当前验收且有
-  owner、follow-up Issue、目标 stage 和解除条件时才能延期。
+- 后续 push、scope、命令、依赖 closure 或验收变化会使旧 Primary audit 或 reviewer verdict 失效；追加
+  superseding/re-review 消息并以新 SHA 重新审查。Primary audit 的 Critical/Important finding 阻塞当前 PR
+  Ready/merge；reviewer 在合并后发现同等级实现/conformance finding 时冻结受影响的 stage claim 和后续依赖，
+  但不回滚已合并 PR。Minor 只有在不影响当前验收且有 owner、follow-up Issue、目标 stage 和解除条件时才能延期。
+- reviewer 在实现/conformance 审查通过后，可以追加架构和文档 advisory audit。架构优化、文档改善和一般建议必须
+  创建 `ready-for-human` 的 HUMAN-only Issue，不进入 `loop.md` acceptance ledger，不自动修复或阻塞 I10；若证据
+  实际证明规范矛盾、实现缺陷或当前 conformance 违约，则必须升级为标准 finding 并按严重度路由。
 - 审查者创建的 corrective PR 必须链接 finding Issue，并使用独立 worktree 和
   `codex/<finding>-<slug>` 分支。开放 PR 的修复分支从被审 PR 的固定 head SHA 建立、目标为活动 PR 分支；
   历史 commit 的修复分支从最新 `origin/main` 建立、目标为 `main`。审查者不得审查或批准自己创建的修复
-  PR；当前会话检查、合并后，主 PR 的新 SHA 必须重新审查。
+  PR；当前会话以 Primary Self-Audit 检查并合并后，主 PR 的新 SHA 送回 reviewer 做异步二审。
 - 本段权限与 `docs/loops/review-loop.md`、`docs/agents/issue-tracker.md` 和 ADR 0011 的 dated amendment 共同构成
   当前工作流；它们不能赋予 Issue/PR 或审查评论规范权威。
 
