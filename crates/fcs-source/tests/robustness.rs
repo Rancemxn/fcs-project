@@ -3,7 +3,7 @@ use fcs_source::{
     diagnostic::{DiagnosticCode, DiagnosticStage, ParseOutput},
     parser::{
         ParseLimits, parse_document, parse_document_bytes, parse_document_bytes_with_limits,
-        parse_document_with_limits, parse_expression_with_limits,
+        parse_document_with_limits, parse_expression, parse_expression_with_limits,
     },
 };
 use proptest::{
@@ -491,5 +491,94 @@ proptest! {
         let second = parse_document_bytes_with_limits(&source, limits);
         prop_assert_eq!(&first, &second);
         assert_spans_are_bounded(&first, &source, std::str::from_utf8(&source).is_ok());
+    }
+
+    #[test]
+    fn generated_delimiters_and_nested_comments_are_deterministic(
+        depth in 0usize..32,
+        unbalanced in any::<bool>(),
+    ) {
+        let opening = "(".repeat(depth);
+        let closing_count = if unbalanced && depth > 0 { depth - 1 } else { depth };
+        let expression = format!("{opening}1{}", ")".repeat(closing_count));
+        let first = parse_expression(&expression);
+        let second = parse_expression(&expression);
+        prop_assert_eq!(&first, &second);
+        assert_spans_are_bounded(&first, expression.as_bytes(), true);
+
+        let comment_opening = "/* ".repeat(depth);
+        let comment_closing_count =
+            if unbalanced && depth > 0 { depth - 1 } else { depth };
+        let source = format!(
+            "#fcs 5.0.0\n{comment_opening}{}format {{ profile: fragment; }}",
+            " */".repeat(comment_closing_count),
+        );
+        let first = parse_document(&source);
+        let second = parse_document(&source);
+        prop_assert_eq!(&first, &second);
+        assert_spans_are_bounded(&first, source.as_bytes(), true);
+    }
+
+    #[test]
+    fn generated_arrays_objects_and_expressions_are_deterministic(
+        atoms in prop::collection::vec(0u16..1000, 1..32),
+        operators in prop::collection::vec(
+            prop::sample::select(vec!["+", "-", "*", "/", "%", "==", "&&", "||"]),
+            0..31,
+        ),
+    ) {
+        let array = format!(
+            "[{}]",
+            atoms
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        let object = format!(
+            "{{{}}}",
+            atoms
+                .iter()
+                .enumerate()
+                .map(|(index, value)| format!("\"k{index}\":{value}"))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        let expression = atoms.iter().enumerate().skip(1).fold(
+            atoms[0].to_string(),
+            |mut expression, (index, atom)| {
+                let operator = operators
+                    .get(index - 1)
+                    .copied()
+                    .unwrap_or("+");
+                expression.push_str(operator);
+                expression.push_str(&atom.to_string());
+                expression
+            },
+        );
+
+        for source in [array, object, expression] {
+            let first = parse_expression(&source);
+            let second = parse_expression(&source);
+            prop_assert_eq!(&first, &second);
+            assert_spans_are_bounded(&first, source.as_bytes(), true);
+        }
+    }
+
+    #[test]
+    fn generated_declarations_and_long_documents_are_deterministic(count in 0usize..64) {
+        let declarations = (0..count)
+            .map(|index| format!("const C{index}: int = {index};"))
+            .collect::<String>();
+        let source = format!(
+            "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ {declarations} }}"
+        );
+        let first = parse_document(&source);
+        let second = parse_document(&source);
+        prop_assert_eq!(&first, &second);
+        assert_spans_are_bounded(&first, source.as_bytes(), true);
+        if first.diagnostics().is_empty() {
+            prop_assert!(first.output().is_some());
+        }
     }
 }

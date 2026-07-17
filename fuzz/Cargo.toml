@@ -1,0 +1,36 @@
+[package]
+name = "fcs-source-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+members = ["."]
+
+[dependencies]
+fcs-source = { path = "../crates/fcs-source" }
+libfuzzer-sys = "=0.4.13"
+
+[[bin]]
+name = "document_bytes"
+path = "fuzz_targets/document_bytes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "document_utf8"
+path = "fuzz_targets/document_utf8.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "expression"
+path = "fuzz_targets/expression.rs"
+test = false
+doc = false
+bench = false
