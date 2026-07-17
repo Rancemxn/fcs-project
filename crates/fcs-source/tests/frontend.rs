@@ -370,6 +370,12 @@ fn beat_arithmetic_is_exact_and_normalized() {
         Beat::new(1, 1).unwrap()
     );
     assert_eq!(Beat::new(2, 6).unwrap(), one_third);
+    assert_eq!(two_thirds.checked_sub(one_third).unwrap(), one_third);
+    assert_eq!(
+        one_third.checked_mul_i64(6).unwrap(),
+        Beat::new(2, 1).unwrap()
+    );
+    assert!(Beat::new(i64::MIN, 1).unwrap().checked_neg().is_err());
 }
 
 #[test]
