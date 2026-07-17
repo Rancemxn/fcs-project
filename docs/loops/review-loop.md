@@ -41,7 +41,8 @@
 - **Terminal completion:** reviewer 只有在 root Issue 的 I10 success signal 已满足，并且 Frontier Sync 同时确认
   没有新的固定 review target、未分配的 Critical/Important finding、待复审的 corrective PR/merged SHA，或
   reviewer 自己保留的未清理 worktree 时，才可以终止并报告审查 frontier 闭合。I10 未完成时，空的 review
-  frontier 不是成功、失败或 blocker。
+  frontier 不是成功、失败或 blocker；任何 `blocked` finding、等待主会话的 corrective PR、dirty corrective
+  worktree、未确认的远端同步或旧状态都只能保持 reviewer 持久目标运行并进入轮询。
 - **Persistent idle wait:** 每次完成一个目标后先检查 root Issue 的 I10 success signal。若 I10 未完成且没有
   新的固定、可审目标，则等待 1 分钟后重新 Frontier Sync，并持续重复；新目标、新的 `Review requested` 或新的
   finding 会立即中断等待并开始下一 review-unit。每 10 次检查只是一个观察批次，批次结束后自动开始下一批，
@@ -51,9 +52,10 @@
   缺口并转 PLANNER；第三次仍无决定性证据则追加 `needs-info` 或 `ready-for-human` finding，停止扩大
   该目标。
 - **Global no-progress:** 连续 3 个 review-unit 未产生新 finding、未关闭/重新分类 finding、未完成一次
-  re-review，也没有新的可分配目标时，只有在仍有固定目标正在处理或存在具体证据/权限/隔离阻塞时，才终止并
-  报告阻塞证据。单纯的空 frontier 必须按 Persistent idle wait 处理；重复读取、重复评论或只编辑旧消息不算
-  review-unit 进展。
+  re-review，也没有新的可分配目标时，只有在仍有固定目标正在处理或存在具体证据/权限/隔离阻塞时，才记录
+  `waiting-for-main` 并进入 Persistent idle wait；不得把 reviewer 持久目标标记为 `blocked` 或停止。单纯的空
+  frontier 必须按 Persistent idle wait 处理；重复读取、重复评论或只编辑旧消息不算 review-unit 进展。只有
+  I10 success signal 与 Terminal completion 的全部条件同时满足，才允许终止。
 - **Worst-case Plan B:** 保留所有已发送 Audit result 和 finding Issue，列出未审目标、证据缺口、owner 和
   下一解除条件；不得把审查未完成描述为通过，也不得自行合并或关闭阻塞项。
 
@@ -63,8 +65,8 @@
   完成架构/文档 advisory pass，或关闭/重新分类至少一个 finding，或把 scope 严格缩小到一个可独立验收的
   residual；同时 review-unit 预算严格减少。
 - 只创建 Issue、重复读取同一输出或重复评论不算 review-unit 进展；Persistent idle wait 是明确的不计预算等待
-  状态。空 frontier 不得触发 no-progress/blocked；若有固定目标不能满足 invariant，才按 no-progress 或
-  Residual Routing 退出，不得无限扩大 scope。
+  状态。空 frontier、`blocked` finding、主会话未交付的 corrective PR、远端同步失败或 reviewer worktree 保留
+  都不得触发持久目标 `blocked`；若有固定目标不能满足 invariant，记录等待原因并继续轮询，不得无限扩大 scope。
 - finding ledger、Issue/PR comments、corrective PR 和 re-review SHA 必须 append-only 可追溯；旧 verdict
   失效时只追加 superseding 记录，不编辑历史消息。
 
@@ -78,6 +80,10 @@
   固定 `origin/main`、被审 head SHA、开放 corrective PR、workflow/severity label、review thread 和必要
   checks；通过 `gh --json`/`gh api` 与 `jq` 检查，不依赖另一个会话的即时通知。远端状态无法确认时，不得把
   审查或 handoff 描述为完成。
+- **Waiting-for-main sync:** 若发现 Critical/Important finding、待复审 corrective PR/merged SHA、主会话 dirty
+  worktree、远端写入尚未确认或其他等待主会话的状态，先追加一次 `waiting-for-main` 记录并保存固定身份、SHA、
+  owner、路径和解除条件；随后每 1 分钟重新执行 Frontier Sync。每 10 次只形成观察批次，批次结束后继续下一批，
+  不得调用 `blocked` 终止、不得把 reviewer 目标标为 achieved/blocked，也不得清理不属于 reviewer 的 worktree。
 - **Selection order:** 默认从最早仍未审查且不依赖未关闭前置 blocker 的 Issue/PR 选择目标，优先当前
   stage gate 和主会话明确发送的 `Review requested`。对明显影响当前 gate、但主会话尚未请求且已经固定的
   PR，可以主动建立审查目标；不审查仍处于写入中的 PR。
@@ -261,7 +267,7 @@
 | 审查者角色不独立、被审目标仍在写入或工作树隔离失败 | HUMAN | 停止该 iteration，报告冲突和恢复条件 |
 | reviewer worktree 不在 `/tmp`、变脏、owner/固定 SHA 缺失或无法安全清理 | LOCAL/HUMAN | 停止交付，保留现场并记录清理条件；不得使用 `--force` 或越权删除 |
 | GitHub 瞬时网络失败 | LOCAL | 按重试规则查询稳定身份并重试；耗尽则保存 payload/outbox，继续安全只读审查 |
-| 连续 3 个 review-unit 无进展且无新 frontier | HUMAN/LOCAL | 仅在仍有固定目标或具体证据/权限/隔离阻塞时终止并报告；单纯空 frontier 按 Persistent idle wait 继续轮询 |
+| 连续 3 个 review-unit 无进展且无新 frontier | LOCAL/WAIT | 记录 `waiting-for-main` 并按每分钟 Frontier Sync 持续轮询；不标记 reviewer 持久目标 `blocked`，直到 I10 success signal 和 Terminal completion 同时满足 |
 | 无 I10 完成且无固定目标 | LOCAL/WAIT | 进入持续的 1 分钟 Frontier Sync 轮询；每 10 次形成一个非终止观察批次，目标出现立即恢复，不标记 `blocked`，不消耗 review-unit 预算 |
 | 达到 480 review-unit | PLANNER | 停止当前预算内的新 review-unit 分配，保留 finding ledger 和 HUMAN-only advisory，产出后继审查 loop handoff；不得把预算耗尽描述为空 frontier 的 `blocked` |
 | 架构/文档优化建议 | HUMAN | 创建 `ready-for-human` HUMAN-only Issue；不进入主 loop、不自动修复、不改变当前 gate |
