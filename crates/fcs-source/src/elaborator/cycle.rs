@@ -33,10 +33,22 @@ struct NodeKey {
     name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DependencyEdge {
+    target: NodeKey,
+    span: crate::ast::SourceSpan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CycleNode {
+    key: NodeKey,
+    edge_spans: Vec<crate::ast::SourceSpan>,
+}
+
 #[derive(Debug, Default)]
 struct DependencyGraph {
     spans: BTreeMap<NodeKey, crate::ast::SourceSpan>,
-    edges: BTreeMap<NodeKey, BTreeSet<NodeKey>>,
+    edges: BTreeMap<NodeKey, BTreeMap<NodeKey, Vec<crate::ast::SourceSpan>>>,
 }
 
 impl DependencyGraph {
@@ -45,8 +57,13 @@ impl DependencyGraph {
         self.edges.entry(key).or_default();
     }
 
-    fn add_edge(&mut self, from: NodeKey, to: NodeKey) {
-        self.edges.entry(from).or_default().insert(to);
+    fn add_edge(&mut self, from: NodeKey, to: NodeKey, span: crate::ast::SourceSpan) {
+        self.edges
+            .entry(from)
+            .or_default()
+            .entry(to)
+            .or_default()
+            .push(span);
     }
 }
 
@@ -87,10 +104,10 @@ pub(super) fn reject_cycles(definitions: &DefinitionsBlock) -> Result<(), Diagno
     }
     for definition in &definitions.declarations {
         let (key, _) = definition_identity(definition);
-        let mut dependencies = BTreeSet::new();
+        let mut dependencies = Vec::new();
         collect_definition_dependencies(definition, key.kind, &names, &mut dependencies);
         for dependency in dependencies {
-            graph.add_edge(key.clone(), dependency);
+            graph.add_edge(key.clone(), dependency.target, dependency.span);
         }
     }
 
@@ -99,10 +116,11 @@ pub(super) fn reject_cycles(definitions: &DefinitionsBlock) -> Result<(), Diagno
     };
     let chain = cycle
         .into_iter()
-        .map(|key| DependencyTraceNode {
-            kind: key.kind.trace_kind(),
-            name: key.name.clone(),
-            span: graph.spans[&key],
+        .map(|node| DependencyTraceNode {
+            kind: node.key.kind.trace_kind(),
+            name: node.key.name.clone(),
+            span: graph.spans[&node.key],
+            edge_spans: node.edge_spans,
         })
         .collect();
     Err(Diagnostic::RecursiveDependency { chain })
@@ -138,7 +156,7 @@ fn collect_definition_dependencies(
     definition: &Definition,
     owner: NodeKind,
     names: &DefinitionNames,
-    output: &mut BTreeSet<NodeKey>,
+    output: &mut Vec<DependencyEdge>,
 ) {
     match definition {
         Definition::Const(declaration) => {
@@ -157,7 +175,7 @@ fn collect_function_block(
     statements: &[FunctionStatement],
     owner: NodeKind,
     names: &DefinitionNames,
-    output: &mut BTreeSet<NodeKey>,
+    output: &mut Vec<DependencyEdge>,
 ) {
     for statement in statements {
         match statement {
@@ -180,7 +198,7 @@ fn collect_template_block(
     statements: &[TemplateStatement],
     owner: NodeKind,
     names: &DefinitionNames,
-    output: &mut BTreeSet<NodeKey>,
+    output: &mut Vec<DependencyEdge>,
 ) {
     for statement in statements {
         match statement {
@@ -203,7 +221,7 @@ fn collect_entity_expression(
     expression: &EntityExpression,
     owner: NodeKind,
     names: &DefinitionNames,
-    output: &mut BTreeSet<NodeKey>,
+    output: &mut Vec<DependencyEdge>,
 ) {
     match expression {
         EntityExpression::Constructor(constructor) => {
@@ -232,7 +250,7 @@ fn collect_schema_value(
     value: &SchemaValue,
     owner: NodeKind,
     names: &DefinitionNames,
-    output: &mut BTreeSet<NodeKey>,
+    output: &mut Vec<DependencyEdge>,
 ) {
     match value {
         SchemaValue::Expression(expression) => {
@@ -254,17 +272,17 @@ fn collect_expression(
     expression: &SourceExpression,
     owner: NodeKind,
     names: &DefinitionNames,
-    output: &mut BTreeSet<NodeKey>,
+    output: &mut Vec<DependencyEdge>,
 ) {
     match expression {
-        SourceExpression::Name { name, .. } => {
-            add_const_dependency(name, names, output);
+        SourceExpression::Name { name, span } => {
+            add_const_dependency(name, *span, names, output);
         }
         SourceExpression::Call {
             callee, arguments, ..
         } => {
-            if let SourceExpression::Name { name, .. } = callee.as_ref() {
-                add_call_dependency(name, owner, names, output);
+            if let SourceExpression::Name { name, span } = callee.as_ref() {
+                add_call_dependency(name, *span, owner, names, output);
             } else {
                 collect_expression(callee, owner, names, output);
             }
@@ -310,41 +328,56 @@ fn collect_expression(
     }
 }
 
-fn add_const_dependency(name: &str, names: &DefinitionNames, output: &mut BTreeSet<NodeKey>) {
+fn add_const_dependency(
+    name: &str,
+    span: crate::ast::SourceSpan,
+    names: &DefinitionNames,
+    output: &mut Vec<DependencyEdge>,
+) {
     if names.consts.contains(name) {
-        output.insert(NodeKey {
-            kind: NodeKind::Const,
-            name: name.to_owned(),
+        output.push(DependencyEdge {
+            target: NodeKey {
+                kind: NodeKind::Const,
+                name: name.to_owned(),
+            },
+            span,
         });
     }
 }
 
 fn add_call_dependency(
     name: &str,
+    span: crate::ast::SourceSpan,
     owner: NodeKind,
     names: &DefinitionNames,
-    output: &mut BTreeSet<NodeKey>,
+    output: &mut Vec<DependencyEdge>,
 ) {
     if names.functions.contains(name) {
-        output.insert(NodeKey {
-            kind: NodeKind::Function,
-            name: name.to_owned(),
+        output.push(DependencyEdge {
+            target: NodeKey {
+                kind: NodeKind::Function,
+                name: name.to_owned(),
+            },
+            span,
         });
     } else if owner == NodeKind::Template && names.templates.contains(name) {
-        output.insert(NodeKey {
-            kind: NodeKind::Template,
-            name: name.to_owned(),
+        output.push(DependencyEdge {
+            target: NodeKey {
+                kind: NodeKind::Template,
+                name: name.to_owned(),
+            },
+            span,
         });
     }
 }
 
-fn find_shortest_cycle(graph: &DependencyGraph) -> Option<Vec<NodeKey>> {
-    let mut best = None;
+fn find_shortest_cycle(graph: &DependencyGraph) -> Option<Vec<CycleNode>> {
+    let mut best: Option<Vec<CycleNode>> = None;
     for start in graph.edges.keys() {
         if let Some(candidate) = shortest_cycle_from(start, graph)
             && best
                 .as_ref()
-                .is_none_or(|current: &Vec<NodeKey>| cycle_order(&candidate, current).is_lt())
+                .is_none_or(|current| cycle_order(&candidate, current).is_lt())
         {
             best = Some(candidate);
         }
@@ -352,22 +385,45 @@ fn find_shortest_cycle(graph: &DependencyGraph) -> Option<Vec<NodeKey>> {
     best
 }
 
-fn shortest_cycle_from(start: &NodeKey, graph: &DependencyGraph) -> Option<Vec<NodeKey>> {
-    let mut queue = VecDeque::from([(start.clone(), vec![start.clone()])]);
+fn shortest_cycle_from(start: &NodeKey, graph: &DependencyGraph) -> Option<Vec<CycleNode>> {
+    let mut queue = VecDeque::from([(
+        start.clone(),
+        vec![CycleNode {
+            key: start.clone(),
+            edge_spans: Vec::new(),
+        }],
+    )]);
     let mut visited = BTreeSet::from([start.clone()]);
     while let Some((current, path)) = queue.pop_front() {
         let Some(dependencies) = graph.edges.get(&current) else {
             continue;
         };
-        for dependency in dependencies {
+        for (dependency, spans) in dependencies {
+            if spans.is_empty() {
+                continue;
+            }
             if dependency == start {
                 let mut cycle = path.clone();
-                cycle.push(start.clone());
+                cycle
+                    .last_mut()
+                    .expect("cycle path always has a current node")
+                    .edge_spans = spans.clone();
+                cycle.push(CycleNode {
+                    key: start.clone(),
+                    edge_spans: Vec::new(),
+                });
                 return Some(cycle);
             }
             if visited.insert(dependency.clone()) {
                 let mut next_path = path.clone();
-                next_path.push(dependency.clone());
+                next_path
+                    .last_mut()
+                    .expect("cycle path always has a current node")
+                    .edge_spans = spans.clone();
+                next_path.push(CycleNode {
+                    key: dependency.clone(),
+                    edge_spans: Vec::new(),
+                });
                 queue.push_back((dependency.clone(), next_path));
             }
         }
@@ -375,6 +431,10 @@ fn shortest_cycle_from(start: &NodeKey, graph: &DependencyGraph) -> Option<Vec<N
     None
 }
 
-fn cycle_order(left: &[NodeKey], right: &[NodeKey]) -> std::cmp::Ordering {
-    left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+fn cycle_order(left: &[CycleNode], right: &[CycleNode]) -> std::cmp::Ordering {
+    left.len().cmp(&right.len()).then_with(|| {
+        left.iter()
+            .map(|node| &node.key)
+            .cmp(right.iter().map(|node| &node.key))
+    })
 }

@@ -399,7 +399,7 @@ impl<'a> StaticEntityValidator<'a> {
     ) -> Result<(), Diagnostic> {
         let actual = match self.validate_expression(condition, scope) {
             Ok(actual) => actual,
-            Err(Diagnostic::UnknownName { .. } | Diagnostic::FeatureUnavailable { .. }) => {
+            Err(Diagnostic::FeatureUnavailable { .. }) => {
                 return Err(Diagnostic::NonConstantStructuralCondition {
                     span: condition.span(),
                 });
@@ -825,18 +825,12 @@ impl<'a> ExpansionContext<'a> {
                 else_items,
                 span,
             } => {
-                let value = match evaluate_with_context(
+                let value = evaluate_with_context(
                     condition,
                     self.document.definitions.as_ref(),
                     &BTreeMap::new(),
                     &self.context,
-                ) {
-                    Ok(value) => value,
-                    Err(Diagnostic::UnknownName { .. }) => {
-                        return Err(Diagnostic::NonConstantStructuralCondition { span: *span });
-                    }
-                    Err(error) => return Err(error),
-                };
+                )?;
                 let TypedValue::Bool(selected) = value else {
                     return Err(Diagnostic::NonConstantStructuralCondition { span: *span });
                 };
@@ -1166,12 +1160,14 @@ impl<'a> ExpansionContext<'a> {
                         .get(subject)
                         .map(|template| template.name_span)
                         .unwrap_or(span),
+                    edge_spans: Vec::new(),
                 })
                 .collect::<Vec<_>>();
             chain.push(DependencyTraceNode {
                 kind: ExpansionTraceKind::Template,
                 name: name.to_owned(),
                 span: template.name_span,
+                edge_spans: Vec::new(),
             });
             return Err(Diagnostic::RecursiveDependency { chain });
         }

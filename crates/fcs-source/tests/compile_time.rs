@@ -304,6 +304,56 @@ definitions {
 }
 
 #[test]
+fn uninstantiated_later_owned_entity_fields_preserve_unknown_name_diagnostics() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  template Note never_called() {
+    return segment { start: missing_start; };
+  }
+}"#;
+
+    assert_code(elaborate_source(source), DiagnosticCode::NAME_UNKNOWN);
+}
+
+#[test]
+fn structural_conditions_preserve_unknown_name_diagnostics() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+collections {
+  notes {
+    if missing_condition {
+      tap { gameplay.time: 0beat; };
+    } else {
+      tap { gameplay.time: 1beat; };
+    }
+  }
+}"#;
+
+    assert_code(elaborate_source(source), DiagnosticCode::NAME_UNKNOWN);
+}
+
+#[test]
+fn unselected_collection_branches_preserve_unknown_name_diagnostics() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+collections {
+  notes {
+    if false {
+      segment { start: missing_start; };
+    } else {
+      tap { gameplay.time: 1beat; };
+    }
+  }
+}"#;
+
+    assert_code(elaborate_source(source), DiagnosticCode::NAME_UNKNOWN);
+}
+
+#[test]
 fn template_unselected_branch_is_schema_checked_before_instantiation() {
     let source = r#"#fcs 5.0.0
 format { profile: chart; }
@@ -1959,6 +2009,78 @@ definitions {
 }
 
 #[test]
+fn dependency_cycle_diagnostic_retains_related_edge_spans() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const a: int = b;
+  const b: int = a;
+}"#;
+    let errors = elaborate_source(source).expect_err("dependency cycle");
+    let diagnostic = &errors[0];
+    assert_eq!(diagnostic.code(), DiagnosticCode::NAME_CYCLE);
+
+    let a_decl_start = source.find("const a").unwrap() + "const ".len();
+    let b_decl_start = source.find("const b").unwrap() + "const ".len();
+    let a_to_b_start = source.find("= b").unwrap() + 2;
+    let b_to_a_start = source.rfind("= a").unwrap() + 2;
+    assert_eq!(
+        diagnostic.primary_span(),
+        SourceSpan::new(a_decl_start, a_decl_start + 1)
+    );
+    assert_eq!(
+        diagnostic
+            .expansion_trace()
+            .iter()
+            .map(|frame| frame.span().unwrap())
+            .collect::<Vec<_>>(),
+        vec![
+            SourceSpan::new(a_decl_start, a_decl_start + 1),
+            SourceSpan::new(b_decl_start, b_decl_start + 1),
+            SourceSpan::new(a_decl_start, a_decl_start + 1),
+        ]
+    );
+    assert_eq!(
+        diagnostic
+            .labels()
+            .iter()
+            .map(|label| label.span())
+            .collect::<Vec<_>>(),
+        vec![
+            SourceSpan::new(a_to_b_start, a_to_b_start + 1),
+            SourceSpan::new(b_to_a_start, b_to_a_start + 1),
+        ]
+    );
+}
+
+#[test]
+fn dependency_cycle_diagnostic_retains_all_duplicate_edge_spans() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const a: int = b + b;
+  const b: int = a;
+}"#;
+    let errors = elaborate_source(source).expect_err("dependency cycle");
+    let diagnostic = &errors[0];
+    let first_b = source.find("b + b").unwrap();
+    let second_b = first_b + 4;
+    let b_to_a = source.rfind("= a").unwrap() + 2;
+    assert_eq!(
+        diagnostic
+            .labels()
+            .iter()
+            .map(|label| label.span())
+            .collect::<Vec<_>>(),
+        vec![
+            SourceSpan::new(first_b, first_b + 1),
+            SourceSpan::new(second_b, second_b + 1),
+            SourceSpan::new(b_to_a, b_to_a + 1),
+        ]
+    );
+}
+
+#[test]
 fn dependency_cycle_selection_is_shortest_and_declaration_order_independent() {
     for declarations in [
         "const a: int = b; const b: int = c; const c: int = a; const x: int = y; const y: int = x;",
@@ -2135,10 +2257,7 @@ collections {
 format { profile: chart; }
 tempoMap { 0beat -> 180bpm; }
 collections { notes { if missing { tap { gameplay.time: 1beat; }; } } }"#;
-    assert_code(
-        elaborate_source(runtime),
-        DiagnosticCode::COMPILE_TIME_NON_CONSTANT_CONDITION,
-    );
+    assert_code(elaborate_source(runtime), DiagnosticCode::NAME_UNKNOWN);
 }
 
 #[test]
