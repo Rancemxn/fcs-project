@@ -15,7 +15,7 @@ Reviewed Implementation Baseline 驱动 Rust 参考实现，再在完整 executa
   `template`、`generate` 或 `emit`。
 - 运行时只有一个物理主时钟；判定时间与滚动坐标分离，但不建立 line-local 物理时钟。
 - 不静默修复非法谱面；可选 repair 必须生成机器可读记录。
-- I0-A 用 `archive/fcs4-pre-cutover` 保存完整旧工具链；I0 完成后活动 `master` 只保留一套
+- I0-A 用 `archive/fcs4-pre-cutover` 保存完整旧工具链；I0 完成后活动 `main` 只保留一套
   无版本实现前缀的 FCS source API，不建立 FCS 4 兼容层。
 - 每个实施阶段结束前依次运行 Clippy、nextest、rustfmt check 和 diff check。
 - generator 实现持续以权威编译期语言为准；I0 的 parser/feature-unavailable 边界不反向定义语法。
@@ -236,13 +236,12 @@ snapshot/import report 仍由 I3/I6 激活，Render codec/raster 能力仍由 I9
 
 当前进度：I0.1–I0.9 已完成；活动树只有 `fcs-source`，Chumsky token parser、稳定诊断、
 byte/property robustness、精确 generator parser 边界和强类型 manifest gate 已落地。
-generator 仍按 I0 边界不展开，不能将 retained source subset 的测试通过误记为完整 source
-implementation 已完成。最终结构、依赖、质量、归档拓扑和独立复审 gate 以 135 个通过的
-workspace tests 完成；后续 test-only ABI/Render closure 与 I1.1 lexer evidence 将当前 workspace gate
-扩展到 175 tests，I1 阶段 baseline 已建立，Task 1 已完成并自动进入 Task 2。
+I0 的 135-test 历史证据与 test-only ABI/Render closure 的 175-test checkpoint 保留为审计事实；
+I1.1–I1.8 已交付 source AST/parser、fixture runner、production ledger、parser limits、deterministic
+properties 和独立 fuzz lane，当前 root workspace gate 为 218 tests，I1 Task 9 正在进行最终治理和独立复审。
 
 - 提交完整切换前快照并建立永久 `archive/fcs4-pre-cutover`；
-- fast-forward `master`，删除活动主线中的 FCS 4、旧 converter 和旧 CLI；
+- fast-forward `main`，删除活动主线中的 FCS 4、旧 converter 和旧 CLI；
 - 将 `fcs-core/src/v5` 提升为无版本前缀的独立 `fcs-source` crate；
 - 用 Chumsky 0.11.2 + `stacker` 建立 token/span/parser 和结构化诊断基线；
 - 建立 byte decode API 和固定 seed/case 的 Proptest parser robustness gate；
@@ -349,7 +348,7 @@ workspace tests 完成；后续 test-only ABI/Render closure 与 I1.1 lexer evid
 
 - **I0.1 快照与归档（已完成）**：提交当前 generator、当时 Frozen 的文档、conformance 和项目
   workflow 工作；创建指向精确切换前提交 `148936d17b671bb34968c88969ab748c818f9fc0` 的
-  `archive/fcs4-pre-cutover`，然后 fast-forward `master`。后续 Trellis bookkeeping commits
+  `archive/fcs4-pre-cutover`，然后 fast-forward `main`。后续 Trellis bookkeeping commits
   不移动归档指针。
 - **I0.2 Generator staging（已完成）**：只接受 `..<`/`..=`，拒绝裸 `..`；在 I2 完成展开前
   返回临时 `FeatureUnavailable { feature: "compile-time-generator", .. }`；已消除
@@ -371,9 +370,9 @@ workspace tests 完成；后续 test-only ABI/Render closure 与 I1.1 lexer evid
   public API、实现文件、valid/invalid fixture、状态、下一阶段和已知偏差。
 - **I0.9 基线 gate（已完成）**：workspace 只有 `fcs-source`；结构搜索、依赖/feature 审计、Clippy、
   nextest、fmt、diff 和
-  独立 review 全绿，记录准确 test count 与 archive/master SHA。
+  独立 review 全绿，记录准确 test count 与 archive/main SHA。
 
-交付：精确旧工具链归档、绿色 `master`、唯一 `fcs-source`、条款矩阵、偏差清单和强类型
+交付：精确旧工具链归档、绿色 `main`、唯一 `fcs-source`、条款矩阵、偏差清单和强类型
 manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 
 ### I1：完整 Source AST 与 parser
@@ -381,32 +380,35 @@ manifest gate。逐步执行见 `docs/plans/i0-source-cutover.md`。
 - **I1.1 Lexer 完整性（2026-07-16 完成）**：补齐 I0 Chumsky lexer 的全部 Appendix B token、UTF-8/BOM、nested
   comment、重开后的 keyword、string escape/NUL/noncharacter、Color、unsigned decimal/unit 和
   byte span conformance；负号只作为 unary token。
-- **I1.2 Grammar AST**：按附录 B 建立 document、definition、statement、schema block、entity、
-  Track、metadata/resource/sync/extension source node；source node 保留完整半开 span。
-- **I1.3 顶级 parser**：强制 format，拒绝 duplicate/unknown block，允许规范声明的顺序无关和
-  source-order collection。
-- **I1.4 Definitions parser**：统一 `const/fn/template` 到 definitions，template/function 使用
- 不同 statement 类型或一个不能表示非法语句的 typed source enum。
-- **I1.5 Generator parser**：保持 I0 的 `..<`/`..=`、裸 `..` 拒绝和 local let；补齐
+- **I1.2 Grammar AST（已完成）**：按附录 B 建立 document、definition、statement、schema block、entity、
+  Track、metadata/resource/sync/extension source node；source node 保留完整半开 span。表达式/type
+  AST 与 parser evidence 已合并。
+- **I1.3 顶级 parser（已完成）**：强制 format，拒绝 duplicate/unknown block，允许规范声明的顺序无关和
+  source-order collection；全部 39 个 FCS source manifest entry 已在 parser boundary 执行。
+- **I1.4 Definitions parser（已完成）**：统一 `const/fn/template` 到 definitions，template/function 使用
+  不同 statement 类型或一个不能表示非法语句的 typed source enum。
+- **I1.5 Generator parser（已完成）**：保持 I0 的 `..<`/`..=`、裸 `..` 拒绝和 local let；补齐
   nested/misplaced generate 的 Frozen category 以及 segment/track owner grammar；zero step
   统一留给 elaborator 求值。
-- **I1.6 Schema parser**：解析 Line/Note/Track/meta/credits/resources/sync、ordered extension
+- **I1.6 Schema parser（已完成）**：解析 Line/Note/Track/meta/credits/resources/sync、ordered extension
   object、preserve envelope 和 balanced Render payload；closed enum 的直接 spelling 是 string，
   bare identifier 仍作为名称 expression 保留给 static phase，parser 只识别结构。
-- **I1.7 Diagnostic**：所有 parser error 映射附录 C category，保留 primary/related span；不得
+- **I1.7 Diagnostic（已完成）**：所有 parser error 映射附录 C category，保留 primary/related span；不得
   panic 或接受 trailing garbage。
-- **I1.8 Robustness 扩展**：在 I0 byte/property gate 上覆盖全部 grammar production、comment、
+- **I1.8 Robustness 扩展（已完成）**：在 I0 byte/property gate 上覆盖全部 grammar production、comment、
   delimiter、expression precedence 和长合法输入，并增加独立 fuzz lane。
 
 测试：每个 EBNF production 至少一个 valid/invalid fixture；所有 `fcs.md` source example parse。
+I1.8 的生产覆盖 ledger、parser limits、deterministic property 与独立 fuzz smoke 证据分别见
+`docs/conformance/fcs5-source-production-coverage.md` 和 `docs/conformance/fcs5-fuzz-lane.md`。
 
 交付：完整、带 span 的 Core source AST，Appendix B parser、parse-stage conformance runner、
 production coverage ledger、独立 fuzz lane 和 I1 条款矩阵证据。逐步执行草案见
 `docs/plans/i1-source-ast-parser.md`；I1 只有在其完整 normative dependency closure、绑定 fixture/hash
 建立 Reviewed Implementation Baseline，独立复审无未关闭的 Critical/Important finding，该计划与
-绑定规范一致，且 I0 质量门通过后才自动开始 Rust 实现。该 gate 已于 2026-07-16 通过，固定输入与
-0/0/0 独立复审见 `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`；I1.1 已通过 175-test
-workspace gate，当前实施单元为 I1.2。
+绑定规范一致，且 I0 质量门通过后才自动开始 Rust 实现。该 gate 已通过，固定输入与 0/0/0 独立复审见
+`docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`；I1.1–I1.8 的实现与证据已合并，当前
+进入 Task 9 governance、最终门禁和独立复审；I2 仍未开始。
 
 ### I2：Static semantics 与编译期展开
 
@@ -614,14 +616,17 @@ git diff --check
   第 11 节以 0/0/0 独立复审关闭 normative RNR gate。真实 Conversion round-trip、完整
   RenderSection executable binary/raster artifact、Core canonical fixture validation 与最终联合独立
   复审仍是各自阶段/RC blocker，全部版本域保持 Draft；
-- I0.1–I0.9 已完成；当前 workspace 的 I0 baseline 加 test-only ABI/Render closure 共 149 个 tests
-  通过，结构/依赖/归档拓扑和既有 I0 独立复审 gate 不回退；
+- I0.1–I0.9 已完成；I0 baseline 加 test-only ABI/Render closure 的 149-test 历史证据仍保留，当前
+  I1.1–I1.8 implementation/evidence 已合并，root workspace 的最终 I1 gate 为 218 个 tests 通过；
+  结构/依赖/归档拓扑和既有 I0 独立复审 gate 不回退；
 - ADR 0010 已将 I1–I9 改为阶段范围化 Reviewed Implementation Baseline；Render `RNR-*` normative
   gate、诚实 manifest、I1 source-parser fixed hash/fixture tree、计划一致性与 I0 质量门均已通过。
-  `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md` 建立 I1 baseline，Rust 实现已自动进入
-  I1.1，无需再次取得用户确认；
-- retained source subset 已提升为唯一 `fcs-source`，完整 Source AST/grammar 仍按 I1 推进；
+  `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md` 建立 I1 baseline；I1.1–I1.8
+  implementation/evidence 已合并，当前按 I1 Task 9 完成最终治理门和独立复审；I2 是下一未开始阶段；
+- retained source subset 已提升为唯一 `fcs-source`；I1.1–I1.8 已交付完整 Source AST/grammar
+  parser boundary，后续 static/canonical/runtime 语义仍由 I2+ owning stages 负责；
 - 当前 generator AST/parser 只接受 `int|beat`、`..<|..=` 和 `let|if|emit`，拒绝裸 `..`、
-  `return` 与 nested generator；zero-step 语法保留给 I2，elaborator 在 I0 不展开并返回稳定
+  `return` 与 nested generator；zero-step 语法保留给 I2，elaborator 在 I1 不展开并返回稳定
   `implementation.feature-unavailable`，且不产生部分输出；
-- I2–I10：未开始。
+- I2–I10：未开始；I2 只能在 I1 Task 9 final gate 和 I2 自身 Reviewed Implementation Baseline
+  满足后开始。

@@ -127,5 +127,6 @@ parser limits. `R::every_public_parser_limit_has_exact_boundary_evidence` and
 introduced by this ledger; adding one later requires a separate public limit contract and limit-1/limit/
 limit+1 evidence rather than silently relying on an implementation allocation bound.
 
-The independent deterministic property and fuzz-lane audit is intentionally not claimed here; it remains
-the next I1.8 child under the parent Issue.
+The deterministic property and independent fuzz-lane audit is closed by I1.8c/#38. The final evidence is
+the fixed-seed 12-property robustness lane plus the three-target bounded libFuzzer smoke over the 42-seed
+corpus; the unbounded command remains local-only and is not required for the I1 gate.

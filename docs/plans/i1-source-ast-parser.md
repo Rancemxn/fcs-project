@@ -5,8 +5,8 @@
 > framework is required.
 
 > **Current status (2026-07-16):** The I1 Reviewed Implementation Baseline passed and is recorded in
-> `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`; I1 Task 1 passed its implementation
-> gate and Task 2 is active automatically under ADR 0010. The independently reviewed plan snapshot
+> `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`; I1.1–I1.8 implementation and evidence
+> are merged, and Task 9 governance is active automatically under ADR 0010. The independently reviewed plan snapshot
 > hash is retained in that record; this status-only
 > amendment does not change task semantics. Render raster, Conversion round-trip and Core canonical
 > execution remain later-stage blockers unless a finding changes I1's public AST/parser behavior. I0
@@ -120,7 +120,7 @@ cargo fmt --all -- --check
 git diff --check
 ```
 
-Expected baseline: clean `master`; the accepted I0 verification commit is an ancestor of HEAD; the
+Expected baseline: clean `main`; the accepted I0 verification commit is an ancestor of HEAD; the
 confirmed S14 specification/plan commit is HEAD or an ancestor; and the workspace has one package.
 Record the actual pre-I1 test count instead of requiring the historical I0 count of 135. If the user
 has added unrelated changes after this plan was written, preserve them and record the actual baseline
@@ -269,50 +269,56 @@ source AST.
 **Clauses:** `fcs.md` 2.9, 3.1, 4.1, 4.5, 6.3–6.4, 13.3, Appendix B `expression`, `type`,
 `entityExpression`, `schemaBlock`.
 
-- [ ] **Step 1: Add failing AST-shape tests.** Assert constructible/non-constructible type shapes,
+- [x] **Step 1: Add failing AST-shape tests.** Assert constructible/non-constructible type shapes,
   full spans, source ordering, distinct statement enums, array/object entries, references, index
   postfix, `choose`, `with`, Track types, and nested generic types.
-- [ ] **Step 2: Extend source types and expressions.** Add only syntax representation. Keep typed
+- [x] **Step 2: Extend source types and expressions.** Add only syntax representation. Keep typed
   values and elaborator-only nodes separate from untyped source nodes; do not make ordered custom
   objects into hash maps.
-- [ ] **Step 3: Add failing expression/type parser tests.** Cover every primary/postfix/type
+- [x] **Step 3: Add failing expression/type parser tests.** Cover every primary/postfix/type
   production, empty/trailing-comma arrays and objects, duplicate object keys that remain syntactic,
   nested calls/index/field access, right-associative power, comparison chains, `choose` arm order,
   required `else`, `null` source representation, keyword field access such as `.length`, unresolved
   bare schema enums, and complete-input rejection.
-- [ ] **Step 4: Implement the Chumsky parsers.** Reuse the existing recursive expression parser and
+- [x] **Step 4: Implement the Chumsky parsers.** Reuse the existing recursive expression parser and
   nesting limit. Do not use Chumsky Pratt/unstable APIs or a manually indexed token cursor. Interval
   and cubic Bezier values remain schema productions, not first-class expression values.
-- [ ] **Step 5: Adapt existing elaborator matches safely.** New syntax outside I2 semantics must
+- [x] **Step 5: Adapt existing elaborator matches safely.** New syntax outside I2 semantics must
   return the established feature-unavailable boundary or a precise later-phase diagnostic without
   panicking. Existing supported I0 expressions must retain behavior.
-- [ ] **Step 6: Run the task gate.** Run Clippy, targeted expression/AST/compile-time nextest,
+- [x] **Step 6: Run the task gate.** Run Clippy, targeted expression/AST/compile-time nextest,
   rustfmt, structural search for non-exhaustive shortcuts/raw cursors, and `git diff --check`.
 
 **Task gate:** `fcs.md` 2.9 and every Appendix B expression/type production parse with exact spans;
 syntactically valid later-phase expressions survive parsing; existing elaboration cannot produce
 partial output for unsupported new nodes.
 
+**Completed:** Source expression/type ASTs and parsers now cover the Appendix B expression/type
+productions, ordered arrays/objects/choose arms, references/index/postfix, nested source types,
+schema-owned intervals and cubic values, and the I2 boundary. Focused expression/AST/compile-time
+tests and the full workspace gates passed; semantic conversion and elaboration remain later-stage
+work.
+
 ### Task 3: I1.3 Complete document and top-level parser
 
 **Clauses:** `fcs.md` 5.1–5.2, Appendix B `document`, `topLevelBlock`, and `formatBlock`.
 
-- [ ] **Step 1: Add failing document tests.** Cover required header/format ordering, all profiles,
+- [x] **Step 1: Add failing document tests.** Cover required header/format ordering, all profiles,
   `features`, all top-level block kinds in multiple orders, missing/duplicate format, duplicate
   optional blocks, unknown blocks, misplaced nested-only blocks, trailing input, and exact block
   spans. Assert missing format uses `profile.requirement-missing`, while a later format uses
   `syntax.misplaced-block`; verify top-level source order is retained.
-- [ ] **Step 2: Introduce the complete document AST.** Represent `FormatBlock` and feature order
+- [x] **Step 2: Introduce the complete document AST.** Represent `FormatBlock` and feature order
   explicitly. Replace the I0 subset fields with a source-ordered top-level enum plus typed accessors
   or an equivalent representation that cannot lose order or duplicate evidence.
-- [ ] **Step 3: Implement top-level Chumsky composition.** Parse every Core block through its owning
+- [x] **Step 3: Implement top-level Chumsky composition.** Parse every Core block through its owning
   parser. Replace the current indexed `validate_top_level_blocks`/`block_extent` prevalidation with
   parser composition and state/recovery so tokens are not independently reinterpreted by a second
   grammar scanner.
-- [ ] **Step 4: Enforce only the frozen front-end boundary.** Require immediate `format`, exactly one
+- [x] **Step 4: Enforce only the frozen front-end boundary.** Require immediate `format`, exactly one
   profile and at most one features field; retain field order. Leave profile/feature compatibility and
   required-block rules such as playable audio or publishable hashes to canonical validation.
-- [ ] **Step 5: Run the task gate.** Run Clippy, frontend/document/diagnostic nextest, rustfmt,
+- [x] **Step 5: Run the task gate.** Run Clippy, frontend/document/diagnostic nextest, rustfmt,
   `git diff --check`, and structural searches proving that unknown/trailing blocks cannot be silently
   skipped.
 
@@ -320,148 +326,170 @@ partial output for unsupported new nodes.
 source-order rules are retained, duplicate/unknown/misplaced blocks have deterministic diagnostics,
 and there is no token-slice top-level pre-parser.
 
+**Completed:** The source-ordered document AST and owning Chumsky top-level parsers now accept every
+Core envelope and preserve the parser/static boundary. Complete-document, profile, duplicate,
+misplaced, trailing-input, and manifest-boundary tests passed; profile compatibility and required
+resource rules remain later semantic validation.
+
 ### Task 4: I1.4 Complete definitions and typed statement parser
 
 **Clauses:** `fcs.md` 5.3, 6.1–6.5, Appendix B `definition`, function/template declarations and
 statement blocks.
 
-- [ ] **Step 1: Add failing production tests.** Cover empty/mixed definitions, parameter lists and
+- [x] **Step 1: Add failing production tests.** Cover empty/mixed definitions, parameter lists and
   trailing commas, recursive source types, nested/else-if blocks, explicit typed lets, return forms,
   template constructible types, and every placement-invalid statement.
-- [ ] **Step 2: Complete typed declaration/statement ASTs.** Function statements can contain only
+- [x] **Step 2: Complete typed declaration/statement ASTs.** Function statements can contain only
   `let`, function `if`, and value return. Template statements can contain only `let`, template `if`,
   and entity return. Preserve declaration, parameter, statement, branch, and expression spans.
-- [ ] **Step 3: Complete Chumsky definitions parsers.** Ensure recursive blocks share parser limits,
+- [x] **Step 3: Complete Chumsky definitions parsers.** Ensure recursive blocks share parser limits,
   recover at statement/declaration boundaries, and do not consume the following declaration after a
   malformed body.
-- [ ] **Step 4: Preserve phase ownership.** Do not check shadowing, names, types, paths, required
+- [x] **Step 4: Preserve phase ownership.** Do not check shadowing, names, types, paths, required
   returns, constructibility, cycles, or branch semantics in the parser. Existing elaborator tests
   may continue to check the retained subset.
-- [ ] **Step 5: Run the task gate.** Run Clippy, definitions/expression/diagnostic/compile-time
+- [x] **Step 5: Run the task gate.** Run Clippy, definitions/expression/diagnostic/compile-time
   nextest, rustfmt, and `git diff --check`.
 
 **Task gate:** Every Appendix B definition and typed statement production has valid/invalid parser
 evidence, illegal statement categories are unrepresentable or rejected at their precise span, and
 semantic errors still reach I2.
 
+**Completed:** Definitions, typed statements, template branches, return forms, and declaration
+boundaries are represented and parsed with source spans; placement-invalid generator/entity/return
+forms retain parser-owned categories, while scope/type/return semantics remain I2-owned.
+
 ### Task 5: I1.5 Generator placement and owner grammar
 
 **Clauses:** `fcs.md` 5.4, 6.5–6.7, 9.1, Appendix B collection/generator/segment productions,
 Appendix C generator categories.
 
-- [ ] **Step 1: Add failing context tests.** Exercise generators in top-level collections and Track
+- [x] **Step 1: Add failing context tests.** Exercise generators in top-level collections and Track
   `segments`; direct collection items; collection/segment `if`; typed local lets; nested generator;
   generator in function/template/top-level/entity field; `emit` outside a generator; `return` in a
   generator; and malformed range operators.
-- [ ] **Step 2: Generalize owner-aware source nodes.** A generator retains its owner/registered
+- [x] **Step 2: Generalize owner-aware source nodes.** A generator retains its owner/registered
   entity context structurally without resolving its type. Reuse typed generator statements across
   legal owner collections without allowing nested generators through the AST.
-- [ ] **Step 3: Emit baseline-bound source-structure categories.** Bare `..` remains `syntax.invalid-token`;
+- [x] **Step 3: Emit baseline-bound source-structure categories.** Bare `..` remains `syntax.invalid-token`;
   syntactically recognizable nested and misplaced generators use
   `compile-time.nested-generator` and `compile-time.misplaced-generator` with `Parse` stage and the
   generator keyword as primary span. Add related owner/generator spans where useful.
-- [ ] **Step 4: Preserve the I2 boundary.** Parse and retain zero step, range expressions, and emit
+- [x] **Step 4: Preserve the I2 boundary.** Parse and retain zero step, range expressions, and emit
   expressions without evaluating type, direction, reachability, count, or collection compatibility.
   Elaborating any generator must still fail before partial output.
-- [ ] **Step 5: Run the task gate.** Run Clippy, generator/collection/Track/diagnostic/compile-time
+- [x] **Step 5: Run the task gate.** Run Clippy, generator/collection/Track/diagnostic/compile-time
   nextest, rustfmt, and `git diff --check`.
 
 **Task gate:** Legal generators parse in every Core owner grammar; nested/misplaced cases use the
 baseline-bound stable categories; zero-step remains an I2 error; no parser or elaborator path emits partial data.
+
+**Completed:** Collection, Track-segment, generator, `if`, typed `let`, and `emit` owner grammars
+are covered, including nested/misplaced diagnostics and zero-step retention. No generator expansion
+or semantic direction/count validation was added to I1.
 
 ### Task 6: I1.6 Complete Core schema-block parsers
 
 **Clauses:** `fcs.md` 5.4, 7.1–7.5, 8.2, 9.1, 11–13 source shapes, 15.1–15.2, Appendix B entity,
 Track, metadata, extension, preserve, and delegated render boundaries.
 
-- [ ] **Step 1: Add failing source-AST tests for Line and entities.** Cover `lines`, Line blocks,
+- [x] **Step 1: Add failing source-AST tests for Line and entities.** Cover `lines`, Line blocks,
   Note variants, `RenderNode` envelope, dotted field paths, nested `tracks`, `scrollTempoMap`,
   constructors, template calls, and chained `with` blocks.
-- [ ] **Step 2: Add failing Track tests.** Cover settings, required `segments` syntax, direct
+- [x] **Step 2: Add failing Track tests.** Cover settings, required `segments` syntax, direct
   half-open interval segments, point, `segment`/`keyframe` constructors, string interpolation
   expressions/quoted names, cubic Bezier syntax, segment `if`, and segment generators. Half-open
   intervals parse only in owning schema productions; `[start,end]` always remains an ordinary
   two-element array expression.
-- [ ] **Step 3: Add failing metadata/resource/sync tests.** Cover the complete examples for `meta`,
+- [x] **Step 3: Add failing metadata/resource/sync tests.** Cover the complete examples for `meta`,
   contributors/person, credits/credit, resources and resource kinds, artwork, sync preview,
   quoted closed enums, references, arrays, ordered custom objects, and custom scalar values. Keep field legality,
   duplicate custom keys, reference existence/type, hash syntax, and interval ordering for later
   semantic phases.
-- [ ] **Step 4: Add extension/preserve/render envelope tests.** Cover exact namespace/semver/
+- [x] **Step 4: Add extension/preserve/render envelope tests.** Cover exact namespace/semver/
   required-or-optional syntax, ordered object payloads, preserve source/payload entry retention,
   balanced Render Core tokens, source spans, truncation/unbalanced delimiters, and trailing input.
   Assert that namespace-specific object semantics and Render payload semantics are not interpreted
   in I1; missing/duplicate preserve entries remain I5 schema validation.
-- [ ] **Step 5: Implement owning parsers and AST modules.** Reuse generic schema-field and ordered
+- [x] **Step 5: Implement owning parsers and AST modules.** Reuse generic schema-field and ordered
   object components where the grammar is identical, but keep schema blocks, custom objects,
   extension envelopes/ordered payload objects, and balanced Render payloads as distinct AST types.
-- [ ] **Step 6: Execute all 32 bound source entries at their front-end boundary.** Valid fixtures and
+- [x] **Step 6: Execute all 32 bound source entries at their front-end boundary.** Valid fixtures and
   semantic-invalid fixtures whose
   manifest stage is elaborate/canonical/evaluate must parse successfully even though their expected
   later-phase result is not executed in I1.
-- [ ] **Step 7: Run the task gate.** Run Clippy, schema/metadata/Track/frontend/conformance-parse
+- [x] **Step 7: Run the task gate.** Run Clippy, schema/metadata/Track/frontend/conformance-parse
   nextest, rustfmt, and `git diff --check`.
 
 **Task gate:** Every Core top-level/schema source shape is represented with complete spans; all
 currently bound syntactically valid source inputs parse; later-phase semantic-invalid fixtures are
 not rejected by I1 for their semantic error.
 
+**Completed:** The source AST/parser owns metadata, resources, sync, Line/Note/Track shapes,
+extension/preserve envelopes, and balanced Render payloads. The manifest runner now executes all 39
+entries at their declared frontend boundary; canonical/resource/render semantics remain assigned to
+their owning later stages.
+
 ### Task 7: I1.7 Diagnostic mapping and recovery
 
 **Clauses:** `fcs.md` 1.2, 2, 5, 6.6–6.7, 16, Appendix B, Appendix C.
 
-- [ ] **Step 1: Create a parser diagnostic inventory.** Map every lexer/grammar failure class to
+- [x] **Step 1: Create a parser diagnostic inventory.** Map every lexer/grammar failure class to
   `decode.invalid-utf8`, `version.*`, the most specific `syntax.*`, the two generator placement
   categories, or the pre-existing implementation-defined parser resource-limit code. Mark every
   semantic Appendix C category as forbidden for generic parser fallback.
-- [ ] **Step 2: Add failing recovery tests.** Include multiple independent malformed declarations,
+- [x] **Step 2: Add failing recovery tests.** Include multiple independent malformed declarations,
   missing terminators/delimiters, unclosed nested blocks, invalid top-level blocks, malformed
   expressions followed by valid siblings, duplicate blocks, and UTF-8 multibyte text before errors.
   Assert deterministic order, deduplication, primary/related half-open spans, and no output when any
   error exists.
-- [ ] **Step 3: Implement bounded recovery at grammar boundaries.** Recover only at unambiguous
+- [x] **Step 3: Implement bounded recovery at grammar boundaries.** Recover only at unambiguous
   semicolon/block/declaration boundaries. Recovery must make progress, respect token/nesting/AST
   limits, and never reinterpret schema/type/name errors as accepted syntax.
-- [ ] **Step 4: Remove ad hoc diagnostic rescans.** Delete helpers that scan raw source or replay
+- [x] **Step 4: Remove ad hoc diagnostic rescans.** Delete helpers that scan raw source or replay
   token slices solely to guess parser errors. Use Chumsky labels/state and parser-owned context to
   produce diagnostics.
-- [ ] **Step 5: Add structural regression tests.** Prevent reintroduction of raw lexer prepasses,
+- [x] **Step 5: Add structural regression tests.** Prevent reintroduction of raw lexer prepasses,
   indexed token cursors, independent top-level scanners, leaked Chumsky public types, and ignored
   trailing tokens.
-- [ ] **Step 6: Run the task gate.** Run Clippy, all diagnostic/parser tests, rustfmt, structural
+- [x] **Step 6: Run the task gate.** Run Clippy, all diagnostic/parser tests, rustfmt, structural
   searches, and `git diff --check`.
 
 **Task gate:** Every invalid I1 grammar test has a stable expected category and bounded primary span;
 multi-error results are deterministic; malformed inputs cannot panic, loop, or return partial ASTs.
 
+**Completed:** Diagnostic inventory and bounded Chumsky recovery are implemented with stable
+category/span ownership, deterministic multi-error ordering, no partial output, and structural guards
+against raw rescans, leaked token types, and ignored trailing input.
+
 ### Task 8: I1.8 Fixture execution, limits, robustness, and fuzz lane
 
 **Clauses:** `fcs.md` 1.2–1.3, 2.1, 16, 18; roadmap I1.8.
 
-- [ ] **Step 1: Build the parse-stage fixture runner.** Reuse the typed manifest loader. Execute
+- [x] **Step 1: Build the parse-stage fixture runner.** Reuse the typed manifest loader. Execute
   parse-stage success/error expectations and assert exact category for parse failures. Separately
   assert that all later-stage source fixtures are syntactically accepted, except fixtures whose
   source is intentionally malformed. Do not execute or rewrite elaborate/canonical/evaluate
   snapshots in I1. Include the S14 complete-envelope, escaped-NUL, header whitespace/leading-zero,
   duplicate-block, placement, unclosed-extension, mixed-Beat and unresolved-enum cases explicitly.
-- [ ] **Step 2: Create a production coverage ledger.** Map every Appendix B production to at least
+- [x] **Step 2: Create a production coverage ledger.** Map every Appendix B production to at least
   one valid and one invalid unit/fixture test. Map every complete FCS document example to a parse
   test; wrap fragmentary examples in the smallest legal owning production rather than pretending
   fragments are documents.
-- [ ] **Step 3: Extend public parser limits.** Add a generic AST-node/list-item budget if required by
+- [x] **Step 3: Extend public parser limits.** Add a generic AST-node/list-item budget if required by
   the complete grammar. Publish defaults and semantics, increment before work, and test each limit
   at `limit-1`, `limit`, and `limit+1`. Keep parser budgets distinct from I2 elaboration budgets.
-- [ ] **Step 4: Expand deterministic properties.** Generate arbitrary bounded bytes/UTF-8, balanced
+- [x] **Step 4: Expand deterministic properties.** Generate arbitrary bounded bytes/UTF-8, balanced
   and unbalanced delimiters, nested comments, arrays/objects, expressions, declarations, blocks,
   and long legal documents. Assert no panic, bounded spans, deterministic result/diagnostics,
   complete consumption, and controlled limit failure.
-- [ ] **Step 5: Establish an independent fuzz lane.** Before choosing a runner, audit its current
+- [x] **Step 5: Establish an independent fuzz lane.** Before choosing a runner, audit its current
   version, features, MSRV, license, and dependency tree and record the decision. Keep fuzz tooling
   outside normal/runtime dependencies. Seed the corpus from all conformance source inputs and I1
   grammar fixtures; target both byte and UTF-8 document entry points plus expression parsing; define
   a bounded smoke command for CI and an unbounded local command. If no acceptable runner is approved,
   I1 cannot be marked complete merely on Proptest evidence.
-- [ ] **Step 6: Run the task gate.** Run Clippy first, then the full workspace nextest suite,
+- [x] **Step 6: Run the task gate.** Run Clippy first, then the full workspace nextest suite,
   deterministic property configuration, the bounded fuzz smoke lane, rustfmt, and
   `git diff --check`.
 
@@ -469,22 +497,33 @@ multi-error results are deterministic; malformed inputs cannot panic, loop, or r
 limit has a bounded failure, long legal inputs pass, property/fuzz inputs do not panic or escape
 limits, and normal dependency activation remains unchanged.
 
+**Completed:** I1.8a/#34 and I1.8b/#36 and I1.8c/#38 are merged. The final I1.8 evidence is the
+39-entry frontend runner (3 parse-success, 9 parse-error, 27 later-stage syntax acceptance), the
+117-production ledger, six public parser-limit boundary contracts, 12 deterministic robustness
+properties, and the isolated three-target cargo-fuzz smoke over 42 seeds. No AST/list budget was
+needed; the independent unbounded lane remains documented as local-only.
+
 ### Task 9: Governance, full quality gate, and independent review
 
 This task closes I1 after roadmap tasks I1.1–I1.8; it does not add product behavior.
 
-- [ ] **Step 1: Update the implementation matrix.** Replace all `blocked-by-I1` rows with evidence
+**Current governance unit:** I1.1–I1.8 implementation and evidence are merged through the parser-boundary
+runner, production ledger, parser-limit, deterministic-property, and isolated fuzz-lane checkpoints. The
+remaining work is limited to the matrix/roadmap/AGENTS reconciliation, final integrity gates, and an
+independent fixed-snapshot review; I1 is not complete until this task gate passes.
+
+- [x] **Step 1: Update the implementation matrix.** Replace all `blocked-by-I1` rows with evidence
   and the honest later-stage status. Parser-complete rows may become `implemented`; mixed
   parser/semantic rows remain `partial` and name I2/I3/I4/I5 explicitly. Never mark Track,
   metadata, choose, extension, or conformance rows fully implemented when only their source syntax
   exists.
-- [ ] **Step 2: Update roadmap and plan status.** Mark I1.1–I1.8 complete only after their task gates,
+- [x] **Step 2: Update roadmap and plan status.** Mark I1.1–I1.8 complete only after their task gates,
   record exact tests/fixtures/fuzz commands, and make I2 the next unstarted phase. Update `AGENTS.md`
   to point to the completed I1 plan without changing baseline-bound specification behavior.
-- [ ] **Step 3: Audit the public/source boundary.** Confirm one source crate, one token path, no
+- [x] **Step 3: Audit the public/source boundary.** Confirm one source crate, one token path, no
   `v5`/FCS 4 compatibility paths, no canonical/runtime model, no path dependency into `refer/`, no
   accidental activation of future catalog dependencies, and no public Chumsky/token types.
-- [ ] **Step 4: Run final gates in required order.** Run:
+- [x] **Step 4: Run final gates in required order.** Run:
 
   ```powershell
   cargo clippy --workspace --all-targets -- -D warnings
@@ -498,14 +537,31 @@ This task closes I1 after roadmap tasks I1.1–I1.8; it does not add product beh
   ```
 
   Also run the bounded fuzz smoke command and the production-coverage audit defined in Task 8.
-- [ ] **Step 5: Independently review I1.** Review Appendix B coverage, parser/static phase separation,
+- [x] **Step 5: Independently review I1.** Review Appendix B coverage, parser/static phase separation,
   AST representability, spans/recovery, limits, all `blocked-by-I1` matrix transitions, dependency
   activation, and the full I1 diff. Fix Critical/Important findings and repeat review before
-  acceptance.
-- [ ] **Step 6: Record exact evidence.** Capture the final master SHA, workspace packages,
+  acceptance. The fixed-snapshot review is recorded in
+  `docs/reviews/i1-task9-independent-review.md` with Critical 0, Important 0, and Minor 0 open.
+- [x] **Step 6: Record exact evidence.** Capture the final main SHA, workspace packages,
   dependency tree, nextest pass count, parse fixture counts, production coverage, fuzz smoke result,
   remaining partial/blocked matrix rows, review disposition, and confirmation that baseline-bound clauses and
-  fixtures were not changed without reopening the baseline.
+  fixtures were not changed without reopening the baseline. The pre-merge fixed snapshot and all
+  gate evidence are recorded below; the merged `main` SHA is appended in the final delivery checkpoint.
+
+**Task 9 evidence (pre-merge fixed snapshot):** The reviewed branch snapshot is
+`eaea6a0676aaf81e7cf3abfce90a8b3a90b85f68`; the review artifact and subsequent plan-only evidence commit
+do not change Rust or fixture inputs. The sole workspace package is `fcs-source` 0.2.0. Normal dependencies
+contain only Chumsky 0.11.2; dev roots are `crc`, `image`, `proptest`, `serde`, `serde_json`, `sha2`, and
+`toml`, while the pinned `libfuzzer-sys`/cargo-fuzz lane is isolated under `fuzz/`. Workspace Clippy passed
+with `-D warnings`; workspace nextest passed 218/218; `cargo fmt --all`, fmt check, both dependency-tree
+audits, `git diff --check`, and clean status checks passed. The production runner passed all 39 entries
+(3 parse-success, 9 parse-error, 27 later-stage syntax-acceptance); the ledger records 117 productions and
+six public parser limits. The deterministic lane covers 12 properties, and
+`FCS_FUZZ_RUNS=32 scripts/fcs5-fuzz-smoke.sh bounded` completed all three targets over 42 seeds. The matrix
+has no `blocked-by-I1` row; remaining `partial` and future-stage blocked rows retain explicit I2/I3/I4/I5/I6/
+I7/I9 owners. The fixed-snapshot review found no open Critical, Important, or Minor finding. A direct diff
+confirmed that `fcs.md`, `fcbc.md`, `fcs-render.md`, `fcs-conversion.md`, and all bound FCS source/expected
+fixtures were unchanged.
 
 **I1 final gate:** All I1.1–I1.8 tasks are complete; no matrix row remains `blocked-by-I1`; all legal
 Core source fixtures parse; all parser-invalid fixtures have deterministic categories/spans; all
