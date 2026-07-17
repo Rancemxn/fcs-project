@@ -617,14 +617,17 @@ git diff --check
   第 11 节以 0/0/0 独立复审关闭 normative RNR gate。真实 Conversion round-trip、完整
   RenderSection executable binary/raster artifact、Core canonical fixture validation 与最终联合独立
   复审仍是各自阶段/RC blocker，全部版本域保持 Draft；
-- I0.1–I0.9 已完成；当前 workspace 的 I0 baseline 加 test-only ABI/Render closure 共 149 个 tests
-  通过，结构/依赖/归档拓扑和既有 I0 独立复审 gate 不回退；
+- I0.1–I0.9 已完成；I0 baseline 加 test-only ABI/Render closure 的 149-test 历史证据仍保留，当前
+  I1.1–I1.8 implementation/evidence 已合并，root workspace 的最终 I1 gate 为 218 个 tests 通过；
+  结构/依赖/归档拓扑和既有 I0 独立复审 gate 不回退；
 - ADR 0010 已将 I1–I9 改为阶段范围化 Reviewed Implementation Baseline；Render `RNR-*` normative
   gate、诚实 manifest、I1 source-parser fixed hash/fixture tree、计划一致性与 I0 质量门均已通过。
-  `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md` 建立 I1 baseline，Rust 实现已自动进入
-  I1.1，无需再次取得用户确认；
-- retained source subset 已提升为唯一 `fcs-source`，完整 Source AST/grammar 仍按 I1 推进；
+  `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md` 建立 I1 baseline；I1.1–I1.8
+  implementation/evidence 已合并，当前按 I1 Task 9 完成最终治理门和独立复审；I2 是下一未开始阶段；
+- retained source subset 已提升为唯一 `fcs-source`；I1.1–I1.8 已交付完整 Source AST/grammar
+  parser boundary，后续 static/canonical/runtime 语义仍由 I2+ owning stages 负责；
 - 当前 generator AST/parser 只接受 `int|beat`、`..<|..=` 和 `let|if|emit`，拒绝裸 `..`、
-  `return` 与 nested generator；zero-step 语法保留给 I2，elaborator 在 I0 不展开并返回稳定
+  `return` 与 nested generator；zero-step 语法保留给 I2，elaborator 在 I1 不展开并返回稳定
   `implementation.feature-unavailable`，且不产生部分输出；
-- I2–I10：未开始。
+- I2–I10：未开始；I2 只能在 I1 Task 9 final gate 和 I2 自身 Reviewed Implementation Baseline
+  满足后开始。
