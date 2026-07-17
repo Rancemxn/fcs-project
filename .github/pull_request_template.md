@@ -5,7 +5,7 @@
 ## Linked work
 
 - Issue: #
-- Relationship: `Closes #<n>` only when merge should close the Issue; otherwise use `Refs #<n>`.
+- Relationship keyword (plain text, not code): Closes #<n> only when merge should close the Issue; otherwise use Refs #<n>.
 
 ## Scope and non-goals
 
