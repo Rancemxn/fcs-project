@@ -1,6 +1,7 @@
 # I2 Static Semantics and Compile-time Expansion
 
-Status: I2 implementation and public conformance delivery candidate
+Status: I2 implementation and public conformance delivery baseline PASS; see
+`docs/reviews/2026-07-17-i2-static-semantics-implementation-closure-review.md`
 
 This plan is the bounded execution contract for I2. It schedules implementation work; it does not
 create FCS semantics, promote a specification version, or authorize work owned by I3 and later stages.
@@ -185,6 +186,22 @@ I2 remains a stage-scoped implementation baseline, not a FCS Core version-state 
 expression/DAG lowering, canonical model construction, and all later product crates remain owned by I3+.
 After the I2.10 PR passes its full Rust gate and independent fixed-SHA audit, the owning matrix and roadmap
 may advance the frontier to the earliest I3 baseline Issue.
+
+## I2 implementation closure
+
+The I2.10 delivery and its corrective review chain are now complete. PR #72 delivered the public fixture
+lane and merged at `117e23f906b8a1d224e8cb09adc95d2f0894931d`; reviewer re-review of the I2.1 correction
+recorded Important finding #81 at merge `c762c630b5b9bb09418f9d543200ad4daab7ec84`; PR #82 corrected that
+path and merged at `3a484e5a8205f7af8c4a23776111e7a1d80dcf62`. The independent Audit result for PR #82/Issue
+#81 is `pass`, and Issues #75–#77/#81 are closed.
+
+The final delivery evidence is `cargo fmt --all -- --check`, workspace Clippy, workspace nextest `286/286`,
+the compile-time focused lane `138/138`, and `git diff --check`. The full fixed scope and hashes are recorded
+in `docs/reviews/2026-07-17-i2-static-semantics-implementation-closure-review.md`.
+
+This closes the I2 Reviewed Implementation Baseline only. The five specification domains remain Draft;
+canonical IDs/time/graph/Track/Note lowering and every I3+ product remain out of scope. The next child may
+bind the I3.1 Canonical IDs frontier after the closure review is merged.
 
 ## Fixture and diagnostic matrix
 

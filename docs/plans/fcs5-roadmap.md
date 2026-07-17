@@ -623,13 +623,17 @@ git diff --check
 - ADR 0010 已将 I1–I9 改为阶段范围化 Reviewed Implementation Baseline；Render `RNR-*` normative
   gate、诚实 manifest、I1 source-parser fixed hash/fixture tree、计划一致性与 I0 质量门均已通过。
   `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md` 建立 I1 baseline；I1.1–I1.8
-  implementation/evidence 已合并，当前按 I1 Task 9 完成最终治理门和独立复审；I2 是下一未开始阶段；
+  implementation/evidence 已合并；I2 的 implementation closure review 现已独立通过，当前 frontier
+  转入 I3.1；
 - retained source subset 已提升为唯一 `fcs-source`；I1.1–I1.8 已交付完整 Source AST/grammar
   parser boundary，后续 static/canonical/runtime 语义仍由 I2+ owning stages 负责；
 - 当前 generator AST/parser 只接受 `int|beat`、`..<|..=` 和 `let|if|emit`，拒绝裸 `..`、
   `return` 与 nested generator；zero-step 语法保留给 I2，elaborator 在 I1 不展开并返回稳定
   `implementation.feature-unavailable`，且不产生部分输出；
-- I2.1–I2.9 已完成并合并；I2.10 正在执行三份 valid elaboration fixture、六份 elaborate-error/
-  budget fixture、implementation matrix 更新和完整 Rust delivery gate。I2 的五域规范状态仍为 Draft；
-  I3 只能在 I2.10 独立复审、合并和阶段 baseline 证据闭合后开始。
-- I3–I10 尚未开始；不得在 I2.10 完成前创建或激活 later-stage product crate。
+- I2.1–I2.10 已完成并合并；I2.10 的三份 valid fixture、六份 elaborate-error/budget fixture、矩阵
+  更新和完整 Rust delivery gate 已记录。PR #78 的独立复审发现 #75–#77，PR #82 修复 #81，且最新
+  merged SHA `3a484e5a8205f7af8c4a23776111e7a1d80dcf62` 已由 reviewer `Audit result: pass` 关闭；I2
+  Reviewed Implementation Baseline 见 `docs/reviews/2026-07-17-i2-static-semantics-implementation-closure-review.md`。
+  五个规范域仍为 Draft。
+- I3–I10 尚未实现；I3.1 是下一 bounded frontier。I3 可以建立自己的 canonical model/owning crate，
+  但不得把 I2 closure 误报为 canonical/runtime/FCBC/Render/Conversion/CLI 完成或版本 Frozen。
