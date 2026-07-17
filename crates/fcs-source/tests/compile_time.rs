@@ -671,6 +671,106 @@ definitions {
 }
 
 #[test]
+fn empty_array_expected_type_flows_through_function_arguments_and_nested_arrays() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  fn count(values: array<int>) -> int { return values.length; }
+  const count_empty: int = count([]);
+  const nested: array<array<int>> = [[]];
+}"#;
+
+    assert!(elaborate_source(source).is_ok());
+}
+
+#[test]
+fn empty_array_expected_type_flows_through_template_parameters_and_locals() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  template Note make(values: array<int>) {
+    let nested: array<array<int>> = [[]];
+    return tap {
+      gameplay.time: 0beat;
+      line: @main;
+    };
+  }
+}
+lines { line main {} }
+collections { notes { make([]); } }"#;
+
+    assert!(elaborate_source(source).is_ok());
+}
+
+#[test]
+fn beat_overflow_uses_numeric_overflow_diagnostic() {
+    let addition = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: beat = 9223372036854775807beat + 1beat; }"#;
+    assert_code(elaborate_source(addition), DiagnosticCode::NUMERIC_OVERFLOW);
+
+    let scaling = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: beat = 9223372036854775807beat * 2; }"#;
+    assert_code(elaborate_source(scaling), DiagnosticCode::NUMERIC_OVERFLOW);
+}
+
+#[test]
+fn beat_scaling_accepts_exact_float_factors_without_saturating() {
+    for expression in [
+        "1beat * 2",
+        "1beat / 2",
+        "1beat * 0.5",
+        "0.5 * 1beat",
+        "1beat / 0.5",
+    ] {
+        let source = format!(
+            "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ const value: beat = {expression}; }}"
+        );
+        assert!(elaborate_source(&source).is_ok(), "{expression}");
+    }
+
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+  notes {
+    tap {
+      line: @main;
+      gameplay.time: 1beat * 0.5;
+    };
+  }
+}"#;
+    let document = parse_document(source).into_result().unwrap();
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
+    let entity = expanded
+        .collections()
+        .next()
+        .unwrap()
+        .entities()
+        .next()
+        .unwrap();
+    assert_eq!(
+        entity.field("gameplay.time").unwrap().value(),
+        &TypedValue::Beat(Beat::new(1, 2).unwrap())
+    );
+
+    let overflow = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: beat = 1beat * 9223372036854775808.0; }"#;
+    assert_code(elaborate_source(overflow), DiagnosticCode::NUMERIC_OVERFLOW);
+
+    let divide_by_zero = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: beat = 1beat / 0.0; }"#;
+    assert_code(
+        elaborate_source(divide_by_zero),
+        DiagnosticCode::NUMERIC_DIVIDE_BY_ZERO,
+    );
+}
+
+#[test]
 fn array_index_must_be_a_compile_time_in_bounds_int() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }

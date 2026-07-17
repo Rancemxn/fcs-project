@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{
-    Beat, BinaryOperator, ConstDeclaration, Definition, DefinitionsBlock, FunctionDeclaration,
-    FunctionStatement, SourceExpression, SourceLiteral, SourceSpan, Type, TypedValue,
-    UnaryOperator,
+    Beat, BeatError, BinaryOperator, ConstDeclaration, Definition, DefinitionsBlock,
+    FunctionDeclaration, FunctionStatement, SourceExpression, SourceLiteral, SourceSpan, Type,
+    TypedValue, UnaryOperator,
 };
 use crate::diagnostic::{ExpansionTraceFrame, ExpansionTraceKind};
 
@@ -121,6 +121,16 @@ pub(super) fn evaluate_with_context(
     bindings: &BTreeMap<String, TypedValue>,
     context: &CompileTimeContext,
 ) -> Result<TypedValue, Diagnostic> {
+    evaluate_with_context_expected(expression, definitions, bindings, context, None)
+}
+
+pub(super) fn evaluate_with_context_expected(
+    expression: &SourceExpression,
+    definitions: Option<&DefinitionsBlock>,
+    bindings: &BTreeMap<String, TypedValue>,
+    context: &CompileTimeContext,
+    expected: Option<&Type>,
+) -> Result<TypedValue, Diagnostic> {
     let mut constants = BTreeMap::new();
     let mut functions = BTreeMap::new();
     let mut root = Scope::root_with_builtins()?;
@@ -172,14 +182,15 @@ pub(super) fn evaluate_with_context(
             &mut budget,
         )?;
     }
-    let actual = infer_expression(expression, &root, &functions)?;
-    let value = evaluate_expression(
+    let actual = infer_expression_with_expected(expression, &root, &functions, expected)?;
+    let value = evaluate_expression_with_expected(
         expression,
         &root,
         &constants,
         &functions,
         &mut values,
         &mut budget,
+        expected,
     )?;
     require_type(&actual, &value.ty(), expression.span())?;
     Ok(value)
@@ -340,7 +351,12 @@ fn check_block(
                 )?;
             }
             FunctionStatement::Return(statement) => {
-                let actual = infer_expression(&statement.value, &scope, functions)?;
+                let actual = infer_expression_with_expected(
+                    &statement.value,
+                    &scope,
+                    functions,
+                    Some(return_type),
+                )?;
                 require_type(return_type, &actual, statement.value.span())?;
                 return Ok(true);
             }
@@ -373,6 +389,15 @@ pub(super) fn infer_expression(
     scope: &Scope,
     functions: &BTreeMap<String, &FunctionDeclaration>,
 ) -> Result<Type, Diagnostic> {
+    infer_expression_with_expected(expression, scope, functions, None)
+}
+
+pub(super) fn infer_expression_with_expected(
+    expression: &SourceExpression,
+    scope: &Scope,
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+    expected: Option<&Type>,
+) -> Result<Type, Diagnostic> {
     match expression {
         SourceExpression::Literal { literal, span } => {
             literal_type(literal).map(Ok).unwrap_or_else(|| {
@@ -390,17 +415,41 @@ pub(super) fn infer_expression(
         }
         SourceExpression::Reference { .. } => Ok(Type::Line),
         SourceExpression::Array { elements, span } => {
-            let mut element_type = None;
+            let expected_element = match expected {
+                Some(Type::Array(element)) => Some(element.as_ref()),
+                _ => None,
+            };
+            if elements.is_empty() {
+                let Some(element) = expected_element else {
+                    return Err(Diagnostic::InvalidOperation {
+                        message: "empty array requires an explicit type context",
+                        span: *span,
+                    });
+                };
+                if !is_pure_value_type(element) {
+                    return Err(Diagnostic::InvalidOperation {
+                        message: "array element type must be a pure compile-time value",
+                        span: *span,
+                    });
+                }
+                return Ok(Type::Array(Box::new(element.clone())));
+            }
+
+            let mut element_type = expected_element.cloned();
             for element in elements {
-                let ty = infer_expression(element, scope, functions)?;
+                let element_expected = expected_element.or(element_type.as_ref());
+                let ty =
+                    infer_expression_with_expected(element, scope, functions, element_expected)?;
                 if !is_pure_value_type(&ty) {
                     return Err(Diagnostic::InvalidOperation {
                         message: "array elements must be pure compile-time values",
                         span: *span,
                     });
                 }
-                if let Some(expected) = &element_type {
+                if let Some(expected) = expected_element {
                     require_type(expected, &ty, element.span())?;
+                } else if let Some(existing) = &element_type {
+                    require_type(existing, &ty, element.span())?;
                 } else {
                     element_type = Some(ty);
                 }
@@ -476,7 +525,8 @@ pub(super) fn infer_expression(
                 });
             }
             for (argument, expected) in arguments.iter().zip(parameters) {
-                let actual = infer_expression(argument, scope, functions)?;
+                let actual =
+                    infer_expression_with_expected(argument, scope, functions, Some(&expected))?;
                 if matches!(name.as_str(), "toFloat" | "seconds" | "radians") && expected != actual
                 {
                     return Err(Diagnostic::InvalidConversion {
@@ -506,7 +556,10 @@ pub(super) fn infer_expression(
             }
         }
         SourceExpression::Index { base, index, span } => {
-            let Type::Array(element) = infer_expression(base, scope, functions)? else {
+            let expected_array = expected.map(|element| Type::Array(Box::new(element.clone())));
+            let Type::Array(element) =
+                infer_expression_with_expected(base, scope, functions, expected_array.as_ref())?
+            else {
                 return Err(Diagnostic::InvalidOperation {
                     message: "indexing requires an array",
                     span: *span,
@@ -517,8 +570,12 @@ pub(super) fn infer_expression(
             Ok(*element)
         }
         SourceExpression::Vec2 { x, y, span } => {
-            let x_type = infer_expression(x, scope, functions)?;
-            let y_type = infer_expression(y, scope, functions)?;
+            let component_expected = match expected {
+                Some(Type::Vec2(element)) => Some(element.as_ref()),
+                _ => None,
+            };
+            let x_type = infer_expression_with_expected(x, scope, functions, component_expected)?;
+            let y_type = infer_expression_with_expected(y, scope, functions, component_expected)?;
             require_type(&x_type, &y_type, *span)?;
             if !is_vec2_element_type(&x_type) {
                 return Err(Diagnostic::InvalidOperation {
@@ -792,32 +849,6 @@ fn evaluate_const(
     Ok(value)
 }
 
-fn infer_expression_with_expected(
-    expression: &SourceExpression,
-    scope: &Scope,
-    functions: &BTreeMap<String, &FunctionDeclaration>,
-    expected: Option<&Type>,
-) -> Result<Type, Diagnostic> {
-    if let SourceExpression::Array { elements, span } = expression
-        && elements.is_empty()
-    {
-        let Some(Type::Array(element)) = expected else {
-            return Err(Diagnostic::InvalidOperation {
-                message: "empty array requires an explicit type context",
-                span: *span,
-            });
-        };
-        if !is_pure_value_type(element) {
-            return Err(Diagnostic::InvalidOperation {
-                message: "array element type must be a pure compile-time value",
-                span: *span,
-            });
-        }
-        return Ok(Type::Array(element.clone()));
-    }
-    infer_expression(expression, scope, functions)
-}
-
 fn evaluate_expression(
     expression: &SourceExpression,
     scope: &Scope,
@@ -825,6 +856,27 @@ fn evaluate_expression(
     functions: &BTreeMap<String, &FunctionDeclaration>,
     const_values: &mut BTreeMap<String, TypedValue>,
     budget: &mut Budget,
+) -> Result<TypedValue, Diagnostic> {
+    evaluate_expression_with_expected(
+        expression,
+        scope,
+        constants,
+        functions,
+        const_values,
+        budget,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_expression_with_expected(
+    expression: &SourceExpression,
+    scope: &Scope,
+    constants: &BTreeMap<String, &ConstDeclaration>,
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+    const_values: &mut BTreeMap<String, TypedValue>,
+    budget: &mut Budget,
+    expected: Option<&Type>,
 ) -> Result<TypedValue, Diagnostic> {
     budget.node(expression.span())?;
     match expression {
@@ -837,32 +889,56 @@ fn evaluate_expression(
         }
         SourceExpression::Reference { name, .. } => Ok(TypedValue::Line(name.clone())),
         SourceExpression::Array { elements, span } => {
+            let expected_element = match expected {
+                Some(Type::Array(element)) => Some(element.as_ref()),
+                _ => None,
+            };
             if elements.is_empty() {
-                return Err(Diagnostic::InvalidOperation {
-                    message: "empty array requires an explicit type context",
-                    span: *span,
+                let Some(element_type) = expected_element else {
+                    return Err(Diagnostic::InvalidOperation {
+                        message: "empty array requires an explicit type context",
+                        span: *span,
+                    });
+                };
+                if !is_pure_value_type(element_type) {
+                    return Err(Diagnostic::InvalidOperation {
+                        message: "array element type must be a pure compile-time value",
+                        span: *span,
+                    });
+                }
+                return Ok(TypedValue::Array {
+                    element_type: Box::new(element_type.clone()),
+                    values: Vec::new(),
                 });
             }
-            let values = elements
-                .iter()
-                .map(|element| {
-                    evaluate_expression(element, scope, constants, functions, const_values, budget)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut values = Vec::with_capacity(elements.len());
+            let mut inferred_element_type = expected_element.cloned();
+            for element in elements {
+                let element_expected = expected_element.or(inferred_element_type.as_ref());
+                let value = evaluate_expression_with_expected(
+                    element,
+                    scope,
+                    constants,
+                    functions,
+                    const_values,
+                    budget,
+                    element_expected,
+                )?;
+                if inferred_element_type.is_none() {
+                    inferred_element_type = Some(value.ty());
+                }
+                values.push(value);
+            }
             if values.windows(2).any(|pair| pair[0].ty() != pair[1].ty()) {
                 return Err(Diagnostic::InvalidOperation {
                     message: "array elements must have one homogeneous type",
                     span: *span,
                 });
             }
-            let element_type =
-                values
-                    .first()
-                    .map(TypedValue::ty)
-                    .ok_or(Diagnostic::InvalidOperation {
-                        message: "empty array requires an explicit type context",
-                        span: *span,
-                    })?;
+            let element_type = inferred_element_type.ok_or(Diagnostic::InvalidOperation {
+                message: "empty array requires an explicit type context",
+                span: *span,
+            })?;
             Ok(TypedValue::Array {
                 element_type: Box::new(element_type),
                 values,
@@ -949,12 +1025,23 @@ fn evaluate_expression(
                     span: *span,
                 });
             };
-            let arguments = arguments
-                .iter()
-                .map(|argument| {
-                    evaluate_expression(argument, scope, constants, functions, const_values, budget)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let parameter_types = signature(name, functions).map(|(parameters, _)| parameters);
+            let mut evaluated_arguments = Vec::with_capacity(arguments.len());
+            for (index, argument) in arguments.iter().enumerate() {
+                let argument_expected = parameter_types
+                    .as_ref()
+                    .and_then(|parameters| parameters.get(index));
+                evaluated_arguments.push(evaluate_expression_with_expected(
+                    argument,
+                    scope,
+                    constants,
+                    functions,
+                    const_values,
+                    budget,
+                    argument_expected,
+                )?);
+            }
+            let arguments = evaluated_arguments;
             if let Some(value) = evaluate_builtin(name, &arguments, *span)? {
                 return Ok(value);
             }
@@ -1050,40 +1137,6 @@ fn evaluate_expression(
             })
         }
     }
-}
-
-fn evaluate_expression_with_expected(
-    expression: &SourceExpression,
-    scope: &Scope,
-    constants: &BTreeMap<String, &ConstDeclaration>,
-    functions: &BTreeMap<String, &FunctionDeclaration>,
-    const_values: &mut BTreeMap<String, TypedValue>,
-    budget: &mut Budget,
-    expected: Option<&Type>,
-) -> Result<TypedValue, Diagnostic> {
-    if let SourceExpression::Array { elements, span } = expression
-        && elements.is_empty()
-    {
-        let Some(Type::Array(element_type)) = expected else {
-            return Err(Diagnostic::InvalidOperation {
-                message: "empty array requires an explicit type context",
-                span: *span,
-            });
-        };
-        budget.node(*span)?;
-        return Ok(TypedValue::Array {
-            element_type: element_type.clone(),
-            values: Vec::new(),
-        });
-    }
-    evaluate_expression(
-        expression,
-        scope,
-        constants,
-        functions,
-        const_values,
-        budget,
-    )
 }
 
 struct ComparisonStep<'expression> {
@@ -1391,12 +1444,15 @@ fn evaluate_unary(
         (UnaryOperator::Negate, TypedValue::Angle(value)) => {
             finite(-value, span).map(TypedValue::Angle)
         }
-        (UnaryOperator::Negate, TypedValue::Beat(value)) => Beat::new(
-            value.numerator().checked_neg().ok_or_else(invalid)?,
-            value.denominator(),
-        )
-        .map(TypedValue::Beat)
-        .map_err(|_| invalid()),
+        (UnaryOperator::Negate, TypedValue::Beat(value)) => {
+            let numerator = value
+                .numerator()
+                .checked_neg()
+                .ok_or(Diagnostic::NumericOverflow { span })?;
+            Beat::new(numerator, value.denominator())
+                .map(TypedValue::Beat)
+                .map_err(|_| Diagnostic::NumericOverflow { span })
+        }
         _ => Err(invalid()),
     }
 }
@@ -1517,6 +1573,18 @@ fn arithmetic(
             })
         }
         (TypedValue::Beat(left), TypedValue::Beat(right)) => beat_pair(left, operator, right, span),
+        (TypedValue::Beat(value), TypedValue::Int(scalar)) => {
+            scale_beat_int(value, operator, scalar, span)
+        }
+        (TypedValue::Beat(value), TypedValue::Float(scalar)) => {
+            scale_beat_float(value, operator, scalar, span)
+        }
+        (TypedValue::Int(scalar), TypedValue::Beat(value)) if operator == Op::Multiply => {
+            scale_beat_int(value, operator, scalar, span)
+        }
+        (TypedValue::Float(scalar), TypedValue::Beat(value)) if operator == Op::Multiply => {
+            scale_beat_float(value, operator, scalar, span)
+        }
         (unit, TypedValue::Int(scalar)) => scale_unit(unit, operator, scalar as f64, span),
         (unit, TypedValue::Float(scalar)) => scale_unit(unit, operator, scalar, span),
         (TypedValue::Int(scalar), unit) if operator == Op::Multiply => {
@@ -1560,34 +1628,14 @@ fn beat_pair(
 ) -> Result<TypedValue, Diagnostic> {
     use BinaryOperator as Op;
     match operator {
-        Op::Add => left.checked_add(right).map(TypedValue::Beat).map_err(|_| {
-            Diagnostic::InvalidOperation {
-                message: "beat arithmetic failed",
-                span,
-            }
-        }),
-        Op::Subtract => {
-            let numerator =
-                right
-                    .numerator()
-                    .checked_neg()
-                    .ok_or(Diagnostic::InvalidOperation {
-                        message: "beat arithmetic failed",
-                        span,
-                    })?;
-            let negated = Beat::new(numerator, right.denominator()).map_err(|_| {
-                Diagnostic::InvalidOperation {
-                    message: "beat arithmetic failed",
-                    span,
-                }
-            })?;
-            left.checked_add(negated)
-                .map(TypedValue::Beat)
-                .map_err(|_| Diagnostic::InvalidOperation {
-                    message: "beat arithmetic failed",
-                    span,
-                })
-        }
+        Op::Add => left
+            .checked_add(right)
+            .map(TypedValue::Beat)
+            .map_err(|error| beat_error(error, span)),
+        Op::Subtract => left
+            .checked_sub(right)
+            .map(TypedValue::Beat)
+            .map_err(|error| beat_error(error, span)),
         Op::Divide if right.numerator() == 0 => Err(Diagnostic::DivideByZero { span }),
         Op::Divide => finite_divide(
             left.numerator() as f64 / left.denominator() as f64,
@@ -1596,6 +1644,49 @@ fn beat_pair(
         )
         .map(TypedValue::Float),
         _ => invalid_binary(span),
+    }
+}
+
+fn scale_beat_int(
+    value: Beat,
+    operator: BinaryOperator,
+    scalar: i64,
+    span: SourceSpan,
+) -> Result<TypedValue, Diagnostic> {
+    use BinaryOperator as Op;
+    let result = match operator {
+        Op::Multiply => value.checked_mul_i64(scalar),
+        Op::Divide if scalar == 0 => return Err(Diagnostic::DivideByZero { span }),
+        Op::Divide => value.checked_div_i64(scalar),
+        _ => return invalid_binary(span),
+    };
+    result
+        .map(TypedValue::Beat)
+        .map_err(|error| beat_error(error, span))
+}
+
+fn scale_beat_float(
+    value: Beat,
+    operator: BinaryOperator,
+    scalar: f64,
+    span: SourceSpan,
+) -> Result<TypedValue, Diagnostic> {
+    use BinaryOperator as Op;
+    let result = match operator {
+        Op::Multiply => value.checked_mul_float(scalar),
+        Op::Divide if scalar == 0.0 => return Err(Diagnostic::DivideByZero { span }),
+        Op::Divide => value.checked_div_float(scalar),
+        _ => return invalid_binary(span),
+    };
+    result
+        .map(TypedValue::Beat)
+        .map_err(|error| beat_error(error, span))
+}
+
+fn beat_error(error: BeatError, span: SourceSpan) -> Diagnostic {
+    match error {
+        BeatError::ZeroDenominator => Diagnostic::DivideByZero { span },
+        BeatError::Overflow => Diagnostic::NumericOverflow { span },
     }
 }
 
@@ -1615,41 +1706,6 @@ fn scale_unit(
         TypedValue::Time(value) => scale(value).map(TypedValue::Time),
         TypedValue::Length(value) => scale(value).map(TypedValue::Length),
         TypedValue::Angle(value) => scale(value).map(TypedValue::Angle),
-        TypedValue::Beat(value) => {
-            if !scalar.is_finite() || scalar.fract() != 0.0 {
-                return Err(Diagnostic::InvalidOperation {
-                    message: "beat scaling requires an integer scalar",
-                    span,
-                });
-            }
-            let scalar = scalar as i64;
-            let (numerator, denominator) = match operator {
-                Op::Multiply => (
-                    value.numerator().checked_mul(scalar),
-                    Some(value.denominator()),
-                ),
-                Op::Divide if scalar != 0 => (
-                    Some(value.numerator()),
-                    value.denominator().checked_mul(scalar),
-                ),
-                _ => (None, None),
-            };
-            Beat::new(
-                numerator.ok_or(Diagnostic::InvalidOperation {
-                    message: "beat arithmetic failed",
-                    span,
-                })?,
-                denominator.ok_or(Diagnostic::InvalidOperation {
-                    message: "beat arithmetic failed",
-                    span,
-                })?,
-            )
-            .map(TypedValue::Beat)
-            .map_err(|_| Diagnostic::InvalidOperation {
-                message: "beat arithmetic failed",
-                span,
-            })
-        }
         _ => invalid_binary(span),
     }
 }

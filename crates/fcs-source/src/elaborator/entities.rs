@@ -9,7 +9,9 @@ use crate::ast::{
 use crate::diagnostic::{ExpansionTraceFrame, ExpansionTraceKind};
 use crate::schema::{ConstructionSchema, EntitySchema, FieldConstraint};
 
-use super::eval::{evaluate_with_context, infer_expression};
+use super::eval::{
+    evaluate_with_context, evaluate_with_context_expected, infer_expression_with_expected,
+};
 use super::scope::{Binding, Scope};
 use super::{CompileTimeContext, DependencyTraceNode, ElaboratorError as Diagnostic};
 
@@ -140,7 +142,11 @@ impl<'a> StaticEntityValidator<'a> {
         for statement in statements {
             match statement {
                 TemplateStatement::Let(statement) => {
-                    let actual = self.validate_expression(&statement.initializer, &scope)?;
+                    let actual = self.validate_expression_with_expected(
+                        &statement.initializer,
+                        &scope,
+                        Some(&statement.ty),
+                    )?;
                     require_static_type(&statement.ty, &actual, statement.initializer.span())?;
                     scope.declare(
                         statement.name.clone(),
@@ -337,7 +343,11 @@ impl<'a> StaticEntityValidator<'a> {
         for item in items {
             match item {
                 GeneratorItem::Let(statement) => {
-                    let actual = self.validate_expression(&statement.initializer, &scope)?;
+                    let actual = self.validate_expression_with_expected(
+                        &statement.initializer,
+                        &scope,
+                        Some(&statement.ty),
+                    )?;
                     require_static_type(&statement.ty, &actual, statement.initializer.span())?;
                     scope.declare(
                         statement.name.clone(),
@@ -450,7 +460,11 @@ impl<'a> StaticEntityValidator<'a> {
                     });
                 }
                 for (argument, parameter) in arguments.iter().zip(&template.parameters) {
-                    let actual = self.validate_expression(argument, scope)?;
+                    let actual = self.validate_expression_with_expected(
+                        argument,
+                        scope,
+                        Some(&parameter.ty),
+                    )?;
                     require_static_type(&parameter.ty, &actual, argument.span())?;
                 }
                 require_static_type(expected_type, &template.return_type, *span)
@@ -539,13 +553,18 @@ impl<'a> StaticEntityValidator<'a> {
                     span: field.value.span(),
                 });
             }
-            let actual = self.validate_expression(&field.value, scope)?;
+            let actual = self.validate_expression_with_expected(
+                &field.value,
+                scope,
+                Some(&field_schema.ty),
+            )?;
             require_static_type(&field_schema.ty, &actual, field.value.span())?;
-            if let Ok(value) = evaluate_with_context(
+            if let Ok(value) = evaluate_with_context_expected(
                 &field.value,
                 self.document.definitions.as_ref(),
                 &BTreeMap::new(),
                 &self.context,
+                Some(&field_schema.ty),
             ) {
                 validate_field_type(field_schema, &value, field.value.span())?;
             }
@@ -588,8 +607,17 @@ impl<'a> StaticEntityValidator<'a> {
         expression: &SourceExpression,
         scope: &Scope,
     ) -> Result<Type, Diagnostic> {
+        self.validate_expression_with_expected(expression, scope, None)
+    }
+
+    fn validate_expression_with_expected(
+        &self,
+        expression: &SourceExpression,
+        scope: &Scope,
+        expected: Option<&Type>,
+    ) -> Result<Type, Diagnostic> {
         validate_line_references(expression, &self.line_names)?;
-        infer_expression(expression, scope, &self.functions)
+        infer_expression_with_expected(expression, scope, &self.functions, expected)
     }
 }
 
@@ -922,11 +950,12 @@ impl<'a> ExpansionContext<'a> {
         for item in items {
             match item {
                 GeneratorItem::Let(statement) => {
-                    let value = evaluate_with_context(
+                    let value = evaluate_with_context_expected(
                         &statement.initializer,
                         self.document.definitions.as_ref(),
                         &local_bindings,
                         &self.context,
+                        Some(&statement.ty),
                     )?;
                     if value.ty() != statement.ty {
                         return Err(Diagnostic::TypeMismatch {
@@ -1171,11 +1200,12 @@ impl<'a> ExpansionContext<'a> {
         ));
         let mut local_bindings = bindings.clone();
         for (argument, parameter) in arguments.iter().zip(&template.parameters) {
-            let value = evaluate_with_context(
+            let value = evaluate_with_context_expected(
                 argument,
                 self.document.definitions.as_ref(),
                 bindings,
                 &self.context,
+                Some(&parameter.ty),
             )?;
             if value.ty() != parameter.ty {
                 return Err(Diagnostic::TypeMismatch {
@@ -1216,11 +1246,12 @@ impl<'a> ExpansionContext<'a> {
         for statement in statements {
             match statement {
                 TemplateStatement::Let(statement) => {
-                    let value = evaluate_with_context(
+                    let value = evaluate_with_context_expected(
                         &statement.initializer,
                         self.document.definitions.as_ref(),
                         &local_bindings,
                         &self.context,
+                        Some(&statement.ty),
                     )?;
                     if value.ty() != statement.ty {
                         return Err(Diagnostic::TypeMismatch {
@@ -1315,11 +1346,12 @@ impl<'a> ExpansionContext<'a> {
                         field: path.clone(),
                         span: field.path.span,
                     })?;
-            let value = evaluate_with_context(
+            let value = evaluate_with_context_expected(
                 &field.value,
                 self.document.definitions.as_ref(),
                 bindings,
                 &self.context,
+                Some(&field_schema.ty),
             )?;
             validate_field_type(field_schema, &value, field.value.span())?;
             entity.replace_field(ExpandedField::new(path, value, field.span));
@@ -1352,11 +1384,12 @@ impl<'a> ExpansionContext<'a> {
                         field: path.clone(),
                         span: field.path.span,
                     })?;
-            let value = evaluate_with_context(
+            let value = evaluate_with_context_expected(
                 &field.value,
                 self.document.definitions.as_ref(),
                 bindings,
                 &self.context,
+                Some(&field_schema.ty),
             )?;
             validate_field_type(field_schema, &value, field.value.span())?;
             result.insert(path.clone(), ExpandedField::new(path, value, field.span));
