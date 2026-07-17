@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::ast::{
     CollectionBlock, CollectionItem, Definition, DefinitionsBlock, Document, EntityConstructor,
     EntityExpression, ExpandedCollection, ExpandedEntity, ExpandedField, Generator, GeneratorItem,
-    SourceExpression, SourceLiteral, SourceSpan, TemplateDeclaration, TemplateStatement, Type,
-    TypedValue, WithExpression,
+    GeneratorOwner, SourceExpression, SourceLiteral, SourceSpan, TemplateDeclaration,
+    TemplateStatement, Type, TypedValue, WithExpression,
 };
 use crate::diagnostic::{ExpansionTraceFrame, ExpansionTraceKind};
 use crate::schema::{ConstructionSchema, EntitySchema, FieldConstraint};
@@ -267,7 +267,37 @@ impl<'a> StaticEntityValidator<'a> {
         expected_type: &Type,
         schema: &EntitySchema,
     ) -> Result<(), Diagnostic> {
-        super::generator::evaluate_range_with_context(self.document, generator, &self.context)?;
+        if let GeneratorOwner::Collection { name } = generator.owner.as_ref() {
+            self.context.push_trace(ExpansionTraceFrame::new(
+                ExpansionTraceKind::Collection,
+                Some(name.clone()),
+                None,
+                None,
+                Some(generator.span),
+            ));
+        }
+        self.context.push_trace(ExpansionTraceFrame::new(
+            ExpansionTraceKind::Generator,
+            Some(generator.variable.clone()),
+            None,
+            None,
+            Some(generator.span),
+        ));
+        self.context.push_trace(ExpansionTraceFrame::new(
+            ExpansionTraceKind::Range,
+            None,
+            None,
+            None,
+            Some(generator.range.span),
+        ));
+        let range_result =
+            super::generator::evaluate_range_with_context(self.document, generator, &self.context);
+        self.context.pop_trace();
+        self.context.pop_trace();
+        if matches!(generator.owner.as_ref(), GeneratorOwner::Collection { .. }) {
+            self.context.pop_trace();
+        }
+        range_result?;
         let mut scope = self.root.child();
         scope.declare(
             "index".to_owned(),

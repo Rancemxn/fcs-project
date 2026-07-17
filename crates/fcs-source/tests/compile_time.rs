@@ -1664,6 +1664,43 @@ definitions { const value: int = 1 + 2; }"#;
 }
 
 #[test]
+fn generator_range_budget_failure_retains_preflight_trace() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections { notes {
+  generate i: int in 0..=0 step 1 {
+    emit tap { gameplay.time: 0beat; };
+  }
+} }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let errors = elaborate(
+        &document,
+        phase2_schema(),
+        CompileTimeLimits {
+            max_expression_nodes: 0,
+            ..CompileTimeLimits::default()
+        },
+    )
+    .expect_err("range preflight should exceed the expression-node budget");
+    assert_eq!(
+        errors[0].code(),
+        DiagnosticCode::COMPILE_TIME_BUDGET_EXCEEDED
+    );
+    let trace = errors[0].expansion_trace();
+    assert!(trace.iter().any(|frame| {
+        frame.kind() == ExpansionTraceKind::Collection && frame.subject() == Some("notes")
+    }));
+    assert!(trace.iter().any(|frame| {
+        frame.kind() == ExpansionTraceKind::Generator && frame.subject() == Some("i")
+    }));
+    assert!(
+        trace
+            .iter()
+            .any(|frame| frame.kind() == ExpansionTraceKind::Range)
+    );
+}
+
+#[test]
 fn expansion_depth_budget_is_checked_at_nested_entity_depth() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }
