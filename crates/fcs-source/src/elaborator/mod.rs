@@ -59,6 +59,11 @@ enum ElaboratorError {
         actual: Type,
         span: SourceSpan,
     },
+    InvalidConversion {
+        expected: Type,
+        actual: Type,
+        span: SourceSpan,
+    },
     UnknownName {
         name: String,
         span: SourceSpan,
@@ -122,6 +127,15 @@ enum ElaboratorError {
         span: SourceSpan,
     },
     NumericOverflow {
+        span: SourceSpan,
+    },
+    DivideByZero {
+        span: SourceSpan,
+    },
+    NonFinite {
+        span: SourceSpan,
+    },
+    NumericDomain {
         span: SourceSpan,
     },
     InvalidOperation {
@@ -225,6 +239,16 @@ impl ElaboratorError {
                 format!("expected type {expected}, found {actual}"),
                 span,
             ),
+            Self::InvalidConversion {
+                expected,
+                actual,
+                span,
+            } => Diagnostic::new(
+                DiagnosticCode::TYPE_INVALID_CONVERSION,
+                DiagnosticStage::Elaborate,
+                format!("cannot convert {actual} to {expected}"),
+                span,
+            ),
             Self::UnknownName { name, span }
             | Self::UnknownTemplate { name, span }
             | Self::UnknownCollection { name, span } => Diagnostic::new(
@@ -322,9 +346,27 @@ impl ElaboratorError {
                 "integer magnitude is outside the signed 64-bit range",
                 span,
             ),
+            Self::DivideByZero { span } => Diagnostic::new(
+                DiagnosticCode::NUMERIC_DIVIDE_BY_ZERO,
+                DiagnosticStage::Elaborate,
+                "division or remainder by zero",
+                span,
+            ),
+            Self::NonFinite { span } => Diagnostic::new(
+                DiagnosticCode::NUMERIC_NON_FINITE,
+                DiagnosticStage::Elaborate,
+                "compile-time arithmetic produced a non-finite value",
+                span,
+            ),
+            Self::NumericDomain { span } => Diagnostic::new(
+                DiagnosticCode::NUMERIC_DOMAIN,
+                DiagnosticStage::Elaborate,
+                "compile-time value is outside the builtin domain",
+                span,
+            ),
             Self::InvalidOperation { message, span } => Diagnostic::new(
                 DiagnosticCode::TYPE_INVALID_OPERATION,
-                DiagnosticStage::Evaluate,
+                DiagnosticStage::Elaborate,
                 message,
                 span,
             ),

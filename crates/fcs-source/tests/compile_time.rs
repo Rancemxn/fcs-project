@@ -285,6 +285,241 @@ definitions { const value: float = 1 + 2.0; }"#;
 }
 
 #[test]
+fn integer_division_by_zero_uses_the_static_numeric_category() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: int = 1 / 0; }"#;
+
+    assert_code(
+        elaborate_source(source),
+        DiagnosticCode::NUMERIC_DIVIDE_BY_ZERO,
+    );
+}
+
+#[test]
+fn floating_and_unit_division_by_zero_use_the_static_numeric_category() {
+    for (ty, expression) in [
+        ("float", "1.0 / 0.0"),
+        ("float", "1px / 0px"),
+        ("length", "1px / 0.0"),
+        ("float", "1beat / 0beat"),
+    ] {
+        let source = format!(
+            "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ const value: {ty} = {expression}; }}"
+        );
+        assert_code(
+            elaborate_source(&source),
+            DiagnosticCode::NUMERIC_DIVIDE_BY_ZERO,
+        );
+    }
+}
+
+#[test]
+fn non_finite_compile_time_arithmetic_uses_the_numeric_category() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: float = 1e308 * 1e308; }"#;
+
+    assert_code(elaborate_source(source), DiagnosticCode::NUMERIC_NON_FINITE);
+}
+
+#[test]
+fn invalid_builtin_domain_uses_the_static_numeric_category() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: float = sqrt(-1.0); }"#;
+
+    assert_code(elaborate_source(source), DiagnosticCode::NUMERIC_DOMAIN);
+}
+
+#[test]
+fn homogeneous_arrays_are_typed_and_indexed_at_compile_time() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const values: array<int> = [1, 2, 3];
+  const third: int = values[2];
+}"#;
+
+    assert!(elaborate_source(source).is_ok());
+}
+
+#[test]
+fn array_and_vector_generic_constraints_are_checked_statistically() {
+    let mixed = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const values: array<int> = [1, 2.0]; }"#;
+    assert_code(elaborate_source(mixed), DiagnosticCode::TYPE_MISMATCH);
+
+    let invalid_vec = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: vec2<bool> = vec2(true, false); }"#;
+    assert_code(
+        elaborate_source(invalid_vec),
+        DiagnosticCode::TYPE_INVALID_OPERATION,
+    );
+
+    let invalid_array = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const values: array<Note> = [1]; }"#;
+    assert_code(
+        elaborate_source(invalid_array),
+        DiagnosticCode::TYPE_INVALID_OPERATION,
+    );
+}
+
+#[test]
+fn empty_arrays_use_the_declared_element_type_context() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const values: array<int> = []; }"#;
+
+    assert!(elaborate_source(source).is_ok());
+}
+
+#[test]
+fn empty_array_context_flows_through_function_locals_and_returns() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  fn empty() -> array<int> {
+    let values: array<int> = [];
+    return values;
+  }
+  const result: array<int> = empty();
+}"#;
+
+    assert!(elaborate_source(source).is_ok());
+}
+
+#[test]
+fn array_index_must_be_a_compile_time_in_bounds_int() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const values: array<int> = [1, 2];
+  const missing: int = values[2];
+}"#;
+
+    assert_code(elaborate_source(source), DiagnosticCode::NUMERIC_DOMAIN);
+}
+
+#[test]
+fn array_length_is_a_compile_time_int_field() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const count: int = [1, 2, 3].length; }"#;
+
+    assert!(elaborate_source(source).is_ok());
+}
+
+#[test]
+fn evaluates_the_complete_scalar_builtin_surface() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const absolute: float = abs(-2.5);
+  const minimum: float = min(1.0, 2.0);
+  const maximum: float = max(1.0, 2.0);
+  const bounded: float = clamp(2.0, 0.0, 1.0);
+  const floored: float = floor(2.5);
+  const ceiled: float = ceil(2.5);
+  const rounded: float = round(2.5);
+  const root: float = sqrt(4.0);
+  const exponential: float = exp(0.0);
+  const logarithm: float = ln(1.0);
+  const tangent: float = tan(0.0);
+  const arcsine: float = asin(0.0);
+  const arccosine: float = acos(1.0);
+  const arctangent: float = atan(0.0);
+  const quadrant: float = atan2(0.0, 1.0);
+  const seconds_value: float = seconds(1s);
+  const radians_value: float = radians(180deg);
+}"#;
+
+    assert!(elaborate_source(source).is_ok());
+}
+
+#[test]
+fn scalar_builtins_preserve_int_and_unit_types() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const absolute_int: int = abs(-2);
+  const absolute_length: length = abs(-2px);
+  const minimum_length: length = min(1px, 2px);
+  const maximum_length: length = max(1px, 2px);
+  const bounded_length: length = clamp(3px, 0px, 2px);
+}"#;
+
+    assert!(elaborate_source(source).is_ok());
+}
+
+#[test]
+fn power_is_checked_and_evaluated_for_int_and_float_scalars() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const integer_power: int = 2 ** 3;
+  const float_power: float = 4.0 ** 0.5;
+}"#;
+
+    assert!(elaborate_source(source).is_ok());
+}
+
+#[test]
+fn floating_remainder_is_not_in_the_operator_matrix() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: float = 3.0 % 2.0; }"#;
+
+    assert_code(
+        elaborate_source(source),
+        DiagnosticCode::TYPE_INVALID_OPERATION,
+    );
+}
+
+#[test]
+fn vector_operator_matrix_supports_add_subtract_and_scalar_scale() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const sum: vec2<length> = vec2(1px, 2px) + vec2(3px, 4px);
+  const difference: vec2<length> = vec2(3px, 4px) - vec2(1px, 2px);
+  const scaled_right: vec2<length> = vec2(1px, 2px) * 2;
+  const scaled_left: vec2<length> = 2 * vec2(1px, 2px);
+  const divided: vec2<length> = vec2(2px, 4px) / 2;
+}"#;
+
+    assert!(elaborate_source(source).is_ok());
+}
+
+#[test]
+fn explicit_conversion_rejects_wrong_units_with_conversion_category() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: float = seconds(1beat); }"#;
+
+    assert_code(
+        elaborate_source(source),
+        DiagnosticCode::TYPE_INVALID_CONVERSION,
+    );
+}
+
+#[test]
+fn scalar_builtin_domain_constraints_are_static_errors() {
+    for (ty, expression) in [
+        ("float", "clamp(1.0, 2.0, 0.0)"),
+        ("bool", "approxEq(1.0, 1.0, -1.0)"),
+    ] {
+        let source = format!(
+            "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ const value: {ty} = {expression}; }}"
+        );
+        assert_code(elaborate_source(&source), DiagnosticCode::NUMERIC_DOMAIN);
+    }
+}
+
+#[test]
 fn evaluates_fixed_builtins_and_diagnoses_bad_calls() {
     let valid = r#"#fcs 5.0.0
 format { profile: fragment; }
@@ -1870,17 +2105,13 @@ definitions {
 }
 
 #[test]
-fn power_is_rejected_by_the_i0_elaborator_boundary() {
+fn power_is_implemented_at_the_i2_type_matrix_boundary() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }
 definitions { const value: int = 2 ** 3; }"#;
     let document = parse_document(source).into_result().unwrap();
-    let diagnostics = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
-        .expect_err("I0 does not define power evaluation");
-    assert_eq!(
-        diagnostics[0].code(),
-        DiagnosticCode::TYPE_INVALID_OPERATION
-    );
+    elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect("I2 type matrix evaluates scalar power");
 }
 
 fn binary_operands(

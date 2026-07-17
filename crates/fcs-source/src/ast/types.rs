@@ -347,6 +347,14 @@ pub enum TypedValue {
     Color(Color),
     /// A representation-level vector value whose components must have equal types.
     Vec2(Box<TypedValue>, Box<TypedValue>),
+    /// An immutable homogeneous compile-time array.
+    ///
+    /// The element type is retained explicitly so an empty array can remain typed
+    /// when its surrounding declaration supplies the required context.
+    Array {
+        element_type: Box<Type>,
+        values: Vec<TypedValue>,
+    },
 }
 
 impl TypedValue {
@@ -357,7 +365,8 @@ impl TypedValue {
     pub fn vec2(x: TypedValue, y: TypedValue) -> Option<Self> {
         let x_type = x.checked_type()?;
         let y_type = y.checked_type()?;
-        (x_type == y_type).then(|| Self::Vec2(Box::new(x), Box::new(y)))
+        (x_type == y_type && is_vec2_element_type(&x_type))
+            .then(|| Self::Vec2(Box::new(x), Box::new(y)))
     }
 
     /// Returns this value's FCS language type.
@@ -386,9 +395,47 @@ impl TypedValue {
             Self::Vec2(x, y) => {
                 let x_type = x.checked_type()?;
                 let y_type = y.checked_type()?;
-                (x_type == y_type).then(|| Type::Vec2(Box::new(x_type)))
+                (x_type == y_type && is_vec2_element_type(&x_type))
+                    .then(|| Type::Vec2(Box::new(x_type)))
             }
+            Self::Array {
+                element_type,
+                values,
+            } => (is_pure_value_type(element_type)
+                && values
+                    .iter()
+                    .all(|value| value.checked_type().as_ref() == Some(element_type)))
+            .then(|| Type::Array(element_type.clone())),
         }
+    }
+}
+
+fn is_vec2_element_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Int | Type::Float | Type::Time | Type::Beat | Type::Length | Type::Angle
+    )
+}
+
+fn is_pure_value_type(ty: &Type) -> bool {
+    match ty {
+        Type::Bool
+        | Type::Int
+        | Type::Float
+        | Type::String
+        | Type::Time
+        | Type::Beat
+        | Type::Length
+        | Type::Angle
+        | Type::Color => true,
+        Type::Vec2(element) => is_vec2_element_type(element),
+        Type::Array(element) => is_pure_value_type(element),
+        Type::Note
+        | Type::Line
+        | Type::RenderNode
+        | Type::Track(_)
+        | Type::TrackSegment(_)
+        | Type::Keyframe(_) => false,
     }
 }
 

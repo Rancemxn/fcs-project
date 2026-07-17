@@ -11,6 +11,11 @@ use crate::ast::{
 use super::scope::{Binding, Scope};
 use super::{CompileTimeLimits, ElaboratorError as Diagnostic};
 
+const BUILTIN_NAMES: &[&str] = &[
+    "abs", "min", "max", "clamp", "floor", "ceil", "round", "sqrt", "exp", "ln", "pow", "sin",
+    "cos", "tan", "asin", "acos", "atan", "atan2", "approxEq", "toFloat", "seconds", "radians",
+];
+
 pub(super) fn check_and_evaluate(
     definitions: &DefinitionsBlock,
     limits: CompileTimeLimits,
@@ -20,11 +25,11 @@ pub(super) fn check_and_evaluate(
     let builtin_span = SourceSpan::new(0, 0);
     let mut global_names = BTreeMap::from([
         ("pi".to_owned(), builtin_span),
-        ("sin".to_owned(), builtin_span),
-        ("cos".to_owned(), builtin_span),
-        ("toFloat".to_owned(), builtin_span),
-        ("approxEq".to_owned(), builtin_span),
+        ("tau".to_owned(), builtin_span),
     ]);
+    for builtin in BUILTIN_NAMES {
+        global_names.insert((*builtin).to_owned(), builtin_span);
+    }
     for definition in &definitions.declarations {
         let (name, span) = match definition {
             Definition::Const(declaration) => (&declaration.name, declaration.name_span),
@@ -40,12 +45,22 @@ pub(super) fn check_and_evaluate(
         }
         match definition {
             Definition::Const(declaration) => {
+                validate_static_type(&declaration.ty, declaration.span)?;
                 constants.insert(declaration.name.clone(), declaration);
             }
             Definition::Function(declaration) => {
+                for parameter in &declaration.parameters {
+                    validate_static_type(&parameter.ty, parameter.span)?;
+                }
+                validate_static_type(&declaration.return_type, declaration.span)?;
                 functions.insert(declaration.name.clone(), declaration);
             }
-            Definition::Template(_) => {}
+            Definition::Template(declaration) => {
+                validate_static_type(&declaration.return_type, declaration.span)?;
+                for parameter in &declaration.parameters {
+                    validate_static_type(&parameter.ty, parameter.span)?;
+                }
+            }
         }
     }
 
@@ -58,8 +73,16 @@ pub(super) fn check_and_evaluate(
             span: SourceSpan::new(0, 0),
         },
     )?;
-    for builtin in ["sin", "cos", "toFloat", "approxEq"] {
-        root.reserve(builtin.to_owned(), builtin_span);
+    root.declare(
+        "tau".to_owned(),
+        Binding {
+            ty: Type::Float,
+            value: Some(TypedValue::Float(std::f64::consts::TAU)),
+            span: builtin_span,
+        },
+    )?;
+    for builtin in BUILTIN_NAMES {
+        root.reserve((*builtin).to_owned(), builtin_span);
     }
     for declaration in functions.values() {
         root.reserve(declaration.name.clone(), declaration.name_span);
@@ -76,7 +99,12 @@ pub(super) fn check_and_evaluate(
     }
 
     for declaration in constants.values() {
-        let actual = infer_expression(&declaration.initializer, &root, &functions)?;
+        let actual = infer_expression_with_expected(
+            &declaration.initializer,
+            &root,
+            &functions,
+            Some(&declaration.ty),
+        )?;
         require_type(&declaration.ty, &actual, declaration.initializer.span())?;
     }
     for declaration in functions.values() {
@@ -118,8 +146,16 @@ pub(super) fn evaluate_with_bindings(
             span: builtin_span,
         },
     )?;
-    for builtin in ["sin", "cos", "toFloat", "approxEq"] {
-        root.reserve(builtin.to_owned(), builtin_span);
+    root.declare(
+        "tau".to_owned(),
+        Binding {
+            ty: Type::Float,
+            value: Some(TypedValue::Float(std::f64::consts::TAU)),
+            span: builtin_span,
+        },
+    )?;
+    for builtin in BUILTIN_NAMES {
+        root.reserve((*builtin).to_owned(), builtin_span);
     }
     if let Some(definitions) = definitions {
         for definition in &definitions.declarations {
@@ -222,7 +258,12 @@ fn check_block(
     for statement in statements {
         match statement {
             FunctionStatement::Let(statement) => {
-                let actual = infer_expression(&statement.initializer, &scope, functions)?;
+                let actual = infer_expression_with_expected(
+                    &statement.initializer,
+                    &scope,
+                    functions,
+                    Some(&statement.ty),
+                )?;
                 require_type(&statement.ty, &actual, statement.initializer.span())?;
                 scope.declare(
                     statement.name.clone(),
@@ -276,14 +317,35 @@ fn infer_expression(
                 })
             })
         }
-        SourceExpression::Array { span, .. }
-        | SourceExpression::Object { span, .. }
+        SourceExpression::Object { span, .. }
         | SourceExpression::Reference { span, .. }
-        | SourceExpression::Index { span, .. }
         | SourceExpression::Choose { span, .. } => Err(Diagnostic::FeatureUnavailable {
             feature: "extended source expression",
             span: *span,
         }),
+        SourceExpression::Array { elements, span } => {
+            let mut element_type = None;
+            for element in elements {
+                let ty = infer_expression(element, scope, functions)?;
+                if !is_pure_value_type(&ty) {
+                    return Err(Diagnostic::InvalidOperation {
+                        message: "array elements must be pure compile-time values",
+                        span: *span,
+                    });
+                }
+                if let Some(expected) = &element_type {
+                    require_type(expected, &ty, element.span())?;
+                } else {
+                    element_type = Some(ty);
+                }
+            }
+            element_type
+                .map(|element| Type::Array(Box::new(element)))
+                .ok_or(Diagnostic::InvalidOperation {
+                    message: "empty array requires an explicit type context",
+                    span: *span,
+                })
+        }
         SourceExpression::Name { name, span } => scope
             .lookup(name)
             .map(|binding| binding.ty.clone())
@@ -330,6 +392,10 @@ fn infer_expression(
                     span: *span,
                 });
             };
+            if let Some(return_type) = infer_polymorphic_builtin(name, arguments, scope, functions)?
+            {
+                return Ok(return_type);
+            }
             let (parameters, return_type) =
                 signature(name, functions).ok_or_else(|| Diagnostic::UnknownName {
                     name: name.clone(),
@@ -345,31 +411,44 @@ fn infer_expression(
             }
             for (argument, expected) in arguments.iter().zip(parameters) {
                 let actual = infer_expression(argument, scope, functions)?;
+                if matches!(name.as_str(), "toFloat" | "seconds" | "radians") && expected != actual
+                {
+                    return Err(Diagnostic::InvalidConversion {
+                        expected,
+                        actual,
+                        span: argument.span(),
+                    });
+                }
                 require_type(&expected, &actual, argument.span())?;
             }
             Ok(return_type)
         }
         SourceExpression::FieldAccess { base, field, span } => {
-            let Type::Vec2(element) = infer_expression(base, scope, functions)? else {
+            match infer_expression(base, scope, functions)? {
+                Type::Vec2(element) if matches!(field.as_str(), "x" | "y") => Ok(*element),
+                Type::Array(_) if field == "length" => Ok(Type::Int),
+                _ => Err(Diagnostic::InvalidOperation {
+                    message: "unknown field for compile-time value",
+                    span: *span,
+                }),
+            }
+        }
+        SourceExpression::Index { base, index, span } => {
+            let Type::Array(element) = infer_expression(base, scope, functions)? else {
                 return Err(Diagnostic::InvalidOperation {
-                    message: "field access requires vec2",
+                    message: "indexing requires an array",
                     span: *span,
                 });
             };
-            if matches!(field.as_str(), "x" | "y") {
-                Ok(*element)
-            } else {
-                Err(Diagnostic::InvalidOperation {
-                    message: "unknown vec2 field",
-                    span: *span,
-                })
-            }
+            let index_type = infer_expression(index, scope, functions)?;
+            require_type(&Type::Int, &index_type, index.span())?;
+            Ok(*element)
         }
         SourceExpression::Vec2 { x, y, span } => {
             let x_type = infer_expression(x, scope, functions)?;
             let y_type = infer_expression(y, scope, functions)?;
             require_type(&x_type, &y_type, *span)?;
-            if !is_scalar_value_type(&x_type) {
+            if !is_vec2_element_type(&x_type) {
                 return Err(Diagnostic::InvalidOperation {
                     message: "invalid vec2 element type",
                     span: *span,
@@ -385,9 +464,13 @@ fn signature(
     functions: &BTreeMap<String, &FunctionDeclaration>,
 ) -> Option<(Vec<Type>, Type)> {
     let builtin = match name {
-        "sin" | "cos" => Some((vec![Type::Float], Type::Float)),
+        "floor" | "ceil" | "round" | "sqrt" | "exp" | "ln" | "sin" | "cos" | "tan" | "asin"
+        | "acos" | "atan" => Some((vec![Type::Float], Type::Float)),
+        "pow" | "atan2" => Some((vec![Type::Float, Type::Float], Type::Float)),
         "toFloat" => Some((vec![Type::Int], Type::Float)),
         "approxEq" => Some((vec![Type::Float, Type::Float, Type::Float], Type::Bool)),
+        "seconds" => Some((vec![Type::Time], Type::Float)),
+        "radians" => Some((vec![Type::Angle], Type::Float)),
         _ => None,
     };
     builtin.or_else(|| {
@@ -404,6 +487,52 @@ fn signature(
     })
 }
 
+fn infer_polymorphic_builtin(
+    name: &str,
+    arguments: &[SourceExpression],
+    scope: &Scope,
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+) -> Result<Option<Type>, Diagnostic> {
+    if !matches!(name, "abs" | "min" | "max" | "clamp") {
+        return Ok(None);
+    }
+    let types = arguments
+        .iter()
+        .map(|argument| infer_expression(argument, scope, functions))
+        .collect::<Result<Vec<_>, _>>()?;
+    let expected_arity = match name {
+        "abs" => 1,
+        "min" | "max" => 2,
+        "clamp" => 3,
+        _ => unreachable!(),
+    };
+    if types.len() != expected_arity {
+        return Err(Diagnostic::WrongArity {
+            callee: name.to_owned(),
+            expected: expected_arity,
+            actual: types.len(),
+            span: arguments
+                .first()
+                .map(SourceExpression::span)
+                .unwrap_or(SourceSpan::new(0, 0)),
+        });
+    }
+    if !types.iter().all(is_ordered_scalar_type) {
+        return Err(Diagnostic::InvalidOperation {
+            message: "builtin requires an ordered scalar type",
+            span: arguments[0].span(),
+        });
+    }
+    if types.windows(2).any(|pair| pair[0] != pair[1]) {
+        return Err(Diagnostic::TypeMismatch {
+            expected: types[0].clone(),
+            actual: types[1].clone(),
+            span: arguments[1].span(),
+        });
+    }
+    Ok(Some(types[0].clone()))
+}
+
 fn infer_binary(operator: BinaryOperator, left: &Type, right: &Type) -> Option<Type> {
     use BinaryOperator as Op;
     match operator {
@@ -415,9 +544,16 @@ fn infer_binary(operator: BinaryOperator, left: &Type, right: &Type) -> Option<T
             Some(Type::Bool)
         }
         Op::Add | Op::Subtract if left == right && is_numeric_or_unit(left) => Some(left.clone()),
+        Op::Power if left == right && matches!(left, Type::Int | Type::Float) => Some(left.clone()),
+        Op::Add | Op::Subtract if matches!((left, right), (Type::Vec2(a), Type::Vec2(b)) if a == b) => {
+            Some(left.clone())
+        }
         Op::Multiply if left == right && matches!(left, Type::Int | Type::Float) => {
             Some(left.clone())
         }
+        Op::Multiply if matches!(left, Type::Vec2(_)) && is_scalar(right) => Some(left.clone()),
+        Op::Multiply if is_scalar(left) && matches!(right, Type::Vec2(_)) => Some(right.clone()),
+        Op::Divide if matches!(left, Type::Vec2(_)) && is_scalar(right) => Some(left.clone()),
         Op::Multiply if is_unit(left) && is_scalar(right) => Some(left.clone()),
         Op::Multiply if is_scalar(left) && is_unit(right) => Some(right.clone()),
         Op::Divide if left == right && matches!(left, Type::Int | Type::Float) => {
@@ -425,9 +561,7 @@ fn infer_binary(operator: BinaryOperator, left: &Type, right: &Type) -> Option<T
         }
         Op::Divide if is_unit(left) && is_scalar(right) => Some(left.clone()),
         Op::Divide if left == right && is_unit(left) => Some(Type::Float),
-        Op::Remainder if left == right && matches!(left, Type::Int | Type::Float) => {
-            Some(left.clone())
-        }
+        Op::Remainder if left == right && left == &Type::Int => Some(left.clone()),
         _ => None,
     }
 }
@@ -441,6 +575,38 @@ fn require_type(expected: &Type, actual: &Type, span: SourceSpan) -> Result<(), 
             actual: actual.clone(),
             span,
         })
+    }
+}
+
+fn validate_static_type(ty: &Type, span: SourceSpan) -> Result<(), Diagnostic> {
+    match ty {
+        Type::Vec2(element) if !is_vec2_element_type(element) => {
+            Err(Diagnostic::InvalidOperation {
+                message: "vec2 element type is not permitted",
+                span,
+            })
+        }
+        Type::Array(element) if !is_pure_value_type(element) => Err(Diagnostic::InvalidOperation {
+            message: "array element type must be a pure compile-time value",
+            span,
+        }),
+        Type::Vec2(_)
+        | Type::Array(_)
+        | Type::Bool
+        | Type::Int
+        | Type::Float
+        | Type::String
+        | Type::Time
+        | Type::Beat
+        | Type::Length
+        | Type::Angle
+        | Type::Color
+        | Type::Note
+        | Type::Line
+        | Type::RenderNode
+        | Type::Track(_)
+        | Type::TrackSegment(_)
+        | Type::Keyframe(_) => Ok(()),
     }
 }
 
@@ -471,6 +637,10 @@ fn is_numeric_or_unit(ty: &Type) -> bool {
     is_scalar(ty) || is_unit(ty)
 }
 
+fn is_ordered_scalar_type(ty: &Type) -> bool {
+    is_numeric_or_unit(ty)
+}
+
 fn is_scalar_value_type(ty: &Type) -> bool {
     matches!(
         ty,
@@ -484,6 +654,35 @@ fn is_scalar_value_type(ty: &Type) -> bool {
             | Type::Angle
             | Type::Color
     )
+}
+
+fn is_vec2_element_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Int | Type::Float | Type::Time | Type::Beat | Type::Length | Type::Angle
+    )
+}
+
+fn is_pure_value_type(ty: &Type) -> bool {
+    match ty {
+        Type::Bool
+        | Type::Int
+        | Type::Float
+        | Type::String
+        | Type::Time
+        | Type::Beat
+        | Type::Length
+        | Type::Angle
+        | Type::Color => true,
+        Type::Vec2(element) => is_vec2_element_type(element),
+        Type::Array(element) => is_pure_value_type(element),
+        Type::Note
+        | Type::Line
+        | Type::RenderNode
+        | Type::Track(_)
+        | Type::TrackSegment(_)
+        | Type::Keyframe(_) => false,
+    }
 }
 
 fn is_equality_type(ty: &Type) -> bool {
@@ -502,16 +701,43 @@ fn evaluate_const(
         return Ok(value.clone());
     }
     let declaration = constants[name];
-    let value = evaluate_expression(
+    let value = evaluate_expression_with_expected(
         &declaration.initializer,
         root,
         constants,
         functions,
         values,
         budget,
+        Some(&declaration.ty),
     )?;
     values.insert(name.to_owned(), value.clone());
     Ok(value)
+}
+
+fn infer_expression_with_expected(
+    expression: &SourceExpression,
+    scope: &Scope,
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+    expected: Option<&Type>,
+) -> Result<Type, Diagnostic> {
+    if let SourceExpression::Array { elements, span } = expression
+        && elements.is_empty()
+    {
+        let Some(Type::Array(element)) = expected else {
+            return Err(Diagnostic::InvalidOperation {
+                message: "empty array requires an explicit type context",
+                span: *span,
+            });
+        };
+        if !is_pure_value_type(element) {
+            return Err(Diagnostic::InvalidOperation {
+                message: "array element type must be a pure compile-time value",
+                span: *span,
+            });
+        }
+        return Ok(Type::Array(element.clone()));
+    }
+    infer_expression(expression, scope, functions)
 }
 
 fn evaluate_expression(
@@ -525,14 +751,44 @@ fn evaluate_expression(
     budget.node(expression.span())?;
     match expression {
         SourceExpression::Literal { literal, span } => literal_value(literal, *span),
-        SourceExpression::Array { span, .. }
-        | SourceExpression::Object { span, .. }
+        SourceExpression::Object { span, .. }
         | SourceExpression::Reference { span, .. }
-        | SourceExpression::Index { span, .. }
         | SourceExpression::Choose { span, .. } => Err(Diagnostic::FeatureUnavailable {
             feature: "extended source expression",
             span: *span,
         }),
+        SourceExpression::Array { elements, span } => {
+            if elements.is_empty() {
+                return Err(Diagnostic::InvalidOperation {
+                    message: "empty array requires an explicit type context",
+                    span: *span,
+                });
+            }
+            let values = elements
+                .iter()
+                .map(|element| {
+                    evaluate_expression(element, scope, constants, functions, const_values, budget)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if values.windows(2).any(|pair| pair[0].ty() != pair[1].ty()) {
+                return Err(Diagnostic::InvalidOperation {
+                    message: "array elements must have one homogeneous type",
+                    span: *span,
+                });
+            }
+            let element_type =
+                values
+                    .first()
+                    .map(TypedValue::ty)
+                    .ok_or(Diagnostic::InvalidOperation {
+                        message: "empty array requires an explicit type context",
+                        span: *span,
+                    })?;
+            Ok(TypedValue::Array {
+                element_type: Box::new(element_type),
+                values,
+            })
+        }
         SourceExpression::Name { name, span } => {
             if let Some(value) = scope.lookup(name).and_then(|binding| binding.value.clone()) {
                 Ok(value)
@@ -640,20 +896,50 @@ fn evaluate_expression(
         SourceExpression::FieldAccess { base, field, span } => {
             let value =
                 evaluate_expression(base, scope, constants, functions, const_values, budget)?;
-            let TypedValue::Vec2(x, y) = value else {
-                return Err(Diagnostic::InvalidOperation {
-                    message: "field access requires vec2",
-                    span: *span,
-                });
-            };
-            match field.as_str() {
-                "x" => Ok(*x),
-                "y" => Ok(*y),
+            match value {
+                TypedValue::Vec2(x, y) => match field.as_str() {
+                    "x" => Ok(*x),
+                    "y" => Ok(*y),
+                    _ => Err(Diagnostic::InvalidOperation {
+                        message: "unknown vec2 field",
+                        span: *span,
+                    }),
+                },
+                TypedValue::Array { values, .. } if field == "length" => {
+                    i64::try_from(values.len())
+                        .map(TypedValue::Int)
+                        .map_err(|_| Diagnostic::NumericOverflow { span: *span })
+                }
                 _ => Err(Diagnostic::InvalidOperation {
-                    message: "unknown vec2 field",
+                    message: "unknown field for compile-time value",
                     span: *span,
                 }),
             }
+        }
+        SourceExpression::Index { base, index, span } => {
+            let value =
+                evaluate_expression(base, scope, constants, functions, const_values, budget)?;
+            let index =
+                evaluate_expression(index, scope, constants, functions, const_values, budget)?;
+            let TypedValue::Array { values, .. } = value else {
+                return Err(Diagnostic::InvalidOperation {
+                    message: "indexing requires an array",
+                    span: *span,
+                });
+            };
+            let TypedValue::Int(index) = index else {
+                return Err(Diagnostic::TypeMismatch {
+                    expected: Type::Int,
+                    actual: index.ty(),
+                    span: *span,
+                });
+            };
+            let index =
+                usize::try_from(index).map_err(|_| Diagnostic::NumericDomain { span: *span })?;
+            values
+                .get(index)
+                .cloned()
+                .ok_or(Diagnostic::NumericDomain { span: *span })
         }
         SourceExpression::Vec2 { x, y, span } => {
             let x = evaluate_expression(x, scope, constants, functions, const_values, budget)?;
@@ -664,6 +950,40 @@ fn evaluate_expression(
             })
         }
     }
+}
+
+fn evaluate_expression_with_expected(
+    expression: &SourceExpression,
+    scope: &Scope,
+    constants: &BTreeMap<String, &ConstDeclaration>,
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+    const_values: &mut BTreeMap<String, TypedValue>,
+    budget: &mut Budget,
+    expected: Option<&Type>,
+) -> Result<TypedValue, Diagnostic> {
+    if let SourceExpression::Array { elements, span } = expression
+        && elements.is_empty()
+    {
+        let Some(Type::Array(element_type)) = expected else {
+            return Err(Diagnostic::InvalidOperation {
+                message: "empty array requires an explicit type context",
+                span: *span,
+            });
+        };
+        budget.node(*span)?;
+        return Ok(TypedValue::Array {
+            element_type: element_type.clone(),
+            values: Vec::new(),
+        });
+    }
+    evaluate_expression(
+        expression,
+        scope,
+        constants,
+        functions,
+        const_values,
+        budget,
+    )
 }
 
 struct ComparisonStep<'expression> {
@@ -835,6 +1155,7 @@ fn evaluate_function(
         functions,
         const_values,
         budget,
+        &function.return_type,
     )?
     .ok_or_else(|| Diagnostic::MissingReturn {
         function: function.name.clone(),
@@ -849,18 +1170,20 @@ fn evaluate_block(
     functions: &BTreeMap<String, &FunctionDeclaration>,
     const_values: &mut BTreeMap<String, TypedValue>,
     budget: &mut Budget,
+    return_type: &Type,
 ) -> Result<Option<TypedValue>, Diagnostic> {
     let mut scope = initial_scope.clone();
     for statement in statements {
         match statement {
             FunctionStatement::Let(statement) => {
-                let value = evaluate_expression(
+                let value = evaluate_expression_with_expected(
                     &statement.initializer,
                     &scope,
                     constants,
                     functions,
                     const_values,
                     budget,
+                    Some(&statement.ty),
                 )?;
                 scope.declare(
                     statement.name.clone(),
@@ -872,13 +1195,14 @@ fn evaluate_block(
                 )?;
             }
             FunctionStatement::Return(statement) => {
-                return evaluate_expression(
+                return evaluate_expression_with_expected(
                     &statement.value,
                     &scope,
                     constants,
                     functions,
                     const_values,
                     budget,
+                    Some(return_type),
                 )
                 .map(Some);
             }
@@ -909,6 +1233,7 @@ fn evaluate_block(
                     functions,
                     const_values,
                     budget,
+                    return_type,
                 )? {
                     return Ok(Some(value));
                 }
@@ -1015,28 +1340,63 @@ fn arithmetic(
     span: SourceSpan,
 ) -> Result<TypedValue, Diagnostic> {
     use BinaryOperator as Op;
-    if operator == Op::Power {
-        return invalid_binary(span);
-    }
     match (left, right) {
         (TypedValue::Int(left), TypedValue::Int(right)) => {
+            if matches!(operator, Op::Divide | Op::Remainder) && right == 0 {
+                return Err(Diagnostic::DivideByZero { span });
+            }
             let value = match operator {
                 Op::Add => left.checked_add(right),
                 Op::Subtract => left.checked_sub(right),
                 Op::Multiply => left.checked_mul(right),
                 Op::Divide => left.checked_div(right),
                 Op::Remainder => left.checked_rem(right),
+                Op::Power if right >= 0 => u32::try_from(right)
+                    .ok()
+                    .and_then(|exponent| left.checked_pow(exponent)),
                 _ => None,
             };
+            if operator == Op::Power && right < 0 {
+                return Err(Diagnostic::NumericDomain { span });
+            }
             value
                 .map(TypedValue::Int)
-                .ok_or(Diagnostic::InvalidOperation {
-                    message: "integer arithmetic failed",
-                    span,
-                })
+                .ok_or(Diagnostic::NumericOverflow { span })
         }
         (TypedValue::Float(left), TypedValue::Float(right)) => {
+            if operator == Op::Power {
+                if left < 0.0 && right.fract() != 0.0 {
+                    return Err(Diagnostic::NumericDomain { span });
+                }
+                return finite(left.powf(right), span).map(TypedValue::Float);
+            }
             float_arithmetic(left, operator, right, span).map(TypedValue::Float)
+        }
+        (TypedValue::Vec2(left_x, left_y), TypedValue::Vec2(right_x, right_y))
+            if matches!(operator, Op::Add | Op::Subtract) =>
+        {
+            let x = arithmetic(*left_x, operator, *right_x, span)?;
+            let y = arithmetic(*left_y, operator, *right_y, span)?;
+            TypedValue::vec2(x, y).ok_or(Diagnostic::InvalidOperation {
+                message: "vector components have different types",
+                span,
+            })
+        }
+        (TypedValue::Vec2(x, y), scalar) if matches!(operator, Op::Multiply | Op::Divide) => {
+            let x = arithmetic(*x, operator, scalar.clone(), span)?;
+            let y = arithmetic(*y, operator, scalar, span)?;
+            TypedValue::vec2(x, y).ok_or(Diagnostic::InvalidOperation {
+                message: "vector components have different types",
+                span,
+            })
+        }
+        (scalar, TypedValue::Vec2(x, y)) if operator == Op::Multiply => {
+            let x = arithmetic(scalar.clone(), operator, *x, span)?;
+            let y = arithmetic(scalar, operator, *y, span)?;
+            TypedValue::vec2(x, y).ok_or(Diagnostic::InvalidOperation {
+                message: "vector components have different types",
+                span,
+            })
         }
         (TypedValue::Time(left), TypedValue::Time(right)) => unit_pair(left, operator, right, span)
             .map(|value| match value {
@@ -1127,7 +1487,8 @@ fn beat_pair(
                     span,
                 })
         }
-        Op::Divide if right.numerator() != 0 => finite_divide(
+        Op::Divide if right.numerator() == 0 => Err(Diagnostic::DivideByZero { span }),
+        Op::Divide => finite_divide(
             left.numerator() as f64 / left.denominator() as f64,
             right.numerator() as f64 / right.denominator() as f64,
             span,
@@ -1204,7 +1565,8 @@ fn float_arithmetic(
         Op::Subtract => finite(left - right, span),
         Op::Multiply => finite(left * right, span),
         Op::Divide => finite_divide(left, right, span),
-        Op::Remainder if right != 0.0 => finite(left % right, span),
+        Op::Remainder if right == 0.0 => Err(Diagnostic::DivideByZero { span }),
+        Op::Remainder => finite(left % right, span),
         _ => Err(Diagnostic::InvalidOperation {
             message: "floating-point arithmetic failed",
             span,
@@ -1247,9 +1609,46 @@ fn evaluate_builtin(
     span: SourceSpan,
 ) -> Result<Option<TypedValue>, Diagnostic> {
     let value = match (name, arguments) {
+        ("abs", [value]) => abs_value(value.clone(), span)?,
+        ("min", [left, right]) => ordered_min_max(left, right, false, span)?,
+        ("max", [left, right]) => ordered_min_max(left, right, true, span)?,
+        ("clamp", [value, lower, upper]) => clamp_value(value.clone(), lower, upper, span)?,
+        ("floor", [TypedValue::Float(value)]) => TypedValue::Float(finite(value.floor(), span)?),
+        ("ceil", [TypedValue::Float(value)]) => TypedValue::Float(finite(value.ceil(), span)?),
+        ("round", [TypedValue::Float(value)]) => {
+            TypedValue::Float(finite(round_ties_even(*value), span)?)
+        }
+        ("exp", [TypedValue::Float(value)]) => TypedValue::Float(finite(value.exp(), span)?),
+        ("ln", [TypedValue::Float(value)]) if *value > 0.0 => {
+            TypedValue::Float(finite(value.ln(), span)?)
+        }
+        ("ln", [TypedValue::Float(_)]) => return Err(Diagnostic::NumericDomain { span }),
+        ("pow", [TypedValue::Float(base), TypedValue::Float(exponent)])
+            if *base >= 0.0 || exponent.fract() == 0.0 =>
+        {
+            TypedValue::Float(finite(base.powf(*exponent), span)?)
+        }
+        ("pow", [TypedValue::Float(_), TypedValue::Float(_)]) => {
+            return Err(Diagnostic::NumericDomain { span });
+        }
         ("sin", [TypedValue::Float(value)]) => TypedValue::Float(finite(value.sin(), span)?),
         ("cos", [TypedValue::Float(value)]) => TypedValue::Float(finite(value.cos(), span)?),
+        ("tan", [TypedValue::Float(value)]) => TypedValue::Float(finite(value.tan(), span)?),
+        ("asin", [TypedValue::Float(value)]) if (-1.0..=1.0).contains(value) => {
+            TypedValue::Float(finite(value.asin(), span)?)
+        }
+        ("asin", [TypedValue::Float(_)]) => return Err(Diagnostic::NumericDomain { span }),
+        ("acos", [TypedValue::Float(value)]) if (-1.0..=1.0).contains(value) => {
+            TypedValue::Float(finite(value.acos(), span)?)
+        }
+        ("acos", [TypedValue::Float(_)]) => return Err(Diagnostic::NumericDomain { span }),
+        ("atan", [TypedValue::Float(value)]) => TypedValue::Float(finite(value.atan(), span)?),
+        ("atan2", [TypedValue::Float(y), TypedValue::Float(x)]) => {
+            TypedValue::Float(finite(y.atan2(*x), span)?)
+        }
         ("toFloat", [TypedValue::Int(value)]) => TypedValue::Float(*value as f64),
+        ("seconds", [TypedValue::Time(value)]) => TypedValue::Float(finite(*value, span)?),
+        ("radians", [TypedValue::Angle(value)]) => TypedValue::Float(finite(*value, span)?),
         (
             "approxEq",
             [
@@ -1257,8 +1656,27 @@ fn evaluate_builtin(
                 TypedValue::Float(right),
                 TypedValue::Float(tolerance),
             ],
-        ) => TypedValue::Bool(*tolerance >= 0.0 && (left - right).abs() <= *tolerance),
-        ("sin" | "cos" | "toFloat" | "approxEq", _) => {
+        ) if tolerance.is_finite() && *tolerance >= 0.0 => {
+            let difference = finite(left - right, span)?;
+            TypedValue::Bool(finite(difference.abs(), span)? <= *tolerance)
+        }
+        (
+            "approxEq",
+            [
+                TypedValue::Float(_),
+                TypedValue::Float(_),
+                TypedValue::Float(_),
+            ],
+        ) => {
+            return Err(Diagnostic::NumericDomain { span });
+        }
+        ("sqrt", [TypedValue::Float(value)]) if *value >= 0.0 => {
+            TypedValue::Float(finite(value.sqrt(), span)?)
+        }
+        ("sqrt", [TypedValue::Float(_)]) => {
+            return Err(Diagnostic::NumericDomain { span });
+        }
+        _ if BUILTIN_NAMES.contains(&name) => {
             return Err(Diagnostic::InvalidOperation {
                 message: "invalid builtin arguments",
                 span,
@@ -1269,22 +1687,122 @@ fn evaluate_builtin(
     Ok(Some(value))
 }
 
+fn abs_value(value: TypedValue, span: SourceSpan) -> Result<TypedValue, Diagnostic> {
+    match value {
+        TypedValue::Int(value) => value
+            .checked_abs()
+            .map(TypedValue::Int)
+            .ok_or(Diagnostic::NumericOverflow { span }),
+        TypedValue::Float(value) => finite(value.abs(), span).map(TypedValue::Float),
+        TypedValue::Time(value) => finite(value.abs(), span).map(TypedValue::Time),
+        TypedValue::Length(value) => finite(value.abs(), span).map(TypedValue::Length),
+        TypedValue::Angle(value) => finite(value.abs(), span).map(TypedValue::Angle),
+        TypedValue::Beat(value) => Beat::new(
+            value
+                .numerator()
+                .checked_abs()
+                .ok_or(Diagnostic::NumericOverflow { span })?,
+            value.denominator(),
+        )
+        .map(TypedValue::Beat)
+        .map_err(|_| Diagnostic::NumericOverflow { span }),
+        _ => Err(Diagnostic::InvalidOperation {
+            message: "abs requires an ordered scalar",
+            span,
+        }),
+    }
+}
+
+fn ordered_min_max(
+    left: &TypedValue,
+    right: &TypedValue,
+    choose_max: bool,
+    span: SourceSpan,
+) -> Result<TypedValue, Diagnostic> {
+    let ordering = ordered_cmp(left, right).ok_or(Diagnostic::InvalidOperation {
+        message: "min/max requires matching ordered scalar types",
+        span,
+    })?;
+    let choose_right = if choose_max {
+        ordering.is_lt()
+    } else {
+        ordering.is_gt()
+    };
+    Ok(if choose_right {
+        right.clone()
+    } else {
+        left.clone()
+    })
+}
+
+fn clamp_value(
+    value: TypedValue,
+    lower: &TypedValue,
+    upper: &TypedValue,
+    span: SourceSpan,
+) -> Result<TypedValue, Diagnostic> {
+    let lower_upper = ordered_cmp(lower, upper).ok_or(Diagnostic::InvalidOperation {
+        message: "clamp requires matching ordered scalar types",
+        span,
+    })?;
+    if lower_upper.is_gt() {
+        return Err(Diagnostic::NumericDomain { span });
+    }
+    if ordered_cmp(&value, lower)
+        .ok_or(Diagnostic::InvalidOperation {
+            message: "clamp requires matching ordered scalar types",
+            span,
+        })?
+        .is_lt()
+    {
+        return Ok(lower.clone());
+    }
+    if ordered_cmp(&value, upper)
+        .ok_or(Diagnostic::InvalidOperation {
+            message: "clamp requires matching ordered scalar types",
+            span,
+        })?
+        .is_gt()
+    {
+        return Ok(upper.clone());
+    }
+    Ok(value)
+}
+
+fn ordered_cmp(left: &TypedValue, right: &TypedValue) -> Option<std::cmp::Ordering> {
+    match (left, right) {
+        (TypedValue::Int(left), TypedValue::Int(right)) => left.partial_cmp(right),
+        (TypedValue::Float(left), TypedValue::Float(right))
+        | (TypedValue::Time(left), TypedValue::Time(right))
+        | (TypedValue::Length(left), TypedValue::Length(right))
+        | (TypedValue::Angle(left), TypedValue::Angle(right)) => left.partial_cmp(right),
+        (TypedValue::Beat(left), TypedValue::Beat(right)) => left.partial_cmp(right),
+        _ => None,
+    }
+}
+
 fn finite(value: f64, span: SourceSpan) -> Result<f64, Diagnostic> {
     value
         .is_finite()
         .then_some(value)
-        .ok_or(Diagnostic::InvalidOperation {
-            message: "non-finite compile-time arithmetic",
-            span,
-        })
+        .ok_or(Diagnostic::NonFinite { span })
+}
+
+fn round_ties_even(value: f64) -> f64 {
+    let lower = value.floor();
+    let fraction = value - lower;
+    if fraction < 0.5 {
+        lower
+    } else if fraction > 0.5 || lower % 2.0 != 0.0 {
+        lower + 1.0
+    } else {
+        lower
+    }
 }
 
 fn finite_divide(left: f64, right: f64, span: SourceSpan) -> Result<f64, Diagnostic> {
     if right == 0.0 {
-        return Err(Diagnostic::InvalidOperation {
-            message: "division by zero",
-            span,
-        });
+        return Err(Diagnostic::DivideByZero { span });
     }
     finite(left / right, span)
 }
