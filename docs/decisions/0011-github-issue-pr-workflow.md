@@ -84,3 +84,28 @@ corrective PR 必须使用独立 worktree 和 `codex/<finding>-<slug>` 分支。
 head SHA 重新审查。历史已合并 commit 的 finding 从最新 `origin/main` 创建分支，PR base 为 `main`，
 不重新打开原 PR。该分支策略是对第 2 节“分支从 `main` 创建”约束的明确例外；其余 Issue/PR、重试、
 进度消息和规范权威边界保持不变。
+
+## 8. 2026-07-17 dated amendment：主会话 Primary audit 与异步二审
+
+用户进一步接受：非机械实现 work-unit 在 Ready/merge 前由当前主会话直接执行 Primary Self-Audit，不调用
+subagent。主会话固定 `Issue/PR 或 commit + head SHA + scope + commands + acceptance gate`，在 PR（若存在）
+和关联 Issue 各追加 `Primary audit result`；只有该结果为 `pass`、适用 gate 已通过且没有未关闭的
+Critical/Important finding 时，主会话才可 Ready/merge。Primary audit 与 reviewer 的 `Audit result` 是两种不同
+证据，不能互相冒充。
+
+主会话在 Primary audit 通过后发送 `Review requested`，独立审查会话异步检查开放 PR 或合并后的固定 commit，
+不再作为每个 work-unit 的前置等待门。reviewer 仍是独立角色、唯一使用 `Audit result` 的二审者、不能 Ready/
+merge/关闭主 Issue，也不能写入主会话工作树。reviewer 在合并后发现 Critical/Important implementation 或
+conformance finding 时，主会话冻结受影响 stage claim 和后续依赖并处理 corrective PR；不回滚已经合并的 PR。
+I10 最终 success signal 仍要求 reviewer frontier 闭合且没有未关闭的 Critical/Important finding。
+
+reviewer 的独立预算从 240 个 review-unit 提升为 480 个，与主 loop 的 240 个 work-unit 预算独立。每个目标在
+implementation/conformance 审查通过后可以追加架构和文档 advisory pass；架构优化、文档改善和一般建议创建
+`ready-for-human` 的 HUMAN-only Issue，不进入 `loop.md` acceptance ledger，也不自动修复或阻塞 I10。若证据
+实际证明规范矛盾、实现缺陷或当前 conformance 违约，则必须回到标准 finding contract。
+
+每次审查目标完成后，reviewer 先检查 root Issue 的 I10 success signal：若未完成且没有新固定目标，按每次 1 分钟、
+最多 10 次的 Idle wait window 重新同步；新目标出现即恢复，10 次耗尽返回 `waiting-for-main` residual 并结束当前
+reviewer turn。等待不消耗 480 review-unit 预算；该 amendment 与第 7 节关于“独立审查必须在 Ready/merge 前完成”
+的表述冲突之处，以本节、`AGENTS.md`、`docs/agents/issue-tracker.md`、`docs/loops/loop.md` 和
+`docs/loops/review-loop.md` 的新契约为准，其余权限、分支隔离、重试、进度消息和规范权威边界保持不变。
