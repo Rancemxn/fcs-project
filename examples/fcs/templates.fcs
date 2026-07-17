@@ -8,11 +8,14 @@ definitions {
     const DEFAULT_X: length = 12px;
     template Note ghost(at: beat, x: length) {
         return tap {
+            line: @main;
             gameplay.time: at;
             presentation.positionX: x;
         };
     }
 }
+
+lines { line main {} }
 
 collections {
     notes {
