@@ -53,8 +53,9 @@ Bounded smoke (the delivery command):
 FCS_FUZZ_RUNS=32 scripts/fcs5-fuzz-smoke.sh bounded
 ```
 
-This runs 32 libFuzzer iterations per target with `max_len=65536`, without
-writing generated corpus or artifacts into the repository. Local exploration
+This passes `-runs=32` to each libFuzzer target with `max_len=65536`; the 42
+seed files are loaded before that bounded run budget. It does not write
+generated corpus or artifacts into the repository. Local exploration
 uses:
 
 ```text
