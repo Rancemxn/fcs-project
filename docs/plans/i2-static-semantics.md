@@ -1,6 +1,6 @@
 # I2 Static Semantics and Compile-time Expansion
 
-Status: implementation baseline preparation
+Status: I2 implementation and public conformance delivery candidate
 
 This plan is the bounded execution contract for I2. It schedules implementation work; it does not
 create FCS semantics, promote a specification version, or authorize work owned by I3 and later stages.
@@ -171,6 +171,20 @@ dependency is proven and recorded in a new progress message.
   parse-stage categories are not used for static errors.
 - Update the I2 implementation matrix and evidence only after all task gates pass; create the next child
   Issue for the earliest I3 baseline only after I2 is independently reviewed and merged.
+
+## I2 delivery checkpoint
+
+The I2.1–I2.9 implementation work units are merged on `main` through PR #65. The I2.10 delivery unit
+executes the three valid public elaboration fixtures and the six bound elaborate-error/budget fixtures
+through the public `fcs_source::elaborator::elaborate` API. Its executable evidence must assert the expected
+expanded shape, deterministic source order, exact Beat/Length values, selected template/`with` behavior,
+concrete-output invariants, stable static diagnostic categories, and the shared generator-budget trace.
+The expected JSON and manifest entries remain fixture authority; they do not become a second semantic model.
+
+I2 remains a stage-scoped implementation baseline, not a FCS Core version-state transition. Runtime
+expression/DAG lowering, canonical model construction, and all later product crates remain owned by I3+.
+After the I2.10 PR passes its full Rust gate and independent fixed-SHA audit, the owning matrix and roadmap
+may advance the frontier to the earliest I3 baseline Issue.
 
 ## Fixture and diagnostic matrix
 

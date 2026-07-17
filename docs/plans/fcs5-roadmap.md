@@ -408,7 +408,8 @@ production coverage ledger、独立 fuzz lane 和 I1 条款矩阵证据。逐步
 建立 Reviewed Implementation Baseline，独立复审无未关闭的 Critical/Important finding，该计划与
 绑定规范一致，且 I0 质量门通过后才自动开始 Rust 实现。该 gate 已通过，固定输入与 0/0/0 独立复审见
 `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`；I1.1–I1.8 的实现与证据已合并，当前
-进入 Task 9 governance、最终门禁和独立复审；I2 仍未开始。
+进入 Task 9 governance、最终门禁和独立复审；I2.1–I2.9 的实现与独立交付证据已合并，当前由
+I2.10 公共 conformance fixture 与阶段门禁收尾。
 
 ### I2：Static semantics 与编译期展开
 
@@ -628,5 +629,7 @@ git diff --check
 - 当前 generator AST/parser 只接受 `int|beat`、`..<|..=` 和 `let|if|emit`，拒绝裸 `..`、
   `return` 与 nested generator；zero-step 语法保留给 I2，elaborator 在 I1 不展开并返回稳定
   `implementation.feature-unavailable`，且不产生部分输出；
-- I2–I10：未开始；I2 只能在 I1 Task 9 final gate 和 I2 自身 Reviewed Implementation Baseline
-  满足后开始。
+- I2.1–I2.9 已完成并合并；I2.10 正在执行三份 valid elaboration fixture、六份 elaborate-error/
+  budget fixture、implementation matrix 更新和完整 Rust delivery gate。I2 的五域规范状态仍为 Draft；
+  I3 只能在 I2.10 独立复审、合并和阶段 baseline 证据闭合后开始。
+- I3–I10 尚未开始；不得在 I2.10 完成前创建或激活 later-stage product crate。
