@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 mod cycle;
 mod entities;
 mod eval;
+mod generator;
 mod resolve;
 mod scope;
 
@@ -15,6 +16,7 @@ use crate::diagnostic::{
 use crate::schema::ConstructionSchema;
 
 pub use crate::diagnostic::Diagnostic;
+pub use generator::{GeneratorRange, GeneratorRangeError, evaluate_generator_range};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompileTimeLimits {
@@ -117,6 +119,13 @@ enum ElaboratorError {
     },
     DynamicFieldForbidden {
         field: String,
+        span: SourceSpan,
+    },
+    InvalidGeneratorRange {
+        span: SourceSpan,
+        message: &'static str,
+    },
+    ZeroGeneratorStep {
         span: SourceSpan,
     },
     NonConstantStructuralCondition {
@@ -351,6 +360,18 @@ impl ElaboratorError {
                 DiagnosticCode::SCHEMA_DYNAMIC_FIELD_FORBIDDEN,
                 DiagnosticStage::Elaborate,
                 format!("field {field} cannot depend on a runtime expression"),
+                span,
+            ),
+            Self::InvalidGeneratorRange { span, message } => Diagnostic::new(
+                DiagnosticCode::COMPILE_TIME_INVALID_RANGE,
+                DiagnosticStage::Elaborate,
+                message,
+                span,
+            ),
+            Self::ZeroGeneratorStep { span } => Diagnostic::new(
+                DiagnosticCode::COMPILE_TIME_ZERO_STEP,
+                DiagnosticStage::Elaborate,
+                "generator range step must not be zero",
                 span,
             ),
             Self::NonConstantStructuralCondition { span } => Diagnostic::new(

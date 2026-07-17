@@ -38,11 +38,53 @@ impl Beat {
     }
 
     pub fn checked_add(self, other: Self) -> Result<Self, BeatError> {
-        let left = self.numerator as i128 * other.denominator as i128;
-        let right = other.numerator as i128 * self.denominator as i128;
-        let numerator = left + right;
-        let denominator = self.denominator as i128 * other.denominator as i128;
+        let left = (self.numerator as i128)
+            .checked_mul(other.denominator as i128)
+            .ok_or(BeatError::Overflow)?;
+        let right = (other.numerator as i128)
+            .checked_mul(self.denominator as i128)
+            .ok_or(BeatError::Overflow)?;
+        let numerator = left.checked_add(right).ok_or(BeatError::Overflow)?;
+        let denominator = (self.denominator as i128)
+            .checked_mul(other.denominator as i128)
+            .ok_or(BeatError::Overflow)?;
         Self::from_i128(numerator, denominator)
+    }
+
+    /// Returns the exact difference of two beats when it fits the source rational shape.
+    pub fn checked_sub(self, other: Self) -> Result<Self, BeatError> {
+        let left = (self.numerator as i128)
+            .checked_mul(other.denominator as i128)
+            .ok_or(BeatError::Overflow)?;
+        let right = (other.numerator as i128)
+            .checked_mul(self.denominator as i128)
+            .ok_or(BeatError::Overflow)?;
+        let numerator = left.checked_sub(right).ok_or(BeatError::Overflow)?;
+        let denominator = (self.denominator as i128)
+            .checked_mul(other.denominator as i128)
+            .ok_or(BeatError::Overflow)?;
+        Self::from_i128(numerator, denominator)
+    }
+
+    /// Returns this beat multiplied by a signed integer without floating-point conversion.
+    pub fn checked_mul_i64(self, factor: i64) -> Result<Self, BeatError> {
+        let numerator = (self.numerator as i128)
+            .checked_mul(factor as i128)
+            .ok_or(BeatError::Overflow)?;
+        Self::from_i128(numerator, self.denominator as i128)
+    }
+
+    /// Returns the exact additive inverse of this beat.
+    pub fn checked_neg(self) -> Result<Self, BeatError> {
+        let numerator = (self.numerator as i128)
+            .checked_neg()
+            .ok_or(BeatError::Overflow)?;
+        Self::from_i128(numerator, self.denominator as i128)
+    }
+
+    /// Returns whether this beat is exactly zero.
+    pub const fn is_zero(self) -> bool {
+        self.numerator == 0
     }
 
     fn from_i128(mut numerator: i128, mut denominator: i128) -> Result<Self, BeatError> {

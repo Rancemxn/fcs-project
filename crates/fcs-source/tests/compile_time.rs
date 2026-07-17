@@ -6,7 +6,9 @@ use fcs_source::ast::{
     TypedExpression, TypedExpressionKind, TypedValue, UnaryOperator, WithExpression,
 };
 use fcs_source::diagnostic::{Diagnostic, DiagnosticCode};
-use fcs_source::elaborator::{CompileTimeLimits, elaborate};
+use fcs_source::elaborator::{
+    CompileTimeLimits, GeneratorRangeError, elaborate, evaluate_generator_range,
+};
 use fcs_source::parser::{
     ParseLimits, parse_document, parse_expression, parse_expression_with_limits, parse_type,
     parse_type_with_limits,
@@ -1127,7 +1129,7 @@ fn rejects_bare_generator_range_operator() {
 }
 
 #[test]
-fn retains_zero_generator_step_for_later_static_semantics() {
+fn generator_zero_step_is_rejected_at_the_static_boundary() {
     let source = generator_source("..<", "0beat");
     let document = parse_document(&source)
         .into_result()
@@ -1144,11 +1146,149 @@ fn retains_zero_generator_step_for_later_static_semantics() {
     ));
 
     let errors = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
-        .expect_err("zero step remains behind the I0 implementation boundary");
+        .expect_err("zero step must fail before generator expansion");
+    assert_eq!(errors[0].code(), DiagnosticCode::COMPILE_TIME_ZERO_STEP);
+}
+
+#[test]
+fn evaluates_descending_integer_ranges_with_exact_metadata_and_values() {
+    let source = include_str!("../../../conformance/fcs5/source/valid/int-range-descending.fcs");
+    let document = parse_document(source).into_result().unwrap();
+    let CollectionItem::Generator(generator) = &document.collections[0].items[0] else {
+        panic!("expected generator collection item");
+    };
+
+    let range =
+        evaluate_generator_range(&document, generator, CompileTimeLimits::default()).unwrap();
+    assert_eq!(range.variable_type(), &Type::Int);
+    assert_eq!(range.start(), &TypedValue::Int(4));
+    assert_eq!(range.end(), &TypedValue::Int(0));
+    assert_eq!(range.step(), &TypedValue::Int(-1));
+    assert!(range.inclusive_end());
+    assert_eq!(range.count(), 5);
     assert_eq!(
-        errors[0].code(),
-        DiagnosticCode::IMPLEMENTATION_FEATURE_UNAVAILABLE
+        (0..range.count())
+            .map(|index| range.value_at(index).unwrap())
+            .collect::<Vec<_>>(),
+        (0..=4).rev().map(TypedValue::Int).collect::<Vec<_>>()
     );
+    assert_eq!(
+        range.value_at(range.count()),
+        Err(GeneratorRangeError::IndexOutOfBounds)
+    );
+}
+
+#[test]
+fn generator_ranges_follow_endpoint_and_direction_rules() {
+    let cases = [
+        ("0..<4", "1", false, 4, vec![0, 1, 2, 3]),
+        ("0..=4", "3", true, 2, vec![0, 3]),
+        ("4..<0", "-3", false, 2, vec![4, 1]),
+        ("4..=0", "-3", true, 2, vec![4, 1]),
+        ("4..<0", "1", false, 0, Vec::new()),
+    ];
+    for (range_text, step, inclusive_end, count, expected) in cases {
+        let source = format!(
+            concat!(
+                "#fcs 5.0.0\nformat {{ profile: fragment; }}\n",
+                "collections {{ notes {{\n",
+                "generate i: int in {range_text} step {step} {{ }}\n",
+                "}} }}"
+            ),
+            range_text = range_text,
+            step = step
+        );
+        let document = parse_document(&source).into_result().unwrap();
+        let CollectionItem::Generator(generator) = &document.collections[0].items[0] else {
+            panic!("expected generator collection item");
+        };
+        let range =
+            evaluate_generator_range(&document, generator, CompileTimeLimits::default()).unwrap();
+        assert_eq!(
+            range.inclusive_end(),
+            inclusive_end,
+            "{range_text} step {step}"
+        );
+        assert_eq!(range.count(), count, "{range_text} step {step}");
+        assert_eq!(
+            (0..range.count())
+                .map(|index| range.value_at(index).unwrap())
+                .collect::<Vec<_>>(),
+            expected
+                .into_iter()
+                .map(TypedValue::Int)
+                .collect::<Vec<_>>(),
+            "{range_text} step {step}"
+        );
+    }
+}
+
+#[test]
+fn generator_beat_ranges_keep_exact_rational_values() {
+    let source = "#fcs 5.0.0\nformat { profile: fragment; }\ncollections { notes {\n".to_owned()
+        + "generate at: beat in 0beat..=1beat step 0.5beat { }\n} }";
+    let document = parse_document(&source).into_result().unwrap();
+    let CollectionItem::Generator(generator) = &document.collections[0].items[0] else {
+        panic!("expected generator collection item");
+    };
+    let range =
+        evaluate_generator_range(&document, generator, CompileTimeLimits::default()).unwrap();
+
+    assert_eq!(range.count(), 3);
+    assert_eq!(
+        (0..range.count())
+            .map(|index| range.value_at(index).unwrap())
+            .collect::<Vec<_>>(),
+        vec![
+            TypedValue::Beat(Beat::new(0, 1).unwrap()),
+            TypedValue::Beat(Beat::new(1, 2).unwrap()),
+            TypedValue::Beat(Beat::new(1, 1).unwrap()),
+        ]
+    );
+}
+
+#[test]
+fn generator_range_rejects_mixed_static_types() {
+    let source = "#fcs 5.0.0\nformat { profile: fragment; }\ncollections { notes {\n".to_owned()
+        + "generate i: int in 0..=1beat step 1 { }\n} }";
+    let document = parse_document(&source).into_result().unwrap();
+    let errors = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect_err("mixed generator range types must fail");
+    assert_eq!(errors[0].code(), DiagnosticCode::COMPILE_TIME_INVALID_RANGE);
+}
+
+#[test]
+fn generator_zero_step_is_checked_after_constant_evaluation() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const STEP: beat = 0beat; }
+collections { notes {
+  generate at: beat in 0beat..<4beat step STEP { }
+} }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let errors = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect_err("constant zero step must fail at elaborate stage");
+    assert_eq!(errors[0].code(), DiagnosticCode::COMPILE_TIME_ZERO_STEP);
+}
+
+#[test]
+fn generator_range_count_overflow_is_reported_before_expansion() {
+    let source = "#fcs 5.0.0\nformat { profile: fragment; }\ncollections { notes {\n".to_owned()
+        + "generate i: int in -9223372036854775808..=9223372036854775807 step 1 { }\n} }";
+    let document = parse_document(&source).into_result().unwrap();
+    let errors = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect_err("range count overflow must fail before expansion");
+    assert_eq!(errors[0].code(), DiagnosticCode::NUMERIC_OVERFLOW);
+}
+
+#[test]
+fn generator_beat_range_count_overflow_is_reported_before_expansion() {
+    let source = "#fcs 5.0.0\nformat { profile: fragment; }\ncollections { notes {\n".to_owned()
+        + "generate at: beat in 0beat..=9223372036854775807beat step 0.1beat { }\n} }";
+    let document = parse_document(&source).into_result().unwrap();
+    let errors = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect_err("beat range count overflow must fail before expansion");
+    assert_eq!(errors[0].code(), DiagnosticCode::NUMERIC_OVERFLOW);
 }
 
 #[test]
