@@ -5,7 +5,7 @@ use fcs_source::ast::{
     SourceEntityConstructorKind, SourceExpression, SourceLiteral, SourceSpan, Type,
     TypedExpression, TypedExpressionKind, TypedValue, UnaryOperator, WithExpression,
 };
-use fcs_source::diagnostic::{Diagnostic, DiagnosticCode};
+use fcs_source::diagnostic::{Diagnostic, DiagnosticCode, ExpansionTraceKind};
 use fcs_source::elaborator::{
     CompileTimeLimits, GeneratorRangeError, elaborate, evaluate_generator_range,
 };
@@ -1430,6 +1430,129 @@ fn bound_compile_time_generator_fixture_expands_concrete_notes() {
             &TypedValue::Beat(Beat::new(3, 1).unwrap()),
         ]
     );
+}
+
+#[test]
+fn generator_iteration_budget_is_shared_across_expansion() {
+    let source = include_str!("../../../conformance/fcs5/source/valid/compile-time-generator.fcs");
+    let document = parse_document(source).into_result().unwrap();
+    let limits = CompileTimeLimits {
+        max_generator_iterations: 2,
+        ..CompileTimeLimits::default()
+    };
+    let errors = elaborate(&document, phase2_schema(), limits)
+        .expect_err("generator iterations must consume the shared budget");
+    assert_eq!(
+        errors[0].code(),
+        DiagnosticCode::COMPILE_TIME_BUDGET_EXCEEDED
+    );
+    let budget = errors[0]
+        .budget()
+        .expect("budget details should be present");
+    assert_eq!(budget.kind(), "max_generator_iterations");
+    assert_eq!(budget.limit(), 2);
+    assert_eq!(budget.observed(), 3);
+    let trace = errors[0].expansion_trace();
+    assert!(
+        trace
+            .iter()
+            .any(|frame| frame.kind() == ExpansionTraceKind::Collection
+                && frame.subject() == Some("notes"))
+    );
+    assert!(
+        trace
+            .iter()
+            .any(|frame| frame.kind() == ExpansionTraceKind::Index && frame.index() == Some(2))
+    );
+    assert!(trace.iter().any(|frame| {
+        frame.kind() == ExpansionTraceKind::Emit && frame.emitted_type() == Some("Note")
+    }));
+}
+
+#[test]
+fn generated_node_budget_is_checked_before_output_append() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections { notes {
+  tap { gameplay.time: 0beat; };
+  tap { gameplay.time: 1beat; };
+} }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let limits = CompileTimeLimits {
+        max_generated_nodes: 1,
+        ..CompileTimeLimits::default()
+    };
+    let errors = elaborate(&document, phase2_schema(), limits)
+        .expect_err("the second generated entity must exceed the node budget");
+    let budget = errors[0].budget().unwrap();
+    assert_eq!(budget.kind(), "max_generated_nodes");
+    assert_eq!(budget.observed(), 2);
+}
+
+#[test]
+fn template_instance_budget_is_shared_across_collection_expansion() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  template Note generated(at: beat, whichLine: Line) {
+    return tap { line: whichLine; gameplay.time: at; };
+  }
+}
+lines { line main {} }
+collections { notes {
+  generated(0beat, @main);
+  generated(1beat, @main);
+} }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let limits = CompileTimeLimits {
+        max_template_instances: 1,
+        ..CompileTimeLimits::default()
+    };
+    let errors = elaborate(&document, phase2_schema(), limits)
+        .expect_err("the second template instance must exceed the shared budget");
+    let budget = errors[0].budget().unwrap();
+    assert_eq!(budget.kind(), "max_template_instances");
+    assert_eq!(budget.observed(), 2);
+}
+
+#[test]
+fn expression_node_budget_is_checked_before_evaluation() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: int = 1 + 2; }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let limits = CompileTimeLimits {
+        max_expression_nodes: 2,
+        ..CompileTimeLimits::default()
+    };
+    let errors = elaborate(&document, phase2_schema(), limits)
+        .expect_err("the third expression node must exceed the node budget");
+    let budget = errors[0].budget().unwrap();
+    assert_eq!(budget.kind(), "max_expression_nodes");
+    assert_eq!(budget.observed(), 3);
+}
+
+#[test]
+fn expansion_depth_budget_is_checked_at_nested_entity_depth() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  template Note generated(at: beat, whichLine: Line) {
+    return tap { line: whichLine; gameplay.time: at; };
+  }
+}
+lines { line main {} }
+collections { notes { generated(0beat, @main); } }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let limits = CompileTimeLimits {
+        max_expansion_depth: 0,
+        ..CompileTimeLimits::default()
+    };
+    let errors = elaborate(&document, phase2_schema(), limits)
+        .expect_err("the template return entity must exceed depth zero");
+    let budget = errors[0].budget().unwrap();
+    assert_eq!(budget.kind(), "max_expansion_depth");
+    assert_eq!(budget.observed(), 1);
 }
 
 #[test]

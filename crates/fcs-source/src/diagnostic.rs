@@ -121,6 +121,7 @@ pub enum ExpansionTraceKind {
     Collection,
     Range,
     Generator,
+    Index,
     Emit,
 }
 
