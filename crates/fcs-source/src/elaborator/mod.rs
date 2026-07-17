@@ -386,6 +386,14 @@ impl ElaboratorError {
                     .first()
                     .map(|node| node.span)
                     .unwrap_or(SourceSpan::new(0, 0));
+                let edge_labels = chain
+                    .windows(2)
+                    .flat_map(|window| window[0].edge_spans.iter().copied())
+                    .enumerate()
+                    .map(|(index, span)| {
+                        DiagnosticLabel::new(span, format!("dependency edge {}", index + 1))
+                    })
+                    .collect::<Vec<_>>();
                 let trace = chain
                     .into_iter()
                     .map(|node| {
@@ -398,13 +406,16 @@ impl ElaboratorError {
                         )
                     })
                     .collect();
-                Diagnostic::new(
+                let diagnostic = Diagnostic::new(
                     DiagnosticCode::NAME_CYCLE,
                     DiagnosticStage::Elaborate,
                     "cyclic name expansion",
                     primary_span,
-                )
-                .with_expansion_trace(trace)
+                );
+                edge_labels
+                    .into_iter()
+                    .fold(diagnostic, |diagnostic, label| diagnostic.with_label(label))
+                    .with_expansion_trace(trace)
             }
             Self::MissingReturn { function, span } => Diagnostic::new(
                 DiagnosticCode::TYPE_MISMATCH,
@@ -551,4 +562,5 @@ pub(super) struct DependencyTraceNode {
     pub(super) kind: ExpansionTraceKind,
     pub(super) name: String,
     pub(super) span: SourceSpan,
+    pub(super) edge_spans: Vec<SourceSpan>,
 }

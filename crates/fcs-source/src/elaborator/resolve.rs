@@ -162,7 +162,7 @@ fn check_collection_items(items: &[CollectionItem], scope: &Scope) -> Result<(),
                 else_items,
                 ..
             } => {
-                resolve_optional_expression(condition, scope)?;
+                resolve_expression(condition, scope)?;
                 check_collection_items(then_items, scope)?;
                 check_collection_items(else_items, scope)?;
             }
@@ -344,9 +344,7 @@ fn resolve_entity_expression(
         }
         EntityExpression::SourceConstructor(constructor) => {
             for field in &constructor.fields {
-                if let crate::ast::SchemaValue::Expression(expression) = &field.value {
-                    resolve_optional_expression(expression, scope)?;
-                }
+                resolve_schema_value(&field.value, scope)?;
             }
             Ok(())
         }
@@ -369,6 +367,22 @@ fn resolve_entity_fields(
         resolve_optional_expression(&field.value, scope)?;
     }
     Ok(())
+}
+
+fn resolve_schema_value(value: &crate::ast::SchemaValue, scope: &Scope) -> Result<(), Diagnostic> {
+    match value {
+        crate::ast::SchemaValue::Expression(expression) => resolve_expression(expression, scope),
+        crate::ast::SchemaValue::CubicBezier { values, .. } => {
+            for expression in values {
+                resolve_expression(expression, scope)?;
+            }
+            Ok(())
+        }
+        crate::ast::SchemaValue::Interval { start, end, .. } => {
+            resolve_expression(start, scope)?;
+            resolve_expression(end, scope)
+        }
+    }
 }
 
 fn resolve_optional_expression(
