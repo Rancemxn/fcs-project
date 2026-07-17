@@ -1292,7 +1292,7 @@ fn generator_beat_range_count_overflow_is_reported_before_expansion() {
 }
 
 #[test]
-fn generator_elaboration_fails_before_partial_output() {
+fn generator_expansion_is_concrete_and_preserves_source_order() {
     let source = "#fcs 5.0.0\n\
          format { profile: fragment; }\n\
          collections {\n\
@@ -1307,20 +1307,162 @@ fn generator_elaboration_fails_before_partial_output() {
     let document = parse_document(&source)
         .into_result()
         .expect("generator source should parse");
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect("generator should expand without partial output");
+    let entities = expanded
+        .collections()
+        .next()
+        .unwrap()
+        .entities()
+        .collect::<Vec<_>>();
+    assert_eq!(entities.len(), 3);
+    assert_eq!(
+        entities
+            .iter()
+            .map(|entity| entity.field("gameplay.time").unwrap().value())
+            .collect::<Vec<_>>(),
+        vec![
+            &TypedValue::Beat(Beat::new(0, 1).unwrap()),
+            &TypedValue::Beat(Beat::new(1, 1).unwrap()),
+            &TypedValue::Beat(Beat::new(2, 1).unwrap()),
+        ]
+    );
+}
+
+#[test]
+fn generator_body_exposes_index_and_exact_range_metadata() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections { notes {
+  generate at: beat in 0beat..<2beat step 1beat {
+    emit tap {
+      gameplay.time: range.start + range.step * index;
+      presentation.positionX: toFloat(range.count) * 1px;
+    };
+  }
+} }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect("generator frame metadata should elaborate");
+    let entities = expanded
+        .collections()
+        .next()
+        .unwrap()
+        .entities()
+        .collect::<Vec<_>>();
+    assert_eq!(entities.len(), 2);
+    assert_eq!(
+        entities
+            .iter()
+            .map(|entity| entity.field("gameplay.time").unwrap().value())
+            .collect::<Vec<_>>(),
+        vec![
+            &TypedValue::Beat(Beat::new(0, 1).unwrap()),
+            &TypedValue::Beat(Beat::new(1, 1).unwrap()),
+        ]
+    );
+    assert!(entities.iter().all(|entity| {
+        entity.field("presentation.positionX").unwrap().value() == &TypedValue::Length(2.0)
+    }));
+}
+
+#[test]
+fn generator_unselected_branch_is_statically_schema_checked() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections { notes {
+  generate i: int in 0..=0 step 1 {
+    if true {
+      emit tap { gameplay.time: 0beat; };
+    } else {
+      emit tap { gameplay.time: 0beat; presentation.unknown: 1.0; };
+    }
+  }
+} }"#;
+    let document = parse_document(source).into_result().unwrap();
     let errors = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
-        .expect_err("I0 must not expand generators");
+        .expect_err("unselected generator branches must still be schema checked");
+    assert_eq!(errors[0].code(), DiagnosticCode::SCHEMA_UNKNOWN_FIELD);
+}
+
+#[test]
+fn generator_unselected_branch_does_not_evaluate_runtime_error() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections { notes {
+  generate i: int in 0..=0 step 1 {
+    if true {
+      emit tap { gameplay.time: 0beat; };
+    } else {
+      emit tap {
+        gameplay.time: 0beat;
+        presentation.alpha: 1.0 / 0.0;
+      };
+    }
+  }
+} }"#;
+    let document = parse_document(source).into_result().unwrap();
+    assert!(elaborate(&document, phase2_schema(), CompileTimeLimits::default()).is_ok());
+}
+
+#[test]
+fn bound_compile_time_generator_fixture_expands_concrete_notes() {
+    let source = include_str!("../../../conformance/fcs5/source/valid/compile-time-generator.fcs");
+    let document = parse_document(source).into_result().unwrap();
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect("bound compile-time generator fixture should elaborate");
+    let entities = expanded
+        .collections()
+        .find(|collection| collection.name() == "notes")
+        .unwrap()
+        .entities()
+        .collect::<Vec<_>>();
+    assert_eq!(entities.len(), 4);
+    assert_eq!(
+        entities
+            .iter()
+            .map(|entity| entity.field("gameplay.time").unwrap().value())
+            .collect::<Vec<_>>(),
+        vec![
+            &TypedValue::Beat(Beat::new(0, 1).unwrap()),
+            &TypedValue::Beat(Beat::new(1, 1).unwrap()),
+            &TypedValue::Beat(Beat::new(2, 1).unwrap()),
+            &TypedValue::Beat(Beat::new(3, 1).unwrap()),
+        ]
+    );
+}
+
+#[test]
+fn generator_emit_must_match_collection_entity_type() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections { notes {
+  generate i: int in 0..=0 step 1 {
+    emit Line { id: "wrong"; };
+  }
+} }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let errors = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect_err("generator emit type must match notes collection");
     assert_eq!(
         errors[0].code(),
-        DiagnosticCode::IMPLEMENTATION_FEATURE_UNAVAILABLE
+        DiagnosticCode::SCHEMA_COLLECTION_TYPE_MISMATCH
     );
-    assert_eq!(
-        errors[0].stage(),
-        fcs_source::diagnostic::DiagnosticStage::Implementation
-    );
-    assert_eq!(
-        errors[0].primary_span().start,
-        source.find("generate").unwrap()
-    );
+}
+
+#[test]
+fn generator_runtime_names_are_rejected_before_output() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections { notes {
+  generate i: int in 0..=0 step 1 {
+    emit tap { gameplay.time: s; };
+  }
+} }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let errors = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect_err("runtime generator dependencies must fail statically");
+    assert_eq!(errors[0].code(), DiagnosticCode::NAME_UNKNOWN);
 }
 
 #[test]

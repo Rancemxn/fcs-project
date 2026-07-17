@@ -179,6 +179,18 @@ fn check_generator(generator: &Generator, scope: &Scope) -> Result<(), Diagnosti
     let mut generator_scope = scope.child();
     declare_local(
         &mut generator_scope,
+        "index".to_owned(),
+        Type::Int,
+        generator.variable_span,
+    )?;
+    declare_local(
+        &mut generator_scope,
+        "range".to_owned(),
+        Type::GeneratorRange(Box::new(generator.variable_type.clone())),
+        generator.range.span,
+    )?;
+    declare_local(
+        &mut generator_scope,
         generator.variable.clone(),
         generator.variable_type.clone(),
         generator.variable_span,

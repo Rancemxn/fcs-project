@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use crate::ast::{Beat, Document, Generator, SourceSpan, Type, TypedValue};
+use crate::ast::{Beat, Document, Generator, GeneratorRangeValue, SourceSpan, Type, TypedValue};
 
 use super::eval::evaluate_with_bindings;
 use super::{CompileTimeLimits, ElaboratorError as Diagnostic};
@@ -54,6 +54,18 @@ impl GeneratorRange {
     /// Returns the source span of the complete range production.
     pub const fn span(&self) -> SourceSpan {
         self.span
+    }
+
+    pub(super) fn frame_value(&self) -> TypedValue {
+        TypedValue::GeneratorRange(Box::new(
+            GeneratorRangeValue::new(
+                self.start.clone(),
+                self.end.clone(),
+                self.step.clone(),
+                self.count,
+            )
+            .expect("checked generator range metadata must be representable"),
+        ))
     }
 
     /// Computes one range value from `start + index * step`.
