@@ -8,12 +8,14 @@ use crate::ast::{
     TypedValue, UnaryOperator,
 };
 use crate::diagnostic::{ExpansionTraceFrame, ExpansionTraceKind};
+use crate::schema::ConstructionSchema;
 
 use super::scope::{BUILTIN_NAMES, Binding, Scope};
 use super::{CompileTimeContext, ElaboratorError as Diagnostic};
 
 pub(super) fn check_and_evaluate_with_context(
     definitions: &DefinitionsBlock,
+    schema: &ConstructionSchema,
     context: &CompileTimeContext,
 ) -> Result<(), Diagnostic> {
     let mut constants = BTreeMap::new();
@@ -90,16 +92,17 @@ pub(super) fn check_and_evaluate_with_context(
             &declaration.initializer,
             &root,
             &functions,
+            schema,
             Some(&declaration.ty),
         )?;
         require_type(&declaration.ty, &actual, declaration.initializer.span())?;
     }
     for declaration in functions.values() {
-        check_function(declaration, &root, &functions)?;
+        check_function(declaration, &root, &functions, schema)?;
     }
 
     let mut values = BTreeMap::new();
-    let mut budget = Budget::new(context.clone());
+    let mut budget = Budget::new(context.clone(), schema);
     for name in constants.keys() {
         evaluate_const(
             name,
@@ -119,15 +122,17 @@ pub(super) fn evaluate_with_context(
     expression: &SourceExpression,
     definitions: Option<&DefinitionsBlock>,
     bindings: &BTreeMap<String, TypedValue>,
+    schema: &ConstructionSchema,
     context: &CompileTimeContext,
 ) -> Result<TypedValue, Diagnostic> {
-    evaluate_with_context_expected(expression, definitions, bindings, context, None)
+    evaluate_with_context_expected(expression, definitions, bindings, schema, context, None)
 }
 
 pub(super) fn evaluate_with_context_expected(
     expression: &SourceExpression,
     definitions: Option<&DefinitionsBlock>,
     bindings: &BTreeMap<String, TypedValue>,
+    schema: &ConstructionSchema,
     context: &CompileTimeContext,
     expected: Option<&Type>,
 ) -> Result<TypedValue, Diagnostic> {
@@ -171,7 +176,7 @@ pub(super) fn evaluate_with_context_expected(
         )?;
     }
     let mut values = BTreeMap::new();
-    let mut budget = Budget::new(context.clone());
+    let mut budget = Budget::new(context.clone(), schema);
     for name in constants.keys() {
         evaluate_const(
             name,
@@ -182,7 +187,7 @@ pub(super) fn evaluate_with_context_expected(
             &mut budget,
         )?;
     }
-    let actual = infer_expression_with_expected(expression, &root, &functions, expected)?;
+    let actual = infer_expression_with_expected(expression, &root, &functions, schema, expected)?;
     let value = evaluate_expression_with_expected(
         expression,
         &root,
@@ -298,6 +303,7 @@ fn check_function(
     declaration: &FunctionDeclaration,
     root: &Scope,
     functions: &BTreeMap<String, &FunctionDeclaration>,
+    schema: &ConstructionSchema,
 ) -> Result<(), Diagnostic> {
     let mut scope = root.child();
     for parameter in &declaration.parameters {
@@ -315,6 +321,7 @@ fn check_function(
         &scope,
         &declaration.return_type,
         functions,
+        schema,
     )? {
         return Err(Diagnostic::MissingReturn {
             function: declaration.name.clone(),
@@ -329,6 +336,7 @@ fn check_block(
     initial_scope: &Scope,
     return_type: &Type,
     functions: &BTreeMap<String, &FunctionDeclaration>,
+    schema: &ConstructionSchema,
 ) -> Result<bool, Diagnostic> {
     let mut scope = initial_scope.clone();
     for statement in statements {
@@ -338,6 +346,7 @@ fn check_block(
                     &statement.initializer,
                     &scope,
                     functions,
+                    schema,
                     Some(&statement.ty),
                 )?;
                 require_type(&statement.ty, &actual, statement.initializer.span())?;
@@ -355,25 +364,29 @@ fn check_block(
                     &statement.value,
                     &scope,
                     functions,
+                    schema,
                     Some(return_type),
                 )?;
                 require_type(return_type, &actual, statement.value.span())?;
                 return Ok(true);
             }
             FunctionStatement::If(statement) => {
-                let condition_type = infer_expression(&statement.condition, &scope, functions)?;
+                let condition_type =
+                    infer_expression(&statement.condition, &scope, functions, schema)?;
                 require_type(&Type::Bool, &condition_type, statement.condition.span())?;
                 let then_returns = check_block(
                     &statement.then_branch,
                     &scope.child(),
                     return_type,
                     functions,
+                    schema,
                 )?;
                 let else_returns = check_block(
                     &statement.else_branch,
                     &scope.child(),
                     return_type,
                     functions,
+                    schema,
                 )?;
                 if then_returns && else_returns {
                     return Ok(true);
@@ -388,14 +401,16 @@ pub(super) fn infer_expression(
     expression: &SourceExpression,
     scope: &Scope,
     functions: &BTreeMap<String, &FunctionDeclaration>,
+    schema: &ConstructionSchema,
 ) -> Result<Type, Diagnostic> {
-    infer_expression_with_expected(expression, scope, functions, None)
+    infer_expression_with_expected(expression, scope, functions, schema, None)
 }
 
 pub(super) fn infer_expression_with_expected(
     expression: &SourceExpression,
     scope: &Scope,
     functions: &BTreeMap<String, &FunctionDeclaration>,
+    schema: &ConstructionSchema,
     expected: Option<&Type>,
 ) -> Result<Type, Diagnostic> {
     match expression {
@@ -438,8 +453,13 @@ pub(super) fn infer_expression_with_expected(
             let mut element_type = expected_element.cloned();
             for element in elements {
                 let element_expected = expected_element.or(element_type.as_ref());
-                let ty =
-                    infer_expression_with_expected(element, scope, functions, element_expected)?;
+                let ty = infer_expression_with_expected(
+                    element,
+                    scope,
+                    functions,
+                    schema,
+                    element_expected,
+                )?;
                 if !is_pure_value_type(&ty) {
                     return Err(Diagnostic::InvalidOperation {
                         message: "array elements must be pure compile-time values",
@@ -473,7 +493,7 @@ pub(super) fn infer_expression_with_expected(
             operand,
             span,
         } => {
-            let operand_type = infer_expression(operand, scope, functions)?;
+            let operand_type = infer_expression(operand, scope, functions, schema)?;
             match (operator, &operand_type) {
                 (UnaryOperator::Not, Type::Bool) => Ok(Type::Bool),
                 (UnaryOperator::Negate, ty) if is_numeric_or_unit(ty) => Ok(operand_type),
@@ -489,8 +509,8 @@ pub(super) fn infer_expression_with_expected(
             right,
             span,
         } => {
-            let left_type = infer_expression(left, scope, functions)?;
-            let right_type = infer_expression(right, scope, functions)?;
+            let left_type = infer_expression(left, scope, functions, schema)?;
+            let right_type = infer_expression(right, scope, functions, schema)?;
             infer_binary(*operator, &left_type, &right_type).ok_or(Diagnostic::InvalidOperation {
                 message: "invalid binary operands",
                 span: *span,
@@ -507,7 +527,8 @@ pub(super) fn infer_expression_with_expected(
                     span: *span,
                 });
             };
-            if let Some(return_type) = infer_polymorphic_builtin(name, arguments, scope, functions)?
+            if let Some(return_type) =
+                infer_polymorphic_builtin(name, arguments, scope, functions, schema)?
             {
                 return Ok(return_type);
             }
@@ -525,8 +546,13 @@ pub(super) fn infer_expression_with_expected(
                 });
             }
             for (argument, expected) in arguments.iter().zip(parameters) {
-                let actual =
-                    infer_expression_with_expected(argument, scope, functions, Some(&expected))?;
+                let actual = infer_expression_with_expected(
+                    argument,
+                    scope,
+                    functions,
+                    schema,
+                    Some(&expected),
+                )?;
                 if matches!(name.as_str(), "toFloat" | "seconds" | "radians") && expected != actual
                 {
                     return Err(Diagnostic::InvalidConversion {
@@ -540,7 +566,20 @@ pub(super) fn infer_expression_with_expected(
             Ok(return_type)
         }
         SourceExpression::FieldAccess { base, field, span } => {
-            match infer_expression(base, scope, functions)? {
+            if let Some((root, path)) = flatten_field_access(expression) {
+                let root_type = infer_expression(root, scope, functions, schema)?;
+                if let Some(entity) = schema.entity(&root_type) {
+                    return entity
+                        .field(&path)
+                        .map(|schema_field| schema_field.ty.clone())
+                        .ok_or_else(|| Diagnostic::UnknownEntityField {
+                            entity: root_type,
+                            field: path.clone(),
+                            span: *span,
+                        });
+                }
+            }
+            match infer_expression(base, scope, functions, schema)? {
                 Type::Vec2(element) if matches!(field.as_str(), "x" | "y") => Ok(*element),
                 Type::Array(_) if field == "length" => Ok(Type::Int),
                 Type::GeneratorRange(element)
@@ -557,15 +596,20 @@ pub(super) fn infer_expression_with_expected(
         }
         SourceExpression::Index { base, index, span } => {
             let expected_array = expected.map(|element| Type::Array(Box::new(element.clone())));
-            let Type::Array(element) =
-                infer_expression_with_expected(base, scope, functions, expected_array.as_ref())?
+            let Type::Array(element) = infer_expression_with_expected(
+                base,
+                scope,
+                functions,
+                schema,
+                expected_array.as_ref(),
+            )?
             else {
                 return Err(Diagnostic::InvalidOperation {
                     message: "indexing requires an array",
                     span: *span,
                 });
             };
-            let index_type = infer_expression(index, scope, functions)?;
+            let index_type = infer_expression(index, scope, functions, schema)?;
             require_type(&Type::Int, &index_type, index.span())?;
             Ok(*element)
         }
@@ -574,8 +618,10 @@ pub(super) fn infer_expression_with_expected(
                 Some(Type::Vec2(element)) => Some(element.as_ref()),
                 _ => None,
             };
-            let x_type = infer_expression_with_expected(x, scope, functions, component_expected)?;
-            let y_type = infer_expression_with_expected(y, scope, functions, component_expected)?;
+            let x_type =
+                infer_expression_with_expected(x, scope, functions, schema, component_expected)?;
+            let y_type =
+                infer_expression_with_expected(y, scope, functions, schema, component_expected)?;
             require_type(&x_type, &y_type, *span)?;
             if !is_vec2_element_type(&x_type) {
                 return Err(Diagnostic::InvalidOperation {
@@ -586,6 +632,20 @@ pub(super) fn infer_expression_with_expected(
             Ok(Type::Vec2(Box::new(x_type)))
         }
     }
+}
+
+fn flatten_field_access(expression: &SourceExpression) -> Option<(&SourceExpression, String)> {
+    let mut segments = Vec::new();
+    let mut current = expression;
+    while let SourceExpression::FieldAccess { base, field, .. } = current {
+        segments.push(field.as_str());
+        current = base;
+    }
+    if segments.is_empty() {
+        return None;
+    }
+    segments.reverse();
+    Some((current, segments.join(".")))
 }
 
 fn signature(
@@ -621,13 +681,14 @@ fn infer_polymorphic_builtin(
     arguments: &[SourceExpression],
     scope: &Scope,
     functions: &BTreeMap<String, &FunctionDeclaration>,
+    schema: &ConstructionSchema,
 ) -> Result<Option<Type>, Diagnostic> {
     if !matches!(name, "abs" | "min" | "max" | "clamp") {
         return Ok(None);
     }
     let types = arguments
         .iter()
-        .map(|argument| infer_expression(argument, scope, functions))
+        .map(|argument| infer_expression(argument, scope, functions, schema))
         .collect::<Result<Vec<_>, _>>()?;
     let expected_arity = match name {
         "abs" => 1,
@@ -830,7 +891,7 @@ fn evaluate_const(
     functions: &BTreeMap<String, &FunctionDeclaration>,
     values: &mut BTreeMap<String, TypedValue>,
     root: &Scope,
-    budget: &mut Budget,
+    budget: &mut Budget<'_>,
 ) -> Result<TypedValue, Diagnostic> {
     if let Some(value) = values.get(name) {
         return Ok(value.clone());
@@ -855,7 +916,7 @@ fn evaluate_expression(
     constants: &BTreeMap<String, &ConstDeclaration>,
     functions: &BTreeMap<String, &FunctionDeclaration>,
     const_values: &mut BTreeMap<String, TypedValue>,
-    budget: &mut Budget,
+    budget: &mut Budget<'_>,
 ) -> Result<TypedValue, Diagnostic> {
     evaluate_expression_with_expected(
         expression,
@@ -875,7 +936,7 @@ fn evaluate_expression_with_expected(
     constants: &BTreeMap<String, &ConstDeclaration>,
     functions: &BTreeMap<String, &FunctionDeclaration>,
     const_values: &mut BTreeMap<String, TypedValue>,
-    budget: &mut Budget,
+    budget: &mut Budget<'_>,
     expected: Option<&Type>,
 ) -> Result<TypedValue, Diagnostic> {
     budget.node(expression.span())?;
@@ -1071,6 +1132,32 @@ fn evaluate_expression_with_expected(
             result
         }
         SourceExpression::FieldAccess { base, field, span } => {
+            if let Some((root, path)) = flatten_field_access(expression) {
+                let root_type = infer_expression(root, scope, functions, budget.schema)?;
+                if budget.schema.entity(&root_type).is_some() {
+                    let value = evaluate_expression(
+                        root,
+                        scope,
+                        constants,
+                        functions,
+                        const_values,
+                        budget,
+                    )?;
+                    if budget
+                        .schema
+                        .entity(&root_type)
+                        .and_then(|entity| entity.field(&path))
+                        .is_none()
+                    {
+                        return Err(Diagnostic::UnknownEntityField {
+                            entity: root_type,
+                            field: path,
+                            span: *span,
+                        });
+                    }
+                    return evaluate_entity_field(value, &path, *span);
+                }
+            }
             let value =
                 evaluate_expression(base, scope, constants, functions, const_values, budget)?;
             match value {
@@ -1225,7 +1312,7 @@ fn evaluate_generated_comparison_chain(
     constants: &BTreeMap<String, &ConstDeclaration>,
     functions: &BTreeMap<String, &FunctionDeclaration>,
     const_values: &mut BTreeMap<String, TypedValue>,
-    budget: &mut Budget,
+    budget: &mut Budget<'_>,
 ) -> Result<TypedValue, Diagnostic> {
     // Preserve the normal left-recursive `&&` budget order before evaluating the first comparison.
     for span in chain.nested_and_spans.iter().skip(1) {
@@ -1296,7 +1383,7 @@ fn evaluate_function(
     constants: &BTreeMap<String, &ConstDeclaration>,
     functions: &BTreeMap<String, &FunctionDeclaration>,
     const_values: &mut BTreeMap<String, TypedValue>,
-    budget: &mut Budget,
+    budget: &mut Budget<'_>,
 ) -> Result<TypedValue, Diagnostic> {
     let mut scope = root.child();
     for (parameter, value) in function.parameters.iter().zip(arguments) {
@@ -1330,7 +1417,7 @@ fn evaluate_block(
     constants: &BTreeMap<String, &ConstDeclaration>,
     functions: &BTreeMap<String, &FunctionDeclaration>,
     const_values: &mut BTreeMap<String, TypedValue>,
-    budget: &mut Budget,
+    budget: &mut Budget<'_>,
     return_type: &Type,
 ) -> Result<Option<TypedValue>, Diagnostic> {
     let mut scope = initial_scope.clone();
@@ -1402,6 +1489,20 @@ fn evaluate_block(
         }
     }
     Ok(None)
+}
+
+fn evaluate_entity_field(
+    value: TypedValue,
+    path: &str,
+    span: SourceSpan,
+) -> Result<TypedValue, Diagnostic> {
+    match (value, path) {
+        (TypedValue::Line(name), "id") => Ok(TypedValue::String(name)),
+        _ => Err(Diagnostic::FeatureUnavailable {
+            feature: "static entity field evaluation for this phase",
+            span,
+        }),
+    }
 }
 
 fn literal_value(literal: &SourceLiteral, span: SourceSpan) -> Result<TypedValue, Diagnostic> {
@@ -1979,13 +2080,14 @@ fn invalid_binary<T>(span: SourceSpan) -> Result<T, Diagnostic> {
     })
 }
 
-struct Budget {
+struct Budget<'a> {
     context: CompileTimeContext,
+    schema: &'a ConstructionSchema,
 }
 
-impl Budget {
-    fn new(context: CompileTimeContext) -> Self {
-        Self { context }
+impl<'a> Budget<'a> {
+    fn new(context: CompileTimeContext, schema: &'a ConstructionSchema) -> Self {
+        Self { context, schema }
     }
 
     fn node(&mut self, span: SourceSpan) -> Result<(), Diagnostic> {

@@ -275,6 +275,85 @@ definitions { fn f() -> float { return 1; } }"#;
 }
 
 #[test]
+fn pure_functions_can_read_static_entity_fields() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  fn read_time(note: Note) -> beat {
+    return note.gameplay.time;
+  }
+}"#;
+
+    elaborate_source(source).expect("entity static-field reads should elaborate");
+}
+
+#[test]
+fn pure_functions_report_unknown_static_entity_fields_from_schema() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  fn read_time(note: Note) -> beat {
+    return note.gameplay.missing;
+  }
+}"#;
+
+    let errors = elaborate_source(source).expect_err("unknown entity field should be rejected");
+    assert_eq!(errors[0].code(), DiagnosticCode::SCHEMA_UNKNOWN_FIELD);
+    assert!(errors[0].message().contains("gameplay.missing"));
+}
+
+#[test]
+fn pure_functions_can_evaluate_static_line_fields() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  fn read_id(lineValue: Line) -> string {
+    return lineValue.id;
+  }
+  template Note selected(whichLine: Line) {
+    return tap {
+      line: whichLine;
+      gameplay.time: 0beat;
+      presentation.texture: read_id(whichLine);
+    };
+  }
+}
+lines { line main {} }
+collections { notes { selected(@main); } }"#;
+
+    elaborate_source(source).expect("line static-field reads should evaluate");
+}
+
+#[test]
+fn pure_functions_route_unavailable_static_entity_field_evaluation() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  fn read_z(lineValue: Line) -> int {
+    return lineValue.zOrder;
+  }
+  template Note selected(whichLine: Line) {
+    let z: int = read_z(whichLine);
+    return tap {
+      line: whichLine;
+      gameplay.time: 0beat;
+    };
+  }
+}
+lines { line main {} }
+collections { notes { selected(@main); } }"#;
+
+    let errors = elaborate_source(source)
+        .expect_err("unavailable entity field evaluation should use the implementation boundary");
+    assert_eq!(
+        errors[0].code(),
+        DiagnosticCode::IMPLEMENTATION_FEATURE_UNAVAILABLE
+    );
+}
+
+#[test]
 fn rejects_unknown_and_runtime_only_names() {
     for name in ["missing", "s", "b", "q", "d", "p"] {
         let source = format!(
