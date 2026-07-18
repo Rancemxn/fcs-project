@@ -634,9 +634,9 @@ git diff --check
   `implementation.feature-unavailable`，且不产生部分输出；
 - I2.1–I2.10 已完成并合并；I2.10 的三份 valid fixture、六份 elaborate-error/budget fixture、矩阵
   更新和完整 Rust delivery gate 已记录。后续 corrective chain 为 PR #92/#96/#97/#98/#102，当前
-  `origin/main` 为 `2d24494354b4b10fe8dbd30cdadf8d1f5d22f4c8`；主自审和适用 Rust gate 均通过。
-  独立 merged-SHA Audit 已对 #92、#96、#102 给出 `pass`，#97 需在 #99 修复后重审，#98 仍待重审。
-  因此 I2 closure 的实现交付已修正但 stage claim 保持 provisional；I3.1 是下一 bounded frontier，五个
-  规范域仍为 Draft。
-- I3–I10 尚未实现；I3.1 是下一 bounded frontier。I3 可以建立自己的 canonical model/owning crate，
+  `origin/main` 为 `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1`；主自审和适用 Rust gate 均通过。
+  独立 merged-SHA Audit 已对 #92、#96、#98、#102 给出 `pass`，#97 需在 #99 修复后重审。因而 I2
+  closure 的实现交付已修正但 stage claim 保持 provisional；I3.1/I3.2 已合并，I3.3 是下一 bounded
+  frontier，五个规范域仍为 Draft。
+- I3.1/I3.2 已实现并合并；I3.3–I10 尚未完成。I3 可以建立自己的 canonical model/owning crate，
   但不得把 I2 closure 误报为 canonical/runtime/FCBC/Render/Conversion/CLI 完成或版本 Frozen。
