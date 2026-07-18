@@ -8,6 +8,7 @@ use crate::ast::{
 };
 use crate::diagnostic::{ExpansionTraceFrame, ExpansionTraceKind};
 use crate::schema::{ConstructionSchema, EntitySchema, FieldConstraint};
+use fcs_model::ExpansionPath;
 
 use super::eval::{
     evaluate_with_context, evaluate_with_context_expected, infer_expression_with_expected,
@@ -960,6 +961,8 @@ pub(super) fn expand_collections(
         schema,
         templates,
         context,
+        current_path: None,
+        next_template_call_order: 0,
     };
     document
         .collections
@@ -986,6 +989,8 @@ struct ExpansionContext<'a> {
     schema: &'a ConstructionSchema,
     templates: BTreeMap<String, &'a TemplateDeclaration>,
     context: CompileTimeContext,
+    current_path: Option<ExpansionPath>,
+    next_template_call_order: u64,
 }
 
 impl<'a> ExpansionContext<'a> {
@@ -1008,7 +1013,16 @@ impl<'a> ExpansionContext<'a> {
                 span: collection.span,
             })?;
         let mut entities = Vec::new();
-        for item in &collection.items {
+        self.next_template_call_order = 0;
+        for (item_order, item) in collection.items.iter().enumerate() {
+            self.current_path = Some(
+                ExpansionPath::new(collection.collection_name.clone(), item_order as u64).map_err(
+                    |_| Diagnostic::InvalidOperation {
+                        message: "invalid canonical expansion path segment",
+                        span: collection.span,
+                    },
+                )?,
+            );
             self.expand_item(
                 item,
                 &collection_schema.emitted_entity_type,
@@ -1016,6 +1030,7 @@ impl<'a> ExpansionContext<'a> {
                 &mut entities,
             )?;
         }
+        self.current_path = None;
         let expanded = ExpandedCollection::new(collection.collection_name.clone(), entities);
         self.context.pop_trace();
         Ok(expanded)
@@ -1105,7 +1120,27 @@ impl<'a> ExpansionContext<'a> {
             &self.context,
         )?;
         let mut generated = Vec::new();
+        let generator_path = self
+            .current_path
+            .clone()
+            .ok_or(Diagnostic::InvalidOperation {
+                message: "missing canonical collection path",
+                span: generator.span,
+            })?;
         for index in 0..range.count() {
+            self.current_path = Some(
+                generator_path
+                    .clone()
+                    .with_generator_index(u64::try_from(index).map_err(|_| {
+                        Diagnostic::NumericOverflow {
+                            span: generator.range.span,
+                        }
+                    })?)
+                    .map_err(|_| Diagnostic::InvalidOperation {
+                        message: "invalid canonical expansion path segment",
+                        span: generator.span,
+                    })?,
+            );
             self.context.push_trace(ExpansionTraceFrame::new(
                 ExpansionTraceKind::Index,
                 None,
@@ -1141,6 +1176,7 @@ impl<'a> ExpansionContext<'a> {
             self.context.pop_trace();
             self.context.pop_trace();
         }
+        self.current_path = Some(generator_path);
         self.context.pop_trace();
         self.context.pop_trace();
         output.extend(generated);
@@ -1249,6 +1285,12 @@ impl<'a> ExpansionContext<'a> {
             });
         }
         self.context.consume("max_generated_nodes", entity.span())?;
+        let mut entity = entity;
+        if entity.expansion_path().is_none()
+            && let Some(path) = &self.current_path
+        {
+            entity.set_expansion_path(path.clone());
+        }
         output.push(entity);
         Ok(())
     }
@@ -1404,6 +1446,17 @@ impl<'a> ExpansionContext<'a> {
             });
         }
         self.context.consume("max_template_instances", span)?;
+        let previous_path = self.current_path.clone();
+        let call_order = self.next_template_call_order;
+        self.next_template_call_order = self.next_template_call_order.saturating_add(1);
+        if let Some(path) = self.current_path.clone() {
+            self.current_path = Some(path.clone().with_template_call(name, call_order).map_err(
+                |_| Diagnostic::InvalidOperation {
+                    message: "invalid canonical expansion path segment",
+                    span,
+                },
+            )?);
+        }
         self.context.push_trace(ExpansionTraceFrame::new(
             ExpansionTraceKind::Template,
             Some(name.to_owned()),
@@ -1439,10 +1492,14 @@ impl<'a> ExpansionContext<'a> {
             depth + 1,
         );
         stack.pop();
-        let result = result?.ok_or_else(|| Diagnostic::MissingReturn {
+        let mut result = result?.ok_or_else(|| Diagnostic::MissingReturn {
             function: template.name.clone(),
             span: template.span,
         })?;
+        if let Some(path) = &self.current_path {
+            result.set_expansion_path(path.clone());
+        }
+        self.current_path = previous_path;
         self.context.pop_trace();
         Ok(result)
     }

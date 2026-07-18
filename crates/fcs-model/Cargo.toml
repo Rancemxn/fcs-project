@@ -1,0 +1,9 @@
+[package]
+name = "fcs-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FCS canonical model identity and lowering foundations"
+
+[dependencies]
+sha2.workspace = true

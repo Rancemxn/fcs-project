@@ -1,6 +1,6 @@
 # FCS 5 规范—实现—测试矩阵
 
-状态日期：2026-07-16
+状态日期：2026-07-18
 
 本矩阵记录权威规范与参考实现之间的可审计关系。它不定义格式语义；发生冲突时以
 `fcs.md`、`fcbc.md`、`fcs-render.md`、`fcs-conversion.md` 和绑定 conformance corpus 为准。
@@ -56,13 +56,10 @@ generator parser 边界为 `9d88a6a`，raw lexer prepass 清理为 `475e137`。I
 依赖、质量、归档拓扑和独立复审 gate 已通过。
 
 I2.1–I2.10 的 static-semantics implementation units 和 public elaborator conformance lane 已合并到
-`origin/main` `2d24494354b4b10fe8dbd30cdadf8d1f5d22f4c8`。I2.10 的三份 valid fixture、六份
-elaborate-error/budget fixture、shared-budget trace 和 `ExpandedSourceDocument` invariant 均有
-executable evidence；post-closure corrective chain 为 PR #92/#96/#97/#98/#102，所有关联 Issues 已关闭。
-主自审和适用 Rust gate 已通过；独立 merged-SHA Audit 对 PR #92、#96、#102 为 `pass`，PR #97 需在
-Issue #99 修复后重审，PR #98 仍待重审。I3.1 Canonical IDs 是下一 bounded frontier。I2 closure review
-中的历史快照和当前限制见 `docs/reviews/2026-07-17-i2-static-semantics-implementation-closure-review.md`。
-这些行只提升 I2-owned static subset，不能替代 I3+ canonical/runtime/FCBC/Render/Conversion 产品实现。
+`origin/main` `c284ee28cb40b10bc74ca1321a69c6bf1baabb7d`；I2 closure review 见
+`docs/reviews/2026-07-17-i2-static-semantics-implementation-closure-review.md`。这些行只提升 I2-owned
+static subset，不能替代 I3+ canonical/runtime/FCBC/Render/Conversion 产品实现。I3.1 的 normative
+contract 已由 FCS §17 与 ADR 0012 闭合，当前实现 work unit 绑定 `fcs-model`。
 
 允许的状态只有：`implemented`、`partial`、`not-started` 和 `blocked-by-I<n>`。`implemented`
 表示该行所列 I0 能力已有实际测试证据；`partial` 必须在“已知偏差”列写明缺失行为和接续阶段。
@@ -98,7 +95,7 @@ Issue #99 修复后重审，PR #98 仍待重审。I3.1 Canonical IDs 是下一 b
 | `fcs.md` 14.1–14.3 | binary64、explicit approximation、player-local sampled boundary、Core easing | 无 | 未来 `fcs-runtime` 与 converter approximation validator | `expected/numeric-vectors.toml`, `source.valid.exact-expression-dag`（manifest only） | error-budget tests（未接入） | blocked-by-I4 | I4 实现 exact evaluator；target approximation 属 I8/converter，播放器 sampled cache 不进入规范实现状态 |
 | `fcs.md` 15.1–15.3 | Extension、fidelity、preserve消除、repair | `parser::parse_document` | `ast/extension.rs`, `ast/entity.rs`, `parser/extension.rs`, `parser/document.rs` | `source_ast::extension_preserve_and_render_envelopes_retain_order_and_balanced_spans`, `source.valid.complete-source-grammar`（later-stage fixture） | `source_ast::extension_payload_duplicate_keys_remain_ordered_and_unbalanced_envelopes_fail`, `source.invalid.unclosed-extension-payload` | partial | I5/I9 | Extension/preserve/render envelopes, ordered payloads, balanced tokens, and spans are parser-complete; fidelity elimination, repair/provenance, and Render semantics remain I5/I9 |
 | `fcs.md` 16 | 稳定 diagnostic categories | `diagnostic::{Diagnostic, DiagnosticCode}` | `diagnostic.rs` | `diagnostic::diagnostics_are_sorted_by_span_then_code` | `diagnostic::missing_header_has_the_frozen_code_and_byte_span`, `diagnostic::parser_resource_limits_use_the_stable_resource_code` | implemented | I1–I9 | S14 正式绑定既有 `resource.limit-exceeded` 及其 parser/compiler limit 边界；后续阶段只在实现对应语义时激活其他已声明 category |
-| `fcs.md` 17 | Expanded source、CanonicalCompilation 与 FCBC handoff | `ast::ExpandedSourceDocument` | `ast/entity.rs`, `elaborator/entities.rs`, 未来 `fcs-model` | `compile_time::expanded_ir_exposes_only_read_accessors`, `compile_time::expanded_output_exposes_and_validates_only_concrete_values`, `conformance_manifest::i2_public_conformance_fixtures_execute_through_the_elaborator` | `compile_time::invalid_expansion_never_returns_partial_output` | partial | I3/I5 | I2 closes the concrete expanded-source handoff and invariant boundary; CanonicalChart/ResourceBundle/DistributionMetadata and exact descriptor lowering remain I3/I5 |
+| `fcs.md` 17 | Expanded source、CanonicalCompilation 与 FCBC handoff | `ast::ExpandedSourceDocument`, `fcs_model::{CanonicalTextualId, StableIdRegistry}` | `crates/fcs-model/src/lib.rs`, `ast/entity.rs`, `elaborator/entities.rs` | `fcs_model::generated_textual_ids_are_deterministic`, `fcs_model::sha256_vector_uses_namespace_separator_and_little_endian_bits`, `compile_time::expanded_ir_exposes_only_read_accessors`, `compile_time::expanded_output_exposes_and_validates_only_concrete_values` | `fcs_model::explicit_ids_reject_reserved_prefix`, `fcs_model::duplicate_textual_ids_are_rejected_without_salt`, `fcs_model::typed_stable_id_collisions_fail` | partial | I3/I5 | I3.1 establishes only the immutable identity/provenance seam and hash/collision contract; CanonicalChart/ResourceBundle/DistributionMetadata and exact descriptor lowering remain later I3/I5 units |
 | `fcs.md` 18 | Source/static/canonical/runtime conformance runner | manifest integrity API（test only） | `tests/conformance_manifest.rs`, `tests/source_ast.rs`, `tests/robustness.rs`, `fuzz/` | `conformance_manifest::typed_manifests_load_with_bound_counts`, `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary`, `conformance_manifest::i2_public_conformance_fixtures_execute_through_the_elaborator`, `source_ast::complete_source_grammar_fixture_parses_with_all_top_level_kinds` | `conformance_manifest::manifests_preserve_integrity_invariants`, `conformance_manifest::i2_elaborate_error_fixtures_keep_static_diagnostics_and_budget_trace` | partial | I3–I5 | The 39-entry parser-boundary runner and I2 elaborator fixture lane are executable; canonical/runtime/other-domain runners remain later-stage work |
 | `fcbc.md` 全部 | FCBC 2 与 Execution ABI | test-only fixture writer/loader/evaluator；无产品 API | `tests/fcbc_execution_abi.rs`, `tests/support/fcbc_reference_*.rs`；未来 `fcs-fcbc` | 864-byte empty + 1021-byte embedded-resource + 3432-byte nonempty execution golden；10 descriptor/7 distance queries | 17 mutation vectors；其中 4 项实际执行稳定 loader category | blocked-by-I7 | I7 | S15 corpus 已绑定 one-chart、14 required sections、ResourceData 原始 bytes/hash/coverage、exact-only profile、非空 descriptor/DAG/Distance、lazy trace 与 direct seek；该 test-only reference chain 已独立复审关闭 fixture blocker，但活动 workspace 仍无通用 canonical writer、产品 loader 或 runtime，不能据此提升 I7 状态 |
 | `fcs-conversion.md` 全部 | Parser/profile/Repair 分层、PGR/RPE/PEC conversion 与 report | manifest integrity API（test only） | `tests/conformance_manifest.rs`，未来 `fcs-converter` 依赖 `fcs-model` | 12-profile/7-dialect/56-rule/32-category registry、38 exact mapping 与 10 selection vectors（manifest only） | 5 invalid mapping、ambiguity/target-profile vectors（manifest only） | blocked-by-I6 | I5/I6/I8 | Registry/path/hash/cross-reference 已验证；活动 workspace 无 source parser、selector、converter、canonical golden 或 target reparse，旧 converter/IR 只在归档分支且不作为 canonical model |

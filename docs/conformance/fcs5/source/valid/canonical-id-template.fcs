@@ -1,0 +1,17 @@
+#fcs 5.0.0
+format { profile: chart; }
+definitions {
+    template Note makeTap(at: beat, whichLine: Line) {
+        return tap {
+            line: whichLine;
+            gameplay.time: at;
+        };
+    }
+}
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+    notes {
+        makeTap(1beat, @main);
+    }
+}

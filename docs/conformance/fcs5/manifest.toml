@@ -76,6 +76,22 @@ expected = "expected/canonical-equivalent.json"
 clauses = ["1.1", "6.8", "15.2", "17", "18"]
 
 [[fixture]]
+id = "source.valid.canonical-id-direct"
+path = "source/valid/canonical-id-direct.fcs"
+stage = "canonical"
+expect = "success"
+expected = "expected/canonical-ids.json"
+clauses = ["11.2", "12.1", "12.2", "12.5", "17", "18"]
+
+[[fixture]]
+id = "source.valid.canonical-id-template"
+path = "source/valid/canonical-id-template.fcs"
+stage = "canonical"
+expect = "success"
+expected = "expected/canonical-ids.json"
+clauses = ["6.3", "6.8", "12.1", "12.2", "17", "18"]
+
+[[fixture]]
 id = "source.valid.exact-expression-dag"
 path = "source/valid/exact-expression-dag.fcs"
 stage = "canonical"
