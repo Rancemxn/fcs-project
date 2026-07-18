@@ -2606,6 +2606,124 @@ fn canonical_note_ids_bind_expanded_direct_template_and_generator_provenance() {
 }
 
 #[test]
+fn canonical_note_times_keep_exact_beat_provenance_and_use_global_clock() {
+    let source = include_str!("../../../docs/conformance/fcs5/source/valid/time-scroll-note.fcs");
+    let document = parse_document(source)
+        .into_result()
+        .expect("time fixture should parse");
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect("time fixture should elaborate");
+    let time_map = expanded
+        .canonical_time_map()
+        .expect("tempo map should pass canonical validation");
+    let note = expanded
+        .canonical_note_times(&time_map)
+        .expect("note time should normalize")[0]
+        .clone();
+
+    assert_eq!(note.stable_id().textual().as_str(), "n");
+    assert_eq!(note.source_beat().numerator(), 2);
+    assert_eq!(note.source_beat().denominator(), 1);
+    assert_eq!(note.chart_time_seconds(), 1.0);
+    assert_eq!(
+        time_map.beat_at_time(note.chart_time_seconds()).unwrap(),
+        2.0
+    );
+}
+
+#[test]
+fn canonical_generator_note_times_follow_expanded_order() {
+    let source =
+        include_str!("../../../docs/conformance/fcs5/source/valid/compile-time-generator.fcs");
+    let document = parse_document(source)
+        .into_result()
+        .expect("generator fixture should parse");
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect("generator fixture should elaborate");
+    let time_map = expanded
+        .canonical_time_map()
+        .expect("tempo map should pass canonical validation");
+    let actual: Vec<_> = expanded
+        .canonical_note_times(&time_map)
+        .expect("generated note times should normalize")
+        .into_iter()
+        .map(|note| (note.source_beat().numerator(), note.chart_time_seconds()))
+        .collect();
+
+    assert_eq!(actual, [(0, 0.0), (1, 0.5), (2, 1.0), (3, 1.5)]);
+}
+
+#[test]
+fn canonical_note_times_are_equivalent_for_direct_template_and_reordered_sources() {
+    let direct =
+        include_str!("../../../docs/conformance/fcs5/source/valid/canonical-equivalent-direct.fcs");
+    let template = include_str!(
+        "../../../docs/conformance/fcs5/source/valid/canonical-equivalent-template.fcs"
+    );
+    let reordered = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+    notes {
+        tap { id: "later"; line: @main; gameplay.time: 2beat; };
+        tap { id: "earlier"; line: @main; gameplay.time: 1beat; };
+    }
+}"#;
+
+    fn normalized(source: &str) -> Vec<(String, i64, i64, f64)> {
+        let document = parse_document(source).into_result().unwrap();
+        let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
+        let time_map = expanded.canonical_time_map().unwrap();
+        let mut values: Vec<_> = expanded
+            .canonical_note_times(&time_map)
+            .unwrap()
+            .into_iter()
+            .map(|note| {
+                (
+                    note.stable_id().textual().as_str().to_owned(),
+                    note.source_beat().numerator(),
+                    note.source_beat().denominator(),
+                    note.chart_time_seconds(),
+                )
+            })
+            .collect();
+        values.sort_by(|left, right| left.0.cmp(&right.0));
+        values
+    }
+
+    assert_eq!(normalized(direct), normalized(template));
+    assert_eq!(
+        normalized(reordered),
+        vec![
+            ("earlier".to_owned(), 1, 1, 0.5),
+            ("later".to_owned(), 2, 1, 1.0),
+        ]
+    );
+}
+
+#[test]
+fn canonical_tempo_validation_preserves_parser_acceptance_and_stable_errors() {
+    for (source, expected) in [
+        (
+            "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { 0beat -> 0bpm; }",
+            fcs_model::TempoError::InvalidBpm,
+        ),
+        (
+            "#fcs 5.0.0\nformat { profile: chart; }\ntempoMap { 0beat -> 120bpm; 2beat -> 180bpm; 1beat -> 200bpm; }",
+            fcs_model::TempoError::NonMonotonicTempo,
+        ),
+    ] {
+        let document = parse_document(source)
+            .into_result()
+            .expect("tempo legality belongs to canonical validation");
+        let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+            .expect("invalid tempo does not block source elaboration");
+        assert_eq!(expanded.canonical_time_map(), Err(expected));
+    }
+}
+
+#[test]
 fn note_constructors_materialize_static_schema_defaults() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }
@@ -2693,6 +2811,7 @@ fn phase2_note_schema_has_exact_fields_required_flags_and_variants() {
             ("gameplay.judgment.enabled", Type::Bool, false),
             ("gameplay.side", Type::String, false),
             ("gameplay.time", Type::Beat, true),
+            ("id", Type::String, false),
             ("line", Type::Line, false),
             ("presentation.alpha", Type::Float, false),
             ("presentation.color", Type::Color, false),

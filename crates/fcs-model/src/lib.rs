@@ -1,12 +1,17 @@
 //! Immutable canonical-model foundations shared by later FCS lowering stages.
 //!
-//! I3.1 owns only identity construction. Time normalization, graph validation,
-//! Track lowering, Note semantics, and runtime descriptors remain later stages.
+//! I3.1 owns identity construction and I3.2 owns exact global chart-time
+//! normalization. Graph validation, Track lowering, Note semantics, and runtime
+//! descriptors remain later stages.
 
 use std::collections::BTreeMap;
 use std::fmt;
 
 use sha2::{Digest, Sha256};
+
+mod time;
+
+pub use time::{AudioOffset, Beat, CanonicalTime, ChartTimeMap, TempoError, TempoPoint};
 
 /// The textual namespace reserved for compiler-generated identities.
 pub const GENERATED_PREFIX: &str = "generated/";
