@@ -2840,7 +2840,7 @@ fn phase2_line_schema_has_only_identity_fields() {
 
     assert_eq!(
         fields,
-        vec![("id", Type::String, true), ("zOrder", Type::Int, false),]
+        vec![("id", Type::String, false), ("zOrder", Type::Int, false),]
     );
     assert_eq!(line.note_variants(), None);
 }

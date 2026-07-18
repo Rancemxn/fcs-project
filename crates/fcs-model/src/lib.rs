@@ -9,9 +9,16 @@ use std::fmt;
 
 use sha2::{Digest, Sha256};
 
+mod line;
 mod metadata;
 mod time;
 
+pub use line::{
+    CanonicalLine, CanonicalLineBase, CanonicalLineGraph, CanonicalLineInherit,
+    CanonicalLineWorldState, CanonicalScrollTempo, CanonicalScrollTempoMap,
+    CanonicalScrollTempoPoint, CanonicalVec2, LineBaseError, LineGraphError, ScrollTempoDomain,
+    ScrollTempoError, ScrollTempoKey,
+};
 pub use metadata::{
     CanonicalArrayError, CanonicalArtwork, CanonicalColor, CanonicalColorError,
     CanonicalContributor, CanonicalCredit, CanonicalMetadata, CanonicalObject,

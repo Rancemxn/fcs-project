@@ -27,7 +27,8 @@ pub use metadata::{
 pub use time::{Beat, BeatError, Bpm, InvalidBpm, SourceBpm};
 pub use track::{
     DirectPoint, DirectSegment, HalfOpenInterval, Interpolation, LineBodyItem, LineDeclaration,
-    LinesBlock, SegmentsBlock, TrackDeclaration, TrackSegmentItem, TrackSetting, TracksBlock,
+    LinesBlock, ScrollTempoMap, ScrollTempoPoint, SegmentsBlock, TrackDeclaration,
+    TrackSegmentItem, TrackSetting, TracksBlock,
 };
 pub use types::{
     BinaryOperator, GeneratorRangeValue, SourceChooseArm, SourceExpression, SourceLiteral,

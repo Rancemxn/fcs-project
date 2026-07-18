@@ -1,7 +1,7 @@
 //! Source-owned Line, Track, and segment grammar nodes.
 
 use super::{
-    EntityField, FieldPath, Generator, SourceBlock, SourceExpression, SourceSpan, SourceType, Type,
+    EntityField, FieldPath, Generator, SourceBpm, SourceExpression, SourceSpan, SourceType, Type,
 };
 
 /// The source-ordered `lines` top-level block.
@@ -26,7 +26,23 @@ pub struct LineDeclaration {
 pub enum LineBodyItem {
     Field(EntityField),
     Tracks(TracksBlock),
-    ScrollTempoMap(SourceBlock),
+    ScrollTempoMap(ScrollTempoMap),
+}
+
+/// A typed source `scrollTempoMap` declaration owned by a Line.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScrollTempoMap {
+    pub points: Vec<ScrollTempoPoint>,
+    pub span: SourceSpan,
+    pub keyword_span: SourceSpan,
+}
+
+/// One source scroll-tempo point before static/canonical validation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScrollTempoPoint {
+    pub key: SourceExpression,
+    pub bpm: SourceBpm,
+    pub span: SourceSpan,
 }
 
 impl LineBodyItem {
