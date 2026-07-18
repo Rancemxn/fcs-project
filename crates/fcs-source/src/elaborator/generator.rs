@@ -75,13 +75,17 @@ impl GeneratorRange {
             return Err(GeneratorRangeError::IndexOutOfBounds);
         }
         match (&self.start, &self.step) {
-            (TypedValue::Int(start), TypedValue::Int(step)) => start
-                .checked_add(
-                    step.checked_mul(index)
-                        .ok_or(GeneratorRangeError::NumericOverflow)?,
-                )
-                .map(TypedValue::Int)
-                .ok_or(GeneratorRangeError::NumericOverflow),
+            (TypedValue::Int(start), TypedValue::Int(step)) => {
+                let offset = i128::from(*step)
+                    .checked_mul(i128::from(index))
+                    .ok_or(GeneratorRangeError::NumericOverflow)?;
+                let value = i128::from(*start)
+                    .checked_add(offset)
+                    .ok_or(GeneratorRangeError::NumericOverflow)?;
+                i64::try_from(value)
+                    .map(TypedValue::Int)
+                    .map_err(|_| GeneratorRangeError::NumericOverflow)
+            }
             (TypedValue::Beat(start), TypedValue::Beat(step)) => step
                 .checked_mul_i64(index)
                 .and_then(|offset| start.checked_add(offset))

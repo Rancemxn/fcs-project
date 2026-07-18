@@ -1599,6 +1599,44 @@ fn evaluates_descending_integer_ranges_with_exact_metadata_and_values() {
 }
 
 #[test]
+fn integer_range_value_at_allows_wide_intermediate_product() {
+    let source = "#fcs 5.0.0\nformat { profile: fragment; }\ncollections { notes {\n".to_owned()
+        + "generate i: int in -9223372036854775807..=9223372036854775807 step 3 { }\n"
+        + "} }";
+    let document = parse_document(&source).into_result().unwrap();
+    let CollectionItem::Generator(generator) = &document.collections[0].items[0] else {
+        panic!("expected generator collection item");
+    };
+
+    let range =
+        evaluate_generator_range(&document, generator, CompileTimeLimits::default()).unwrap();
+    assert_eq!(range.count(), 6_148_914_691_236_517_205);
+    assert_eq!(
+        range.value_at(range.count() - 1),
+        Ok(TypedValue::Int(9_223_372_036_854_775_805))
+    );
+}
+
+#[test]
+fn descending_integer_range_value_at_allows_wide_intermediate_product() {
+    let source = "#fcs 5.0.0\nformat { profile: fragment; }\ncollections { notes {\n".to_owned()
+        + "generate i: int in 9223372036854775807..=-9223372036854775807 step -3 { }\n"
+        + "} }";
+    let document = parse_document(&source).into_result().unwrap();
+    let CollectionItem::Generator(generator) = &document.collections[0].items[0] else {
+        panic!("expected generator collection item");
+    };
+
+    let range =
+        evaluate_generator_range(&document, generator, CompileTimeLimits::default()).unwrap();
+    assert_eq!(range.count(), 6_148_914_691_236_517_205);
+    assert_eq!(
+        range.value_at(range.count() - 1),
+        Ok(TypedValue::Int(-9_223_372_036_854_775_805))
+    );
+}
+
+#[test]
 fn generator_ranges_follow_endpoint_and_direction_rules() {
     let cases = [
         ("0..<4", "1", false, 4, vec![0, 1, 2, 3]),
