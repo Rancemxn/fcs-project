@@ -169,6 +169,11 @@ pub(super) enum ElaboratorError {
         span: SourceSpan,
         previous_span: SourceSpan,
     },
+    DuplicateLineId {
+        name: String,
+        span: SourceSpan,
+        previous_span: SourceSpan,
+    },
     TypeMismatch {
         expected: Type,
         actual: Type,
@@ -353,6 +358,17 @@ impl ElaboratorError {
                 span,
             )
             .with_label(DiagnosticLabel::new(previous_span, "previous binding")),
+            Self::DuplicateLineId {
+                name,
+                span,
+                previous_span,
+            } => Diagnostic::new(
+                DiagnosticCode::NAME_DUPLICATE,
+                DiagnosticStage::Elaborate,
+                format!("Line ID {name} is declared more than once"),
+                span,
+            )
+            .with_label(DiagnosticLabel::new(previous_span, "previous Line ID")),
             Self::TypeMismatch {
                 expected,
                 actual,

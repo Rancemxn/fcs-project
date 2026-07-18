@@ -487,6 +487,57 @@ collections { notes { selected(1beat, @main); } }"#;
 }
 
 #[test]
+fn judgeline_collection_ids_are_referenceable_by_notes() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+collections {
+  judgelines { Line { id: "judge"; }; }
+  notes {
+    tap { line: @judge; gameplay.time: 1beat; };
+  }
+}"#;
+
+    elaborate_source(source).expect("judgeline collection IDs should share the Line namespace");
+}
+
+#[test]
+fn judgeline_ids_in_statically_checked_branches_are_referenceable() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+collections {
+  judgelines {
+    if true {
+      Line { id: "judge"; };
+    } else {
+      Line { id: "unused"; };
+    }
+  }
+  notes {
+    tap { line: @judge; gameplay.time: 1beat; };
+  }
+}"#;
+
+    elaborate_source(source).expect("static judgeline branches should share the Line namespace");
+}
+
+#[test]
+fn duplicate_line_ids_across_lines_and_judgelines_are_rejected() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line judge {} }
+collections {
+  judgelines { Line { id: "judge"; }; }
+}"#;
+
+    let errors = elaborate_source(source).expect_err("duplicate Line IDs should be rejected");
+    assert_eq!(errors[0].code(), DiagnosticCode::NAME_DUPLICATE);
+    assert!(errors[0].message().contains("Line ID judge"));
+}
+
+#[test]
 fn template_note_returns_require_a_line_binding() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }
