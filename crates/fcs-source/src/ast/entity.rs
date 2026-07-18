@@ -224,9 +224,8 @@ impl ExpandedSourceDocument {
                     .value();
                 let canonical_time = match value {
                     TypedValue::Beat(beat) => {
-                        let source_beat =
-                            CanonicalBeat::new(beat.numerator(), beat.denominator())
-                                .map_err(|_| CanonicalNoteTimeError::InvalidGameplayTime)?;
+                        let source_beat = CanonicalBeat::new(beat.numerator(), beat.denominator())
+                            .map_err(|_| CanonicalNoteTimeError::InvalidGameplayTime)?;
                         time_map
                             .chart_time(source_beat)
                             .map_err(CanonicalNoteTimeError::Tempo)?

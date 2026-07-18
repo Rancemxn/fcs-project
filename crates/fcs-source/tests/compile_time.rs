@@ -279,12 +279,32 @@ fn pure_functions_can_read_static_entity_fields() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }
 definitions {
+  fn read_alpha(note: Note) -> float {
+    return note.presentation.alpha;
+  }
+}"#;
+
+    elaborate_source(source).expect("entity static-field reads should elaborate");
+}
+
+#[test]
+fn pure_functions_reject_fields_without_one_compile_time_access_type() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
   fn read_time(note: Note) -> beat {
     return note.gameplay.time;
   }
 }"#;
 
-    elaborate_source(source).expect("entity static-field reads should elaborate");
+    let errors = elaborate_source(source)
+        .expect_err("beat-or-time fields must not be exposed as an exact beat type");
+    assert_eq!(errors[0].code(), DiagnosticCode::TYPE_INVALID_OPERATION);
+    assert!(
+        errors[0]
+            .message()
+            .contains("no single Core compile-time field-access type")
+    );
 }
 
 #[test]
@@ -2794,10 +2814,16 @@ collections { notes { tap { gameplay.time: 0beat; }; } }"#;
 fn phase2_schema_requires_note_time_and_types_position() {
     let schema = phase2_schema();
     let note = schema.entity(&Type::Note).unwrap();
-    assert_eq!(note.field("gameplay.time").unwrap().ty, Type::Beat);
+    let time = note.field("gameplay.time").unwrap();
+    assert_eq!(time.expected_type(), None);
+    assert!(time.accepts_type(&Type::Beat));
+    assert!(time.accepts_type(&Type::Time));
+    assert!(!time.accepts_type(&Type::Float));
     assert_eq!(
-        note.field("presentation.positionX").unwrap().ty,
-        Type::Length
+        note.field("presentation.positionX")
+            .unwrap()
+            .expected_type(),
+        Some(&Type::Length)
     );
 }
 
@@ -2806,7 +2832,7 @@ fn phase2_schema_exposes_only_gameplay_side_as_a_closed_string_enum() {
     let note = phase2_schema().entity(&Type::Note).unwrap();
     let side = note.field("gameplay.side").unwrap();
 
-    assert_eq!(side.ty, Type::String);
+    assert_eq!(side.expected_type(), Some(&Type::String));
     assert_eq!(
         side.constraint(),
         Some(&FieldConstraint::StringEnum(&["above", "below"]))
@@ -2838,47 +2864,53 @@ fn phase2_note_schema_has_exact_fields_required_flags_and_variants() {
     ];
     let fields: Vec<_> = note
         .fields()
-        .map(|field| (field.path.as_str(), field.ty.clone(), field.required))
+        .map(|field| {
+            (
+                field.path.as_str(),
+                field.expected_type().cloned(),
+                field.required,
+            )
+        })
         .collect();
 
     assert_eq!(
         fields,
         vec![
-            ("gameplay.endTime", Type::Beat, false),
+            ("gameplay.endTime", None, false),
             (
                 "gameplay.judgeShape.center",
-                Type::Vec2(Box::new(Type::Length)),
+                Some(Type::Vec2(Box::new(Type::Length))),
                 false,
             ),
             (
                 "gameplay.judgeShape.halfExtents",
-                Type::Vec2(Box::new(Type::Length)),
+                Some(Type::Vec2(Box::new(Type::Length))),
                 false,
             ),
-            ("gameplay.judgeShape.kind", Type::String, false),
-            ("gameplay.judgeShape.radius", Type::Length, false),
-            ("gameplay.judgment.enabled", Type::Bool, false),
-            ("gameplay.scoreExtension", Type::String, false),
-            ("gameplay.scorePolicy", Type::String, false),
-            ("gameplay.side", Type::String, false),
-            ("gameplay.soundPolicy", Type::String, false),
-            ("gameplay.soundResource", Type::String, false),
-            ("gameplay.time", Type::Beat, true),
-            ("id", Type::String, false),
-            ("line", Type::Line, false),
-            ("presentation.alpha", Type::Float, false),
-            ("presentation.color", Type::Color, false),
-            ("presentation.positionX", Type::Length, false),
-            ("presentation.rotation", Type::Angle, false),
-            ("presentation.scaleX", Type::Float, false),
-            ("presentation.scaleY", Type::Float, false),
-            ("presentation.scrollFactor", Type::Float, false),
-            ("presentation.texture", Type::String, false),
-            ("presentation.visibleFrom", Type::Beat, false),
-            ("presentation.visibleUntil", Type::Beat, false),
-            ("presentation.xOffset", Type::Length, false),
-            ("presentation.yOffset", Type::Length, false),
-            ("render.enabled", Type::Bool, false),
+            ("gameplay.judgeShape.kind", Some(Type::String), false),
+            ("gameplay.judgeShape.radius", Some(Type::Length), false),
+            ("gameplay.judgment.enabled", Some(Type::Bool), false),
+            ("gameplay.scoreExtension", Some(Type::String), false),
+            ("gameplay.scorePolicy", Some(Type::String), false),
+            ("gameplay.side", Some(Type::String), false),
+            ("gameplay.soundPolicy", Some(Type::String), false),
+            ("gameplay.soundResource", Some(Type::String), false),
+            ("gameplay.time", None, true),
+            ("id", Some(Type::String), false),
+            ("line", Some(Type::Line), false),
+            ("presentation.alpha", Some(Type::Float), false),
+            ("presentation.color", Some(Type::Color), false),
+            ("presentation.positionX", Some(Type::Length), false),
+            ("presentation.rotation", Some(Type::Angle), false),
+            ("presentation.scaleX", Some(Type::Float), false),
+            ("presentation.scaleY", Some(Type::Float), false),
+            ("presentation.scrollFactor", Some(Type::Float), false),
+            ("presentation.texture", Some(Type::String), false),
+            ("presentation.visibleFrom", Some(Type::Beat), false),
+            ("presentation.visibleUntil", Some(Type::Beat), false),
+            ("presentation.xOffset", Some(Type::Length), false),
+            ("presentation.yOffset", Some(Type::Length), false),
+            ("render.enabled", Some(Type::Bool), false),
         ]
     );
     assert_eq!(note.note_variants(), Some(note_variants.as_slice()));
@@ -2889,12 +2921,21 @@ fn phase2_line_schema_has_only_identity_fields() {
     let line = phase2_schema().entity(&Type::Line).unwrap();
     let fields: Vec<_> = line
         .fields()
-        .map(|field| (field.path.as_str(), field.ty.clone(), field.required))
+        .map(|field| {
+            (
+                field.path.as_str(),
+                field.expected_type().cloned(),
+                field.required,
+            )
+        })
         .collect();
 
     assert_eq!(
         fields,
-        vec![("id", Type::String, false), ("zOrder", Type::Int, false),]
+        vec![
+            ("id", Some(Type::String), false),
+            ("zOrder", Some(Type::Int), false),
+        ]
     );
     assert_eq!(line.note_variants(), None);
 }

@@ -569,14 +569,20 @@ pub(super) fn infer_expression_with_expected(
             if let Some((root, path)) = flatten_field_access(expression) {
                 let root_type = infer_expression(root, scope, functions, schema)?;
                 if let Some(entity) = schema.entity(&root_type) {
-                    return entity
-                        .field(&path)
-                        .map(|schema_field| schema_field.ty.clone())
-                        .ok_or_else(|| Diagnostic::UnknownEntityField {
+                    let Some(schema_field) = entity.field(&path) else {
+                        return Err(Diagnostic::UnknownEntityField {
                             entity: root_type,
                             field: path.clone(),
                             span: *span,
                         });
+                    };
+                    return schema_field.expected_type().cloned().ok_or(
+                        Diagnostic::InvalidOperation {
+                            message:
+                                "schema field has no single Core compile-time field-access type",
+                            span: *span,
+                        },
+                    );
                 }
             }
             match infer_expression(base, scope, functions, schema)? {

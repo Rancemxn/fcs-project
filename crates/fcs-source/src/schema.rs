@@ -16,8 +16,8 @@ pub enum FieldConstraint {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldSchema {
     pub path: String,
-    pub ty: Type,
     pub required: bool,
+    ty: Type,
     constraint: Option<FieldConstraint>,
 }
 
@@ -38,6 +38,10 @@ impl FieldSchema {
             Some(FieldConstraint::TimeOrBeat) => matches!(actual, Type::Time | Type::Beat),
             Some(FieldConstraint::StringEnum(_)) | None => actual == &self.ty,
         }
+    }
+
+    pub(crate) fn diagnostic_type(&self) -> &Type {
+        &self.ty
     }
 }
 

@@ -115,6 +115,18 @@ fn canonical_notes_accept_time_valued_gameplay_and_hold_boundaries() {
 }
 
 #[test]
+fn canonical_notes_ignore_beat_provenance_when_chart_time_matches() {
+    let from_beat = canonical(&format!(
+        "{HEADER}lines {{ line main {{}} }} collections {{ notes {{ tap {{ id: \"same\"; line: @main; gameplay.time: 2beat; }}; }} }}"
+    ));
+    let from_time = canonical(&format!(
+        "{HEADER}lines {{ line main {{}} }} collections {{ notes {{ tap {{ id: \"same\"; line: @main; gameplay.time: 1s; }}; }} }}"
+    ));
+
+    assert_eq!(from_beat, from_time);
+}
+
+#[test]
 fn canonical_notes_validate_shapes_policies_and_hold_boundaries() {
     let notes = canonical(&format!(
         "{HEADER}{POLICY_DECLARATIONS}lines {{ line main {{}} line other {{}} }} collections {{ notes {{\

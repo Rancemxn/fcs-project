@@ -71,10 +71,16 @@ pub struct TempoPoint {
 }
 
 /// A canonical chart-time value with optional exact beat provenance.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub struct CanonicalTime {
     source_beat: Option<Beat>,
     chart_time_seconds: f64,
+}
+
+impl PartialEq for CanonicalTime {
+    fn eq(&self, other: &Self) -> bool {
+        self.chart_time_seconds == other.chart_time_seconds
+    }
 }
 
 impl CanonicalTime {
@@ -427,5 +433,15 @@ mod tests {
             CanonicalTime::from_chart_time_seconds(f64::NAN),
             Err(TempoError::NonFiniteChartTime)
         );
+    }
+
+    #[test]
+    fn canonical_time_equality_ignores_source_beat_provenance() {
+        let map = map(&[(0, 1, 120.0)]);
+        let from_beat = map.chart_time(Beat::new(2, 1).unwrap()).unwrap();
+        let from_time = CanonicalTime::from_chart_time_seconds(1.0).unwrap();
+
+        assert_eq!(from_beat, from_time);
+        assert_ne!(from_beat.source_beat(), from_time.source_beat());
     }
 }

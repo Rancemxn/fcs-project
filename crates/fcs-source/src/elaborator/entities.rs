@@ -1805,7 +1805,7 @@ fn validate_schema_type(
 ) -> Result<(), Diagnostic> {
     if !field.accepts_type(actual) {
         return Err(Diagnostic::TypeMismatch {
-            expected: field.ty.clone(),
+            expected: field.diagnostic_type().clone(),
             actual: actual.clone(),
             span,
         });
