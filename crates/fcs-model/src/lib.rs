@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 
 mod line;
 mod metadata;
+mod note;
 mod time;
 
 pub use line::{
@@ -24,6 +25,11 @@ pub use metadata::{
     CanonicalContributor, CanonicalCredit, CanonicalMetadata, CanonicalObject,
     CanonicalObjectEntry, CanonicalObjectError, CanonicalPreview, CanonicalResource,
     CanonicalResourceKind, CanonicalSync, CanonicalValue, CanonicalValueType, DeclaredSha256,
+};
+pub use note::{
+    CanonicalJudgeShape, CanonicalNote, CanonicalNoteError, CanonicalNoteGameplay,
+    CanonicalNoteKind, CanonicalNotePresentation, CanonicalNoteScorePolicy, CanonicalNoteSet,
+    CanonicalNoteSide, CanonicalNoteSoundPolicy,
 };
 pub use time::{AudioOffset, Beat, CanonicalTime, ChartTimeMap, TempoError, TempoPoint};
 

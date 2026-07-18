@@ -410,8 +410,9 @@ production coverage ledger、独立 fuzz lane 和 I1 条款矩阵证据。逐步
 `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`；I1.1–I1.8 的实现与证据已合并，当前
 进入 Task 9 governance、最终门禁和独立复审；I2.1–I2.9 的实现与独立交付证据已合并，当前由
 I2.10 公共 conformance fixture 与阶段门禁收尾。I2.1–I2.10 及其 corrective chain 已合并到
-`origin/main` `2d24494354b4b10fe8dbd30cdadf8d1f5d22f4c8`；主自审和适用 Rust gate 已通过，当前
-独立重审 residual 见 I2 closure review，I3.1 是下一 bounded frontier。
+`origin/main` `2d24494354b4b10fe8dbd30cdadf8d1f5d22f4c8`；主自审和适用 Rust gate 已通过。I3.1–I3.4
+的 canonical implementation units 已合并，I3.3 metadata/resource/sync 与 I3.4 Line span corrective
+residual 均已路由完成；当前 bounded frontier 转入 I3.5 Note lowering。
 
 ### I2：Static semantics 与编译期展开
 
@@ -458,6 +459,12 @@ I2.10 公共 conformance fixture 与阶段门禁收尾。I2.1–I2.10 及其 cor
   serializer，排序与 stable ID 固定；不能让 JSON representation 成为 canonical API。
 
 测试：tempo/Track/graph/Note 每个边界，source declaration reorder 的语义不变性和 snapshot golden。
+
+当前交付状态：I3.1–I3.4 已实现并合并；I3.5 已建立 immutable canonical Note、四种 Note kind、
+Line/time/policy/shape/Hold/presentation lowering、stable ID 和 deterministic sort 的实现与 focused
+evidence。I3.5 仍是 `partial` 的阶段能力：Track normalization、scroll integration、runtime visibility/
+descriptor、resource bytes/hash resolution、CanonicalChart aggregation 和 snapshot 由 I3.6–I3.9、I4
+和 I5 继续承接；这些 residual 不阻塞本 bounded Note work-unit 的交付。
 
 ### I4：Reference evaluator 与数值系统
 
@@ -636,7 +643,9 @@ git diff --check
   更新和完整 Rust delivery gate 已记录。后续 corrective chain 为 PR #92/#96/#97/#98/#102，当前
   `origin/main` 为 `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1`；主自审和适用 Rust gate 均通过。
   独立 merged-SHA Audit 已对 #92、#96、#98、#102 给出 `pass`，#97 需在 #99 修复后重审。因而 I2
-  closure 的实现交付已修正但 stage claim 保持 provisional；I3.1/I3.2 已合并，I3.3 是下一 bounded
-  frontier，五个规范域仍为 Draft。
-- I3.1/I3.2 已实现并合并；I3.3–I10 尚未完成。I3 可以建立自己的 canonical model/owning crate，
-  但不得把 I2 closure 误报为 canonical/runtime/FCBC/Render/Conversion/CLI 完成或版本 Frozen。
+  closure 的实现交付已修正但 stage claim 保持 provisional；五个规范域仍为 Draft。
+- I3.1–I3.4 已实现并合并；I3.3 metadata/resource/sync、I3.4 Line graph/topology 及其 span corrective
+  baseline 已交付，当前 I3.5 Note lowering 是下一 bounded frontier。I3.5 的 residual 为 Track、scroll、
+  runtime descriptor、CanonicalChart/snapshot 和 I5 resource bytes/hash resolution；I3.6–I10 尚未完成。
+  I3 可以建立自己的 canonical model/owning crate，但不得把这些阶段性 canonical seams 误报为完整
+  canonical/runtime/FCBC/Render/Conversion/CLI 完成或版本 Frozen。
