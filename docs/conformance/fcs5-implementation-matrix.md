@@ -56,10 +56,11 @@ generator parser 边界为 `9d88a6a`，raw lexer prepass 清理为 `475e137`。I
 依赖、质量、归档拓扑和独立复审 gate 已通过。
 
 I2.1–I2.10 的 static-semantics implementation units 和 public elaborator conformance lane 已合并到
-`origin/main` `c284ee28cb40b10bc74ca1321a69c6bf1baabb7d`；I2 closure review 见
+`origin/main` `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1`；I2 closure review 见
 `docs/reviews/2026-07-17-i2-static-semantics-implementation-closure-review.md`。这些行只提升 I2-owned
 static subset，不能替代 I3+ canonical/runtime/FCBC/Render/Conversion 产品实现。I3.1 的 normative
-contract 已由 FCS §17 与 ADR 0012 闭合，当前实现 work unit 绑定 `fcs-model`。
+contract 已由 FCS §17 与 ADR 0012 闭合，I3.1/I3.2 已合并，当前下一 bounded frontier 是 I3.3 metadata
+graph。
 
 允许的状态只有：`implemented`、`partial`、`not-started` 和 `blocked-by-I<n>`。`implemented`
 表示该行所列 I0 能力已有实际测试证据；`partial` 必须在“已知偏差”列写明缺失行为和接续阶段。

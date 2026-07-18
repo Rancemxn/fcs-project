@@ -10,15 +10,15 @@ The current branch starts from the merged I1.9 checkpoint `0681ddd8561ef3072e117
 
 ## Current-state closure handoff
 
-`origin/main` is `2d24494354b4b10fe8dbd30cdadf8d1f5d22f4c8`, including corrective PRs #92 and #96 and
+`origin/main` is `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1`, including corrective PRs #92 and #96 and
 PRs #97, #98, and #102 for Issues #84, #87, #88, #91, #93, and #99. Primary Self-Audit and the applicable
 local Rust gates passed for each merge. Independent Audit results are `pass` for the fixed merged SHAs of
-PRs #92, #96, and #102; PR #97 requires re-review after the former #99-blocked result, and PR #98 still awaits its
-merged-SHA audit. This asynchronous residual does not block the primary session's handoff to I3.1, but it
+PRs #92, #96, #98, and #102; PR #97 requires re-review after the former #99-blocked result. This asynchronous residual does not block the primary session's handoff to I3.3, but it
 keeps the corrected I2 stage claim provisional and must freeze I2-dependent work if a later Critical or
 Important finding appears.
 
-I3.1 Canonical IDs is the next bounded frontier. This handoff does not implement I3 or promote any
+I3.1 Canonical IDs and I3.2 Time normalization are merged; I3.3 Metadata graph is the next bounded frontier.
+This handoff does not implement later I3 work or promote any
 specification version.
 
 ## Objective

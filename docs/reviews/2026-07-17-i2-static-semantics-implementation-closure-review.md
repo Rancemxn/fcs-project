@@ -8,7 +8,7 @@ evidence. They are not the current merged-SHA claim after the post-closure corre
 
 ## Current-state superseding checkpoint
 
-- Current `origin/main`: `2d24494354b4b10fe8dbd30cdadf8d1f5d22f4c8` (merge of PR #102).
+- Current `origin/main`: `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1` (including the I3.1/I3.2 merges).
 - Corrective chain bound to the current tree:
   - PR #92 / Issues #84 and #87 → merge `144526f570e426f66b50d406f9df60d811255045`;
   - PR #96 / Issue #88 → merge `669c5f26144a0507cae7f48720942e10938a6aee`;
@@ -17,11 +17,12 @@ evidence. They are not the current merged-SHA claim after the post-closure corre
   - PR #102 / Issue #99 → merge `2d24494354b4b10fe8dbd30cdadf8d1f5d22f4c8`.
 - Primary Self-Audit and applicable local Rust gates passed for every corrective merge; no normative
   specification or fixture semantics changed.
-- Independent review frontier: merged PR #92, PR #96, and PR #102 have `Audit result: pass`; PR #97
-  requires re-review after its former #99-blocked audit, and PR #98 still requires its merged-SHA audit.
-  These are asynchronous reviewer residuals under `docs/loops/loop.md`, not a primary-session waiting gate.
-- I2 implementation and public-conformance work is corrected, and I3.1 Canonical IDs is the next bounded
-  frontier. The I2 stage claim remains explicitly provisional until the pending corrected-SHA audits close;
+- Independent review frontier: merged PR #92, PR #96, PR #98, and PR #102 have `Audit result: pass`; PR #97
+  requires re-review after its former #99-blocked audit. This is an asynchronous reviewer residual under
+  `docs/loops/loop.md`, not a primary-session waiting gate.
+- I2 implementation and public-conformance work is corrected; I3.1 Canonical IDs and I3.2 Time normalization
+  are merged, and I3.3 Metadata graph is the next bounded frontier. The I2 stage claim remains explicitly
+  provisional until the pending corrected-SHA audit closes;
   a later Critical/Important finding freezes the affected stage and dependent work.
 
 The historical review below closed the implementation and public-conformance delivery evidence for I2.1–I2.10
