@@ -2632,6 +2632,35 @@ fn canonical_note_times_keep_exact_beat_provenance_and_use_global_clock() {
 }
 
 #[test]
+fn canonical_note_times_accept_direct_time_without_beat_provenance() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections { notes {
+    tap { id: "time-valued"; line: @main; gameplay.time: 1s; };
+} }"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("time-valued Note should parse");
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect("time-valued Note should elaborate");
+    let time_map = expanded
+        .canonical_time_map()
+        .expect("tempo map should pass canonical validation");
+    let note = expanded
+        .canonical_note_times(&time_map)
+        .expect("direct Note time should normalize")
+        .into_iter()
+        .next()
+        .unwrap();
+
+    assert_eq!(note.stable_id().textual().as_str(), "time-valued");
+    assert_eq!(note.source_beat(), None);
+    assert_eq!(note.chart_time_seconds(), 1.0);
+}
+
+#[test]
 fn canonical_generator_note_times_follow_expanded_order() {
     let source =
         include_str!("../../../docs/conformance/fcs5/source/valid/compile-time-generator.fcs");

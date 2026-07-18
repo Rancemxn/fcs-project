@@ -66,7 +66,7 @@ pub struct ExpandedSourceDocument {
     required_extensions: std::collections::BTreeSet<String>,
 }
 
-/// A Note identity paired with its canonical chart-time value and exact beat provenance.
+/// A Note identity paired with its canonical chart-time value and optional exact beat provenance.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalNoteTime {
     stable_id: StableId,
@@ -204,7 +204,7 @@ impl ExpandedSourceDocument {
         ChartTimeMap::new(points)
     }
 
-    /// Normalizes Note gameplay beats while retaining exact source-beat provenance.
+    /// Normalizes Note gameplay beat/time values while retaining exact beat provenance.
     pub fn canonical_note_times(
         &self,
         time_map: &ChartTimeMap,
@@ -212,7 +212,7 @@ impl ExpandedSourceDocument {
         let ids = self
             .canonical_note_ids()
             .map_err(CanonicalNoteTimeError::Identity)?;
-        let mut source_beats = Vec::new();
+        let mut canonical_times = Vec::new();
         for collection in &self.collections {
             for entity in &collection.entities {
                 if entity.entity_type != Type::Note {
@@ -222,27 +222,30 @@ impl ExpandedSourceDocument {
                     .field("gameplay.time")
                     .ok_or(CanonicalNoteTimeError::MissingGameplayTime)?
                     .value();
-                let TypedValue::Beat(beat) = value else {
-                    return Err(CanonicalNoteTimeError::InvalidGameplayTime);
+                let canonical_time = match value {
+                    TypedValue::Beat(beat) => {
+                        let source_beat =
+                            CanonicalBeat::new(beat.numerator(), beat.denominator())
+                                .map_err(|_| CanonicalNoteTimeError::InvalidGameplayTime)?;
+                        time_map
+                            .chart_time(source_beat)
+                            .map_err(CanonicalNoteTimeError::Tempo)?
+                    }
+                    TypedValue::Time(value) => CanonicalTime::from_chart_time_seconds(*value)
+                        .map_err(CanonicalNoteTimeError::Tempo)?,
+                    _ => return Err(CanonicalNoteTimeError::InvalidGameplayTime),
                 };
-                source_beats.push(
-                    CanonicalBeat::new(beat.numerator(), beat.denominator())
-                        .map_err(|_| CanonicalNoteTimeError::InvalidGameplayTime)?,
-                );
+                canonical_times.push(canonical_time);
             }
         }
-        ids.into_iter()
-            .zip(source_beats)
-            .map(|(stable_id, source_beat)| {
-                let canonical_time = time_map
-                    .chart_time(source_beat)
-                    .map_err(CanonicalNoteTimeError::Tempo)?;
-                Ok(CanonicalNoteTime {
-                    stable_id,
-                    canonical_time,
-                })
+        Ok(ids
+            .into_iter()
+            .zip(canonical_times)
+            .map(|(stable_id, canonical_time)| CanonicalNoteTime {
+                stable_id,
+                canonical_time,
             })
-            .collect()
+            .collect())
     }
 
     /// Applies the FCS sync affine boundary without changing canonical chart time.
