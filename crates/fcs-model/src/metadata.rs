@@ -10,39 +10,73 @@ use std::fmt;
 
 use crate::{AudioOffset, Beat};
 
-/// An sRGB color value carried by canonical typed custom data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// A linear RGBA color value carried by canonical typed custom data.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CanonicalColor {
-    red: u8,
-    green: u8,
-    blue: u8,
-    alpha: u8,
+    red: f64,
+    green: f64,
+    blue: f64,
+    alpha: f64,
 }
 
 impl CanonicalColor {
-    pub const fn rgba(red: u8, green: u8, blue: u8, alpha: u8) -> Self {
-        Self {
-            red,
-            green,
-            blue,
-            alpha,
+    /// Constructs a canonical color from linear RGBA Float64 components.
+    pub fn from_linear(components: [f64; 4]) -> Result<Self, CanonicalColorError> {
+        if components
+            .iter()
+            .all(|component| component.is_finite() && (0.0..=1.0).contains(component))
+        {
+            Ok(Self {
+                red: components[0],
+                green: components[1],
+                blue: components[2],
+                alpha: components[3],
+            })
+        } else {
+            Err(CanonicalColorError::InvalidComponent)
         }
     }
 
-    pub const fn red(self) -> u8 {
+    /// Compatibility constructor for encoded 8-bit sRGB input. The stored
+    /// components are still canonical linear values.
+    pub fn rgba(red: u8, green: u8, blue: u8, alpha: u8) -> Self {
+        Self::from_linear([
+            srgb_to_linear(red),
+            srgb_to_linear(green),
+            srgb_to_linear(blue),
+            f64::from(alpha) / 255.0,
+        ])
+        .expect("8-bit sRGB conversion produces valid canonical components")
+    }
+
+    pub const fn red(self) -> f64 {
         self.red
     }
 
-    pub const fn green(self) -> u8 {
+    pub const fn green(self) -> f64 {
         self.green
     }
 
-    pub const fn blue(self) -> u8 {
+    pub const fn blue(self) -> f64 {
         self.blue
     }
 
-    pub const fn alpha(self) -> u8 {
+    pub const fn alpha(self) -> f64 {
         self.alpha
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanonicalColorError {
+    InvalidComponent,
+}
+
+fn srgb_to_linear(value: u8) -> f64 {
+    let encoded = f64::from(value) / 255.0;
+    if encoded <= 0.04045 {
+        encoded / 12.92
+    } else {
+        ((encoded + 0.055) / 1.055).powf(2.4)
     }
 }
 
