@@ -502,6 +502,97 @@ collections {
 }
 
 #[test]
+fn template_produced_line_ids_are_referenceable_from_judgelines() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  template Line makeJudge() {
+    return Line { id: "judge"; };
+  }
+}
+collections {
+  judgelines { makeJudge(); }
+  notes { tap { line: @judge; gameplay.time: 1beat; }; }
+}"#;
+
+    let document = parse_document(source)
+        .into_result()
+        .expect("valid source syntax");
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect("template-produced judgeline IDs should share the Line namespace");
+    let note = expanded
+        .collections()
+        .find(|collection| collection.name() == "notes")
+        .expect("notes")
+        .entities()
+        .next()
+        .expect("note");
+    assert_eq!(
+        note.field("line").unwrap().value(),
+        &TypedValue::Line("judge".into())
+    );
+}
+
+#[test]
+fn template_line_ids_are_collected_from_branches_generators_and_nested_calls() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  template Line nestedJudge() {
+    return Line { id: "nested"; };
+  }
+  template Line branchJudge() {
+    if true {
+      return Line { id: "branch"; };
+    } else {
+      return Line { id: "unused"; };
+    }
+  }
+  template Line generatedJudge() {
+    return nestedJudge();
+  }
+}
+collections {
+  judgelines {
+    branchJudge();
+    generate i: int in 0..=0 step 1 {
+      emit generatedJudge();
+    }
+  }
+  notes {
+    tap { line: @branch; gameplay.time: 1beat; };
+    tap { line: @unused; gameplay.time: 2beat; };
+    tap { line: @nested; gameplay.time: 3beat; };
+  }
+}"#;
+
+    elaborate_source(source)
+        .expect("template Line IDs must be visible across all static judgeline shapes");
+}
+
+#[test]
+fn template_produced_line_ids_participate_in_duplicate_diagnostics() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  template Line makeJudge() {
+    return Line { id: "judge"; };
+  }
+}
+lines { line judge {} }
+collections { judgelines { makeJudge(); } }"#;
+
+    let errors = elaborate_source(source).expect_err("duplicate template Line ID");
+    assert_eq!(errors[0].code(), DiagnosticCode::NAME_DUPLICATE);
+    assert!(errors[0].message().contains("Line ID judge"));
+    assert_eq!(errors[0].labels().len(), 1);
+    assert_eq!(errors[0].labels()[0].message(), "previous Line ID");
+}
+
+#[test]
 fn judgeline_ids_in_statically_checked_branches_are_referenceable() {
     let source = r#"#fcs 5.0.0
 format { profile: chart; }
