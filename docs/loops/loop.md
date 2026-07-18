@@ -159,6 +159,47 @@
 - 具体审查目标选择、finding Issue 路由、评论格式、历史 commit 审查以及分支/worktree 隔离由
   `docs/loops/review-loop.md` 定义；本 loop 只负责提供固定快照、接收结果、修复 finding 和最终合并。
 
+# GitHub Comment Markdown Contract
+
+所有由本 loop 发往 GitHub Issue/PR 的 progress、audit、handoff 或 delivery comment 都是一个原生 Markdown
+文档，不是 shell 片段、JSON 字符串或终端输出预览。主会话和 review loop 必须同时遵守以下不变量：
+
+- payload 使用真实的 LF 换行；不得把 JSON 转义后的换行、字面量的反斜杠-n 或一整段单行字符串当作 Markdown
+  正文发送。
+- Markdown 中的反引号、美元符号、反斜杠、尖括号、竖线和列表标记必须按正文字符保留；不得让 shell command
+  substitution、未引用的字符串插值或 HTML 转义改写它们。
+- 原始正文不得拼接进 shell command string 或未经保护的 JSON/双引号参数。写入边界必须使用能保留原始正文、真实
+  换行和所有 Markdown 标点的 body file、stdin 或等价的安全 API 参数；本契约约束 payload，不限定具体工具。
+- 文档中的 fenced template 只说明评论内容，外层 fence 不属于待发送正文；发送前必须保留模板内部的标题、空行、
+  列表和 code span。
+
+## Shape and read-back gate
+
+- 事件标题使用一个 H2，并与 `Primary audit result`、`Review requested`、`Delivery-ready Progress` 或
+  `Superseding ...` 等固定事件名称一致；标题不手写日期。
+- 标题与正文、各段落与列表、列表与表格或 fenced block 之间保留空行；每个 top-level list item 从新行开始，
+  不把多个字段折叠成一个段落。
+- 写入前保留准备发送的完整正文和稳定身份（target、event、Issue/PR、head SHA）；重试同一远端动作时不得
+  生成第二种序列化版本。
+- 写入后必须按返回的 comment URL/ID 重新读取正文，并在只允许 CRLF-to-LF 归一化的前提下与准备正文比较。
+  未通过比对、远端写入尚未确认或出现字面转义换行时，不得记录为成功。
+- 发现格式错误时不得编辑或删除历史 comment；立即追加 `## Superseding ...`，指出被替代 comment、原因、固定
+  target/head SHA、修正后的字段和 Next。修正 comment 本身也必须经过同一 read-back gate。
+
+~~~md
+## Primary audit result
+
+- Target: PR #<n> / Issue #<n>
+- Head SHA: <sha>
+- Scope: <fixed scope>
+- Commands: <command> -> <passed/failed/skipped and actual result>
+- Verdict: pass / blocked / needs-info
+- Findings: none / <finding list with severity>
+- Gate impact: <current gate impact>
+- Limitations: <none or uncovered scope>
+- Next: <one bounded next action>
+~~~
+
 # Authorized Change & Delivery
 
 - 可以自动进行仓库内设计、实现、测试、fixture、计划、review 和治理修改，以及正常的 GitHub

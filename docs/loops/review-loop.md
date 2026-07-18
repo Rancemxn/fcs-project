@@ -219,11 +219,26 @@
 - 清理失败或 worktree 变脏时，保留现场并追加 residual：包含 path、owner、固定 SHA、阻塞原因和下一清理
   条件；不得把审查标记为完全交付。主会话不得代替 reviewer 删除其 dirty worktree。
 
+# GitHub Comment Markdown Contract
+
+review loop 的 `Audit result`、`Superseding audit`、`waiting-for-main`、finding routing 和 corrective handoff
+comment 与主 loop 使用同一 raw-Markdown 传输契约：
+
+- comment body 必须是带真实 LF 换行的 Markdown 文档；不能发送 JSON 转义后的正文、字面量反斜杠-n 或单行预览。
+- 反引号、美元符号、反斜杠、尖括号、竖线和列表标记必须原样到达 GitHub；禁止 shell command substitution、
+  未保护的字符串插值和会改写正文的 HTML/JSON 转义。
+- 不得把 raw body 拼接进 shell command string 或未经保护的 JSON/双引号参数。使用能保留正文的 body file、stdin
+  或等价的安全 API 参数；本节规定结果不规定工具实现。
+- 标题与正文、字段与列表、表格或 fenced block 之间必须有空行；模板外层 fence 不得作为实际 comment 正文。
+- 写入后按 comment URL/ID 回读并比较正文；只允许 CRLF-to-LF 归一化。写入未确认、出现字面转义换行或正文不匹配
+  时，verdict 必须保持未确认，并追加 `## Superseding audit`，不得编辑历史消息。
+
 # Audit Comment Contract
 
-审查目标完成后，在被审 PR（若存在）和关联 Issue 立即追加内容等价于以下结构的新消息：
+审查目标完成后，在被审 PR（若存在）和关联 Issue 立即追加内容等价于以下结构的新消息。以下 fenced block 是
+正文模板，不是要一起发送的外层 fence；模板中的真实空行和 Markdown 标点必须保留。
 
-```md
+~~~md
 ## Audit result
 
 - Target: PR #<n> / Issue #<n> / commit <sha>
@@ -241,7 +256,7 @@
 - Limitations: <未覆盖范围或 none>
 - Worktree: <cleaned，或 retained + owner/condition>
 - Next: <主会话或 finding owner 的下一有界动作>
-```
+~~~
 
 若快照失效，追加 `## Superseding audit`，明确被替代的 head SHA、旧 verdict、新请求原因和新审查目标；
 不要修改旧消息。评论标题不手写 `YYYY-MM-DD` 等日期，GitHub timestamp 是时间记录。
