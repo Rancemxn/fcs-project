@@ -523,6 +523,52 @@ collections {
 }
 
 #[test]
+fn template_produced_judgeline_ids_are_referenceable_by_notes() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  template Line makeJudge() {
+    return Line { id: "judge"; };
+  }
+}
+collections {
+  judgelines { makeJudge(); }
+  notes { tap { line: @judge; gameplay.time: 1beat; }; }
+}"#;
+    let document = parse_document(source).into_result().unwrap();
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default()).unwrap();
+    let note = expanded
+        .collections()
+        .find(|collection| collection.name() == "notes")
+        .and_then(|collection| collection.entities().next())
+        .expect("the template-produced judgeline note should expand");
+
+    assert_eq!(
+        note.field("line").unwrap().value(),
+        &TypedValue::Line("judge".into())
+    );
+}
+
+#[test]
+fn duplicate_template_produced_judgeline_ids_are_rejected() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  template Line makeJudge() {
+    return Line { id: "judge"; };
+  }
+}
+lines { line judge {} }
+collections { judgelines { makeJudge(); } }"#;
+    let errors =
+        elaborate_source(source).expect_err("duplicate template Line IDs should be rejected");
+    assert_eq!(errors[0].code(), DiagnosticCode::NAME_DUPLICATE);
+    assert!(errors[0].message().contains("Line ID judge"));
+}
+
+#[test]
 fn duplicate_line_ids_across_lines_and_judgelines_are_rejected() {
     let source = r#"#fcs 5.0.0
 format { profile: chart; }

@@ -23,7 +23,7 @@ pub(super) fn validate_static_entities_with_context(
     let templates = template_map(document.definitions.as_ref());
     let functions = function_map(document.definitions.as_ref());
     let root = definition_scope(document.definitions.as_ref())?;
-    let line_names = collect_line_names(document)?;
+    let line_names = collect_line_names(document, &templates)?;
     let validator = StaticEntityValidator {
         document,
         schema,
@@ -37,8 +37,12 @@ pub(super) fn validate_static_entities_with_context(
     validator.validate_collections()
 }
 
-fn collect_line_names(document: &Document) -> Result<BTreeSet<String>, Diagnostic> {
+fn collect_line_names(
+    document: &Document,
+    templates: &BTreeMap<String, &TemplateDeclaration>,
+) -> Result<BTreeSet<String>, Diagnostic> {
     let mut names = BTreeMap::new();
+    let mut template_stack = BTreeSet::new();
     for line in &document.lines {
         insert_line_name(&mut names, line.name.clone(), line.name_span)?;
     }
@@ -46,7 +50,12 @@ fn collect_line_names(document: &Document) -> Result<BTreeSet<String>, Diagnosti
         if collection.collection_name != "judgelines" {
             continue;
         }
-        collect_line_names_from_items(&collection.items, &mut names)?;
+        collect_line_names_from_items(
+            &collection.items,
+            &mut names,
+            templates,
+            &mut template_stack,
+        )?;
     }
     Ok(names.keys().cloned().collect())
 }
@@ -54,6 +63,8 @@ fn collect_line_names(document: &Document) -> Result<BTreeSet<String>, Diagnosti
 fn collect_line_names_from_items(
     items: &[CollectionItem],
     names: &mut BTreeMap<String, SourceSpan>,
+    templates: &BTreeMap<String, &TemplateDeclaration>,
+    template_stack: &mut BTreeSet<String>,
 ) -> Result<(), Diagnostic> {
     for item in items {
         match item {
@@ -61,18 +72,23 @@ fn collect_line_names_from_items(
                 collect_line_name_from_constructor(constructor, names)?;
             }
             CollectionItem::Expression(expression) => {
-                collect_line_name_from_expression(expression, names)?;
+                collect_line_names_from_expression(expression, names, templates, template_stack)?;
             }
             CollectionItem::Conditional {
                 then_items,
                 else_items,
                 ..
             } => {
-                collect_line_names_from_items(then_items, names)?;
-                collect_line_names_from_items(else_items, names)?;
+                collect_line_names_from_items(then_items, names, templates, template_stack)?;
+                collect_line_names_from_items(else_items, names, templates, template_stack)?;
             }
             CollectionItem::Generator(generator) => {
-                collect_line_names_from_generator_items(&generator.body, names)?;
+                collect_line_names_from_generator_items(
+                    &generator.body,
+                    names,
+                    templates,
+                    template_stack,
+                )?;
             }
         }
     }
@@ -82,19 +98,31 @@ fn collect_line_names_from_items(
 fn collect_line_names_from_generator_items(
     items: &[GeneratorItem],
     names: &mut BTreeMap<String, SourceSpan>,
+    templates: &BTreeMap<String, &TemplateDeclaration>,
+    template_stack: &mut BTreeSet<String>,
 ) -> Result<(), Diagnostic> {
     for item in items {
         match item {
             GeneratorItem::Emit(expression) => {
-                collect_line_name_from_expression(expression, names)?;
+                collect_line_names_from_expression(expression, names, templates, template_stack)?;
             }
             GeneratorItem::Conditional {
                 then_items,
                 else_items,
                 ..
             } => {
-                collect_line_names_from_generator_items(then_items, names)?;
-                collect_line_names_from_generator_items(else_items, names)?;
+                collect_line_names_from_generator_items(
+                    then_items,
+                    names,
+                    templates,
+                    template_stack,
+                )?;
+                collect_line_names_from_generator_items(
+                    else_items,
+                    names,
+                    templates,
+                    template_stack,
+                )?;
             }
             GeneratorItem::Let(_) => {}
         }
@@ -102,27 +130,86 @@ fn collect_line_names_from_generator_items(
     Ok(())
 }
 
-fn collect_line_name_from_expression(
+fn collect_line_names_from_expression(
     expression: &EntityExpression,
     names: &mut BTreeMap<String, SourceSpan>,
+    templates: &BTreeMap<String, &TemplateDeclaration>,
+    template_stack: &mut BTreeSet<String>,
 ) -> Result<(), Diagnostic> {
-    let Some((name, span)) = line_name_from_expression(expression) else {
-        return Ok(());
-    };
-    insert_line_name(names, name, span)
+    match expression {
+        EntityExpression::Constructor(constructor) => {
+            collect_line_name_from_constructor(constructor, names)
+        }
+        EntityExpression::With(with_expression) => {
+            if let Some((name, span)) = with_expression
+                .fields
+                .iter()
+                .find(|field| field.path.segments.as_slice() == ["id"])
+                .and_then(line_name_from_field)
+            {
+                return insert_line_name(names, name, span);
+            }
+            collect_line_names_from_expression(
+                &with_expression.base,
+                names,
+                templates,
+                template_stack,
+            )
+        }
+        EntityExpression::SourceConstructor(_) => Ok(()),
+        EntityExpression::Source(SourceExpression::Call { callee, .. }) => {
+            let SourceExpression::Name { name, .. } = callee.as_ref() else {
+                return Ok(());
+            };
+            let Some(template) = templates.get(name) else {
+                return Ok(());
+            };
+            if template.return_type != Type::Line || !template_stack.insert(name.clone()) {
+                return Ok(());
+            }
+            let result =
+                collect_line_names_from_template(&template.body, names, templates, template_stack);
+            template_stack.remove(name);
+            result
+        }
+        EntityExpression::Source(_) => Ok(()),
+    }
 }
 
-fn line_name_from_expression(expression: &EntityExpression) -> Option<(String, SourceSpan)> {
-    match expression {
-        EntityExpression::Constructor(constructor) => line_name_from_constructor(constructor),
-        EntityExpression::With(with_expression) => with_expression
-            .fields
-            .iter()
-            .find(|field| field.path.segments.as_slice() == ["id"])
-            .and_then(line_name_from_field)
-            .or_else(|| line_name_from_expression(&with_expression.base)),
-        EntityExpression::SourceConstructor(_) | EntityExpression::Source(_) => None,
+fn collect_line_names_from_template(
+    statements: &[TemplateStatement],
+    names: &mut BTreeMap<String, SourceSpan>,
+    templates: &BTreeMap<String, &TemplateDeclaration>,
+    template_stack: &mut BTreeSet<String>,
+) -> Result<(), Diagnostic> {
+    for statement in statements {
+        match statement {
+            TemplateStatement::Let(_) => {}
+            TemplateStatement::If(statement) => {
+                collect_line_names_from_template(
+                    &statement.then_branch,
+                    names,
+                    templates,
+                    template_stack,
+                )?;
+                collect_line_names_from_template(
+                    &statement.else_branch,
+                    names,
+                    templates,
+                    template_stack,
+                )?;
+            }
+            TemplateStatement::Return(statement) => {
+                collect_line_names_from_expression(
+                    &statement.value,
+                    names,
+                    templates,
+                    template_stack,
+                )?;
+            }
+        }
     }
+    Ok(())
 }
 
 fn collect_line_name_from_constructor(
