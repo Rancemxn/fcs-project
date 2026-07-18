@@ -1,11 +1,25 @@
 # I2 Static Semantics and Compile-time Expansion
 
-Status: I2 implementation and public conformance delivery baseline PASS; see
-`docs/reviews/2026-07-17-i2-static-semantics-implementation-closure-review.md`
+Status: I2 implementation and public-conformance evidence corrected through PR #102; primary delivery gates
+pass, while the superseding independent re-audit residual is recorded in
+`docs/reviews/2026-07-17-i2-static-semantics-implementation-closure-review.md`.
 
 This plan is the bounded execution contract for I2. It schedules implementation work; it does not
 create FCS semantics, promote a specification version, or authorize work owned by I3 and later stages.
 The current branch starts from the merged I1.9 checkpoint `0681ddd8561ef3072e1175b13e2ab3b214aab364`.
+
+## Current-state closure handoff
+
+`origin/main` is `2d24494354b4b10fe8dbd30cdadf8d1f5d22f4c8`, including corrective PRs #92 and #96 and
+PRs #97, #98, and #102 for Issues #84, #87, #88, #91, #93, and #99. Primary Self-Audit and the applicable
+local Rust gates passed for each merge. Independent Audit results are `pass` for the fixed merged SHAs of
+PRs #92, #96, and #102; PR #97 requires re-review after the former #99-blocked result, and PR #98 still awaits its
+merged-SHA audit. This asynchronous residual does not block the primary session's handoff to I3.1, but it
+keeps the corrected I2 stage claim provisional and must freeze I2-dependent work if a later Critical or
+Important finding appears.
+
+I3.1 Canonical IDs is the next bounded frontier. This handoff does not implement I3 or promote any
+specification version.
 
 ## Objective
 
@@ -187,7 +201,10 @@ expression/DAG lowering, canonical model construction, and all later product cra
 After the I2.10 PR passes its full Rust gate and independent fixed-SHA audit, the owning matrix and roadmap
 may advance the frontier to the earliest I3 baseline Issue.
 
-## I2 implementation closure
+## Historical I2 implementation closure snapshot
+
+The following closure text records the pre-correction snapshot and is retained for audit history. Current
+state is defined by the Current-state closure handoff above.
 
 The I2.10 delivery and its corrective review chain are now complete. PR #72 delivered the public fixture
 lane and merged at `117e23f906b8a1d224e8cb09adc95d2f0894931d`; reviewer re-review of the I2.1 correction

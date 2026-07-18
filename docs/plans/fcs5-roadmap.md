@@ -409,7 +409,9 @@ production coverage ledger、独立 fuzz lane 和 I1 条款矩阵证据。逐步
 绑定规范一致，且 I0 质量门通过后才自动开始 Rust 实现。该 gate 已通过，固定输入与 0/0/0 独立复审见
 `docs/reviews/2026-07-16-i1-source-parser-baseline-review.md`；I1.1–I1.8 的实现与证据已合并，当前
 进入 Task 9 governance、最终门禁和独立复审；I2.1–I2.9 的实现与独立交付证据已合并，当前由
-I2.10 公共 conformance fixture 与阶段门禁收尾。
+I2.10 公共 conformance fixture 与阶段门禁收尾。I2.1–I2.10 及其 corrective chain 已合并到
+`origin/main` `2d24494354b4b10fe8dbd30cdadf8d1f5d22f4c8`；主自审和适用 Rust gate 已通过，当前
+独立重审 residual 见 I2 closure review，I3.1 是下一 bounded frontier。
 
 ### I2：Static semantics 与编译期展开
 
@@ -631,9 +633,10 @@ git diff --check
   `return` 与 nested generator；zero-step 语法保留给 I2，elaborator 在 I1 不展开并返回稳定
   `implementation.feature-unavailable`，且不产生部分输出；
 - I2.1–I2.10 已完成并合并；I2.10 的三份 valid fixture、六份 elaborate-error/budget fixture、矩阵
-  更新和完整 Rust delivery gate 已记录。PR #78 的独立复审发现 #75–#77，PR #82 修复 #81，且最新
-  merged SHA `3a484e5a8205f7af8c4a23776111e7a1d80dcf62` 已由 reviewer `Audit result: pass` 关闭；I2
-  Reviewed Implementation Baseline 见 `docs/reviews/2026-07-17-i2-static-semantics-implementation-closure-review.md`。
-  五个规范域仍为 Draft。
+  更新和完整 Rust delivery gate 已记录。后续 corrective chain 为 PR #92/#96/#97/#98/#102，当前
+  `origin/main` 为 `2d24494354b4b10fe8dbd30cdadf8d1f5d22f4c8`；主自审和适用 Rust gate 均通过。
+  独立 merged-SHA Audit 已对 #92、#96、#102 给出 `pass`，#97 需在 #99 修复后重审，#98 仍待重审。
+  因此 I2 closure 的实现交付已修正但 stage claim 保持 provisional；I3.1 是下一 bounded frontier，五个
+  规范域仍为 Draft。
 - I3–I10 尚未实现；I3.1 是下一 bounded frontier。I3 可以建立自己的 canonical model/owning crate，
   但不得把 I2 closure 误报为 canonical/runtime/FCBC/Render/Conversion/CLI 完成或版本 Frozen。
