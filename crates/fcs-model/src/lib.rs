@@ -9,8 +9,15 @@ use std::fmt;
 
 use sha2::{Digest, Sha256};
 
+mod metadata;
 mod time;
 
+pub use metadata::{
+    CanonicalArrayError, CanonicalArtwork, CanonicalColor, CanonicalContributor, CanonicalCredit,
+    CanonicalMetadata, CanonicalObject, CanonicalObjectEntry, CanonicalObjectError,
+    CanonicalPreview, CanonicalResource, CanonicalResourceKind, CanonicalSync, CanonicalValue,
+    CanonicalValueType, DeclaredSha256,
+};
 pub use time::{AudioOffset, Beat, CanonicalTime, ChartTimeMap, TempoError, TempoPoint};
 
 /// The textual namespace reserved for compiler-generated identities.

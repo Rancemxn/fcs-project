@@ -1,4 +1,5 @@
 pub mod ast;
+mod canonical;
 pub mod diagnostic;
 pub mod elaborator;
 pub mod parser;

@@ -281,6 +281,25 @@ pub fn elaborate(
     elaborate_inner(document, schema, limits).map_err(|error| vec![error.into_diagnostic()])
 }
 
+/// Evaluates one metadata expression in the same pure compile-time environment
+/// used by source definitions. Container expressions and metadata references are
+/// handled by the canonical adapter; this helper supplies scalar arithmetic and
+/// constant/function semantics without exposing the elaborator internals.
+pub(crate) fn evaluate_metadata_expression(
+    expression: &crate::ast::SourceExpression,
+    definitions: Option<&crate::ast::DefinitionsBlock>,
+) -> Result<crate::ast::TypedValue, Diagnostic> {
+    let context = CompileTimeContext::new(CompileTimeLimits::default());
+    eval::evaluate_with_context(
+        expression,
+        definitions,
+        &BTreeMap::new(),
+        crate::schema::phase2_schema(),
+        &context,
+    )
+    .map_err(ElaboratorError::into_diagnostic)
+}
+
 fn elaborate_inner(
     document: &Document,
     schema: &ConstructionSchema,
