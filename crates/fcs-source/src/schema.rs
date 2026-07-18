@@ -136,7 +136,7 @@ fn build_phase2_schema() -> ConstructionSchema {
         ],
     );
     let line = line_entity(vec![
-        field("id", Type::String, true),
+        field("id", Type::String, false),
         field("zOrder", Type::Int, false),
     ]);
 

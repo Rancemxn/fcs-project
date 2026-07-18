@@ -2,13 +2,13 @@ use chumsky::{input::ValueInput, prelude::*};
 
 use crate::ast::{
     DirectPoint, DirectSegment, FieldPath, GeneratorOwner, HalfOpenInterval, Interpolation,
-    LineBodyItem, LineDeclaration, LinesBlock, SegmentsBlock, SourceBlock, SourceExpression,
-    SourceSpan, TrackDeclaration, TrackSegmentItem, TrackSetting, TracksBlock,
+    LineBodyItem, LineDeclaration, LinesBlock, ScrollTempoMap, ScrollTempoPoint, SegmentsBlock,
+    SourceBpm, SourceExpression, SourceSpan, TrackDeclaration, TrackSegmentItem, TrackSetting,
+    TracksBlock,
 };
 
 use super::{
     definitions::identifier_with_span,
-    document::source_group_parser,
     entities::{field_parser, field_path_parser, generator_parser},
     expression::{expression_parser, type_parser},
     input::{ChumskySpan, ParserExtra, source_span},
@@ -67,18 +67,51 @@ where
 }
 
 fn scroll_tempo_map_block_parser<'tokens, I>()
--> impl Parser<'tokens, I, SourceBlock, ParserExtra<'tokens>> + Clone
+-> impl Parser<'tokens, I, ScrollTempoMap, ParserExtra<'tokens>> + Clone
 where
     I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
 {
     just(Token::Keyword(Keyword::ScrollTempoMap))
         .map_with(|_, extra| source_span(extra.span()))
-        .then(source_group_parser(true))
-        .map_with(|(keyword_span, body), extra| SourceBlock {
-            body,
+        .then(
+            scroll_tempo_point_parser()
+                .repeated()
+                .collect::<Vec<_>>()
+                .delimited_by(just(left_brace()), just(right_brace())),
+        )
+        .map_with(|(keyword_span, points), extra| ScrollTempoMap {
+            points,
             span: source_span(extra.span()),
             keyword_span,
         })
+}
+
+fn scroll_tempo_point_parser<'tokens, I>()
+-> impl Parser<'tokens, I, ScrollTempoPoint, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    expression_parser()
+        .then_ignore(just(arrow()))
+        .then(signed_scroll_bpm_parser())
+        .then_ignore(just(semicolon()))
+        .map_with(|(key, bpm), extra| ScrollTempoPoint {
+            key,
+            bpm,
+            span: source_span(extra.span()),
+        })
+}
+
+fn signed_scroll_bpm_parser<'tokens, I>()
+-> impl Parser<'tokens, I, SourceBpm, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    select! { Token::TempoBpm(bpm) => bpm }
+        .map(|bpm| bpm)
+        .or(just(Token::Punctuation(Punctuation::Minus))
+            .ignore_then(select! { Token::TempoBpm(bpm) => bpm })
+            .map(|bpm| SourceBpm::from_value(-bpm.get())))
 }
 
 fn tracks_block_parser<'tokens, I>()

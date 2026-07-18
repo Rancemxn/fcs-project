@@ -113,11 +113,25 @@ impl ExpandedSourceDocument {
     /// Lowers the currently available expanded Note identities without performing
     /// later time, graph, Track, or gameplay normalization.
     pub fn canonical_note_ids(&self) -> Result<Vec<StableId>, IdError> {
+        self.canonical_entity_ids(Type::Note, EntityKind::Note)
+    }
+
+    /// Lowers expanded `judgelines` identities, including generated IDs for
+    /// Line constructors that omit their optional explicit `id` field.
+    pub fn canonical_line_ids(&self) -> Result<Vec<StableId>, IdError> {
+        self.canonical_entity_ids(Type::Line, EntityKind::Line)
+    }
+
+    fn canonical_entity_ids(
+        &self,
+        entity_type: Type,
+        entity_kind: EntityKind,
+    ) -> Result<Vec<StableId>, IdError> {
         let mut registry = StableIdRegistry::new();
         let mut ids = Vec::new();
         for collection in &self.collections {
             for (expanded_order, entity) in collection.entities.iter().enumerate() {
-                if entity.entity_type != Type::Note {
+                if entity.entity_type != entity_type {
                     continue;
                 }
                 let textual = entity
@@ -135,10 +149,10 @@ impl ExpandedSourceDocument {
                         let path = entity
                             .expansion_path()
                             .ok_or(IdError::MissingExpansionPath)?;
-                        CanonicalTextualId::generated(EntityKind::Note, path, expanded_order as u64)
+                        CanonicalTextualId::generated(entity_kind, path, expanded_order as u64)
                     }
                 };
-                ids.push(registry.insert(EntityKind::Note, textual)?);
+                ids.push(registry.insert(entity_kind, textual)?);
             }
         }
         Ok(ids)
