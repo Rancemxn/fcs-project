@@ -56,11 +56,13 @@ generator parser 边界为 `9d88a6a`，raw lexer prepass 清理为 `475e137`。I
 依赖、质量、归档拓扑和独立复审 gate 已通过。
 
 I2.1–I2.10 的 static-semantics implementation units 和 public elaborator conformance lane 已合并到
-`main`。I2.10 的三份 valid fixture、六份 elaborate-error/budget fixture、shared-budget trace 和
-`ExpandedSourceDocument` invariant 均有 executable evidence；PR #78/#82 的 I2.1 corrective chain
-也已由独立 reviewer 在最新 merged SHA 上以 `pass` 关闭。I2 closure review 见
-`docs/reviews/2026-07-17-i2-static-semantics-implementation-closure-review.md`。这些行只提升
-I2-owned static subset，不能替代 I3+ canonical/runtime/FCBC/Render/Conversion 产品实现。
+`origin/main` `2d24494354b4b10fe8dbd30cdadf8d1f5d22f4c8`。I2.10 的三份 valid fixture、六份
+elaborate-error/budget fixture、shared-budget trace 和 `ExpandedSourceDocument` invariant 均有
+executable evidence；post-closure corrective chain 为 PR #92/#96/#97/#98/#102，所有关联 Issues 已关闭。
+主自审和适用 Rust gate 已通过；独立 merged-SHA Audit 对 PR #92、#96、#102 为 `pass`，PR #97 需在
+Issue #99 修复后重审，PR #98 仍待重审。I3.1 Canonical IDs 是下一 bounded frontier。I2 closure review
+中的历史快照和当前限制见 `docs/reviews/2026-07-17-i2-static-semantics-implementation-closure-review.md`。
+这些行只提升 I2-owned static subset，不能替代 I3+ canonical/runtime/FCBC/Render/Conversion 产品实现。
 
 允许的状态只有：`implemented`、`partial`、`not-started` 和 `blocked-by-I<n>`。`implemented`
 表示该行所列 I0 能力已有实际测试证据；`partial` 必须在“已知偏差”列写明缺失行为和接续阶段。

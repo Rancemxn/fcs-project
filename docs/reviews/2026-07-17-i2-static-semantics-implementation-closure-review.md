@@ -1,12 +1,36 @@
 # I2 Static Semantics Implementation Closure Review
 
-Status: PASS — Reviewed Implementation Baseline established for I2 only
+Status: CURRENT CHECKPOINT — primary corrective chain through PR #102 is merged at `origin/main`; the
+superseding independent-review residual is recorded below and does not block the primary I3.1 handoff.
 
-This review closes the implementation and public-conformance delivery evidence for I2.1–I2.10. It does
-not promote FCS Core, FCBC/Execution ABI, Render, or Conversion from Draft, and it does not authorize any
-public release or later-stage product implementation by itself.
+The fixed snapshot and baseline conclusion in the historical section below are retained as append-only
+evidence. They are not the current merged-SHA claim after the post-closure corrective chain.
 
-## Fixed delivery snapshot
+## Current-state superseding checkpoint
+
+- Current `origin/main`: `2d24494354b4b10fe8dbd30cdadf8d1f5d22f4c8` (merge of PR #102).
+- Corrective chain bound to the current tree:
+  - PR #92 / Issues #84 and #87 → merge `144526f570e426f66b50d406f9df60d811255045`;
+  - PR #96 / Issue #88 → merge `669c5f26144a0507cae7f48720942e10938a6aee`;
+  - PR #97 / Issue #91 → merge `db3289d75120f77f0fa542b94701c3c0094af665`;
+  - PR #98 / Issue #93 → merge `6f54e3242d702e511cc15cbb4a132b9c4e040890`;
+  - PR #102 / Issue #99 → merge `2d24494354b4b10fe8dbd30cdadf8d1f5d22f4c8`.
+- Primary Self-Audit and applicable local Rust gates passed for every corrective merge; no normative
+  specification or fixture semantics changed.
+- Independent review frontier: merged PR #92, PR #96, and PR #102 have `Audit result: pass`; PR #97
+  requires re-review after its former #99-blocked audit, and PR #98 still requires its merged-SHA audit.
+  These are asynchronous reviewer residuals under `docs/loops/loop.md`, not a primary-session waiting gate.
+- I2 implementation and public-conformance work is corrected, and I3.1 Canonical IDs is the next bounded
+  frontier. The I2 stage claim remains explicitly provisional until the pending corrected-SHA audits close;
+  a later Critical/Important finding freezes the affected stage and dependent work.
+
+The historical review below closed the implementation and public-conformance delivery evidence for I2.1–I2.10
+at its fixed pre-correction snapshot. It does not promote FCS Core, FCBC/Execution ABI, Render, or Conversion
+from Draft, and it does not authorize any public release or later-stage product implementation by itself.
+
+## Historical fixed delivery snapshot
+
+Historical status: PASS — Reviewed Implementation Baseline established for the pre-correction I2 closure.
 
 - Current `main`: `3a484e5a8205f7af8c4a23776111e7a1d80dcf62`.
 - I2.10 public fixture delivery: PR #72, merge `117e23f906b8a1d224e8cb09adc95d2f0894931d`, delivered head
