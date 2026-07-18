@@ -13,10 +13,10 @@ mod metadata;
 mod time;
 
 pub use metadata::{
-    CanonicalArrayError, CanonicalArtwork, CanonicalColor, CanonicalContributor, CanonicalCredit,
-    CanonicalMetadata, CanonicalObject, CanonicalObjectEntry, CanonicalObjectError,
-    CanonicalPreview, CanonicalResource, CanonicalResourceKind, CanonicalSync, CanonicalValue,
-    CanonicalValueType, DeclaredSha256,
+    CanonicalArrayError, CanonicalArtwork, CanonicalColor, CanonicalColorError,
+    CanonicalContributor, CanonicalCredit, CanonicalMetadata, CanonicalObject,
+    CanonicalObjectEntry, CanonicalObjectError, CanonicalPreview, CanonicalResource,
+    CanonicalResourceKind, CanonicalSync, CanonicalValue, CanonicalValueType, DeclaredSha256,
 };
 pub use time::{AudioOffset, Beat, CanonicalTime, ChartTimeMap, TempoError, TempoPoint};
 

@@ -831,9 +831,7 @@ fn lower_literal(
             ));
             None
         }
-        SourceLiteral::Color(value) => Some(RawValue::Color(CanonicalColor::rgba(
-            value.r, value.g, value.b, value.a,
-        ))),
+        SourceLiteral::Color(value) => Some(RawValue::Color(canonical_color(*value))),
         SourceLiteral::Line(value) => Some(RawValue::Reference {
             name: value.clone(),
             span,
@@ -855,9 +853,7 @@ fn raw_from_typed(
         TypedValue::Beat(value) => CanonicalBeat::new(value.numerator(), value.denominator())
             .ok()
             .map(RawValue::Beat),
-        TypedValue::Color(value) => Some(RawValue::Color(CanonicalColor::rgba(
-            value.r, value.g, value.b, value.a,
-        ))),
+        TypedValue::Color(value) => Some(RawValue::Color(canonical_color(value))),
         TypedValue::Line(value) => Some(RawValue::Reference { name: value, span }),
         TypedValue::Array { values, .. } => Some(RawValue::Array(
             values
@@ -882,6 +878,11 @@ fn raw_from_typed(
             None
         }
     }
+}
+
+fn canonical_color(value: crate::ast::Color) -> CanonicalColor {
+    CanonicalColor::from_linear(value.to_linear())
+        .expect("source Color::to_linear must produce valid canonical components")
 }
 
 fn finite_raw(
