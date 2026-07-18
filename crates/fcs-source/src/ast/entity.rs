@@ -6,7 +6,8 @@ use super::{DocumentProfile, LetStatement, TempoMap};
 use super::{SourceExpression, SourceSpan, Type, TypedValue};
 use crate::version::Version;
 use fcs_model::{
-    CanonicalTextualId, EntityKind, ExpansionPath, IdError, StableId, StableIdRegistry,
+    AudioOffset, Beat as CanonicalBeat, CanonicalTextualId, CanonicalTime, ChartTimeMap,
+    EntityKind, ExpansionPath, IdError, StableId, StableIdRegistry, TempoError, TempoPoint,
 };
 
 /// A violation detected while constructing or auditing expanded output.
@@ -63,6 +64,35 @@ pub struct ExpandedSourceDocument {
     collections: Vec<ExpandedCollection>,
 }
 
+/// A Note identity paired with its canonical chart-time value and exact beat provenance.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CanonicalNoteTime {
+    stable_id: StableId,
+    canonical_time: CanonicalTime,
+}
+
+impl CanonicalNoteTime {
+    pub fn stable_id(&self) -> &StableId {
+        &self.stable_id
+    }
+
+    pub const fn source_beat(&self) -> CanonicalBeat {
+        self.canonical_time.source_beat()
+    }
+
+    pub const fn chart_time_seconds(&self) -> f64 {
+        self.canonical_time.chart_time_seconds()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CanonicalNoteTimeError {
+    Identity(IdError),
+    Tempo(TempoError),
+    MissingGameplayTime,
+    InvalidGameplayTime,
+}
+
 impl ExpandedSourceDocument {
     pub fn source_version(&self) -> Version {
         self.source_version.clone()
@@ -112,6 +142,74 @@ impl ExpandedSourceDocument {
             }
         }
         Ok(ids)
+    }
+
+    /// Converts the source tempo map to the canonical global chart-time model.
+    pub fn canonical_time_map(&self) -> Result<ChartTimeMap, TempoError> {
+        let tempo_map = self.tempo_map.as_ref().ok_or(TempoError::EmptyTempoMap)?;
+        let points = tempo_map
+            .points
+            .iter()
+            .map(|point| {
+                CanonicalBeat::new(point.beat.numerator(), point.beat.denominator())
+                    .map(|beat| TempoPoint {
+                        beat,
+                        bpm: point.bpm.get(),
+                    })
+                    .map_err(|_| TempoError::InvalidBeat)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        ChartTimeMap::new(points)
+    }
+
+    /// Normalizes Note gameplay beats while retaining exact source-beat provenance.
+    pub fn canonical_note_times(
+        &self,
+        time_map: &ChartTimeMap,
+    ) -> Result<Vec<CanonicalNoteTime>, CanonicalNoteTimeError> {
+        let ids = self
+            .canonical_note_ids()
+            .map_err(CanonicalNoteTimeError::Identity)?;
+        let mut source_beats = Vec::new();
+        for collection in &self.collections {
+            for entity in &collection.entities {
+                if entity.entity_type != Type::Note {
+                    continue;
+                }
+                let value = entity
+                    .field("gameplay.time")
+                    .ok_or(CanonicalNoteTimeError::MissingGameplayTime)?
+                    .value();
+                let TypedValue::Beat(beat) = value else {
+                    return Err(CanonicalNoteTimeError::InvalidGameplayTime);
+                };
+                source_beats.push(
+                    CanonicalBeat::new(beat.numerator(), beat.denominator())
+                        .map_err(|_| CanonicalNoteTimeError::InvalidGameplayTime)?,
+                );
+            }
+        }
+        ids.into_iter()
+            .zip(source_beats)
+            .map(|(stable_id, source_beat)| {
+                let canonical_time = time_map
+                    .chart_time(source_beat)
+                    .map_err(CanonicalNoteTimeError::Tempo)?;
+                Ok(CanonicalNoteTime {
+                    stable_id,
+                    canonical_time,
+                })
+            })
+            .collect()
+    }
+
+    /// Applies the FCS sync affine boundary without changing canonical chart time.
+    pub fn audio_time(
+        &self,
+        offset: AudioOffset,
+        chart_time_seconds: f64,
+    ) -> Result<f64, TempoError> {
+        offset.audio_time(chart_time_seconds)
     }
 
     pub(crate) fn try_from_collections(
