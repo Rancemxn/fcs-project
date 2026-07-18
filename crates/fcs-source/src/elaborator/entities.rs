@@ -38,6 +38,7 @@ pub(super) fn validate_static_entities_with_context(
 }
 
 fn collect_line_names(document: &Document) -> Result<BTreeSet<String>, Diagnostic> {
+    let templates = template_map(document.definitions.as_ref());
     let mut names = BTreeMap::new();
     for line in &document.lines {
         insert_line_name(&mut names, line.name.clone(), line.name_span)?;
@@ -46,7 +47,7 @@ fn collect_line_names(document: &Document) -> Result<BTreeSet<String>, Diagnosti
         if collection.collection_name != "judgelines" {
             continue;
         }
-        collect_line_names_from_items(&collection.items, &mut names)?;
+        collect_line_names_from_items(&collection.items, &mut names, &templates)?;
     }
     Ok(names.keys().cloned().collect())
 }
@@ -54,6 +55,7 @@ fn collect_line_names(document: &Document) -> Result<BTreeSet<String>, Diagnosti
 fn collect_line_names_from_items(
     items: &[CollectionItem],
     names: &mut BTreeMap<String, SourceSpan>,
+    templates: &BTreeMap<String, &TemplateDeclaration>,
 ) -> Result<(), Diagnostic> {
     for item in items {
         match item {
@@ -61,18 +63,18 @@ fn collect_line_names_from_items(
                 collect_line_name_from_constructor(constructor, names)?;
             }
             CollectionItem::Expression(expression) => {
-                collect_line_name_from_expression(expression, names)?;
+                collect_line_name_from_expression(expression, names, templates)?;
             }
             CollectionItem::Conditional {
                 then_items,
                 else_items,
                 ..
             } => {
-                collect_line_names_from_items(then_items, names)?;
-                collect_line_names_from_items(else_items, names)?;
+                collect_line_names_from_items(then_items, names, templates)?;
+                collect_line_names_from_items(else_items, names, templates)?;
             }
             CollectionItem::Generator(generator) => {
-                collect_line_names_from_generator_items(&generator.body, names)?;
+                collect_line_names_from_generator_items(&generator.body, names, templates)?;
             }
         }
     }
@@ -82,19 +84,20 @@ fn collect_line_names_from_items(
 fn collect_line_names_from_generator_items(
     items: &[GeneratorItem],
     names: &mut BTreeMap<String, SourceSpan>,
+    templates: &BTreeMap<String, &TemplateDeclaration>,
 ) -> Result<(), Diagnostic> {
     for item in items {
         match item {
             GeneratorItem::Emit(expression) => {
-                collect_line_name_from_expression(expression, names)?;
+                collect_line_name_from_expression(expression, names, templates)?;
             }
             GeneratorItem::Conditional {
                 then_items,
                 else_items,
                 ..
             } => {
-                collect_line_names_from_generator_items(then_items, names)?;
-                collect_line_names_from_generator_items(else_items, names)?;
+                collect_line_names_from_generator_items(then_items, names, templates)?;
+                collect_line_names_from_generator_items(else_items, names, templates)?;
             }
             GeneratorItem::Let(_) => {}
         }
@@ -105,23 +108,94 @@ fn collect_line_names_from_generator_items(
 fn collect_line_name_from_expression(
     expression: &EntityExpression,
     names: &mut BTreeMap<String, SourceSpan>,
+    templates: &BTreeMap<String, &TemplateDeclaration>,
 ) -> Result<(), Diagnostic> {
-    let Some((name, span)) = line_name_from_expression(expression) else {
-        return Ok(());
-    };
-    insert_line_name(names, name, span)
+    collect_line_name_from_expression_visiting(expression, names, templates, &mut BTreeSet::new())
 }
 
-fn line_name_from_expression(expression: &EntityExpression) -> Option<(String, SourceSpan)> {
+fn collect_line_names_from_template_body(
+    statements: &[TemplateStatement],
+    names: &mut BTreeMap<String, SourceSpan>,
+    templates: &BTreeMap<String, &TemplateDeclaration>,
+    visiting: &mut BTreeSet<String>,
+) -> Result<(), Diagnostic> {
+    for statement in statements {
+        match statement {
+            TemplateStatement::Let(_) => {}
+            TemplateStatement::If(statement) => {
+                collect_line_names_from_template_body(
+                    &statement.then_branch,
+                    names,
+                    templates,
+                    visiting,
+                )?;
+                collect_line_names_from_template_body(
+                    &statement.else_branch,
+                    names,
+                    templates,
+                    visiting,
+                )?;
+            }
+            TemplateStatement::Return(statement) => {
+                collect_line_name_from_expression_visiting(
+                    &statement.value,
+                    names,
+                    templates,
+                    visiting,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_line_name_from_expression_visiting(
+    expression: &EntityExpression,
+    names: &mut BTreeMap<String, SourceSpan>,
+    templates: &BTreeMap<String, &TemplateDeclaration>,
+    visiting: &mut BTreeSet<String>,
+) -> Result<(), Diagnostic> {
     match expression {
-        EntityExpression::Constructor(constructor) => line_name_from_constructor(constructor),
-        EntityExpression::With(with_expression) => with_expression
-            .fields
-            .iter()
-            .find(|field| field.path.segments.as_slice() == ["id"])
-            .and_then(line_name_from_field)
-            .or_else(|| line_name_from_expression(&with_expression.base)),
-        EntityExpression::SourceConstructor(_) | EntityExpression::Source(_) => None,
+        EntityExpression::Constructor(constructor) => {
+            collect_line_name_from_constructor(constructor, names)
+        }
+        EntityExpression::With(with_expression) => {
+            if let Some((name, span)) = with_expression
+                .fields
+                .iter()
+                .find(|field| field.path.segments.as_slice() == ["id"])
+                .and_then(line_name_from_field)
+            {
+                insert_line_name(names, name, span)
+            } else {
+                collect_line_name_from_expression_visiting(
+                    &with_expression.base,
+                    names,
+                    templates,
+                    visiting,
+                )
+            }
+        }
+        EntityExpression::Source(SourceExpression::Call { callee, .. }) => {
+            let SourceExpression::Name { name, .. } = callee.as_ref() else {
+                return Ok(());
+            };
+            if !visiting.insert(name.clone()) {
+                return Ok(());
+            }
+            let result = (|| {
+                let Some(template) = templates.get(name) else {
+                    return Ok(());
+                };
+                if template.return_type != Type::Line {
+                    return Ok(());
+                }
+                collect_line_names_from_template_body(&template.body, names, templates, visiting)
+            })();
+            visiting.remove(name);
+            result
+        }
+        EntityExpression::SourceConstructor(_) | EntityExpression::Source(_) => Ok(()),
     }
 }
 
