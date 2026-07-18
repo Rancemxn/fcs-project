@@ -233,6 +233,17 @@ comment 与主 loop 使用同一 raw-Markdown 传输契约：
 - 写入后按 comment URL/ID 回读并比较正文；只允许 CRLF-to-LF 归一化。写入未确认、出现字面转义换行或正文不匹配
   时，verdict 必须保持未确认，并追加 `## Superseding audit`，不得编辑历史消息。
 
+## Markdown validation
+
+review loop 修改 comment template 或本文件后，必须运行以下命令并要求 exit 0：
+
+~~~sh
+markdownlint --disable MD013 MD025 MD060 -- docs/loops/loop.md docs/loops/review-loop.md
+~~~
+
+MD013、MD025 和 MD060 仅用于保留本仓库已有的中文长行、独立 H1 契约章节和 compact table pipe 风格；其余
+markdownlint 规则仍然有效。此检查验证 loop 文档，不会替代 comment payload 的 remote read-back。
+
 # Audit Comment Contract
 
 审查目标完成后，在被审 PR（若存在）和关联 Issue 立即追加内容等价于以下结构的新消息。以下 fenced block 是

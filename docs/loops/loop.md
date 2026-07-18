@@ -186,6 +186,18 @@
 - 发现格式错误时不得编辑或删除历史 comment；立即追加 `## Superseding ...`，指出被替代 comment、原因、固定
   target/head SHA、修正后的字段和 Next。修正 comment 本身也必须经过同一 read-back gate。
 
+## Markdown validation
+
+在提交或修改本节的 comment template 后，必须运行以下仓库级 Markdown 检查，并要求 exit 0：
+
+~~~sh
+markdownlint --disable MD013 MD025 MD060 -- docs/loops/loop.md docs/loops/review-loop.md
+~~~
+
+MD013、MD025 和 MD060 是本仓库这两份契约的显式排版例外：中文长行不强制硬折行；每个独立契约章节保留
+H1；现有表格保留 compact pipe 风格。除这三条外不得禁用规则；markdownlint 通过也不能替代 GitHub comment
+payload 的 read-back gate。
+
 ~~~md
 ## Primary audit result
 
