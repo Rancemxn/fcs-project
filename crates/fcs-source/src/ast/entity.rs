@@ -5,6 +5,9 @@ use std::collections::BTreeMap;
 use super::{DocumentProfile, LetStatement, TempoMap};
 use super::{SourceExpression, SourceSpan, Type, TypedValue};
 use crate::version::Version;
+use fcs_model::{
+    CanonicalTextualId, EntityKind, ExpansionPath, IdError, StableId, StableIdRegistry,
+};
 
 /// A violation detected while constructing or auditing expanded output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +78,40 @@ impl ExpandedSourceDocument {
 
     pub fn collections(&self) -> impl Iterator<Item = &ExpandedCollection> {
         self.collections.iter()
+    }
+
+    /// Lowers the currently available expanded Note identities without performing
+    /// later time, graph, Track, or gameplay normalization.
+    pub fn canonical_note_ids(&self) -> Result<Vec<StableId>, IdError> {
+        let mut registry = StableIdRegistry::new();
+        let mut ids = Vec::new();
+        for collection in &self.collections {
+            for (expanded_order, entity) in collection.entities.iter().enumerate() {
+                if entity.entity_type != Type::Note {
+                    continue;
+                }
+                let textual = entity
+                    .field("id")
+                    .and_then(|field| match field.value() {
+                        TypedValue::String(value) => {
+                            Some(CanonicalTextualId::explicit(value.clone()))
+                        }
+                        _ => None,
+                    })
+                    .transpose()?;
+                let textual = match textual {
+                    Some(textual) => textual,
+                    None => {
+                        let path = entity
+                            .expansion_path()
+                            .ok_or(IdError::MissingExpansionPath)?;
+                        CanonicalTextualId::generated(EntityKind::Note, path, expanded_order as u64)
+                    }
+                };
+                ids.push(registry.insert(EntityKind::Note, textual)?);
+            }
+        }
+        Ok(ids)
     }
 
     pub(crate) fn try_from_collections(
@@ -367,6 +404,7 @@ pub struct ExpandedEntity {
     note_variant: Option<NoteVariant>,
     fields: BTreeMap<String, ExpandedField>,
     span: SourceSpan,
+    expansion_path: Option<ExpansionPath>,
 }
 
 impl ExpandedEntity {
@@ -381,7 +419,12 @@ impl ExpandedEntity {
             note_variant,
             fields,
             span,
+            expansion_path: None,
         }
+    }
+
+    pub(crate) fn set_expansion_path(&mut self, path: ExpansionPath) {
+        self.expansion_path = Some(path);
     }
 
     pub(crate) fn replace_field(&mut self, field: ExpandedField) {
@@ -405,6 +448,11 @@ impl ExpandedEntity {
     /// Returns the source provenance span of this entity.
     pub const fn span(&self) -> SourceSpan {
         self.span
+    }
+
+    /// Returns the deterministic source/expansion provenance used by I3 canonical IDs.
+    pub fn expansion_path(&self) -> Option<&ExpansionPath> {
+        self.expansion_path.as_ref()
     }
 
     /// Looks up a lowered field by its canonical dotted path.
@@ -467,6 +515,7 @@ mod tests {
                 .into_iter()
                 .collect(),
             span: entity_span,
+            expansion_path: None,
         };
 
         assert_eq!(entity.entity_type(), &Type::Note);
@@ -499,6 +548,7 @@ mod tests {
                 .into_iter()
                 .collect(),
             span,
+            expansion_path: None,
         };
         let invalid_field = ExpandedSourceDocument::try_from_collections(
             Version::new(5, 0, 0),
@@ -528,6 +578,7 @@ mod tests {
             .into_iter()
             .collect(),
             span,
+            expansion_path: None,
         };
         let empty_path = ExpandedSourceDocument::try_from_collections(
             Version::new(5, 0, 0),
@@ -554,6 +605,7 @@ mod tests {
             .into_iter()
             .collect(),
             span,
+            expansion_path: None,
         };
         let mismatched_key = ExpandedSourceDocument::try_from_collections(
             Version::new(5, 0, 0),
@@ -574,6 +626,7 @@ mod tests {
             note_variant: None,
             fields: BTreeMap::new(),
             span,
+            expansion_path: None,
         };
         let invalid_type = ExpandedSourceDocument::try_from_collections(
             Version::new(5, 0, 0),

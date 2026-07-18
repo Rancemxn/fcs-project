@@ -1832,6 +1832,34 @@ Canonical ID 由显式 ID 优先；缺失允许 ID 的 schema 使用规范化 so
 resource `source`。相同 source、resource bytes 和 compilation profile 位于不同宿主目录时，必须
 得到相同 canonical IDs。
 
+对于 Line 和 Note，生成 textual ID 的精确编码固定为：
+
+```text
+generated/<entity-kind>/<expansion-path>/order/<zero-based-decimal>
+```
+
+其中 `<entity-kind>` 当前只能是小写 ASCII `line` 或 `note`；`<expansion-path>` 依次包含：
+
+```text
+collection/<collection-name>/item/<item-order>
+[/template/<template-name>/call/<call-order>]
+[/generate/<generator-index>]
+```
+
+`collection-name` 和 `template-name` 使用其 source identifier 的 ASCII spelling，不做大小写、Unicode
+或其他规范化；因此它们不能包含 `/`。所有 order/index 组件都是零基、无前导零的十进制整数。
+`item-order` 是 collection 中 source item 的零基顺序；`call-order` 是同一次 deterministic expansion
+traversal 中 template call 的零基顺序；`generator-index` 是该 generator 的零基 iteration index。
+最终 `order` 是实体完成 template/generator expansion 后在其 owning collection 中的零基 expanded-output
+顺序。条件分支只贡献被选中的输出，但不重编号 source item；同一 canonical input 的不同宿主目录、
+comment、trivia 或 authoring-only local name 不得改变这些 ID。
+
+显式 source ID 保留原始 UTF-8 字节，不得以 `generated/` 开头；该前缀由 compiler 生成 ID 保留，违反时
+必须在 canonical ID validation 失败。Line 使用 `fcs.line`、Note 使用 `fcs.note` typed namespace，
+并按 `fcbc.md` §6.2 对最终 textual ID 计算 `SHA-256(namespace || 0x00 || UTF-8(textual ID))` 的前
+64 little-endian bits。ID 为 0、重复 textual ID 或同一 typed namespace 中的任意 64-bit collision 都是
+错误；compiler 不得加盐、重命名或依赖 map/host traversal order 恢复。
+
 标准 FCBC writer 必须消费整个 CanonicalCompilation，把恰好一个 CanonicalChart 和全部
 CanonicalResourceBundle payload 写入一个自包含 FCBC。播放器只从 FCBC loader 得到已验证的
 runtime descriptors；它不重新解析 FCS、解析 workspace path、执行 authoring structure 或决定

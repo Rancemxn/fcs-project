@@ -2568,6 +2568,44 @@ fn bound_template_if_with_fixture_expands_selected_branch_and_overlay() {
 }
 
 #[test]
+fn canonical_note_ids_bind_expanded_direct_template_and_generator_provenance() {
+    let cases = [
+        (
+            include_str!("../../../docs/conformance/fcs5/source/valid/canonical-id-direct.fcs"),
+            vec!["generated/note/collection/notes/item/0/order/0"],
+        ),
+        (
+            include_str!("../../../docs/conformance/fcs5/source/valid/canonical-id-template.fcs"),
+            vec!["generated/note/collection/notes/item/0/template/makeTap/call/0/order/0"],
+        ),
+        (
+            include_str!("../../../docs/conformance/fcs5/source/valid/compile-time-generator.fcs"),
+            vec![
+                "generated/note/collection/notes/item/0/template/generatedTap/call/0/generate/0/order/0",
+                "generated/note/collection/notes/item/0/template/generatedTap/call/1/generate/1/order/1",
+                "generated/note/collection/notes/item/0/template/generatedTap/call/2/generate/2/order/2",
+                "generated/note/collection/notes/item/0/template/generatedTap/call/3/generate/3/order/3",
+            ],
+        ),
+    ];
+
+    for (source, expected) in cases {
+        let document = parse_document(source)
+            .into_result()
+            .expect("canonical ID fixture should parse");
+        let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+            .expect("canonical ID fixture should elaborate");
+        let actual: Vec<_> = expanded
+            .canonical_note_ids()
+            .expect("canonical IDs should lower")
+            .into_iter()
+            .map(|id| id.textual().as_str().to_owned())
+            .collect();
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
 fn note_constructors_materialize_static_schema_defaults() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }

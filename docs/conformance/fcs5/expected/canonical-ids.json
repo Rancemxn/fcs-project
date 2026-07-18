@@ -1,0 +1,22 @@
+{
+  "direct": [
+    "generated/note/collection/notes/item/0/order/0"
+  ],
+  "template": [
+    "generated/note/collection/notes/item/0/template/makeTap/call/0/order/0"
+  ],
+  "generator": [
+    "generated/note/collection/notes/item/0/template/generatedTap/call/0/generate/0/order/0",
+    "generated/note/collection/notes/item/0/template/generatedTap/call/1/generate/1/order/1",
+    "generated/note/collection/notes/item/0/template/generatedTap/call/2/generate/2/order/2",
+    "generated/note/collection/notes/item/0/template/generatedTap/call/3/generate/3/order/3"
+  ],
+  "line": "generated/line/collection/lines/item/0/order/0",
+  "forbiddenInputs": [
+    "workspacePath",
+    "sourceText",
+    "template",
+    "generator",
+    "local"
+  ]
+}
