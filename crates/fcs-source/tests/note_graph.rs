@@ -92,6 +92,29 @@ fn four_note_kinds_lower_defaults_and_sort_by_canonical_key() {
 }
 
 #[test]
+fn canonical_notes_accept_time_valued_gameplay_and_hold_boundaries() {
+    let notes = canonical(&format!(
+        "{HEADER}lines {{ line main {{}} }} collections {{ notes {{\
+            tap {{ id: \"time-tap\"; line: @main; gameplay.time: 1s; }};\
+            hold {{ id: \"time-hold\"; line: @main; gameplay.time: 2s; gameplay.endTime: 3s; }};\
+        }} }}"
+    ));
+
+    let tap = notes.note_by_textual_id("time-tap").unwrap();
+    assert_eq!(tap.gameplay().time().chart_time_seconds(), 1.0);
+    assert_eq!(tap.gameplay().time().source_beat(), None);
+
+    let hold = notes.note_by_textual_id("time-hold").unwrap();
+    assert_eq!(hold.gameplay().time().chart_time_seconds(), 2.0);
+    assert_eq!(hold.gameplay().time().source_beat(), None);
+    assert_eq!(
+        hold.gameplay().end_time().unwrap().chart_time_seconds(),
+        3.0
+    );
+    assert_eq!(hold.gameplay().end_time().unwrap().source_beat(), None);
+}
+
+#[test]
 fn canonical_notes_validate_shapes_policies_and_hold_boundaries() {
     let notes = canonical(&format!(
         "{HEADER}{POLICY_DECLARATIONS}lines {{ line main {{}} line other {{}} }} collections {{ notes {{\
@@ -323,6 +346,7 @@ fn canonical_note_presentation_retains_rotation_and_visibility_boundaries() {
             .visible_from()
             .expect("visibleFrom is retained")
             .source_beat()
+            .unwrap()
             .as_f64(),
         1.0
     );
@@ -331,6 +355,7 @@ fn canonical_note_presentation_retains_rotation_and_visibility_boundaries() {
             .visible_until()
             .expect("visibleUntil is retained")
             .source_beat()
+            .unwrap()
             .as_f64(),
         3.0
     );

@@ -9,6 +9,7 @@ use super::ast::{NoteVariant, Type};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldConstraint {
     StringEnum(&'static [&'static str]),
+    TimeOrBeat,
 }
 
 /// The schema of a field accepted by an entity constructor.
@@ -24,6 +25,19 @@ impl FieldSchema {
     /// Returns the field's additional value constraint, if one is registered.
     pub fn constraint(&self) -> Option<&FieldConstraint> {
         self.constraint.as_ref()
+    }
+
+    /// Returns the type to use as an expression hint, when the field has one exact type.
+    pub fn expected_type(&self) -> Option<&Type> {
+        (!matches!(self.constraint, Some(FieldConstraint::TimeOrBeat))).then_some(&self.ty)
+    }
+
+    /// Returns whether a concrete value type is accepted by this field schema.
+    pub fn accepts_type(&self, actual: &Type) -> bool {
+        match self.constraint {
+            Some(FieldConstraint::TimeOrBeat) => matches!(actual, Type::Time | Type::Beat),
+            Some(FieldConstraint::StringEnum(_)) | None => actual == &self.ty,
+        }
     }
 }
 
@@ -112,8 +126,18 @@ fn build_phase2_schema() -> ConstructionSchema {
         vec![
             field("id", Type::String, false),
             field("line", Type::Line, false),
-            field("gameplay.time", Type::Beat, true),
-            field("gameplay.endTime", Type::Beat, false),
+            constrained_field(
+                "gameplay.time",
+                Type::Beat,
+                true,
+                FieldConstraint::TimeOrBeat,
+            ),
+            constrained_field(
+                "gameplay.endTime",
+                Type::Beat,
+                false,
+                FieldConstraint::TimeOrBeat,
+            ),
             constrained_field(
                 "gameplay.side",
                 Type::String,

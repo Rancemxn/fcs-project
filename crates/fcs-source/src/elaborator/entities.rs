@@ -765,12 +765,13 @@ impl<'a> StaticEntityValidator<'a> {
             }
             let is_resource_reference = path == "gameplay.soundResource"
                 && matches!(field.value, SourceExpression::Reference { .. });
+            let expected = field_schema.expected_type();
             let actual = if is_resource_reference {
                 Type::String
             } else {
-                self.validate_expression_with_expected(&field.value, scope, Some(&field_schema.ty))?
+                self.validate_expression_with_expected(&field.value, scope, expected)?
             };
-            require_static_type(&field_schema.ty, &actual, field.value.span())?;
+            validate_schema_type(field_schema, &actual, field.value.span())?;
             if !is_resource_reference
                 && let Ok(value) = evaluate_with_context_expected(
                     &field.value,
@@ -778,7 +779,7 @@ impl<'a> StaticEntityValidator<'a> {
                     &BTreeMap::new(),
                     self.schema,
                     &self.context,
-                    Some(&field_schema.ty),
+                    expected,
                 )
             {
                 validate_field_type(field_schema, &value, field.value.span())?;
@@ -1623,8 +1624,12 @@ impl<'a> ExpansionContext<'a> {
                         field: path.clone(),
                         span: field.path.span,
                     })?;
-            let value =
-                self.evaluate_field_value(&path, &field.value, &field_schema.ty, bindings)?;
+            let value = self.evaluate_field_value(
+                &path,
+                &field.value,
+                field_schema.expected_type(),
+                bindings,
+            )?;
             validate_field_type(field_schema, &value, field.value.span())?;
             entity.replace_field(ExpandedField::new(path, value, field.span));
         }
@@ -1656,8 +1661,12 @@ impl<'a> ExpansionContext<'a> {
                         field: path.clone(),
                         span: field.path.span,
                     })?;
-            let value =
-                self.evaluate_field_value(&path, &field.value, &field_schema.ty, bindings)?;
+            let value = self.evaluate_field_value(
+                &path,
+                &field.value,
+                field_schema.expected_type(),
+                bindings,
+            )?;
             validate_field_type(field_schema, &value, field.value.span())?;
             result.insert(path.clone(), ExpandedField::new(path, value, field.span));
         }
@@ -1668,7 +1677,7 @@ impl<'a> ExpansionContext<'a> {
         &self,
         path: &str,
         expression: &SourceExpression,
-        expected: &Type,
+        expected: Option<&Type>,
         bindings: &BTreeMap<String, TypedValue>,
     ) -> Result<TypedValue, Diagnostic> {
         if path == "gameplay.soundResource"
@@ -1682,7 +1691,7 @@ impl<'a> ExpansionContext<'a> {
             bindings,
             self.schema,
             &self.context,
-            Some(expected),
+            expected,
         )
     }
 
@@ -1776,19 +1785,28 @@ fn validate_field_type(
     value: &TypedValue,
     span: SourceSpan,
 ) -> Result<(), Diagnostic> {
-    if value.ty() != field.ty {
-        return Err(Diagnostic::TypeMismatch {
-            expected: field.ty.clone(),
-            actual: value.ty(),
-            span,
-        });
-    }
+    validate_schema_type(field, &value.ty(), span)?;
     if let Some(FieldConstraint::StringEnum(values)) = field.constraint()
         && let TypedValue::String(value) = value
         && !values.contains(&value.as_str())
     {
         return Err(Diagnostic::InvalidOperation {
             message: "string value is outside the schema enum",
+            span,
+        });
+    }
+    Ok(())
+}
+
+fn validate_schema_type(
+    field: &crate::schema::FieldSchema,
+    actual: &Type,
+    span: SourceSpan,
+) -> Result<(), Diagnostic> {
+    if !field.accepts_type(actual) {
+        return Err(Diagnostic::TypeMismatch {
+            expected: field.ty.clone(),
+            actual: actual.clone(),
             span,
         });
     }

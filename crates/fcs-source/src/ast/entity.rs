@@ -78,7 +78,7 @@ impl CanonicalNoteTime {
         &self.stable_id
     }
 
-    pub const fn source_beat(&self) -> CanonicalBeat {
+    pub const fn source_beat(&self) -> Option<CanonicalBeat> {
         self.canonical_time.source_beat()
     }
 

@@ -2622,8 +2622,8 @@ fn canonical_note_times_keep_exact_beat_provenance_and_use_global_clock() {
         .clone();
 
     assert_eq!(note.stable_id().textual().as_str(), "n");
-    assert_eq!(note.source_beat().numerator(), 2);
-    assert_eq!(note.source_beat().denominator(), 1);
+    assert_eq!(note.source_beat().unwrap().numerator(), 2);
+    assert_eq!(note.source_beat().unwrap().denominator(), 1);
     assert_eq!(note.chart_time_seconds(), 1.0);
     assert_eq!(
         time_map.beat_at_time(note.chart_time_seconds()).unwrap(),
@@ -2647,7 +2647,12 @@ fn canonical_generator_note_times_follow_expanded_order() {
         .canonical_note_times(&time_map)
         .expect("generated note times should normalize")
         .into_iter()
-        .map(|note| (note.source_beat().numerator(), note.chart_time_seconds()))
+        .map(|note| {
+            (
+                note.source_beat().unwrap().numerator(),
+                note.chart_time_seconds(),
+            )
+        })
         .collect();
 
     assert_eq!(actual, [(0, 0.0), (1, 0.5), (2, 1.0), (3, 1.5)]);
@@ -2682,8 +2687,8 @@ collections {
             .map(|note| {
                 (
                     note.stable_id().textual().as_str().to_owned(),
-                    note.source_beat().numerator(),
-                    note.source_beat().denominator(),
+                    note.source_beat().unwrap().numerator(),
+                    note.source_beat().unwrap().denominator(),
                     note.chart_time_seconds(),
                 )
             })
@@ -2777,7 +2782,10 @@ fn phase2_schema_exposes_only_gameplay_side_as_a_closed_string_enum() {
         side.constraint(),
         Some(&FieldConstraint::StringEnum(&["above", "below"]))
     );
-    assert_eq!(note.field("gameplay.time").unwrap().constraint(), None);
+    assert_eq!(
+        note.field("gameplay.time").unwrap().constraint(),
+        Some(&FieldConstraint::TimeOrBeat)
+    );
     assert_eq!(
         note.field("presentation.texture").unwrap().constraint(),
         None
