@@ -296,8 +296,12 @@ impl<'a> StaticEntityValidator<'a> {
             None,
             Some(generator.range.span),
         ));
-        let range_result =
-            super::generator::evaluate_range_with_context(self.document, generator, &self.context);
+        let range_result = super::generator::evaluate_range_with_context(
+            self.document,
+            generator,
+            self.schema,
+            &self.context,
+        );
         self.context.pop_trace();
         self.context.pop_trace();
         if matches!(generator.owner.as_ref(), GeneratorOwner::Collection { .. }) {
@@ -563,6 +567,7 @@ impl<'a> StaticEntityValidator<'a> {
                 &field.value,
                 self.document.definitions.as_ref(),
                 &BTreeMap::new(),
+                self.schema,
                 &self.context,
                 Some(&field_schema.ty),
             ) {
@@ -617,7 +622,7 @@ impl<'a> StaticEntityValidator<'a> {
         expected: Option<&Type>,
     ) -> Result<Type, Diagnostic> {
         validate_line_references(expression, &self.line_names)?;
-        infer_expression_with_expected(expression, scope, &self.functions, expected)
+        infer_expression_with_expected(expression, scope, &self.functions, self.schema, expected)
     }
 }
 
@@ -829,6 +834,7 @@ impl<'a> ExpansionContext<'a> {
                     condition,
                     self.document.definitions.as_ref(),
                     &BTreeMap::new(),
+                    self.schema,
                     &self.context,
                 )?;
                 let TypedValue::Bool(selected) = value else {
@@ -887,8 +893,12 @@ impl<'a> ExpansionContext<'a> {
             None,
             Some(generator.range.span),
         ));
-        let range =
-            super::generator::evaluate_range_with_context(self.document, generator, &self.context)?;
+        let range = super::generator::evaluate_range_with_context(
+            self.document,
+            generator,
+            self.schema,
+            &self.context,
+        )?;
         let mut generated = Vec::new();
         for index in 0..range.count() {
             self.context.push_trace(ExpansionTraceFrame::new(
@@ -948,6 +958,7 @@ impl<'a> ExpansionContext<'a> {
                         &statement.initializer,
                         self.document.definitions.as_ref(),
                         &local_bindings,
+                        self.schema,
                         &self.context,
                         Some(&statement.ty),
                     )?;
@@ -979,6 +990,7 @@ impl<'a> ExpansionContext<'a> {
                         condition,
                         self.document.definitions.as_ref(),
                         &local_bindings,
+                        self.schema,
                         &self.context,
                     )?;
                     let TypedValue::Bool(selected) = condition else {
@@ -1200,6 +1212,7 @@ impl<'a> ExpansionContext<'a> {
                 argument,
                 self.document.definitions.as_ref(),
                 bindings,
+                self.schema,
                 &self.context,
                 Some(&parameter.ty),
             )?;
@@ -1246,6 +1259,7 @@ impl<'a> ExpansionContext<'a> {
                         &statement.initializer,
                         self.document.definitions.as_ref(),
                         &local_bindings,
+                        self.schema,
                         &self.context,
                         Some(&statement.ty),
                     )?;
@@ -1270,6 +1284,7 @@ impl<'a> ExpansionContext<'a> {
                         &statement.condition,
                         self.document.definitions.as_ref(),
                         &local_bindings,
+                        self.schema,
                         &self.context,
                     )?;
                     let TypedValue::Bool(selected) = condition else {
@@ -1346,6 +1361,7 @@ impl<'a> ExpansionContext<'a> {
                 &field.value,
                 self.document.definitions.as_ref(),
                 bindings,
+                self.schema,
                 &self.context,
                 Some(&field_schema.ty),
             )?;
@@ -1384,6 +1400,7 @@ impl<'a> ExpansionContext<'a> {
                 &field.value,
                 self.document.definitions.as_ref(),
                 bindings,
+                self.schema,
                 &self.context,
                 Some(&field_schema.ty),
             )?;

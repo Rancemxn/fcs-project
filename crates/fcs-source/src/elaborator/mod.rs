@@ -286,7 +286,7 @@ fn elaborate_inner(
     let context = CompileTimeContext::new(limits);
     if let Some(definitions) = &document.definitions {
         cycle::reject_cycles(definitions)?;
-        eval::check_and_evaluate_with_context(definitions, &context)?;
+        eval::check_and_evaluate_with_context(definitions, schema, &context)?;
     }
     let collections = entities::expand_collections(document, schema, context)?;
     ExpandedSourceDocument::try_from_collections(

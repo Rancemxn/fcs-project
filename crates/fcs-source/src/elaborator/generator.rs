@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use crate::ast::{Beat, Document, Generator, GeneratorRangeValue, SourceSpan, Type, TypedValue};
+use crate::schema::{ConstructionSchema, phase2_schema};
 
 use super::eval::evaluate_with_context;
 use super::{CompileTimeContext, CompileTimeLimits, ElaboratorError as Diagnostic};
@@ -117,19 +118,20 @@ pub fn evaluate_generator_range(
         })
         .and_then(|()| {
             document.definitions.as_ref().map_or(Ok(()), |definitions| {
-                super::eval::check_and_evaluate_with_context(definitions, &context)
+                super::eval::check_and_evaluate_with_context(definitions, phase2_schema(), &context)
             })
         })
     {
         return Err(vec![error.into_diagnostic()]);
     }
-    evaluate_range_with_context(document, generator, &context)
+    evaluate_range_with_context(document, generator, phase2_schema(), &context)
         .map_err(|error| vec![error.into_diagnostic()])
 }
 
 pub(super) fn evaluate_range_with_context(
     document: &Document,
     generator: &Generator,
+    schema: &ConstructionSchema,
     context: &CompileTimeContext,
 ) -> Result<GeneratorRange, Diagnostic> {
     let definitions = document.definitions.as_ref();
@@ -137,13 +139,21 @@ pub(super) fn evaluate_range_with_context(
         &generator.range.start,
         definitions,
         &BTreeMap::new(),
+        schema,
         context,
     )?;
-    let end = evaluate_with_context(&generator.range.end, definitions, &BTreeMap::new(), context)?;
+    let end = evaluate_with_context(
+        &generator.range.end,
+        definitions,
+        &BTreeMap::new(),
+        schema,
+        context,
+    )?;
     let step = evaluate_with_context(
         &generator.range.step,
         definitions,
         &BTreeMap::new(),
+        schema,
         context,
     )?;
 
