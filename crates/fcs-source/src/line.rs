@@ -29,6 +29,7 @@ impl Document {
 #[derive(Debug)]
 struct LoweredLine {
     id: StableId,
+    name_span: SourceSpan,
     parent_name: Option<(String, SourceSpan)>,
     base: CanonicalLineBase,
     inherit: CanonicalLineInherit,
@@ -97,7 +98,13 @@ fn lower_line_graph(document: &Document) -> Result<CanonicalLineGraph, Vec<Diagn
     }
 
     let mut resolved = Vec::new();
+    let mut line_name_spans = BTreeMap::<u64, SourceSpan>::new();
+    let mut parent_spans = BTreeMap::<u64, SourceSpan>::new();
     for line in lowered {
+        line_name_spans.insert(line.id.value(), line.name_span);
+        if let Some((_, span)) = line.parent_name.as_ref() {
+            parent_spans.insert(line.id.value(), *span);
+        }
         let parent = match line.parent_name.as_ref() {
             Some((name, span)) => match ids_by_name.get(name) {
                 Some(id) => Some(id.clone()),
@@ -122,14 +129,32 @@ fn lower_line_graph(document: &Document) -> Result<CanonicalLineGraph, Vec<Diagn
             line.scroll_tempo,
         ) {
             Ok(line) => resolved.push(line),
-            Err(error) => diagnostics.push(graph_diagnostic(error, SourceSpan::new(0, 0))),
+            Err(error) => diagnostics.push(graph_diagnostic_with_spans(
+                error,
+                &line_name_spans,
+                &parent_spans,
+                line_name_spans
+                    .values()
+                    .next()
+                    .copied()
+                    .expect("a Line graph error requires a declared Line"),
+            )),
         }
     }
 
     if diagnostics.is_empty() {
         match CanonicalLineGraph::new(resolved) {
             Ok(graph) => Ok(graph),
-            Err(error) => Err(vec![graph_diagnostic(error, SourceSpan::new(0, 0))]),
+            Err(error) => Err(vec![graph_diagnostic_with_spans(
+                error,
+                &line_name_spans,
+                &parent_spans,
+                line_name_spans
+                    .values()
+                    .next()
+                    .copied()
+                    .expect("a Line graph error requires a declared Line"),
+            )]),
         }
     } else {
         sort_diagnostics(&mut diagnostics);
@@ -220,11 +245,14 @@ fn lower_line(
     let parent_name = fields
         .get("parent")
         .and_then(|field| lower_parent(field, definitions, diagnostics));
+    let mut field_spans = BTreeMap::<String, SourceSpan>::new();
     let position = field_or_default(
         &fields,
         "position",
         definitions,
         diagnostics,
+        &mut field_spans,
+        declaration.span,
         vec2_length(0.0, 0.0),
     );
     let rotation = field_or_default(
@@ -232,6 +260,8 @@ fn lower_line(
         "rotation",
         definitions,
         diagnostics,
+        &mut field_spans,
+        declaration.span,
         TypedValue::Angle(0.0),
     );
     let scale = field_or_default(
@@ -239,6 +269,8 @@ fn lower_line(
         "scale",
         definitions,
         diagnostics,
+        &mut field_spans,
+        declaration.span,
         vec2_float(1.0, 1.0),
     );
     let alpha = field_or_default(
@@ -246,6 +278,8 @@ fn lower_line(
         "alpha",
         definitions,
         diagnostics,
+        &mut field_spans,
+        declaration.span,
         TypedValue::Float(1.0),
     );
     let transform_origin = field_or_default(
@@ -253,6 +287,8 @@ fn lower_line(
         "transformOrigin",
         definitions,
         diagnostics,
+        &mut field_spans,
+        declaration.span,
         vec2_length(0.0, 0.0),
     );
     let texture_anchor = field_or_default(
@@ -260,6 +296,8 @@ fn lower_line(
         "textureAnchor",
         definitions,
         diagnostics,
+        &mut field_spans,
+        declaration.span,
         vec2_float(0.5, 0.5),
     );
     let floor_scale = field_or_default(
@@ -267,6 +305,8 @@ fn lower_line(
         "floorScale",
         definitions,
         diagnostics,
+        &mut field_spans,
+        declaration.span,
         TypedValue::Length(120.0),
     );
     let integration_origin = field_or_default(
@@ -274,6 +314,8 @@ fn lower_line(
         "integrationOrigin",
         definitions,
         diagnostics,
+        &mut field_spans,
+        declaration.span,
         TypedValue::Time(0.0),
     );
     let initial_floor_position = field_or_default(
@@ -281,6 +323,8 @@ fn lower_line(
         "initialFloorPosition",
         definitions,
         diagnostics,
+        &mut field_spans,
+        declaration.span,
         TypedValue::Float(0.0),
     );
     let allow_reverse_scroll = field_or_default(
@@ -288,6 +332,8 @@ fn lower_line(
         "allowReverseScroll",
         definitions,
         diagnostics,
+        &mut field_spans,
+        declaration.span,
         TypedValue::Bool(false),
     );
     let z_order = field_or_default(
@@ -295,6 +341,8 @@ fn lower_line(
         "zOrder",
         definitions,
         diagnostics,
+        &mut field_spans,
+        declaration.span,
         TypedValue::Int(0),
     );
 
@@ -337,6 +385,8 @@ fn lower_line(
         initial_floor_position,
         allow_reverse_scroll,
         z_order,
+        &field_spans,
+        declaration.span,
     ) {
         Ok(base) => base,
         Err((code, message, span)) => {
@@ -356,6 +406,7 @@ fn lower_line(
 
     Some(LoweredLine {
         id,
+        name_span: declaration.name_span,
         parent_name,
         base,
         inherit,
@@ -393,12 +444,18 @@ fn field_or_default(
     path: &str,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     diagnostics: &mut Vec<Diagnostic>,
+    field_spans: &mut BTreeMap<String, SourceSpan>,
+    declaration_span: SourceSpan,
     default: TypedValue,
 ) -> TypedValue {
-    fields
-        .get(path)
-        .and_then(|field| evaluate_field(field, definitions, diagnostics))
-        .unwrap_or(default)
+    let Some(field) = fields.get(path) else {
+        return default;
+    };
+    field_spans.insert(path.to_owned(), field.span);
+    evaluate_field(field, definitions, diagnostics).unwrap_or_else(|| {
+        field_spans.insert(path.to_owned(), declaration_span);
+        default
+    })
 }
 
 fn evaluate_field(
@@ -428,24 +485,61 @@ fn lower_base(
     initial_floor_position: TypedValue,
     allow_reverse_scroll: TypedValue,
     z_order: TypedValue,
+    field_spans: &BTreeMap<String, SourceSpan>,
+    fallback_span: SourceSpan,
 ) -> Result<CanonicalLineBase, (DiagnosticCode, String, SourceSpan)> {
-    let position = vec2_of(position, "position", "vec2<length>")?;
-    let rotation = angle_of(rotation, "rotation")?;
-    let scale = vec2_of(scale, "scale", "vec2<float>")?;
-    let alpha = float_of(alpha, "alpha")?;
-    let transform_origin = vec2_of(transform_origin, "transformOrigin", "vec2<length>")?;
-    let texture_anchor = vec2_of(texture_anchor, "textureAnchor", "vec2<float>")?;
-    let floor_scale = length_of(floor_scale, "floorScale")?;
-    let integration_origin = time_of(integration_origin, "integrationOrigin")?;
-    let initial_floor_position = float_of(initial_floor_position, "initialFloorPosition")?;
-    let allow_reverse_scroll = bool_of(allow_reverse_scroll, "allowReverseScroll")?;
-    let z_order = int_of(z_order, "zOrder")?.try_into().map_err(|_| {
-        (
-            DiagnosticCode::NUMERIC_DOMAIN,
-            "zOrder must fit a signed 32-bit integer".into(),
-            SourceSpan::new(0, 0),
-        )
-    })?;
+    let position = vec2_of(
+        position,
+        "position",
+        "vec2<length>",
+        field_spans,
+        fallback_span,
+    )?;
+    let rotation = angle_of(rotation, "rotation", field_spans, fallback_span)?;
+    let scale = vec2_of(scale, "scale", "vec2<float>", field_spans, fallback_span)?;
+    let alpha = float_of(alpha, "alpha", field_spans, fallback_span)?;
+    let transform_origin = vec2_of(
+        transform_origin,
+        "transformOrigin",
+        "vec2<length>",
+        field_spans,
+        fallback_span,
+    )?;
+    let texture_anchor = vec2_of(
+        texture_anchor,
+        "textureAnchor",
+        "vec2<float>",
+        field_spans,
+        fallback_span,
+    )?;
+    let floor_scale = length_of(floor_scale, "floorScale", field_spans, fallback_span)?;
+    let integration_origin = time_of(
+        integration_origin,
+        "integrationOrigin",
+        field_spans,
+        fallback_span,
+    )?;
+    let initial_floor_position = float_of(
+        initial_floor_position,
+        "initialFloorPosition",
+        field_spans,
+        fallback_span,
+    )?;
+    let allow_reverse_scroll = bool_of(
+        allow_reverse_scroll,
+        "allowReverseScroll",
+        field_spans,
+        fallback_span,
+    )?;
+    let z_order = int_of(z_order, "zOrder", field_spans, fallback_span)?
+        .try_into()
+        .map_err(|_| {
+            (
+                DiagnosticCode::NUMERIC_DOMAIN,
+                "zOrder must fit a signed 32-bit integer".into(),
+                span_for(field_spans, "zOrder", fallback_span),
+            )
+        })?;
     CanonicalLineBase::new(
         position,
         rotation,
@@ -459,7 +553,7 @@ fn lower_base(
         allow_reverse_scroll,
         z_order,
     )
-    .map_err(base_error)
+    .map_err(|error| base_error(error, field_spans, fallback_span))
 }
 
 fn lower_scroll_tempo_map(
@@ -518,12 +612,14 @@ fn vec2_of(
     value: TypedValue,
     field: &'static str,
     expected: &'static str,
+    field_spans: &BTreeMap<String, SourceSpan>,
+    fallback_span: SourceSpan,
 ) -> Result<CanonicalVec2, (DiagnosticCode, String, SourceSpan)> {
     let TypedValue::Vec2(x, y) = value else {
         return Err((
             DiagnosticCode::TYPE_MISMATCH,
             format!("{field} must have type {expected}"),
-            SourceSpan::new(0, 0),
+            span_for(field_spans, field, fallback_span),
         ));
     };
     let (x, y) = match expected {
@@ -533,7 +629,7 @@ fn vec2_of(
                 return Err((
                     DiagnosticCode::TYPE_MISMATCH,
                     format!("{field} must have type {expected}"),
-                    SourceSpan::new(0, 0),
+                    span_for(field_spans, field, fallback_span),
                 ));
             }
         },
@@ -543,25 +639,28 @@ fn vec2_of(
                 return Err((
                     DiagnosticCode::TYPE_MISMATCH,
                     format!("{field} must have type {expected}"),
-                    SourceSpan::new(0, 0),
+                    span_for(field_spans, field, fallback_span),
                 ));
             }
         },
         _ => unreachable!("unknown Line vec2 type"),
     };
-    CanonicalVec2::new(x, y).map_err(base_error)
+    CanonicalVec2::new(x, y)
+        .map_err(|error| base_error_for_field(error, field, field_spans, fallback_span))
 }
 
 fn float_of(
     value: TypedValue,
     field: &'static str,
+    field_spans: &BTreeMap<String, SourceSpan>,
+    fallback_span: SourceSpan,
 ) -> Result<f64, (DiagnosticCode, String, SourceSpan)> {
     match value {
         TypedValue::Float(value) => Ok(value),
         _ => Err((
             DiagnosticCode::TYPE_MISMATCH,
             format!("{field} must have type float"),
-            SourceSpan::new(0, 0),
+            span_for(field_spans, field, fallback_span),
         )),
     }
 }
@@ -569,13 +668,15 @@ fn float_of(
 fn length_of(
     value: TypedValue,
     field: &'static str,
+    field_spans: &BTreeMap<String, SourceSpan>,
+    fallback_span: SourceSpan,
 ) -> Result<f64, (DiagnosticCode, String, SourceSpan)> {
     match value {
         TypedValue::Length(value) => Ok(value),
         _ => Err((
             DiagnosticCode::TYPE_MISMATCH,
             format!("{field} must have type length"),
-            SourceSpan::new(0, 0),
+            span_for(field_spans, field, fallback_span),
         )),
     }
 }
@@ -583,13 +684,15 @@ fn length_of(
 fn angle_of(
     value: TypedValue,
     field: &'static str,
+    field_spans: &BTreeMap<String, SourceSpan>,
+    fallback_span: SourceSpan,
 ) -> Result<f64, (DiagnosticCode, String, SourceSpan)> {
     match value {
         TypedValue::Angle(value) => Ok(value),
         _ => Err((
             DiagnosticCode::TYPE_MISMATCH,
             format!("{field} must have type angle"),
-            SourceSpan::new(0, 0),
+            span_for(field_spans, field, fallback_span),
         )),
     }
 }
@@ -597,13 +700,15 @@ fn angle_of(
 fn time_of(
     value: TypedValue,
     field: &'static str,
+    field_spans: &BTreeMap<String, SourceSpan>,
+    fallback_span: SourceSpan,
 ) -> Result<f64, (DiagnosticCode, String, SourceSpan)> {
     match value {
         TypedValue::Time(value) => Ok(value),
         _ => Err((
             DiagnosticCode::TYPE_MISMATCH,
             format!("{field} must have type time"),
-            SourceSpan::new(0, 0),
+            span_for(field_spans, field, fallback_span),
         )),
     }
 }
@@ -611,13 +716,15 @@ fn time_of(
 fn bool_of(
     value: TypedValue,
     field: &'static str,
+    field_spans: &BTreeMap<String, SourceSpan>,
+    fallback_span: SourceSpan,
 ) -> Result<bool, (DiagnosticCode, String, SourceSpan)> {
     match value {
         TypedValue::Bool(value) => Ok(value),
         _ => Err((
             DiagnosticCode::TYPE_MISMATCH,
             format!("{field} must have type bool"),
-            SourceSpan::new(0, 0),
+            span_for(field_spans, field, fallback_span),
         )),
     }
 }
@@ -625,13 +732,15 @@ fn bool_of(
 fn int_of(
     value: TypedValue,
     field: &'static str,
+    field_spans: &BTreeMap<String, SourceSpan>,
+    fallback_span: SourceSpan,
 ) -> Result<i64, (DiagnosticCode, String, SourceSpan)> {
     match value {
         TypedValue::Int(value) => Ok(value),
         _ => Err((
             DiagnosticCode::TYPE_MISMATCH,
             format!("{field} must have type int"),
-            SourceSpan::new(0, 0),
+            span_for(field_spans, field, fallback_span),
         )),
     }
 }
@@ -651,19 +760,55 @@ fn type_mismatch(
     ));
 }
 
-fn base_error(error: LineBaseError) -> (DiagnosticCode, String, SourceSpan) {
+fn base_error(
+    error: LineBaseError,
+    field_spans: &BTreeMap<String, SourceSpan>,
+    fallback_span: SourceSpan,
+) -> (DiagnosticCode, String, SourceSpan) {
+    let field = match error {
+        LineBaseError::NonFinite { field } | LineBaseError::OutOfRange { field } => field,
+    };
+    let span = span_for(field_spans, field, fallback_span);
     match error {
         LineBaseError::NonFinite { field } => (
             DiagnosticCode::NUMERIC_NON_FINITE,
             format!("Line field {field} must be finite"),
-            SourceSpan::new(0, 0),
+            span,
         ),
         LineBaseError::OutOfRange { field } => (
             DiagnosticCode::NUMERIC_DOMAIN,
             format!("Line field {field} is outside its allowed range"),
-            SourceSpan::new(0, 0),
+            span,
         ),
     }
+}
+
+fn base_error_for_field(
+    error: LineBaseError,
+    field: &str,
+    field_spans: &BTreeMap<String, SourceSpan>,
+    fallback_span: SourceSpan,
+) -> (DiagnosticCode, String, SourceSpan) {
+    match error {
+        LineBaseError::NonFinite { .. } => (
+            DiagnosticCode::NUMERIC_NON_FINITE,
+            format!("Line field {field} must be finite"),
+            span_for(field_spans, field, fallback_span),
+        ),
+        LineBaseError::OutOfRange { .. } => (
+            DiagnosticCode::NUMERIC_DOMAIN,
+            format!("Line field {field} is outside its allowed range"),
+            span_for(field_spans, field, fallback_span),
+        ),
+    }
+}
+
+fn span_for(
+    field_spans: &BTreeMap<String, SourceSpan>,
+    field: &str,
+    fallback_span: SourceSpan,
+) -> SourceSpan {
+    field_spans.get(field).copied().unwrap_or(fallback_span)
 }
 
 fn scroll_diagnostic(error: ScrollTempoError, span: SourceSpan) -> Diagnostic {
@@ -702,6 +847,57 @@ fn graph_diagnostic(error: LineGraphError, span: SourceSpan) -> Diagnostic {
         ),
     };
     Diagnostic::new(code, DiagnosticStage::Canonical, message, span)
+}
+
+fn graph_diagnostic_with_spans(
+    error: LineGraphError,
+    line_name_spans: &BTreeMap<u64, SourceSpan>,
+    parent_spans: &BTreeMap<u64, SourceSpan>,
+    fallback_span: SourceSpan,
+) -> Diagnostic {
+    let primary_span = match &error {
+        LineGraphError::UnknownParent { line, .. } | LineGraphError::SelfParent { line } => {
+            parent_spans
+                .get(line)
+                .copied()
+                .or_else(|| line_name_spans.get(line).copied())
+        }
+        LineGraphError::Cycle { lines } => lines.first().and_then(|line| {
+            parent_spans
+                .get(line)
+                .copied()
+                .or_else(|| line_name_spans.get(line).copied())
+        }),
+        LineGraphError::WrongNamespace { id } | LineGraphError::DuplicateId { id } => {
+            line_name_spans.get(id).copied()
+        }
+    }
+    .unwrap_or(fallback_span);
+
+    let mut diagnostic = graph_diagnostic(error.clone(), primary_span);
+    match error {
+        LineGraphError::SelfParent { line } => {
+            if let Some(span) = line_name_spans.get(&line).copied() {
+                diagnostic = diagnostic.with_label(DiagnosticLabel::new(span, "Line declaration"));
+            }
+        }
+        LineGraphError::Cycle { lines } => {
+            for line in lines.into_iter().skip(1) {
+                if let Some(span) = parent_spans
+                    .get(&line)
+                    .copied()
+                    .or_else(|| line_name_spans.get(&line).copied())
+                {
+                    diagnostic =
+                        diagnostic.with_label(DiagnosticLabel::new(span, "cycle parent edge"));
+                }
+            }
+        }
+        LineGraphError::WrongNamespace { .. }
+        | LineGraphError::DuplicateId { .. }
+        | LineGraphError::UnknownParent { .. } => {}
+    }
+    diagnostic
 }
 
 fn identity_diagnostic(message: String, span: SourceSpan) -> Diagnostic {

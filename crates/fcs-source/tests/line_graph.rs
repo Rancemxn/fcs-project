@@ -1,5 +1,5 @@
 use fcs_model::{EntityKind, derive_stable_id};
-use fcs_source::ast::LineBodyItem;
+use fcs_source::ast::{LineBodyItem, SourceSpan};
 use fcs_source::diagnostic::DiagnosticCode;
 use fcs_source::elaborator::{CompileTimeLimits, elaborate};
 use fcs_source::parser::parse_document;
@@ -17,6 +17,42 @@ fn line<'a>(graph: &'a fcs_model::CanonicalLineGraph, name: &str) -> &'a fcs_mod
     graph
         .line_by_textual_id(name)
         .unwrap_or_else(|| panic!("missing line {name}"))
+}
+
+fn field_span(document: &fcs_source::ast::Document, line_name: &str, path: &str) -> SourceSpan {
+    document
+        .lines
+        .iter()
+        .find(|line| line.name == line_name)
+        .and_then(|line| {
+            line.items.iter().find_map(|item| match item {
+                LineBodyItem::Field(field) if field.path.segments.join(".") == path => {
+                    Some(field.span)
+                }
+                _ => None,
+            })
+        })
+        .unwrap_or_else(|| panic!("missing {line_name}.{path} field"))
+}
+
+fn field_value_span(
+    document: &fcs_source::ast::Document,
+    line_name: &str,
+    path: &str,
+) -> SourceSpan {
+    document
+        .lines
+        .iter()
+        .find(|line| line.name == line_name)
+        .and_then(|line| {
+            line.items.iter().find_map(|item| match item {
+                LineBodyItem::Field(field) if field.path.segments.join(".") == path => {
+                    Some(field.value.span())
+                }
+                _ => None,
+            })
+        })
+        .unwrap_or_else(|| panic!("missing {line_name}.{path} field"))
 }
 
 const HEADER: &str = "#fcs 5.0.0\nformat { profile: chart; }\n";
@@ -220,6 +256,83 @@ fn invalid_line_base_values_have_canonical_diagnostics() {
         diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code() == DiagnosticCode::NUMERIC_NON_FINITE)
+    );
+    let non_finite = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code() == DiagnosticCode::NUMERIC_NON_FINITE)
+        .expect("non-finite diagnostic");
+    assert_eq!(
+        non_finite.primary_span(),
+        field_value_span(&document, "main", "integrationOrigin")
+    );
+}
+
+#[test]
+fn canonical_line_diagnostics_keep_field_and_graph_spans() {
+    let source = format!("{HEADER}lines {{ line main {{ alpha: 2.0; }} }}");
+    let document = parse_document(&source).into_result().unwrap();
+    let diagnostics = document.canonical_line_graph().unwrap_err();
+    let alpha = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code() == DiagnosticCode::NUMERIC_DOMAIN)
+        .expect("alpha range diagnostic");
+    assert_eq!(alpha.primary_span(), field_span(&document, "main", "alpha"));
+
+    let source = format!("{HEADER}lines {{ line main {{ position: vec2(1.0, 2.0); }} }}");
+    let document = parse_document(&source).into_result().unwrap();
+    let diagnostics = document.canonical_line_graph().unwrap_err();
+    let position = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code() == DiagnosticCode::TYPE_MISMATCH)
+        .expect("position type diagnostic");
+    assert_eq!(
+        position.primary_span(),
+        field_span(&document, "main", "position")
+    );
+
+    let source = format!("{HEADER}lines {{ line main {{ parent: @main; }} }}");
+    let document = parse_document(&source).into_result().unwrap();
+    let diagnostics = document.canonical_line_graph().unwrap_err();
+    let self_parent = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code() == DiagnosticCode::GRAPH_CYCLE)
+        .expect("self-parent diagnostic");
+    assert_eq!(
+        self_parent.primary_span(),
+        field_value_span(&document, "main", "parent")
+    );
+    assert_eq!(self_parent.labels().len(), 1);
+    assert_eq!(self_parent.labels()[0].span(), document.lines[0].name_span);
+
+    let source = format!("{HEADER}lines {{ line a {{ parent: @b; }} line b {{ parent: @a; }} }}");
+    let document = parse_document(&source).into_result().unwrap();
+    let diagnostics = document.canonical_line_graph().unwrap_err();
+    let cycle = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code() == DiagnosticCode::GRAPH_CYCLE)
+        .expect("cycle diagnostic");
+    let a_parent = field_value_span(&document, "a", "parent");
+    let b_parent = field_value_span(&document, "b", "parent");
+    let first_parent = if fcs_model::derive_stable_id(EntityKind::Line, "a")
+        < fcs_model::derive_stable_id(EntityKind::Line, "b")
+    {
+        a_parent
+    } else {
+        b_parent
+    };
+    let second_parent = if first_parent == a_parent {
+        b_parent
+    } else {
+        a_parent
+    };
+    assert_eq!(cycle.primary_span(), first_parent);
+    assert_eq!(
+        cycle
+            .labels()
+            .iter()
+            .map(|label| label.span())
+            .collect::<Vec<_>>(),
+        vec![second_parent]
     );
 }
 
