@@ -763,20 +763,24 @@ impl<'a> StaticEntityValidator<'a> {
                     span: field.value.span(),
                 });
             }
-            let actual = self.validate_expression_with_expected(
-                &field.value,
-                scope,
-                Some(&field_schema.ty),
-            )?;
+            let is_resource_reference = path == "gameplay.soundResource"
+                && matches!(field.value, SourceExpression::Reference { .. });
+            let actual = if is_resource_reference {
+                Type::String
+            } else {
+                self.validate_expression_with_expected(&field.value, scope, Some(&field_schema.ty))?
+            };
             require_static_type(&field_schema.ty, &actual, field.value.span())?;
-            if let Ok(value) = evaluate_with_context_expected(
-                &field.value,
-                self.document.definitions.as_ref(),
-                &BTreeMap::new(),
-                self.schema,
-                &self.context,
-                Some(&field_schema.ty),
-            ) {
+            if !is_resource_reference
+                && let Ok(value) = evaluate_with_context_expected(
+                    &field.value,
+                    self.document.definitions.as_ref(),
+                    &BTreeMap::new(),
+                    self.schema,
+                    &self.context,
+                    Some(&field_schema.ty),
+                )
+            {
                 validate_field_type(field_schema, &value, field.value.span())?;
             }
             if let Some(FieldConstraint::StringEnum(values)) = field_schema.constraint()
@@ -1619,14 +1623,8 @@ impl<'a> ExpansionContext<'a> {
                         field: path.clone(),
                         span: field.path.span,
                     })?;
-            let value = evaluate_with_context_expected(
-                &field.value,
-                self.document.definitions.as_ref(),
-                bindings,
-                self.schema,
-                &self.context,
-                Some(&field_schema.ty),
-            )?;
+            let value =
+                self.evaluate_field_value(&path, &field.value, &field_schema.ty, bindings)?;
             validate_field_type(field_schema, &value, field.value.span())?;
             entity.replace_field(ExpandedField::new(path, value, field.span));
         }
@@ -1658,18 +1656,34 @@ impl<'a> ExpansionContext<'a> {
                         field: path.clone(),
                         span: field.path.span,
                     })?;
-            let value = evaluate_with_context_expected(
-                &field.value,
-                self.document.definitions.as_ref(),
-                bindings,
-                self.schema,
-                &self.context,
-                Some(&field_schema.ty),
-            )?;
+            let value =
+                self.evaluate_field_value(&path, &field.value, &field_schema.ty, bindings)?;
             validate_field_type(field_schema, &value, field.value.span())?;
             result.insert(path.clone(), ExpandedField::new(path, value, field.span));
         }
         Ok(result)
+    }
+
+    fn evaluate_field_value(
+        &self,
+        path: &str,
+        expression: &SourceExpression,
+        expected: &Type,
+        bindings: &BTreeMap<String, TypedValue>,
+    ) -> Result<TypedValue, Diagnostic> {
+        if path == "gameplay.soundResource"
+            && let SourceExpression::Reference { name, .. } = expression
+        {
+            return Ok(TypedValue::String(name.clone()));
+        }
+        evaluate_with_context_expected(
+            expression,
+            self.document.definitions.as_ref(),
+            bindings,
+            self.schema,
+            &self.context,
+            Some(expected),
+        )
     }
 
     fn apply_defaults(
@@ -1689,6 +1703,7 @@ impl<'a> ExpansionContext<'a> {
             "presentation.alpha",
             "presentation.scaleX",
             "presentation.scaleY",
+            "presentation.rotation",
             "presentation.color",
             "zOrder",
         ] {
@@ -1705,6 +1720,7 @@ impl<'a> ExpansionContext<'a> {
                 | "presentation.alpha"
                 | "presentation.scaleX"
                 | "presentation.scaleY" => TypedValue::Float(1.0),
+                "presentation.rotation" => TypedValue::Angle(0.0),
                 "presentation.color" => TypedValue::Color(crate::ast::Color::WHITE),
                 "zOrder" => TypedValue::Int(0),
                 _ => continue,

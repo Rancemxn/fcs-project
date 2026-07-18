@@ -1,7 +1,7 @@
 //! Type checking and pure compile-time evaluation for FCS 5 definitions.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 mod cycle;
@@ -11,7 +11,9 @@ mod generator;
 mod resolve;
 mod scope;
 
-use crate::ast::{Definition, Document, ExpandedSourceDocument, SourceSpan, Type};
+use crate::ast::{
+    Definition, Document, ExpandedSourceDocument, ExtensionRequirement, SourceSpan, Type,
+};
 use crate::diagnostic::{
     DiagnosticCode, DiagnosticLabel, DiagnosticStage, ExpansionTraceFrame, ExpansionTraceKind,
 };
@@ -313,11 +315,26 @@ fn elaborate_inner(
         eval::check_and_evaluate_with_context(definitions, schema, &context)?;
     }
     let collections = entities::expand_collections(document, schema, context)?;
-    ExpandedSourceDocument::try_from_collections(
+    let resource_kinds = document
+        .resources
+        .iter()
+        .flat_map(|block| &block.resources)
+        .map(|resource| (resource.name.clone(), resource.kind))
+        .collect();
+    let required_extensions = document
+        .extensions
+        .iter()
+        .flat_map(|block| &block.declarations)
+        .filter(|extension| extension.requirement == ExtensionRequirement::Required)
+        .map(|extension| extension.header.namespace.clone())
+        .collect::<BTreeSet<_>>();
+    ExpandedSourceDocument::try_from_collections_with_declarations(
         document.source_version.clone(),
         document.profile,
         document.tempo_map.clone(),
         collections,
+        resource_kinds,
+        required_extensions,
     )
     .map_err(|violation| ElaboratorError::InvalidOperation {
         message: violation.message(),

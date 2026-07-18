@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{DocumentProfile, LetStatement, TempoMap};
+use super::{DocumentProfile, LetStatement, ResourceKind, TempoMap};
 use super::{SourceExpression, SourceSpan, Type, TypedValue};
 use crate::version::Version;
 use fcs_model::{
@@ -62,6 +62,8 @@ pub struct ExpandedSourceDocument {
     profile: DocumentProfile,
     tempo_map: Option<TempoMap>,
     collections: Vec<ExpandedCollection>,
+    resource_kinds: BTreeMap<String, ResourceKind>,
+    required_extensions: std::collections::BTreeSet<String>,
 }
 
 /// A Note identity paired with its canonical chart-time value and exact beat provenance.
@@ -110,23 +112,41 @@ impl ExpandedSourceDocument {
         self.collections.iter()
     }
 
+    pub(crate) fn resource_kind(&self, name: &str) -> Option<ResourceKind> {
+        self.resource_kinds.get(name).copied()
+    }
+
+    pub(crate) fn has_required_extension(&self, namespace: &str) -> bool {
+        self.required_extensions.contains(namespace)
+    }
+
     /// Lowers the currently available expanded Note identities without performing
     /// later time, graph, Track, or gameplay normalization.
     pub fn canonical_note_ids(&self) -> Result<Vec<StableId>, IdError> {
-        self.canonical_entity_ids(Type::Note, EntityKind::Note)
+        self.canonical_note_ids_with_spans()
+            .map(|ids| ids.into_iter().map(|(id, _)| id).collect())
+            .map_err(|(error, _)| error)
+    }
+
+    pub(crate) fn canonical_note_ids_with_spans(
+        &self,
+    ) -> Result<Vec<(StableId, SourceSpan)>, (IdError, SourceSpan)> {
+        self.canonical_entity_ids_with_spans(Type::Note, EntityKind::Note)
     }
 
     /// Lowers expanded `judgelines` identities, including generated IDs for
     /// Line constructors that omit their optional explicit `id` field.
     pub fn canonical_line_ids(&self) -> Result<Vec<StableId>, IdError> {
-        self.canonical_entity_ids(Type::Line, EntityKind::Line)
+        self.canonical_entity_ids_with_spans(Type::Line, EntityKind::Line)
+            .map(|ids| ids.into_iter().map(|(id, _)| id).collect())
+            .map_err(|(error, _)| error)
     }
 
-    fn canonical_entity_ids(
+    fn canonical_entity_ids_with_spans(
         &self,
         entity_type: Type,
         entity_kind: EntityKind,
-    ) -> Result<Vec<StableId>, IdError> {
+    ) -> Result<Vec<(StableId, SourceSpan)>, (IdError, SourceSpan)> {
         let mut registry = StableIdRegistry::new();
         let mut ids = Vec::new();
         for collection in &self.collections {
@@ -134,12 +154,17 @@ impl ExpandedSourceDocument {
                 if entity.entity_type != entity_type {
                     continue;
                 }
+                let identity_span = entity
+                    .field("id")
+                    .map(|field| field.span())
+                    .unwrap_or_else(|| entity.span());
                 let textual = entity
                     .field("id")
                     .and_then(|field| match field.value() {
-                        TypedValue::String(value) => {
-                            Some(CanonicalTextualId::explicit(value.clone()))
-                        }
+                        TypedValue::String(value) => Some(
+                            CanonicalTextualId::explicit(value.clone())
+                                .map_err(|error| (error, identity_span)),
+                        ),
                         _ => None,
                     })
                     .transpose()?;
@@ -148,11 +173,14 @@ impl ExpandedSourceDocument {
                     None => {
                         let path = entity
                             .expansion_path()
-                            .ok_or(IdError::MissingExpansionPath)?;
+                            .ok_or((IdError::MissingExpansionPath, identity_span))?;
                         CanonicalTextualId::generated(entity_kind, path, expanded_order as u64)
                     }
                 };
-                ids.push(registry.insert(entity_kind, textual)?);
+                let stable_id = registry
+                    .insert(entity_kind, textual)
+                    .map_err(|error| (error, identity_span))?;
+                ids.push((stable_id, identity_span));
             }
         }
         Ok(ids)
@@ -226,17 +254,38 @@ impl ExpandedSourceDocument {
         offset.audio_time(chart_time_seconds)
     }
 
+    #[cfg(test)]
     pub(crate) fn try_from_collections(
         source_version: Version,
         profile: DocumentProfile,
         tempo_map: Option<TempoMap>,
         collections: Vec<ExpandedCollection>,
     ) -> Result<Self, ExpandedInvariantViolation> {
+        Self::try_from_collections_with_declarations(
+            source_version,
+            profile,
+            tempo_map,
+            collections,
+            BTreeMap::new(),
+            std::collections::BTreeSet::new(),
+        )
+    }
+
+    pub(crate) fn try_from_collections_with_declarations(
+        source_version: Version,
+        profile: DocumentProfile,
+        tempo_map: Option<TempoMap>,
+        collections: Vec<ExpandedCollection>,
+        resource_kinds: BTreeMap<String, ResourceKind>,
+        required_extensions: std::collections::BTreeSet<String>,
+    ) -> Result<Self, ExpandedInvariantViolation> {
         let document = Self {
             source_version,
             profile,
             tempo_map,
             collections,
+            resource_kinds,
+            required_extensions,
         };
         document.validate_invariants()?;
         Ok(document)
