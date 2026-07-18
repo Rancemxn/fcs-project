@@ -23,11 +23,7 @@ pub(super) fn validate_static_entities_with_context(
     let templates = template_map(document.definitions.as_ref());
     let functions = function_map(document.definitions.as_ref());
     let root = definition_scope(document.definitions.as_ref())?;
-    let line_names = document
-        .lines
-        .iter()
-        .map(|line| line.name.clone())
-        .collect::<BTreeSet<_>>();
+    let line_names = collect_line_names(document)?;
     let validator = StaticEntityValidator {
         document,
         schema,
@@ -39,6 +35,141 @@ pub(super) fn validate_static_entities_with_context(
     };
     validator.validate_templates(document.definitions.as_ref())?;
     validator.validate_collections()
+}
+
+fn collect_line_names(document: &Document) -> Result<BTreeSet<String>, Diagnostic> {
+    let mut names = BTreeMap::new();
+    for line in &document.lines {
+        insert_line_name(&mut names, line.name.clone(), line.name_span)?;
+    }
+    for collection in &document.collections {
+        if collection.collection_name != "judgelines" {
+            continue;
+        }
+        collect_line_names_from_items(&collection.items, &mut names)?;
+    }
+    Ok(names.keys().cloned().collect())
+}
+
+fn collect_line_names_from_items(
+    items: &[CollectionItem],
+    names: &mut BTreeMap<String, SourceSpan>,
+) -> Result<(), Diagnostic> {
+    for item in items {
+        match item {
+            CollectionItem::Constructor(constructor) => {
+                collect_line_name_from_constructor(constructor, names)?;
+            }
+            CollectionItem::Expression(expression) => {
+                collect_line_name_from_expression(expression, names)?;
+            }
+            CollectionItem::Conditional {
+                then_items,
+                else_items,
+                ..
+            } => {
+                collect_line_names_from_items(then_items, names)?;
+                collect_line_names_from_items(else_items, names)?;
+            }
+            CollectionItem::Generator(generator) => {
+                collect_line_names_from_generator_items(&generator.body, names)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_line_names_from_generator_items(
+    items: &[GeneratorItem],
+    names: &mut BTreeMap<String, SourceSpan>,
+) -> Result<(), Diagnostic> {
+    for item in items {
+        match item {
+            GeneratorItem::Emit(expression) => {
+                collect_line_name_from_expression(expression, names)?;
+            }
+            GeneratorItem::Conditional {
+                then_items,
+                else_items,
+                ..
+            } => {
+                collect_line_names_from_generator_items(then_items, names)?;
+                collect_line_names_from_generator_items(else_items, names)?;
+            }
+            GeneratorItem::Let(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn collect_line_name_from_expression(
+    expression: &EntityExpression,
+    names: &mut BTreeMap<String, SourceSpan>,
+) -> Result<(), Diagnostic> {
+    let Some((name, span)) = line_name_from_expression(expression) else {
+        return Ok(());
+    };
+    insert_line_name(names, name, span)
+}
+
+fn line_name_from_expression(expression: &EntityExpression) -> Option<(String, SourceSpan)> {
+    match expression {
+        EntityExpression::Constructor(constructor) => line_name_from_constructor(constructor),
+        EntityExpression::With(with_expression) => with_expression
+            .fields
+            .iter()
+            .find(|field| field.path.segments.as_slice() == ["id"])
+            .and_then(line_name_from_field)
+            .or_else(|| line_name_from_expression(&with_expression.base)),
+        EntityExpression::SourceConstructor(_) | EntityExpression::Source(_) => None,
+    }
+}
+
+fn collect_line_name_from_constructor(
+    constructor: &EntityConstructor,
+    names: &mut BTreeMap<String, SourceSpan>,
+) -> Result<(), Diagnostic> {
+    let Some((name, span)) = line_name_from_constructor(constructor) else {
+        return Ok(());
+    };
+    insert_line_name(names, name, span)
+}
+
+fn line_name_from_constructor(constructor: &EntityConstructor) -> Option<(String, SourceSpan)> {
+    (constructor.entity_type == Type::Line)
+        .then(|| {
+            constructor
+                .fields
+                .iter()
+                .find(|field| field.path.segments.as_slice() == ["id"])
+                .and_then(line_name_from_field)
+        })
+        .flatten()
+}
+
+fn line_name_from_field(field: &crate::ast::EntityField) -> Option<(String, SourceSpan)> {
+    match &field.value {
+        SourceExpression::Literal {
+            literal: SourceLiteral::String(name),
+            ..
+        } => Some((name.clone(), field.path.span)),
+        _ => None,
+    }
+}
+
+fn insert_line_name(
+    names: &mut BTreeMap<String, SourceSpan>,
+    name: String,
+    span: SourceSpan,
+) -> Result<(), Diagnostic> {
+    if let Some(previous_span) = names.insert(name.clone(), span) {
+        return Err(Diagnostic::DuplicateLineId {
+            name,
+            span,
+            previous_span,
+        });
+    }
+    Ok(())
 }
 
 fn function_map(
