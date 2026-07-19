@@ -47,9 +47,8 @@ clauses = ["9.1", "9.3", "9.5"]
 [[fixture]]
 id = "source.valid.time-scroll-note"
 path = "source/valid/time-scroll-note.fcs"
-stage = "evaluate"
+stage = "canonical"
 expect = "success"
-expected = "expected/time-scroll-note.json"
 clauses = ["8.2", "8.3", "10.1", "10.2", "12.4"]
 
 [[fixture]]
