@@ -1,0 +1,160 @@
+{
+  "features": [],
+  "lines": {
+    "topologicalOrder": [
+      {
+        "namespace": "fcs.line",
+        "textual": "main",
+        "value": 16435008573859040154
+      }
+    ],
+    "values": [
+      {
+        "base": {
+          "allowReverseScroll": false,
+          "alpha": 1.0,
+          "floorScale": 120.0,
+          "initialFloorPosition": 0.0,
+          "integrationOrigin": 0.0,
+          "position": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "rotation": 0.0,
+          "scale": {
+            "x": 1.0,
+            "y": 1.0
+          },
+          "textureAnchor": {
+            "x": 0.5,
+            "y": 0.5
+          },
+          "transformOrigin": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "zOrder": 0
+        },
+        "documentOrder": 0,
+        "id": {
+          "namespace": "fcs.line",
+          "textual": "main",
+          "value": 16435008573859040154
+        },
+        "inherit": {
+          "alpha": true,
+          "position": true,
+          "rotation": true,
+          "scale": true,
+          "scroll": false
+        },
+        "parent": null,
+        "scrollTempo": {
+          "kind": "global"
+        }
+      }
+    ]
+  },
+  "metadata": {
+    "artwork": null,
+    "contributors": [],
+    "credits": [],
+    "meta": null,
+    "resources": [],
+    "sync": null
+  },
+  "notes": [
+    {
+      "documentOrder": 0,
+      "gameplay": {
+        "endTime": null,
+        "judgeShape": {
+          "kind": "lineDefault"
+        },
+        "judgmentEnabled": true,
+        "kind": "tap",
+        "line": {
+          "namespace": "fcs.line",
+          "textual": "main",
+          "value": 16435008573859040154
+        },
+        "scorePolicy": {
+          "kind": "default"
+        },
+        "side": "above",
+        "soundPolicy": {
+          "kind": "default"
+        },
+        "time": {
+          "chartTimeSeconds": 0.5,
+          "sourceBeat": {
+            "denominator": 1,
+            "numerator": 1
+          }
+        }
+      },
+      "id": {
+        "namespace": "fcs.note",
+        "textual": "equivalent-note",
+        "value": 10623658386981531084
+      },
+      "kind": "tap",
+      "presentation": {
+        "alpha": 1.0,
+        "color": {
+          "alpha": 1.0,
+          "blue": 1.0,
+          "green": 1.0,
+          "red": 1.0
+        },
+        "positionX": 64.0,
+        "renderEnabled": true,
+        "rotation": 0.0,
+        "scaleX": 1.0,
+        "scaleY": 1.0,
+        "scrollFactor": 1.0,
+        "texture": null,
+        "visibleFrom": null,
+        "visibleUntil": null,
+        "xOffset": 0.0,
+        "yOffset": 0.0
+      }
+    }
+  ],
+  "profile": "chart",
+  "requiredExtensions": [],
+  "scroll": [
+    {
+      "allowReverseScroll": false,
+      "coordinate": {
+        "points": [
+          {
+            "bpm": 120.0,
+            "chartTimeSeconds": 0.0
+          }
+        ]
+      },
+      "floorScale": 120.0,
+      "initialFloorPosition": 0.0,
+      "integrationOrigin": 0.0,
+      "line": {
+        "namespace": "fcs.line",
+        "textual": "main",
+        "value": 16435008573859040154
+      },
+      "speed": 1.0
+    }
+  ],
+  "sourceVersion": "5.0.0",
+  "tempoMap": [
+    {
+      "beat": {
+        "denominator": 1,
+        "numerator": 0
+      },
+      "bpm": 120.0,
+      "chartTimeSeconds": 0.0
+    }
+  ],
+  "tracks": []
+}
