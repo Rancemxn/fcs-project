@@ -383,7 +383,7 @@ impl CanonicalTrackSet {
             }
         }
         for group in replace_groups.values_mut() {
-            group.sort_by(|left, right| right.priority.cmp(&left.priority));
+            group.sort_by_key(|track| std::cmp::Reverse(track.priority));
             let mut covered = Vec::new();
             let mut index = 0;
             while index < group.len() {
