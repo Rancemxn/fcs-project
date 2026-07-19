@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/fcs-model", "crates/fcs-source"]
+members = ["crates/fcs-model", "crates/fcs-runtime", "crates/fcs-source"]
 
 [workspace.package]
 version = "0.2.0"
