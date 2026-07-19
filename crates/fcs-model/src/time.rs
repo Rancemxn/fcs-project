@@ -70,16 +70,35 @@ pub struct TempoPoint {
     pub bpm: f64,
 }
 
-/// An exact beat plus its normalized binary64 chart-time value.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// A canonical chart-time value with optional exact beat provenance.
+#[derive(Debug, Clone, Copy)]
 pub struct CanonicalTime {
-    source_beat: Beat,
+    source_beat: Option<Beat>,
     chart_time_seconds: f64,
 }
 
+impl PartialEq for CanonicalTime {
+    fn eq(&self, other: &Self) -> bool {
+        self.chart_time_seconds == other.chart_time_seconds
+    }
+}
+
 impl CanonicalTime {
-    pub const fn source_beat(self) -> Beat {
+    /// Returns exact source beat provenance when the value originated as a beat.
+    pub const fn source_beat(self) -> Option<Beat> {
         self.source_beat
+    }
+
+    /// Constructs a canonical time directly from a finite source-time value.
+    pub fn from_chart_time_seconds(chart_time_seconds: f64) -> Result<Self, TempoError> {
+        if chart_time_seconds.is_finite() {
+            Ok(Self {
+                source_beat: None,
+                chart_time_seconds,
+            })
+        } else {
+            Err(TempoError::NonFiniteChartTime)
+        }
     }
 
     pub const fn chart_time_seconds(self) -> f64 {
@@ -203,7 +222,7 @@ impl ChartTimeMap {
             return Err(TempoError::NonFiniteChartTime);
         }
         Ok(CanonicalTime {
-            source_beat,
+            source_beat: Some(source_beat),
             chart_time_seconds,
         })
     }
@@ -403,5 +422,26 @@ mod tests {
 
         let map = map(&[(0, 1, f64::MAX)]);
         assert_eq!(map.beat_at_time(-f64::MAX), Err(TempoError::NonFiniteBeat));
+    }
+
+    #[test]
+    fn direct_chart_time_has_no_beat_provenance() {
+        let time = CanonicalTime::from_chart_time_seconds(1.25).unwrap();
+        assert_eq!(time.source_beat(), None);
+        assert_eq!(time.chart_time_seconds(), 1.25);
+        assert_eq!(
+            CanonicalTime::from_chart_time_seconds(f64::NAN),
+            Err(TempoError::NonFiniteChartTime)
+        );
+    }
+
+    #[test]
+    fn canonical_time_equality_ignores_source_beat_provenance() {
+        let map = map(&[(0, 1, 120.0)]);
+        let from_beat = map.chart_time(Beat::new(2, 1).unwrap()).unwrap();
+        let from_time = CanonicalTime::from_chart_time_seconds(1.0).unwrap();
+
+        assert_eq!(from_beat, from_time);
+        assert_ne!(from_beat.source_beat(), from_time.source_beat());
     }
 }

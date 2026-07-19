@@ -676,31 +676,47 @@ fn time_from_field(
         }
         return None;
     };
-    let TypedValue::Beat(value) = field.value() else {
-        type_mismatch(path, "beat", field.value(), field.span(), diagnostics);
-        return None;
-    };
-    let beat = match CanonicalBeat::new(value.numerator(), value.denominator()) {
-        Ok(beat) => beat,
-        Err(_) => {
-            diagnostics.push(Diagnostic::new(
-                DiagnosticCode::TEMPO_INVALID,
-                DiagnosticStage::Canonical,
-                "Note beat is not representable canonically",
-                field.span(),
-            ));
-            return None;
+    match field.value() {
+        TypedValue::Beat(value) => {
+            let beat = match CanonicalBeat::new(value.numerator(), value.denominator()) {
+                Ok(beat) => beat,
+                Err(_) => {
+                    diagnostics.push(Diagnostic::new(
+                        DiagnosticCode::TEMPO_INVALID,
+                        DiagnosticStage::Canonical,
+                        "Note beat is not representable canonically",
+                        field.span(),
+                    ));
+                    return None;
+                }
+            };
+            match time_map.chart_time(beat) {
+                Ok(time) => Some(time),
+                Err(error) => {
+                    diagnostics.push(Diagnostic::new(
+                        DiagnosticCode::TEMPO_INVALID,
+                        DiagnosticStage::Canonical,
+                        error.to_string(),
+                        field.span(),
+                    ));
+                    None
+                }
+            }
         }
-    };
-    match time_map.chart_time(beat) {
-        Ok(time) => Some(time),
-        Err(error) => {
-            diagnostics.push(Diagnostic::new(
-                DiagnosticCode::TEMPO_INVALID,
-                DiagnosticStage::Canonical,
-                error.to_string(),
-                field.span(),
-            ));
+        TypedValue::Time(value) => match CanonicalTime::from_chart_time_seconds(*value) {
+            Ok(time) => Some(time),
+            Err(error) => {
+                diagnostics.push(Diagnostic::new(
+                    DiagnosticCode::TEMPO_INVALID,
+                    DiagnosticStage::Canonical,
+                    error.to_string(),
+                    field.span(),
+                ));
+                None
+            }
+        },
+        value => {
+            type_mismatch(path, "beat or time", value, field.span(), diagnostics);
             None
         }
     }
