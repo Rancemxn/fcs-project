@@ -80,10 +80,10 @@ impl Document {
                 self.format.span,
             )]
         })?;
-        let lines = self.canonical_line_graph()?;
+        let lines = self.canonical_line_graph_with_expanded(&expanded)?;
         let notes = expanded.canonical_notes(&time_map, &lines)?;
         let tracks = expanded.canonical_tracks(&time_map, &lines)?;
-        let scroll = self.canonical_scroll_set(&time_map)?;
+        let scroll = self.canonical_scroll_set_for_graph(&time_map, &lines)?;
         let source_version = CanonicalSourceVersion::new(self.source_version.to_string())
             .map_err(|error| vec![chart_diagnostic(error, self.format.span)])?;
         let required_extensions = self
