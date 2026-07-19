@@ -114,15 +114,14 @@
 
 ## Rust 开发与验证
 
-- 日常编译和测试不要使用 `--release`。
-- 项目使用 `cargo-nextest` 运行测试，不要把普通 `cargo test` 当作默认测试命令。
-- 验证遵循“足以发现当前错误的最小反馈”：在编辑循环中优先运行受影响 crate、模块、测试或
-  fixture 的 focused check。不要在每个文件、patch 或 focused test 后运行全 workspace Clippy/nextest，
-  也不要把全量 Clippy 作为每次 focused test 的前置条件。
-- 只在 Rust 源码、build/dependency 配置、测试或可执行 fixture 发生变更，且到达一个可交付检查点时
-  运行全量门禁。检查点包括：一个完整工作单元完成、PR 从 draft 转 ready、交接给其他实施者，或变更涉及
-  公开接口、workspace/dependency、conformance 行为。用户明确要求全量验证时也应执行。
-- 全量 Rust 检查点的默认顺序是：
+- 本地工作树不运行任何会编译、测试、执行 fuzz 或生成 Cargo build artifact 的命令。`cargo check`、
+  Clippy、nextest、build script、可执行 fixture 和 fuzz 一律由本仓库 `.github/workflows/full-gate.yml`
+  在 GitHub runner 上执行；本地只运行 diff、链接、Markdown/YAML/JSON/schema、格式等不产生构建产物的
+  静态检查。
+- 第一个需要 Rust 编译或测试反馈的完整 SHA 必须推送到 draft PR；后续每个需要反馈的修改检查点都以新 SHA
+  触发 `pull_request` full gate。没有可用 PR run 时，可以对解析为目标 SHA 的 branch/tag ref 使用
+  `workflow_dispatch`，但必须回读并确认 run 的 `headSha` 与目标 SHA 完全一致。
+- full gate 使用 cargo-nextest 而不是普通 `cargo test`，并且不使用 `--release`。其 Rust 检查顺序是：
 
   ```text
   cargo fmt --all -- --check
@@ -130,16 +129,23 @@
   cargo nextest run --workspace
   ```
 
-  若格式检查只发现本次 Rust 改动的差异，运行 `cargo fmt --all` 并审查它的 diff；若失败来自与任务无关的
-  既有文件，不要顺带格式化，应记录为既有门禁问题。一个检查点的全量门禁通过后，只有后续改动可能使结果
-  失效时才重跑。
-- 只修改 Markdown、AGENTS、Issue/PR 模板、评论、label 或其他不参与 Rust 构建的元数据时，不运行 Clippy、
-  nextest 或 cargo fmt；改用 diff、链接、Markdown/YAML/JSON schema 和相关 CLI smoke check。
-- 修改 source parser 或 elaborator 时先补充失败测试，并在 red→green 循环中只运行能复现当前行为的
-  focused test；完成该工作单元后再进全量 Rust 检查点。converter、VM 和旧 bytecode 已不在活动
+  workflow 还必须执行 ADR 0013 固定的 locked dependency、bounded fuzz、diff 和 clean-worktree gate。
+  不得用本地结果、cache 命中、部分 job 或旧 SHA 的 run 替代它。
+- 适用时，Primary audit 只接受同一 head SHA 的成功 run，并记录 workflow/run URL、run ID、event、`headSha` 和
+  conclusion。`queued`/`in_progress`、缺失、失败或 SHA 不匹配都不能写成通过；GitHub 暂时不可用时只能继续
+  不依赖远端结果的静态工作，不得 Ready 或 merge。
+- `Swatinem/rust-cache` 的 hit/miss 只影响性能，不改变命令、结论或验收。瞬时基础设施失败可以在同一 SHA
+  重跑；代码、测试或配置失败必须修正后推送新 SHA，不能回退到本地编译。新 SHA 导致旧 run 被取消时，
+  旧 run 只是过期证据，不是当前 SHA 的 gate 失败。
+- 只修改 Markdown、AGENTS、Issue/PR 模板、评论、label 或其他不参与构建的元数据时，Rust full gate 为
+  non-applicable；使用 diff、链接、Markdown/YAML/JSON schema 和相关 CLI smoke check。自动触发的 Action
+  run 不改变该分类。
+- 修改 source parser 或 elaborator 时先补充失败测试；red 和 green 都由固定 SHA 的 Action run 证明。
+  converter、VM 和旧 bytecode 已不在活动
   workspace。未来跨格式语义变化必须针对 canonical model、ConversionReport、
   round-trip fixture 和 `examples/` 验证，converter 不得直接消费 source AST。
-- 交付说明必须列出实际运行的 focused/full 检查、未运行的门禁及原因。不得将“未适用”写成“已通过”。
+- 交付说明必须分别列出本地静态检查和远端 full-gate evidence，以及未运行门禁及原因。不得将
+  `queued`、缺失、失败或 non-applicable 写成通过。
 - 使用校验脚本或外部模拟器验证解析逻辑时，先确认校验脚本与模拟器的代码逻辑一致，不能用有问题的校验脚本得出结论。
 - 遇到规范未定义的外部谱面边界时，研究阶段可以记录候选假设，但规范性实现不得发明“通用
   语义”。Strict mode 必须失败或要求显式 semantic profile；repair 只能修复非法或矛盾输入，
@@ -178,16 +184,18 @@
   `gh pr review --comment`/`--request-changes`，创建 bug/finding Issue，以及为已记录 finding 创建
   corrective PR。审查者不能合并 PR、标记 Ready、关闭主 Issue、修改主 Issue workflow label，或写入当前
   会话的工作树、活动实现分支和 `main`。
-- 主会话在每个非机械实现 work-unit 的 full gate 后直接执行 Primary Self-Audit，不调用 subagent。它必须固定
-  `Issue/PR 或 commit + head SHA + scope + commands + acceptance gate`，并在 PR（若存在）和关联 Issue 各追加一条
+- 主会话在每个非机械实现 work-unit 的适用同 SHA GitHub full gate 成功后直接执行 Primary Self-Audit，不调用
+  subagent。它必须固定 `Issue/PR 或 commit + head SHA + scope + commands + full-gate evidence + acceptance gate`，
+  并在 PR（若存在）和关联 Issue 各追加一条
   `Primary audit result`；只有 `pass` 且无未解决 Critical/Important finding 时，主会话才可 Ready/merge。Primary
-  audit 不是 reviewer 的独立证据，消息包含 Target、Head SHA、Scope、Commands、Verdict、Findings、Gate impact、
-  Limitations 和 Next，不手写日期、不编辑旧消息。
+  audit 不是 reviewer 的独立证据，消息包含 Target、Head SHA、Scope、Commands、Full-gate evidence、Verdict、
+  Findings、Gate impact、Limitations 和 Next，不包含 `Advisories`，不手写日期、不编辑旧消息。
 - Primary audit 通过后，当前会话发送 `Review requested`；独立审查会话异步审查开放 PR 或其合并后的固定 commit，
   不再是每个 work-unit 的前置等待门。审查结束后审查者立即在 PR 和关联 Issue 各追加一条 append-only `Audit result`
   （被审 PR 存在时评论 PR，同时评论关联 Issue；仅有 commit 时评论关联 Issue），即使没有 finding。reviewer 的
-  `Audit result` 仍必须包含 Target、Head SHA、Scope、Commands、Verdict、Findings、Advisories、Gate impact、Limitations 和
-  Next，不手写日期、不编辑旧消息。
+  `Audit result` 仍必须包含 Target、Head SHA、Scope、Commands、Full-gate evidence、Root cause、Corrective action、
+  Corrective PR、Regression evidence、Verdict、Findings、Advisories、Gate impact、Limitations、Worktree 和 Next，
+  不手写日期、不编辑旧消息。
 - 后续 push、scope、命令、依赖 closure 或验收变化会使旧 Primary audit 或 reviewer verdict 失效；追加
   superseding/re-review 消息并以新 SHA 重新审查。Primary audit 的 Critical/Important finding 阻塞当前 PR
   Ready/merge；reviewer 在合并后发现同等级实现/conformance finding 时冻结受影响的 stage claim 和后续依赖，

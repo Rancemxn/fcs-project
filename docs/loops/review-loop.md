@@ -6,7 +6,7 @@
   finding，由 reviewer 在隔离 worktree 中完成最小修复、回归验证并提交 linked corrective PR，再把新 SHA
   路由回主会话，直到当前审查 frontier 闭合。
 - **Observable success signal:** 每个已审查目标都有一条 append-only `Audit result`（即使零 finding），
-  其中包含目标身份、head SHA、scope、实际命令、verdict、限制、advisory 结果和 Next；所有
+  其中包含目标身份、head SHA、scope、实际命令、full-gate evidence、verdict、限制、advisory 结果和 Next；所有
   Critical/Important implementation/conformance finding 都有根因证据、owner、修复路径和最新状态；安全
   可修复的 finding 有已提交的 corrective PR 和回归证据，不能安全修复的 finding 有明确的 PLANNER/HUMAN
   residual；必要的 corrective PR 已链接 finding Issue，且主会话已经重新审查修复后的新 SHA；架构/文档建议
@@ -23,8 +23,8 @@
   `docs/specifications/fcs-conversion.md` 和
   `docs/specifications/governance.md` 是规范与状态权威；Accepted ADR 是架构/治理约束；计划、Issue、PR、
   实现、测试和本 loop 只能安排或证明工作，不能创造规范语义。
-- 每次审查必须绑定一个不可漂移的快照：`Issue/PR 或 commit + head SHA + scope + commands + acceptance
-  gate`。审查者不得把作者的结论、旧测试输出或未固定的工作树当作快照证据。
+- 每次审查必须绑定一个不可漂移的快照：`Issue/PR 或 commit + head SHA + scope + commands + full-gate
+  evidence + acceptance gate`。审查者不得把作者的结论、旧测试输出或未固定的工作树当作快照证据。
 - 审查会话是独立于主实现会话的第二个角色。主会话保留主实现分支的 owner 身份和唯一 merge owner 权限；
   审查会话可以读取、评论、review/request changes、创建 finding Issue，并在自己拥有的 `/tmp` 隔离
   worktree 中实现、验证、提交、push 和创建 corrective PR，但不得写入主会话的工作树、活动实现分支或
@@ -51,9 +51,9 @@
   finding 会立即中断等待并开始下一 review-unit。每 10 次检查只是一个观察批次，批次结束后自动开始下一批，
   不结束 reviewer turn、不标记 `blocked`，也不消耗 480 review-unit 预算。`waiting-for-main` 只表示当前轮询
   状态，不是终止 residual；即使进程或会话被外部中断，下一次启动也必须从远端状态恢复轮询。
-- **Per-target no-progress:** 两次不同的复现/证据路径没有缩小审查 residual 时，缩小 scope 或标记证据
-  缺口并转 PLANNER；第三次仍无决定性证据则追加 `needs-info` 或 `ready-for-human` finding，停止扩大
-  该目标。
+- **Per-target no-progress:** 两次不同的复现/证据路径或远端诊断 SHA 没有缩小审查 residual 时，缩小 scope
+  或标记证据缺口并转 PLANNER；第三个不同 SHA 仍无决定性证据则追加 `needs-info` 或 `ready-for-human`
+  finding，停止扩大该目标。同 SHA 的瞬时基础设施重跑和 Action 等待不计作新路径，也不消耗 review-unit。
 - **Global no-progress:** 连续 3 个 review-unit 未产生新 finding、未关闭/重新分类 finding、未完成一次
   re-review，也没有新的可分配目标时，只有在仍有固定目标正在处理或存在具体证据/权限/隔离阻塞时，才记录
   `waiting-for-main` 并进入 Persistent idle wait；不得把 reviewer 持久目标标记为 `blocked` 或停止。单纯的空
@@ -67,6 +67,8 @@
 - 每个非终止 review-unit 必须完成一次固定目标的实现/conformance 审查并追加 Audit result，或在实现审查通过后
   完成架构/文档 advisory pass，或完成一个 finding 的根因确认、修复交付或重新分类，或把 scope 严格缩小到
   一个可独立验收的 residual；只报告症状、重复读取同一输出或重复评论不算进展，同时 review-unit 预算严格减少。
+- `queued`/`in_progress` Action run 是不消耗 review-unit 的等待状态；只有新的固定 SHA、决定性根因证据、
+  corrective delivery 或 re-review 才能推进审查。cache hit/miss 不改变 verdict。
 - 只创建 Issue、重复读取同一输出或重复评论不算 review-unit 进展；Persistent idle wait 是明确的不计预算等待
   状态。空 frontier、`blocked` finding、主会话未交付的 corrective PR、远端同步失败或 reviewer worktree 保留
   都不得触发持久目标 `blocked`；若有固定目标不能满足 invariant，记录等待原因并继续轮询，不得无限扩大 scope。
@@ -91,7 +93,7 @@
   stage gate 和主会话明确发送的 `Review requested`。对明显影响当前 gate、但主会话尚未请求且已经固定的
   PR，可以主动建立审查目标；不审查仍处于写入中的 PR。
 - **Review request:** 主会话在 Primary audit 通过后发送新的 `Review requested`，同时给出 PR number、associated
-  Issue、head SHA、scope、权威条款、commands、验收 gate、已知 residual 和是否暂停写入。主会话可以在 reviewer
+  Issue、head SHA、scope、权威条款、commands、full-gate evidence、验收 gate、已知 residual 和是否暂停写入。主会话可以在 reviewer
   返回前 Ready/merge；审查会话先验证远端 head SHA 与请求一致，再开始 iteration，并可审查开放 PR 或其合并后的
   固定 commit。
 - **Invalidation:** 后续 push、scope 扩大/改变、验收命令或 gate 变化、依赖 closure 变化都会使旧 verdict
@@ -104,8 +106,10 @@
 
 1. **Bind:** 读取固定 Issue/PR/commit、head SHA、diff、规范/ADR/计划/fixture 路由和验收命令；记录
    不在 scope 内的内容。
-2. **Reproduce:** 运行能发现当前错误的最小 focused checks；根据 scope 需要扩展到 conformance、hash、
-   mutation、round-trip、raster 或 workspace gate。每个命令记录实际结果，不把 skipped 当作 passed。
+2. **Reproduce:** 适用时先复用目标同 SHA 的成功 full-gate evidence；Rust gate non-applicable 时核对理由，并在
+   隔离 worktree 做不产生构建产物的静态检查。不为“独立”重复同一 gate。若竞争性假设必须靠执行区分，先创建记录 unknown root cause/evidence gap 的 finding，
+   在其独立 branch 提交最小诊断或回归测试，push 后对解析为该 SHA 的 ref 运行 `workflow_dispatch` full gate，
+   并核对 run `headSha`。预期失败的 run 是 red evidence，不是 pass。
 3. **Inspect:** 对照规范条款、调用方、测试和固定 artifact 检查实现、边界、错误路径、资源/依赖和
    交付声明；可引用已合并 commit 指出历史漏洞。
 4. **Root-cause analysis:** 从可复现症状沿调用链、数据流和规范边界追到第一个被违反的不变量或契约；
@@ -115,11 +119,11 @@
 5. **Classify and route:** 实现/conformance finding 标为 `Critical`、`Important` 或 `Minor`，判断是否阻塞
    当前 stage/PR gate，并创建或更新 finding Issue；严重度必须由影响、复现结果和根因证据支持。明确该
    finding 是当前 stage 可安全修复的代码/测试问题、later-stage 问题，还是规范/治理决策问题。
-6. **Corrective implementation and delivery:** 对根因已确认、属于当前 stage 且可安全在本地收敛的
+6. **Corrective implementation and delivery:** 对根因已确认、属于当前 stage 且可安全收敛的
    implementation/conformance `Critical` 或 `Important` finding，reviewer 必须在 `/tmp` 独立 worktree
-   中实现最小修复并补充回归覆盖，运行与变更匹配的 focused/full checks，审查 diff 后 commit、push 并
-   创建链接 finding Issue 的 corrective PR。PR 和 Audit result 必须写明根因、修复边界、实际验证结果、
-   base/head SHA；验证失败、暴露新根因或无法安全收敛时，保留证据并把 finding 路由为有界 residual，
+   中实现最小修复并补充回归覆盖，审查静态 diff 后 commit、push 并创建链接 finding Issue 的 draft corrective
+   PR；编译、测试、fuzz 和可执行 fixture 只由该 PR 的 GitHub full gate 执行。PR 和 Audit result 必须写明根因、
+   修复边界、red/green run、base/head SHA；验证失败、暴露新根因或无法安全收敛时，保留证据并把 finding 路由为有界 residual，
    不得伪造 pass。reviewer 不得批准、Ready 或合并自己创建的 corrective PR；主会话审查、合并后，新的
    SHA 必须回到本 loop 重新审查。
 7. **Advisory pass:** 只有实现/conformance verdict 为 `pass` 时，检查架构 seam、模块边界、局部性、可测试性、
@@ -190,6 +194,10 @@
 - 对需修复的当前-stage implementation/conformance finding，reviewer 是该 corrective worktree 的执行 owner：
   从固定 base/head SHA 建立 worktree 后，只在其中修改代码和测试，保留主会话 dirty worktree、活动实现分支和
   `main` 不变。修复必须最小化地针对已确认根因，并包含能失败于旧行为、通过于新行为的回归证据。
+- reviewer worktree 不运行任何编译、测试、fuzz 或会生成 Cargo build artifact 的命令。根因区分需要执行时，
+  reviewer 先推送 finding branch 的诊断 SHA，以 `workflow_dispatch` full gate 取得 red evidence；只有根因确认后
+  才能创建 corrective PR，随后以该 PR 新 SHA 的成功 run 取得 green evidence。两个 run 都必须记录 URL/ID、event、
+  精确 `headSha` 和 conclusion。
 - corrective PR 创建前，reviewer 必须确认 worktree owner、用途、base/head SHA、分支、变更范围和验证命令；
   PR 正文或首条进度评论必须链接 finding、记录根因和实际验证结果。只创建分支或只提交猜测性 patch 不满足
   corrective delivery。
@@ -256,6 +264,7 @@ markdownlint 规则仍然有效。此检查验证 loop 文档，不会替代 com
 - Head SHA: `<sha>`
 - Scope: <固定范围>
 - Commands: `<command>` → <passed/failed/skipped>（列出实际结果）
+- Full-gate evidence: <workflow/run URL + run ID + event + exact head SHA + conclusion, or non-applicable with reason>
 - Root cause: <已确认的因果链与证据，或明确 unknown/evidence gap 及路由>
 - Corrective action: <隔离 worktree 中的修复范围、commit/push 状态；或 not applicable 及原因>
 - Corrective PR: <#<n>/URL，或 pending residual/none>
@@ -275,7 +284,7 @@ markdownlint 规则仍然有效。此检查验证 loop 文档，不会替代 com
 # Permissions & Handoff
 
 - 审查会话可以使用 `gh issue create`、`gh issue comment`、`gh pr comment`、`gh pr review --request-changes`
-  或 `--comment`，以及在独立 worktree/branch 上实现、验证、commit、push 和创建 corrective PR；所有 GitHub
+  或 `--comment`，以及在独立 worktree/branch 上实现、静态检查、commit、push、触发 full gate 和创建 corrective PR；所有 GitHub
   网络失败遵守 `AGENTS.md` 的 5 秒、最多 10 次重试和 pending remote sync 规则。
 - 审查者只清理自己在 `/tmp` 下创建的 worktree，并且必须遵守 Worktree Cleanup；主会话只清理自己创建的
   临时 worktree，不能删除 reviewer 的 dirty worktree。
@@ -302,23 +311,25 @@ markdownlint 规则仍然有效。此检查验证 loop 文档，不会替代 com
 |---|---|---|
 | Scope/authority | fixed SHA、规范/ADR/plan clauses、依赖 closure | target binding and limitations |
 | Implementation/root cause | diff、调用方、错误路径、资源/依赖边界、从症状到违反契约的根因证据 | finding location, causal chain and impact |
-| Tests/conformance | focused/full command output、回归测试、fixture/golden/hash/raster as applicable | command status, regression evidence and artifact link |
+| Tests/conformance | 目标同 SHA full-gate evidence；必要的诊断 SHA red run 与 corrective SHA green run；不使用本地 Cargo | run URL/ID/event/headSha/conclusion、regression evidence 和 artifact link |
 | Architecture | module boundaries、seams、dependency direction、locality、testability、AI navigability | advisory Issue or `Advisories: none` |
 | Documentation | CONTEXT/spec/ADR/plan/loop links、terminology、scope/authority consistency | advisory Issue or `Advisories: none` |
 | GitHub delivery | Issue/PR linkage、branch/base、review threads、required checks | Audit result and finding ledger |
-| Corrective delivery | confirmed root cause、isolated worktree、最小修复 diff、回归命令结果、finding link、base/head SHA | corrective PR, commit/push evidence and re-review target |
+| Corrective delivery | confirmed root cause、isolated worktree、最小修复 diff、red/green Action evidence、finding link、base/head SHA | corrective PR, commit/push evidence and re-review target |
 
 # Residual Routing
 
 | Residual / failure | Route | Action |
 |---|---|---|
-| 根因已确认、属于当前 stage 且安全可修复的 Critical/Important finding | LOCAL → 主会话 | reviewer 在 `/tmp` 隔离 worktree 中实施最小修复、补回归测试、运行验证、commit/push 并创建 linked corrective PR；阻塞主 PR，等待主会话合并后 re-review |
+| 根因已确认、属于当前 stage 且安全可修复的 Critical/Important finding | LOCAL → 主会话 | reviewer 在 `/tmp` 隔离 worktree 中实施最小修复、补回归测试、commit/push 并创建 linked corrective PR；由同 SHA GitHub full gate 验证，阻塞主 PR 并等待主会话合并后 re-review |
 | 只有症状或竞争性假设，根因仍未确认 | PLANNER/HUMAN | 记录已执行的区分验证、证据缺口、owner 和解除条件；不得提交猜测性修复或报告为 actionable pass |
 | 根因已确认但修复需要规范/ADR/semantic-profile 选择 | PLANNER/HUMAN | 保留根因证据和双方影响，按治理流程路由；不得用 reviewer 的偏好替代规范决定 |
-| corrective patch 的 focused/full 验证失败或暴露新的根因 | LOCAL/HUMAN | 保留 dirty worktree 和实际输出，更新 finding/owner/解除条件；未收敛前不得创建虚假 pass 或关闭 finding |
+| diagnostic/corrective SHA 的 full gate 失败或暴露新的根因 | LOCAL/HUMAN | 保留 worktree 和 Action evidence，修正后推送新 SHA 或更新 finding/owner/解除条件；不得以本地 Cargo 或虚假 pass 收敛 |
 | 可复现但属于 later-stage 的 finding | PLANNER | 记录 owner、目标 stage、依赖、验收条件和 follow-up Issue，不阻塞不相关当前工作 |
 | Minor 且不影响当前 gate | PLANNER | 要求 owner 和解除条件；在当前 Audit result 中明确延期，不给出无条件 pass |
-| 缺少固定 SHA、scope、命令或 artifact | LOCAL | 请求补齐固定输入；输入未齐前 verdict 为 `needs-info` |
+| 缺少固定 SHA、scope、命令、适用 full-gate evidence 或 artifact | LOCAL | 请求补齐固定输入；输入未齐前 verdict 为 `needs-info` |
+| Action run queued/in-progress、GitHub 暂时不可用或同 SHA 基础设施重跑 | LOCAL/WAIT | 不消耗 review-unit，继续可分离静态审查；没有成功同 SHA evidence 时不得给出 pass |
+| Action cache miss，但同 SHA full gate 成功 | LOCAL | 记录为性能信息，不改变审查 verdict；只有反复异常 miss 影响完成时才建立 workflow residual |
 | 规范/ADR/外部证据冲突 | PLANNER/HUMAN | 保留双方证据，按 specification governance 或新 ADR 路由，不自行选择公开语义 |
 | 审查者角色不独立、被审目标仍在写入或工作树隔离失败 | HUMAN | 停止该 iteration，报告冲突和恢复条件 |
 | reviewer worktree 不在 `/tmp`、变脏、owner/固定 SHA 缺失或无法安全清理 | LOCAL/HUMAN | 停止交付，保留现场并记录清理条件；不得使用 `--force` 或越权删除 |

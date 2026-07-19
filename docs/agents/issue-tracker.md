@@ -101,7 +101,8 @@ During implementation, announce changed scope in a new Issue comment that explic
 
 ## Pull Request contract
 
-Open a draft PR when early CI or interface feedback is useful. Mark it ready only after the intended scope and local gates are complete.
+Open a draft PR at the first complete SHA that needs Rust compile or test feedback. Mark it ready only after the intended
+scope, local static checks, and every applicable same-SHA GitHub full gate are complete.
 
 The PR body records the stable initial delivery contract:
 
@@ -116,7 +117,10 @@ It also contains one substantive initial `Progress` checkpoint. Group the initia
 
 After the PR is created, every later meaningful checkpoint is a new PR comment. Post one after each material push, when blockers change, and before marking the PR ready so the latest message matches the current diff and commit set. Do not repeatedly edit the PR body or an earlier comment. Correct stale information with a new explicitly superseding comment. A single-checkpoint PR still needs one substantive initial message; it does not need one message per commit.
 
-Select focused and full validation according to the risk-based rules in `AGENTS.md`. A documentation/workflow-only PR does not trigger Rust Clippy, nextest, or cargo fmt. A Rust/build/dependency/test/executable-fixture change must reach one full Rust checkpoint before the PR is ready or merged.
+Select validation according to `AGENTS.md`. Local work is limited to non-building static checks. A
+documentation/workflow-only PR has no required Rust full gate; a Rust/build/dependency/test/executable-fixture change
+must have a successful `.github/workflows/full-gate.yml` run whose `headSha` exactly matches the audited PR head before
+the PR is ready or merged. A cache miss is not a gate failure, and a local Cargo result cannot replace the Action run.
 
 Useful commands:
 
@@ -162,12 +166,14 @@ The review session may not:
 - review or approve a corrective PR that it created. The primary session inspects, reviews, and merges that PR; the
   primary PR's new head SHA must then be independently reviewed again.
 
-Every Primary or reviewer audit binds `Issue/PR or commit + head SHA + scope + commands + acceptance gate`. Before a primary
+Every Primary or reviewer audit binds `Issue/PR or commit + head SHA + scope + commands + full-gate evidence + acceptance gate`. Before a primary
 PR is Ready or merged, the primary session records `Primary audit result` on the PR (when one exists) and associated Issue;
 the primary may continue to Ready/merge after a passing Primary audit without waiting for the reviewer. It then posts
 `Review requested`; after the fixed snapshot is audited, the review session immediately appends one `Audit result` comment
-to the reviewed PR and associated Issue, even when there are no findings. Primary and reviewer messages include Target,
-Head SHA, Scope, Commands, Verdict, Findings, Advisories, Gate impact, Limitations, and Next. Do not hand-write dates or edit old messages.
+to the reviewed PR and associated Issue, even when there are no findings. Primary messages include Target, Head SHA,
+Scope, Commands, Full-gate evidence, Verdict, Findings, Gate impact, Limitations, and Next. Reviewer messages include
+those fields plus Root cause, Corrective action, Corrective PR, Regression evidence, Advisories, and Worktree. `Advisories`
+is reviewer-only. Do not hand-write dates or edit old messages.
 A later push, scope, command, or acceptance change invalidates the affected audit; append a superseding/re-review message and
 audit the new SHA.
 
