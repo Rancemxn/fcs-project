@@ -48,7 +48,7 @@ Keep this initial checkpoint in the body. After each material push, blocker chan
 ## Verification
 
 - [ ] Rust/build/dependency/test/executable-fixture change: a full Rust checkpoint is required before ready/merge.
-- [ ] Documentation/workflow/metadata-only change: Rust gates are not applicable.
+- [ ] Documentation or workflow-policy-metadata-only change (not `.github/workflows/` implementation): Rust gates are not applicable.
 
 Focused checks actually run:
 
