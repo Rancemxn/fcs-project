@@ -945,6 +945,16 @@ mod tests {
             ),
             Ok(CanonicalTrackValue::Float(1.0))
         );
+        assert_eq!(
+            evaluate_track_set(
+                &tracks,
+                &owner,
+                CanonicalTrackTarget::Alpha,
+                2.0,
+                CanonicalTrackValue::Float(0.25),
+            ),
+            Ok(CanonicalTrackValue::Float(1.0))
+        );
     }
 
     #[test]
@@ -1247,6 +1257,70 @@ mod tests {
                 CanonicalTrackValue::Float(0.0),
             ),
             Ok(CanonicalTrackValue::Float(1.0e16 - 1.0e16 + 1.0))
+        );
+    }
+
+    #[test]
+    fn multiply_blend_uses_priority_then_owner_local_track_identity() {
+        let owner = owner("main");
+        let multiply = |name, priority, value| {
+            point_track(
+                owner.clone(),
+                name,
+                CanonicalTrackTarget::Alpha,
+                CanonicalTrackBlend::Multiply,
+                priority,
+                CanonicalTrackValue::Float(value),
+            )
+        };
+        let expected = CanonicalTrackValue::Float(f64::from_bits(0x7fe1_ccf3_85eb_c89f));
+
+        let by_name = CanonicalTrackSet::new(vec![
+            multiply("z-large", 0, 1.0e308),
+            multiply("a-small", 0, 1.0e-308),
+        ])
+        .unwrap();
+        assert_eq!(
+            evaluate_track_set(
+                &by_name,
+                &owner,
+                CanonicalTrackTarget::Alpha,
+                0.0,
+                CanonicalTrackValue::Float(1.0e308),
+            ),
+            Ok(expected)
+        );
+
+        let by_priority = CanonicalTrackSet::new(vec![
+            multiply("a-large", 1, 1.0e308),
+            multiply("z-small", 0, 1.0e-308),
+        ])
+        .unwrap();
+        assert_eq!(
+            evaluate_track_set(
+                &by_priority,
+                &owner,
+                CanonicalTrackTarget::Alpha,
+                0.0,
+                CanonicalTrackValue::Float(1.0e308),
+            ),
+            Ok(expected)
+        );
+
+        let overflowing_priority = CanonicalTrackSet::new(vec![
+            multiply("z-small", 1, 1.0e-308),
+            multiply("a-large", 0, 1.0e308),
+        ])
+        .unwrap();
+        assert_eq!(
+            evaluate_track_set(
+                &overflowing_priority,
+                &owner,
+                CanonicalTrackTarget::Alpha,
+                0.0,
+                CanonicalTrackValue::Float(1.0e308),
+            ),
+            Err(TrackEvaluationError::NonFiniteResult)
         );
     }
 
