@@ -85,7 +85,7 @@ impl Document {
         let tracks = expanded.canonical_tracks(&time_map, &lines)?;
         let scroll = self.canonical_scroll_set(&time_map)?;
         let source_version = CanonicalSourceVersion::new(self.source_version.to_string())
-            .map_err(|error| chart_diagnostic(error, self.format.span))?;
+            .map_err(|error| vec![chart_diagnostic(error, self.format.span)])?;
         let required_extensions = self
             .extensions
             .iter()
@@ -98,7 +98,7 @@ impl Document {
                 )
             })
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| chart_diagnostic(error, self.format.span))?;
+            .map_err(|error| vec![chart_diagnostic(error, self.format.span)])?;
 
         Ok(CanonicalChart::new(
             source_version,
