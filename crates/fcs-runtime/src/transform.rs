@@ -650,6 +650,36 @@ mod tests {
     }
 
     #[test]
+    fn identity_line_returns_identity_components_matrix_and_points() {
+        let id = ids(&[("identity", EntityKind::Line)]).remove(0);
+        let graph = CanonicalLineGraph::new([line(
+            id.clone(),
+            None,
+            0,
+            CanonicalLineBase::identity(),
+            CanonicalLineInherit::default(),
+        )])
+        .unwrap();
+
+        let result = evaluate_line_transform(&graph, &empty_tracks(), &id, 0.0).unwrap();
+
+        assert_eq!(result.line_id(), id.value());
+        assert_eq!(result.local().position(), vec2(0.0, 0.0));
+        assert_eq!(result.local().rotation(), 0.0);
+        assert_eq!(result.local().scale(), vec2(1.0, 1.0));
+        assert_eq!(result.local().alpha(), 1.0);
+        assert_eq!(result.world(), result.local());
+        assert_eq!(
+            result.world_matrix().rows(),
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        );
+        assert_eq!(
+            result.transform_world_point(vec2(3.0, 5.0)).unwrap(),
+            vec2(3.0, 5.0)
+        );
+    }
+
+    #[test]
     fn pivoted_local_matrix_and_point_application_follow_column_vector_order() {
         let id = ids(&[("main", EntityKind::Line)]).remove(0);
         let graph = CanonicalLineGraph::new([line(
@@ -730,63 +760,128 @@ mod tests {
     }
 
     #[test]
-    fn parent_components_inherit_independently_without_matrix_decomposition() {
-        let mut ids = ids(&[("parent", EntityKind::Line), ("child", EntityKind::Line)]);
+    fn multi_level_parent_components_compose_without_matrix_decomposition() {
+        let mut ids = ids(&[
+            ("grandparent", EntityKind::Line),
+            ("parent", EntityKind::Line),
+            ("child", EntityKind::Line),
+        ]);
+        let grandparent_id = ids.remove(0);
         let parent_id = ids.remove(0);
         let child_id = ids.remove(0);
-        let parent = line(
-            parent_id.clone(),
+        let grandparent = line(
+            grandparent_id.clone(),
             None,
             0,
-            base((10.0, 20.0), 0.0, (2.0, 3.0), 0.5, (0.0, 0.0)),
+            base((1.0, 2.0), 0.0, (2.0, 2.0), 0.5, (0.0, 0.0)),
+            CanonicalLineInherit::default(),
+        );
+        let parent = line(
+            parent_id.clone(),
+            Some(grandparent_id),
+            1,
+            base((3.0, 4.0), 0.0, (4.0, 4.0), 0.25, (0.0, 0.0)),
             CanonicalLineInherit::default(),
         );
         let child = line(
             child_id.clone(),
             Some(parent_id),
-            1,
-            base((1.0, 2.0), 0.0, (4.0, 5.0), 0.25, (0.0, 0.0)),
+            2,
+            base((5.0, 6.0), 0.0, (6.0, 7.0), 0.125, (0.0, 0.0)),
             CanonicalLineInherit::default(),
         );
-        let graph = CanonicalLineGraph::new([child, parent]).unwrap();
+        let graph = CanonicalLineGraph::new([child, grandparent, parent]).unwrap();
 
         let result = evaluate_line_transform(&graph, &empty_tracks(), &child_id, 0.0).unwrap();
 
-        assert_eq!(result.world().position(), vec2(12.0, 26.0));
+        assert_eq!(result.world().position(), vec2(47.0, 58.0));
         assert_eq!(result.world().rotation(), 0.0);
-        assert_eq!(result.world().scale(), vec2(8.0, 15.0));
-        assert_eq!(result.world().alpha(), 0.125);
+        assert_eq!(result.world().scale(), vec2(48.0, 56.0));
+        assert_eq!(result.world().alpha(), 0.015625);
         assert_eq!(
             result.world_matrix().rows(),
-            [[8.0, 0.0, 12.0], [0.0, 15.0, 26.0], [0.0, 0.0, 1.0]]
+            [[48.0, 0.0, 47.0], [0.0, 56.0, 58.0], [0.0, 0.0, 1.0]]
         );
     }
 
     #[test]
     fn disabled_inherit_flags_start_from_world_identity() {
-        let mut ids = ids(&[("parent", EntityKind::Line), ("child", EntityKind::Line)]);
+        let mut ids = ids(&[
+            ("parent", EntityKind::Line),
+            ("no-position", EntityKind::Line),
+            ("no-rotation", EntityKind::Line),
+            ("no-scale", EntityKind::Line),
+            ("no-alpha", EntityKind::Line),
+        ]);
         let parent_id = ids.remove(0);
-        let child_id = ids.remove(0);
+        let no_position_id = ids.remove(0);
+        let no_rotation_id = ids.remove(0);
+        let no_scale_id = ids.remove(0);
+        let no_alpha_id = ids.remove(0);
+        let angle = f64::from_bits(1);
         let parent = line(
             parent_id.clone(),
             None,
             0,
-            base((10.0, 20.0), f64::from_bits(1), (2.0, 3.0), 0.5, (0.0, 0.0)),
+            base((10.0, 20.0), angle, (2.0, 3.0), 0.5, (0.0, 0.0)),
             CanonicalLineInherit::default(),
         );
-        let child = line(
-            child_id.clone(),
-            Some(parent_id),
+        let no_position = line(
+            no_position_id.clone(),
+            Some(parent_id.clone()),
             1,
-            base((1.0, 2.0), 0.0, (4.0, 5.0), 0.25, (0.0, 0.0)),
-            CanonicalLineInherit::new(false, false, false, false, false),
+            CanonicalLineBase::identity(),
+            CanonicalLineInherit::new(false, true, true, true, false),
         );
-        let graph = CanonicalLineGraph::new([parent, child]).unwrap();
+        let no_rotation = line(
+            no_rotation_id.clone(),
+            Some(parent_id.clone()),
+            2,
+            CanonicalLineBase::identity(),
+            CanonicalLineInherit::new(true, false, true, true, false),
+        );
+        let no_scale = line(
+            no_scale_id.clone(),
+            Some(parent_id.clone()),
+            3,
+            CanonicalLineBase::identity(),
+            CanonicalLineInherit::new(true, true, false, true, false),
+        );
+        let no_alpha = line(
+            no_alpha_id.clone(),
+            Some(parent_id),
+            4,
+            CanonicalLineBase::identity(),
+            CanonicalLineInherit::new(true, true, true, false, false),
+        );
+        let graph = CanonicalLineGraph::new([no_scale, parent, no_alpha, no_position, no_rotation])
+            .unwrap();
 
-        let result = evaluate_line_transform(&graph, &empty_tracks(), &child_id, 0.0).unwrap();
+        let no_position =
+            evaluate_line_transform(&graph, &empty_tracks(), &no_position_id, 0.0).unwrap();
+        assert_eq!(no_position.world().position(), vec2(0.0, 0.0));
+        assert_eq!(no_position.world().rotation().to_bits(), angle.to_bits());
+        assert_eq!(no_position.world().scale(), vec2(2.0, 3.0));
+        assert_eq!(no_position.world().alpha(), 0.5);
 
-        assert_eq!(result.world(), result.local());
-        assert_eq!(result.world_matrix(), result.local_matrix());
+        let no_rotation =
+            evaluate_line_transform(&graph, &empty_tracks(), &no_rotation_id, 0.0).unwrap();
+        assert_eq!(no_rotation.world().position(), vec2(10.0, 20.0));
+        assert_eq!(no_rotation.world().rotation(), 0.0);
+        assert_eq!(no_rotation.world().scale(), vec2(2.0, 3.0));
+        assert_eq!(no_rotation.world().alpha(), 0.5);
+
+        let no_scale = evaluate_line_transform(&graph, &empty_tracks(), &no_scale_id, 0.0).unwrap();
+        assert_eq!(no_scale.world().position(), vec2(10.0, 20.0));
+        assert_eq!(no_scale.world().rotation().to_bits(), angle.to_bits());
+        assert_eq!(no_scale.world().scale(), vec2(1.0, 1.0));
+        assert_eq!(no_scale.world().alpha(), 0.5);
+
+        let no_alpha = evaluate_line_transform(&graph, &empty_tracks(), &no_alpha_id, 0.0).unwrap();
+        assert_eq!(no_alpha.world().position(), vec2(10.0, 20.0));
+        assert_eq!(no_alpha.world().rotation().to_bits(), angle.to_bits());
+        assert_eq!(no_alpha.world().scale(), vec2(2.0, 3.0));
+        assert_eq!(no_alpha.world().alpha(), 1.0);
     }
 
     #[test]
