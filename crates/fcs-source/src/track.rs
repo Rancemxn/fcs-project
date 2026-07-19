@@ -69,10 +69,7 @@ fn lower_track(
             return None;
         }
     };
-    let target = match target(track, diagnostics) {
-        Some(target) => target,
-        None => return None,
-    };
+    let target = target(track, diagnostics)?;
     let blend = enum_setting(
         track,
         "blend",

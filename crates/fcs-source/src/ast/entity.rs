@@ -165,6 +165,7 @@ pub struct ExpandedTrack {
 }
 
 impl ExpandedTrack {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         owner: String,
         name: String,
@@ -457,32 +458,14 @@ impl ExpandedSourceDocument {
         tempo_map: Option<TempoMap>,
         collections: Vec<ExpandedCollection>,
     ) -> Result<Self, ExpandedInvariantViolation> {
-        Self::try_from_collections_with_declarations(
-            source_version,
-            profile,
-            tempo_map,
-            collections,
-            BTreeMap::new(),
-            std::collections::BTreeSet::new(),
-        )
-    }
-
-    pub(crate) fn try_from_collections_with_declarations(
-        source_version: Version,
-        profile: DocumentProfile,
-        tempo_map: Option<TempoMap>,
-        collections: Vec<ExpandedCollection>,
-        resource_kinds: BTreeMap<String, ResourceKind>,
-        required_extensions: std::collections::BTreeSet<String>,
-    ) -> Result<Self, ExpandedInvariantViolation> {
         Self::try_from_collections_with_declarations_and_tracks(
             source_version,
             profile,
             tempo_map,
             collections,
             Vec::new(),
-            resource_kinds,
-            required_extensions,
+            BTreeMap::new(),
+            std::collections::BTreeSet::new(),
         )
     }
 
