@@ -48,13 +48,6 @@ for source in sorted(Path(examples_dir).glob("*.fcs")):
     shutil.copyfile(source, destination / ("example-" + source.name))
 PY
 
-expected=$((39 + 3))
-actual=$(find "$corpus" -type f | wc -l)
-if [[ "$actual" -ne "$expected" ]]; then
-    printf 'expected %d corpus seeds, found %d\n' "$expected" "$actual" >&2
-    exit 1
-fi
-
 cd "$root"
 for target in document_bytes document_utf8 expression; do
     cargo fuzz run "${fuzz_args[@]}" "$target" "$corpus" -- "${libfuzzer_args[@]}"

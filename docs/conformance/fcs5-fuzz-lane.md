@@ -43,9 +43,9 @@ fixtures; the fuzz targets provide an independent libFuzzer execution path.
 ## Corpus and commands
 
 `fuzz/corpus/README.md` and `scripts/fcs5-fuzz-smoke.sh` materialize one seed
-for each of the 39 manifest entries plus the three public FCS examples into a
-temporary corpus. The same 42 seeds are passed to all three targets, so the
-byte, UTF-8, and expression entry points share the complete source corpus.
+for every current manifest entry plus each public FCS example into a temporary
+corpus. The same complete seed set is passed to all three targets, so the byte,
+UTF-8, and expression entry points share the source corpus.
 
 Bounded smoke (the delivery command):
 
@@ -53,10 +53,9 @@ Bounded smoke (the delivery command):
 FCS_FUZZ_RUNS=32 scripts/fcs5-fuzz-smoke.sh bounded
 ```
 
-This passes `-runs=32` to each libFuzzer target with `max_len=65536`; the 42
-seed files are loaded before that bounded run budget. It does not write
-generated corpus or artifacts into the repository. Local exploration
-uses:
+This passes `-runs=32` to each libFuzzer target with `max_len=65536`; the
+complete seed set is loaded before that bounded run budget. It does not write
+generated corpus or artifacts into the repository. Local exploration uses:
 
 ```text
 scripts/fcs5-fuzz-smoke.sh unbounded

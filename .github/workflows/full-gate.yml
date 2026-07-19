@@ -1,0 +1,57 @@
+name: Full gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: cargo-bins/cargo-binstall@main
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            fuzz -> target
+
+      - name: Install test tools
+        run: cargo binstall cargo-nextest cargo-fuzz --secure --no-confirm
+
+      - name: Run full gate
+        env:
+          FCS_FUZZ_RUNS: "32"
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
+          cargo metadata --locked --offline --no-deps --format-version 1
+          cargo metadata --locked --offline --manifest-path fuzz/Cargo.toml --no-deps --format-version 1
+          cargo tree --locked --offline --manifest-path fuzz/Cargo.toml -i fcs-model
+          cargo tree --locked --offline --manifest-path fuzz/Cargo.toml -i sha2
+          cargo tree --workspace --locked --offline -d
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo nextest run --workspace
+          scripts/fcs5-fuzz-smoke.sh bounded
+          git diff --check
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
