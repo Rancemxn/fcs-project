@@ -39,7 +39,7 @@ impl CanonicalScrollCoordinate {
     pub fn new(
         points: impl IntoIterator<Item = CanonicalScrollTempoPoint>,
     ) -> Result<Self, ScrollCoordinateError> {
-        let mut normalized = Vec::new();
+        let mut normalized = Vec::<CanonicalScrollTempoPoint>::new();
         for point in points {
             if let Some(previous) = normalized.last_mut() {
                 if point.chart_time < previous.chart_time {
