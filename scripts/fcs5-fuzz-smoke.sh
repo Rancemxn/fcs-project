@@ -4,14 +4,15 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 runs=${FCS_FUZZ_RUNS:-32}
 mode=${1:-bounded}
+host_target=$(rustc --print host-tuple)
 
 case "$mode" in
     bounded)
-        fuzz_args=(--sanitizer none --dev)
+        fuzz_args=(--target "$host_target" --sanitizer none --dev)
         libfuzzer_args=(-runs="$runs" -max_len=65536)
         ;;
     unbounded)
-        fuzz_args=()
+        fuzz_args=(--target "$host_target")
         libfuzzer_args=()
         ;;
     *)
