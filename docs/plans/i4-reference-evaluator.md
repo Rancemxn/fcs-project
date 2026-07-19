@@ -2,8 +2,9 @@
 
 ## Normative closure
 
-- `docs/specifications/fcs.md` sections 9.4, 13, 14.1, 14.3, and 18.
-- `docs/specifications/fcbc.md` sections 13.1, 13.2, and 14.
+- `docs/specifications/fcs.md` sections 9.4, 10.1–10.4, 11.4, 12.4, 13,
+  14.1, 14.3, and 18.
+- `docs/specifications/fcbc.md` sections 11, 13.1, 13.2, 14, and 15.
 - ADR 0005, ADR 0009, and ADR 0010.
 - `docs/conformance/fcs5/expected/numeric-vectors.toml` and the runtime rows of
   `docs/conformance/fcs5-implementation-matrix.md`.
@@ -73,10 +74,33 @@ The public API exposes only project-owned component, matrix, and error types.
 It does not include texture anchors, scroll inheritance, source/FCBC/Render
 types, player state, or the later independent reference implementation.
 
+## I4.4 specification closure
+
+Before the product evaluator is activated, the scroll dependency closure fixes
+the distinction between each Line's local descriptor and the query-time
+effective result:
+
+- `q`, scroll tempo, speed environment, integration origin, and initial floor
+  remain Line-local;
+- `inherit.scroll=false` terminates scroll ancestry, while `true` recursively
+  adds only the actual parent chain's local floor and velocity;
+- effective floor reference values are combined in high precision and rounded
+  once, while effective velocity uses root-to-target binary64 addition;
+- floor scale, Note scroll factor, transforms, and hidden sampled caches never
+  participate in composition; direct seek and error isolation are explicit;
+- local reverse permission remains local, so an allowed reverse ancestor may
+  make a descendant's effective velocity negative.
+
+The literal `source.valid.scroll-inheritance` vector binds a three-Line chain,
+detached inheritance, boundary continuity, reverse/zero speed, signed zero,
+Note distance, direct-seek values in both directions, and an unrelated Track
+gap. The vector is an evaluate-stage contract only until the product evaluator
+owns its execution.
+
 ## Explicit non-goals
 
-- Scroll integration, typed Expression DAG, Piecewise lowering, and exact
-  integration validation (I4.4-I4.7).
+- Typed Expression DAG, Piecewise lowering, and exact integration validation
+  (I4.5-I4.7).
 - A claim that platform `f64` transcendental calls already satisfy the complete
   difficult-input correct-rounding requirement. I4.8 owns that independent
   reference closure and production/transform cross-check.
@@ -129,12 +153,26 @@ types, player state, or the later independent reference implementation.
    unknown Line, Track gap, non-finite time, and overflow paths return stable
    errors.
 
+## I4.4 specification acceptance evidence
+
+1. The manifest binds `source.valid.scroll-inheritance` and its independent
+   literal expected JSON; the source has no sampled floor or hidden cache.
+2. Root, child, and grandchild queries prove local q/origin values remain
+   distinct while effective floor and velocity compose recursively.
+3. Detached scroll inheritance, local zero speed, an allowed reverse ancestor,
+   direct seek in both directions, and tempo/speed boundaries have explicit
+   expected values.
+4. Note distance uses the effective floor with an independent floor scale and
+   scroll factor; signed-zero origin and non-origin results bind raw bits.
+5. An unrelated `track.gap` is recorded as an isolated error and cannot fail a
+   target on the root-to-target ancestry.
+
 ## Delivery and residual gate
 
 The Rust/build/test gate runs only on an exact draft-PR SHA through
-`.github/workflows/full-gate.yml`. I4.1 through I4.3 are bounded `partial`
+`.github/workflows/full-gate.yml`. I4.1 through I4.4 are bounded `partial`
 transitions: they do not close the FCS section 14 matrix row or the I4 stage.
-I4.4-I4.7 still own scroll, DAG, Piecewise, and integration; I4.8 must bind
+I4.5-I4.7 still own DAG, Piecewise, and integration; I4.8 must bind
 difficult transcendental/cubic-Bezier/transform vectors, an independent
 implementation path, and production/reference cross-checks before strict-runtime
 conformance can pass.

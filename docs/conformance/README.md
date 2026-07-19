@@ -17,6 +17,12 @@ candidate 仍随五个 Draft/联合重审版本域审查，不是 Frozen baselin
 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md` 为准；后者是联合候选自检，不是独立
 review 或 Frozen 声明。
 
+I4.4 scroll-composition closure adds the evaluate-stage
+`source.valid.scroll-inheritance` vector and its literal expected output to the
+active corpus. The active FCS manifest therefore contains 42 entries; this
+vector is a candidate semantic binding until the product evaluator and its
+exact-head full-gate evidence are delivered.
+
 S15 FCBC/Execution ABI closure 把 root `candidate_baseline` 更新为
 `2026-07-15-s15-cross-spec-closure`，并引入 FCBC manifest schema 2。当前两个 FCBC golden 都固定
 14 个 required section（原 1–13 加 ResourceData 20）和 `chart_count=1`：

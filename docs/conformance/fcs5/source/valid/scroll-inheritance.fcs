@@ -1,0 +1,127 @@
+#fcs 5.0.0
+format { profile: chart; }
+tempoMap {
+    0beat -> 120bpm;
+}
+lines {
+    line root {
+        scrollTempoMap {
+            0s -> 120bpm;
+            2s -> 60bpm;
+        }
+        integrationOrigin: -1s;
+        initialFloorPosition: 4.0;
+        allowReverseScroll: true;
+        tracks {
+            track reverseThenStop -> scrollSpeed: float {
+                blend: "replace";
+                priority: 0;
+                fill: "holdAfter";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "holdAfter";
+                segments {
+                    [-2s, 1s): -0.5 -> -0.5 using "step";
+                    [1s, 3s): 0.0 -> 0.0 using "step";
+                    [3s, 5s): 1.0 -> 1.0 using "step";
+                }
+            }
+        }
+    }
+    line child {
+        parent: @root;
+        inherit.scroll: true;
+        scrollTempoMap {
+            0s -> 60bpm;
+            2s -> 120bpm;
+        }
+        integrationOrigin: 1s;
+        initialFloorPosition: 10.0;
+        tracks {
+            track stopAfterBoundary -> scrollSpeed: float {
+                blend: "replace";
+                priority: 0;
+                fill: "holdAfter";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "holdAfter";
+                segments {
+                    [0s, 2s): 1.0 -> 1.0 using "step";
+                    [2s, 4s): 0.0 -> 0.0 using "step";
+                }
+            }
+        }
+    }
+    line grandchild {
+        parent: @child;
+        inherit.scroll: true;
+        floorScale: 10px;
+        scrollTempoMap {
+            0s -> 120bpm;
+        }
+    }
+    line detached {
+        parent: @root;
+        inherit.scroll: false;
+        initialFloorPosition: 3.0;
+        scrollTempoMap {
+            0s -> 120bpm;
+        }
+    }
+    line inherited_negative {
+        parent: @root;
+        inherit.scroll: true;
+        scrollTempoMap {
+            0s -> 120bpm;
+        }
+        tracks {
+            track zeroLocalSpeed -> scrollSpeed: float {
+                blend: "replace";
+                priority: 0;
+                fill: "zero";
+                extrapolateBefore: "zero";
+                extrapolateAfter: "zero";
+                segments {
+                    [0s, 1s): 0.0 -> 0.0 using "step";
+                }
+            }
+        }
+    }
+    line unrelated_gap {
+        tracks {
+            track deliberateGap -> scrollSpeed: float {
+                blend: "replace";
+                priority: 0;
+                fill: "error";
+                extrapolateBefore: "error";
+                extrapolateAfter: "error";
+                segments {
+                    [1s, 2s): 1.0 -> 1.0 using "step";
+                }
+            }
+        }
+    }
+    line signed_zero {
+        initialFloorPosition: -0.0;
+        tracks {
+            track zeroSpeed -> scrollSpeed: float {
+                blend: "replace";
+                priority: 0;
+                fill: "zero";
+                extrapolateBefore: "zero";
+                extrapolateAfter: "zero";
+                segments {
+                    [0s, 1s): 0.0 -> 0.0 using "step";
+                }
+            }
+        }
+    }
+}
+collections {
+    notes {
+        tap {
+            id: "grandchild-note";
+            line: @grandchild;
+            gameplay.time: 4s;
+            presentation.scrollFactor: 0.5;
+        };
+    }
+}

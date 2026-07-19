@@ -758,7 +758,7 @@ fn typed_manifests_load_with_bound_counts() {
     assert_eq!(render.schema_version, 3);
     assert_eq!(conversion.schema_version, 2);
     assert_eq!(root.suite.len(), 6);
-    assert_eq!(fcs.fixture.len(), 41);
+    assert_eq!(fcs.fixture.len(), 42);
     assert_eq!(fcbc.fixture.len(), 3);
     assert_eq!(render.binary_fixture.len(), 0);
     assert_eq!(render.fixture.len(), 1);
@@ -832,7 +832,7 @@ fn fcs_source_fixtures_execute_at_the_declared_frontend_boundary() {
 
     assert_eq!(parse_success, 3);
     assert_eq!(parse_error, 9);
-    assert_eq!(later_stage, 29);
+    assert_eq!(later_stage, 30);
 }
 
 #[test]
@@ -1071,6 +1071,227 @@ fn i3_scroll_fixture_executes_at_the_canonical_boundary() {
         canonical_scroll_fixture(&fcs_base, fixture).expect("valid scroll fixture should lower");
     assert_eq!(scroll.lines().len(), 1);
     assert_eq!(scroll.lines()[0].coordinate().coordinate(1.0), Ok(2.0));
+}
+
+#[test]
+fn i4_scroll_inheritance_fixture_binds_literal_composition_vectors() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+    let fixture = fixture(&fcs, "source.valid.scroll-inheritance");
+    assert_eq!(fixture.stage, FixtureStage::Evaluate);
+    assert_eq!(fixture.expect, FixtureExpectation::Success);
+    assert_eq!(
+        fixture.expected.as_deref(),
+        Some("expected/scroll-inheritance.json")
+    );
+
+    let expected = expected_json(&fcs_base, fixture);
+    assert_eq!(expected["schemaVersion"].as_u64(), Some(1));
+    let queries = expected["queries"]
+        .as_array()
+        .expect("scroll inheritance expected queries must be an array");
+    assert_eq!(queries.len(), 22);
+
+    let literal_queries = [
+        ("root", -2.0, -4.0, -1.0, 5.0, -1.0, 5.0, "4014000000000000"),
+        ("root", 0.0, 0.0, -1.0, 3.0, -1.0, 3.0, "4008000000000000"),
+        ("root", 1.0, 2.0, 0.0, 2.0, 0.0, 2.0, "4000000000000000"),
+        ("root", 2.0, 4.0, 0.0, 2.0, 0.0, 2.0, "4000000000000000"),
+        ("root", 3.0, 5.0, 1.0, 2.0, 1.0, 2.0, "4000000000000000"),
+        ("root", 4.0, 6.0, 1.0, 3.0, 1.0, 3.0, "4008000000000000"),
+        ("child", -2.0, -2.0, 1.0, 7.0, 0.0, 12.0, "4028000000000000"),
+        ("child", 0.0, 0.0, 1.0, 9.0, 0.0, 12.0, "4028000000000000"),
+        ("child", 1.0, 1.0, 1.0, 10.0, 1.0, 12.0, "4028000000000000"),
+        ("child", 2.0, 2.0, 0.0, 11.0, 0.0, 13.0, "402a000000000000"),
+        ("child", 4.0, 6.0, 0.0, 11.0, 1.0, 14.0, "402c000000000000"),
+        (
+            "grandchild",
+            -2.0,
+            -4.0,
+            2.0,
+            -6.0,
+            2.0,
+            6.0,
+            "4018000000000000",
+        ),
+        (
+            "grandchild",
+            0.0,
+            0.0,
+            2.0,
+            -2.0,
+            2.0,
+            10.0,
+            "4024000000000000",
+        ),
+        (
+            "grandchild",
+            1.0,
+            2.0,
+            2.0,
+            0.0,
+            3.0,
+            12.0,
+            "4028000000000000",
+        ),
+        (
+            "grandchild",
+            2.0,
+            4.0,
+            2.0,
+            2.0,
+            2.0,
+            15.0,
+            "402e000000000000",
+        ),
+        (
+            "grandchild",
+            3.0,
+            6.0,
+            2.0,
+            4.0,
+            2.0,
+            17.0,
+            "4031000000000000",
+        ),
+        (
+            "grandchild",
+            4.0,
+            8.0,
+            2.0,
+            6.0,
+            3.0,
+            20.0,
+            "4034000000000000",
+        ),
+        ("detached", 0.0, 0.0, 2.0, 3.0, 2.0, 3.0, "4008000000000000"),
+        (
+            "detached",
+            4.0,
+            8.0,
+            2.0,
+            11.0,
+            2.0,
+            11.0,
+            "4026000000000000",
+        ),
+        (
+            "inherited_negative",
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            -1.0,
+            3.0,
+            "4008000000000000",
+        ),
+        (
+            "signed_zero",
+            0.0,
+            0.0,
+            0.0,
+            -0.0,
+            0.0,
+            -0.0,
+            "8000000000000000",
+        ),
+        (
+            "signed_zero",
+            1.0,
+            2.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            "0000000000000000",
+        ),
+    ];
+
+    for (
+        line,
+        chart_time,
+        local_q,
+        local_velocity,
+        local_floor,
+        effective_velocity,
+        effective_floor,
+        effective_floor_bits,
+    ) in literal_queries
+    {
+        let query = queries
+            .iter()
+            .find(|query| {
+                query["line"].as_str() == Some(line)
+                    && query["chartTime"].as_f64() == Some(chart_time)
+            })
+            .unwrap_or_else(|| panic!("missing scroll query {line} at {chart_time}s"));
+        assert_eq!(query["localQ"].as_f64(), Some(local_q));
+        assert_eq!(query["localVelocity"].as_f64(), Some(local_velocity));
+        assert_eq!(query["localFloor"].as_f64(), Some(local_floor));
+        assert_eq!(
+            query["effectiveVelocity"].as_f64(),
+            Some(effective_velocity)
+        );
+        assert_eq!(query["effectiveFloor"].as_f64(), Some(effective_floor));
+        assert_eq!(
+            query["effectiveFloorBits"].as_str(),
+            Some(effective_floor_bits)
+        );
+        assert_eq!(
+            format!(
+                "{:016x}",
+                query["effectiveFloor"].as_f64().unwrap().to_bits()
+            ),
+            effective_floor_bits
+        );
+    }
+
+    let signed_zero_origin = queries
+        .iter()
+        .find(|query| {
+            query["line"].as_str() == Some("signed_zero")
+                && query["chartTime"].as_f64() == Some(0.0)
+        })
+        .expect("signed-zero origin query");
+    assert_eq!(
+        signed_zero_origin["localFloor"].as_f64().unwrap().to_bits(),
+        0x8000_0000_0000_0000
+    );
+
+    let signed_zero_non_origin = queries
+        .iter()
+        .find(|query| {
+            query["line"].as_str() == Some("signed_zero")
+                && query["chartTime"].as_f64() == Some(1.0)
+        })
+        .expect("signed-zero non-origin query");
+    assert_eq!(
+        signed_zero_non_origin["effectiveFloor"]
+            .as_f64()
+            .unwrap()
+            .to_bits(),
+        0
+    );
+
+    let note = &expected["note"];
+    assert_eq!(note["id"].as_str(), Some("grandchild-note"));
+    assert_eq!(note["line"].as_str(), Some("grandchild"));
+    assert_eq!(note["effectiveFloorAtNote"].as_f64(), Some(20.0));
+    assert_eq!(note["effectiveFloorAtQuery"].as_f64(), Some(10.0));
+    assert_eq!(note["floorScale"].as_f64(), Some(10.0));
+    assert_eq!(note["scrollFactor"].as_f64(), Some(0.5));
+    assert_eq!(note["distancePx"].as_f64(), Some(50.0));
+    assert_eq!(note["distanceBits"].as_str(), Some("4049000000000000"));
+    assert_eq!(note["localYPx"].as_f64(), Some(50.0));
+
+    assert_eq!(
+        expected["isolatedError"]["line"].as_str(),
+        Some("unrelated_gap")
+    );
+    assert_eq!(
+        expected["isolatedError"]["category"].as_str(),
+        Some("track.gap")
+    );
 }
 
 #[test]
