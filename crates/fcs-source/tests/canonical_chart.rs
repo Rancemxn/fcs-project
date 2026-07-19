@@ -82,3 +82,30 @@ tempoMap { 0beat -> 120bpm; }
 
     assert_eq!(first, reordered);
 }
+
+#[test]
+fn canonical_chart_includes_lines_emitted_by_judgelines() {
+    let chart = canonical(
+        r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+collections {
+    judgelines { Line { id: "judge"; }; }
+    notes { tap { id: "tap"; line: @judge; gameplay.time: 1s; }; }
+}
+"#,
+    );
+
+    assert_eq!(chart.lines().lines().count(), 1);
+    assert_eq!(chart.notes().notes().len(), 1);
+    assert_eq!(
+        chart
+            .lines()
+            .line_by_textual_id("judge")
+            .expect("emitted Line should enter the canonical graph")
+            .id()
+            .textual()
+            .as_str(),
+        "judge"
+    );
+}
