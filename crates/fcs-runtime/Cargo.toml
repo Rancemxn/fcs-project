@@ -7,3 +7,4 @@ description = "FCS exact runtime descriptor and evaluation foundations"
 
 [dependencies]
 fcs-model = { path = "../fcs-model" }
+nalgebra.workspace = true

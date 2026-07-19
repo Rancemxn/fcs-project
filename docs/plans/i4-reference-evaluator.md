@@ -51,14 +51,35 @@ The API exposes only canonical project types and `TrackEvaluationError`.
 There is no LUT, fixed Newton solve, host animation curve, sampled cache, or
 FCBC/source serialization dependency.
 
+## I4.3 owned surface
+
+I4.3 adds the product Line transform evaluator on the immutable
+`CanonicalLineGraph` and `CanonicalTrackSet` boundaries:
+
+- one Line query evaluates position, rotation, scale, and alpha from their
+  canonical base values plus the I4.2 Track path at a finite chart time;
+- the local column-vector matrix preserves the exact FCS section 11.3 order,
+  including a non-zero transform origin and counter-clockwise rotation;
+- stable-ID topological traversal recursively composes parent position,
+  rotation, scale, and alpha according to each independent inherit flag;
+- world components are derived from declared component state rather than
+  matrix decomposition, while `worldOrigin` is evaluated through the complete
+  world matrix;
+- private `nalgebra` 0.35.0 fixed-size storage is allowed, but project code
+  defines every 3x3 accumulation explicitly instead of delegating the
+  normative operation order to the generic multiplication/GEMM path.
+
+The public API exposes only project-owned component, matrix, and error types.
+It does not include texture anchors, scroll inheritance, source/FCBC/Render
+types, player state, or the later independent reference implementation.
+
 ## Explicit non-goals
 
-- Matrix/parent transform evaluation or `nalgebra` activation (I4.3).
 - Scroll integration, typed Expression DAG, Piecewise lowering, and exact
   integration validation (I4.4-I4.7).
 - A claim that platform `f64` transcendental calls already satisfy the complete
   difficult-input correct-rounding requirement. I4.8 owns that independent
-  reference closure and production cross-check.
+  reference closure and production/transform cross-check.
 - Player-local sampled caches, BakedCurve output, Conversion approximation,
   FCBC codecs, CLI integration, or any version-domain status transition.
 
@@ -92,12 +113,28 @@ FCBC/source serialization dependency.
    errors. Exact-product underflow that cannot be represented by the expansion
    is rejected conservatively.
 
+## I4.3 acceptance evidence
+
+1. Identity, translation, non-uniform scale, positive rotation, pivot, and
+   project-owned point-application vectors bind the column-vector convention.
+2. Position, rotation, scale, and alpha Tracks feed the transform query through
+   the existing typed evaluator without schema-default inference.
+3. Multi-level parent vectors prove recursive world origin, rotation, scale,
+   alpha, and matrix composition; all disabled inherit flags restart from their
+   world identity components.
+4. A non-uniform parent scale plus child rotation preserves separately declared
+   world rotation/scale while the resulting matrix contains geometric shear;
+   no matrix decomposition is used.
+5. Reordered Line declarations return identical results, and wrong namespace,
+   unknown Line, Track gap, non-finite time, and overflow paths return stable
+   errors.
+
 ## Delivery and residual gate
 
 The Rust/build/test gate runs only on an exact draft-PR SHA through
-`.github/workflows/full-gate.yml`. I4.1 and I4.2 are bounded `partial`
+`.github/workflows/full-gate.yml`. I4.1 through I4.3 are bounded `partial`
 transitions: they do not close the FCS section 14 matrix row or the I4 stage.
-I4.3-I4.7 still own transform, scroll, DAG, Piecewise, and integration; I4.8
-must bind difficult transcendental and cubic-Bezier bit vectors, an independent
-implementation path, and production/reference cross-checks before
-strict-runtime conformance can pass.
+I4.4-I4.7 still own scroll, DAG, Piecewise, and integration; I4.8 must bind
+difficult transcendental/cubic-Bezier/transform vectors, an independent
+implementation path, and production/reference cross-checks before strict-runtime
+conformance can pass.
