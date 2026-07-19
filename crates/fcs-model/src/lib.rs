@@ -9,6 +9,7 @@ use std::fmt;
 
 use sha2::{Digest, Sha256};
 
+mod chart;
 mod line;
 mod metadata;
 mod note;
@@ -16,6 +17,10 @@ mod scroll;
 mod time;
 mod track;
 
+pub use chart::{
+    CanonicalChart, CanonicalChartError, CanonicalProfile, CanonicalProfileFeature,
+    CanonicalRequiredExtension, CanonicalSourceVersion,
+};
 pub use line::{
     CanonicalLine, CanonicalLineBase, CanonicalLineGraph, CanonicalLineInherit,
     CanonicalLineWorldState, CanonicalScrollTempo, CanonicalScrollTempoMap,
