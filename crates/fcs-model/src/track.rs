@@ -1,6 +1,6 @@
 //! Immutable canonical Track values and interval invariants.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::{CanonicalTime, CanonicalVec2, EntityKind, StableId};
@@ -305,11 +305,25 @@ impl CanonicalTrack {
         let mut intervals = Vec::new();
         let fill_is_active =
             |fill| !matches!(fill, CanonicalTrackFill::Base | CanonicalTrackFill::Error);
-        let first = self.pieces.first().expect("canonical Tracks are nonempty");
+        let pieces = self
+            .pieces
+            .iter()
+            .filter(|piece| {
+                !matches!(piece, CanonicalTrackPiece::Point(point) if self.pieces.iter().any(|other| {
+                    matches!(
+                        other,
+                        CanonicalTrackPiece::Segment(segment)
+                            if segment.start.chart_time_seconds()
+                                == point.time.chart_time_seconds()
+                    )
+                }))
+            })
+            .collect::<Vec<_>>();
+        let first = pieces.first().expect("canonical Tracks are nonempty");
         if fill_is_active(self.extrapolate_before) {
             intervals.push((f64::NEG_INFINITY, first.time()));
         }
-        for (index, piece) in self.pieces.iter().enumerate() {
+        for (index, piece) in pieces.iter().copied().enumerate() {
             match piece {
                 CanonicalTrackPiece::Segment(segment) => intervals.push((
                     segment.start.chart_time_seconds(),
@@ -317,14 +331,14 @@ impl CanonicalTrack {
                 )),
                 CanonicalTrackPiece::Point(point) => intervals.push((
                     point.time.chart_time_seconds(),
-                    self.pieces
+                    pieces
                         .get(index + 1)
-                        .map_or(f64::INFINITY, CanonicalTrackPiece::time),
+                        .map_or(f64::INFINITY, |piece| piece.time()),
                 )),
             }
         }
-        for pieces in self.pieces.windows(2) {
-            let left_end = match &pieces[0] {
+        for pieces in pieces.windows(2) {
+            let left_end = match pieces[0] {
                 CanonicalTrackPiece::Segment(segment) => segment.end.chart_time_seconds(),
                 CanonicalTrackPiece::Point(point) => point.time.chart_time_seconds(),
             };
@@ -333,7 +347,7 @@ impl CanonicalTrack {
                 intervals.push((left_end, right_start));
             }
         }
-        if let Some(CanonicalTrackPiece::Segment(segment)) = self.pieces.last()
+        if let Some(CanonicalTrackPiece::Segment(segment)) = pieces.last().copied()
             && fill_is_active(self.extrapolate_after)
         {
             intervals.push((segment.end.chart_time_seconds(), f64::INFINITY));
@@ -350,7 +364,6 @@ pub struct CanonicalTrackSet {
 impl CanonicalTrackSet {
     pub fn new(mut tracks: Vec<CanonicalTrack>) -> Result<Self, CanonicalTrackError> {
         let mut identities = BTreeSet::new();
-        let mut replaces: Vec<&CanonicalTrack> = Vec::new();
         for track in &tracks {
             if !identities.insert((track.owner.value(), track.name.clone())) {
                 return Err(CanonicalTrackError::DuplicateIdentity {
@@ -358,16 +371,40 @@ impl CanonicalTrackSet {
                     name: track.name.clone(),
                 });
             }
+        }
+        let mut replace_groups: BTreeMap<(u64, CanonicalTrackTarget), Vec<&CanonicalTrack>> =
+            BTreeMap::new();
+        for track in &tracks {
             if track.blend == CanonicalTrackBlend::Replace {
-                if replaces.iter().any(|other| {
-                    other.owner == track.owner
-                        && other.target == track.target
-                        && other.priority == track.priority
-                        && intervals_overlap(other, track)
-                }) {
+                replace_groups
+                    .entry((track.owner.value(), track.target))
+                    .or_default()
+                    .push(track);
+            }
+        }
+        for group in replace_groups.values_mut() {
+            group.sort_by(|left, right| right.priority.cmp(&left.priority));
+            let mut covered = Vec::new();
+            let mut index = 0;
+            while index < group.len() {
+                let priority = group[index].priority;
+                let mut effective = Vec::new();
+                while index < group.len() && group[index].priority == priority {
+                    let mut track_intervals = Vec::new();
+                    for interval in group[index].active_intervals() {
+                        track_intervals.extend(subtract_intervals(interval, &covered));
+                    }
+                    effective.push(track_intervals);
+                    index += 1;
+                }
+                if track_intervals_overlap(&effective) {
                     return Err(CanonicalTrackError::ReplaceConflict);
                 }
-                replaces.push(track);
+                for track in &group[..index] {
+                    if track.priority == priority {
+                        covered.extend(track.active_intervals());
+                    }
+                }
             }
         }
         tracks.sort_by(|left, right| {
@@ -386,13 +423,38 @@ impl CanonicalTrackSet {
     }
 }
 
-fn intervals_overlap(left: &CanonicalTrack, right: &CanonicalTrack) -> bool {
-    let right = right.active_intervals();
-    left.active_intervals().iter().any(|left| {
-        right
-            .iter()
-            .any(|right| left.0.max(right.0) < left.1.min(right.1))
+fn track_intervals_overlap(tracks: &[Vec<(f64, f64)>]) -> bool {
+    tracks.iter().enumerate().any(|(index, left)| {
+        tracks[index + 1..].iter().any(|right| {
+            left.iter().any(|left| {
+                right
+                    .iter()
+                    .any(|right| left.0.max(right.0) < left.1.min(right.1))
+            })
+        })
     })
+}
+
+fn subtract_intervals(interval: (f64, f64), covered: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let mut remaining = vec![interval];
+    for cover in covered {
+        let mut next = Vec::new();
+        for candidate in remaining {
+            if cover.1 <= candidate.0 || cover.0 >= candidate.1 {
+                next.push(candidate);
+                continue;
+            }
+            if candidate.0 < cover.0 {
+                next.push((candidate.0, cover.0.min(candidate.1)));
+            }
+            if cover.1 < candidate.1 {
+                next.push((cover.1.max(candidate.0), candidate.1));
+            }
+        }
+        remaining = next;
+    }
+    remaining.retain(|(start, end)| start < end);
+    remaining
 }
 
 fn validate_interpolation(
