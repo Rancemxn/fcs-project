@@ -99,13 +99,12 @@ fn lower_line_graph(
         match expanded.canonical_line_ids_with_spans() {
             Ok(ids) => {
                 let mut ids = ids.into_iter();
-                for (expanded_order, entity) in expanded
-                    .collections()
-                    .flat_map(|collection| collection.entities())
-                    .filter(|entity| entity.entity_type() == &Type::Line)
-                    .enumerate()
-                {
-                    let document_order = document.lines.len() as u64 + expanded_order as u64;
+                for (document_order, entity) in (document.lines.len() as u64..).zip(
+                    expanded
+                        .collections()
+                        .flat_map(|collection| collection.entities())
+                        .filter(|entity| entity.entity_type() == &Type::Line),
+                ) {
                     let (id, name_span) = ids
                         .next()
                         .expect("canonical Line IDs and expanded Lines have equal cardinality");
