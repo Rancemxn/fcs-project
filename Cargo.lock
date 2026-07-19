@@ -163,6 +163,9 @@ dependencies = [
 [[package]]
 name = "fcs-runtime"
 version = "0.2.0"
+dependencies = [
+ "fcs-model",
+]
 
 [[package]]
 name = "fcs-source"

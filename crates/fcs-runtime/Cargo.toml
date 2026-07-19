@@ -4,3 +4,6 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "FCS exact runtime descriptor and evaluation foundations"
+
+[dependencies]
+fcs-model = { path = "../fcs-model" }
