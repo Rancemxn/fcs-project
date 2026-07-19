@@ -332,9 +332,15 @@ impl ExpandedSourceDocument {
     /// Lowers expanded `judgelines` identities, including generated IDs for
     /// Line constructors that omit their optional explicit `id` field.
     pub fn canonical_line_ids(&self) -> Result<Vec<StableId>, IdError> {
-        self.canonical_entity_ids_with_spans(Type::Line, EntityKind::Line)
+        self.canonical_line_ids_with_spans()
             .map(|ids| ids.into_iter().map(|(id, _)| id).collect())
             .map_err(|(error, _)| error)
+    }
+
+    pub(crate) fn canonical_line_ids_with_spans(
+        &self,
+    ) -> Result<Vec<(StableId, SourceSpan)>, (IdError, SourceSpan)> {
+        self.canonical_entity_ids_with_spans(Type::Line, EntityKind::Line)
     }
 
     fn canonical_entity_ids_with_spans(

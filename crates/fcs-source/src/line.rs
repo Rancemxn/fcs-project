@@ -10,8 +10,8 @@ use fcs_model::{
 };
 
 use crate::ast::{
-    Document, EntityField, LineBodyItem, LineDeclaration, SourceExpression, SourceLiteral,
-    SourceSpan, TypedValue,
+    Document, EntityField, ExpandedEntity, ExpandedSourceDocument, LineBodyItem, LineDeclaration,
+    SourceExpression, SourceLiteral, SourceSpan, Type, TypedValue,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLabel, DiagnosticStage};
 
@@ -22,7 +22,14 @@ impl Document {
     /// owned by I3.6; this boundary only validates Line-owned static fields,
     /// parent topology, and the declared scroll-tempo envelope.
     pub fn canonical_line_graph(&self) -> Result<CanonicalLineGraph, Vec<Diagnostic>> {
-        lower_line_graph(self)
+        lower_line_graph(self, None)
+    }
+
+    pub(crate) fn canonical_line_graph_with_expanded(
+        &self,
+        expanded: &ExpandedSourceDocument,
+    ) -> Result<CanonicalLineGraph, Vec<Diagnostic>> {
+        lower_line_graph(self, Some(expanded))
     }
 }
 
@@ -37,7 +44,10 @@ struct LoweredLine {
     document_order: u64,
 }
 
-fn lower_line_graph(document: &Document) -> Result<CanonicalLineGraph, Vec<Diagnostic>> {
+fn lower_line_graph(
+    document: &Document,
+    expanded: Option<&ExpandedSourceDocument>,
+) -> Result<CanonicalLineGraph, Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
     let mut registry = StableIdRegistry::new();
     let mut ids_by_name = BTreeMap::<String, StableId>::new();
@@ -84,6 +94,47 @@ fn lower_line_graph(document: &Document) -> Result<CanonicalLineGraph, Vec<Diagn
         }
     }
 
+    let mut expanded_identities = Vec::new();
+    if let Some(expanded) = expanded {
+        match expanded.canonical_line_ids_with_spans() {
+            Ok(ids) => {
+                let mut ids = ids.into_iter();
+                for (document_order, entity) in (document.lines.len() as u64..).zip(
+                    expanded
+                        .collections()
+                        .flat_map(|collection| collection.entities())
+                        .filter(|entity| entity.entity_type() == &Type::Line),
+                ) {
+                    let (id, name_span) = ids
+                        .next()
+                        .expect("canonical Line IDs and expanded Lines have equal cardinality");
+                    let name = id.textual().as_str().to_owned();
+                    if let Some(previous_span) = first_spans.insert(name.clone(), name_span) {
+                        diagnostics.push(
+                            Diagnostic::new(
+                                DiagnosticCode::NAME_DUPLICATE,
+                                DiagnosticStage::Canonical,
+                                format!("Line ID {name} is declared more than once"),
+                                name_span,
+                            )
+                            .with_label(DiagnosticLabel::new(
+                                previous_span,
+                                "first Line declaration",
+                            )),
+                        );
+                    } else {
+                        ids_by_name.insert(name, id.clone());
+                        expanded_identities.push((document_order, entity, id, name_span));
+                    }
+                }
+                debug_assert!(ids.next().is_none());
+            }
+            Err((error, span)) => {
+                diagnostics.push(identity_diagnostic(error.to_string(), span));
+            }
+        }
+    }
+
     let mut lowered = Vec::new();
     for (document_order, declaration, id) in identities {
         if let Some(line) = lower_line(
@@ -93,6 +144,13 @@ fn lower_line_graph(document: &Document) -> Result<CanonicalLineGraph, Vec<Diagn
             document.definitions.as_ref(),
             &mut diagnostics,
         ) {
+            lowered.push(line);
+        }
+    }
+    for (document_order, entity, id, name_span) in expanded_identities {
+        if let Some(line) =
+            lower_expanded_line(entity, id, document_order, name_span, &mut diagnostics)
+        {
             lowered.push(line);
         }
     }
@@ -160,6 +218,56 @@ fn lower_line_graph(document: &Document) -> Result<CanonicalLineGraph, Vec<Diagn
         sort_diagnostics(&mut diagnostics);
         Err(diagnostics)
     }
+}
+
+fn lower_expanded_line(
+    entity: &ExpandedEntity,
+    id: StableId,
+    document_order: u64,
+    name_span: SourceSpan,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<LoweredLine> {
+    let mut field_spans = BTreeMap::new();
+    let z_order = entity.field("zOrder").map_or(TypedValue::Int(0), |field| {
+        field_spans.insert("zOrder".to_owned(), field.span());
+        field.value().clone()
+    });
+    let base = match lower_base(
+        vec2_length(0.0, 0.0),
+        TypedValue::Angle(0.0),
+        vec2_float(1.0, 1.0),
+        TypedValue::Float(1.0),
+        vec2_length(0.0, 0.0),
+        vec2_float(0.5, 0.5),
+        TypedValue::Length(120.0),
+        TypedValue::Time(0.0),
+        TypedValue::Float(0.0),
+        TypedValue::Bool(false),
+        z_order,
+        &field_spans,
+        entity.span(),
+    ) {
+        Ok(base) => base,
+        Err((code, message, span)) => {
+            diagnostics.push(Diagnostic::new(
+                code,
+                DiagnosticStage::Canonical,
+                message,
+                span,
+            ));
+            return None;
+        }
+    };
+
+    Some(LoweredLine {
+        id,
+        name_span,
+        parent_name: None,
+        base,
+        inherit: CanonicalLineInherit::default(),
+        scroll_tempo: CanonicalScrollTempo::Global,
+        document_order,
+    })
 }
 
 fn lower_line(

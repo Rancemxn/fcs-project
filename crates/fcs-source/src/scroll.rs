@@ -12,6 +12,14 @@ impl Document {
         time_map: &ChartTimeMap,
     ) -> Result<CanonicalScrollSet, Vec<Diagnostic>> {
         let graph = self.canonical_line_graph()?;
+        self.canonical_scroll_set_for_graph(time_map, &graph)
+    }
+
+    pub(crate) fn canonical_scroll_set_for_graph(
+        &self,
+        time_map: &ChartTimeMap,
+        graph: &fcs_model::CanonicalLineGraph,
+    ) -> Result<CanonicalScrollSet, Vec<Diagnostic>> {
         let lines = graph
             .lines()
             .map(|line| {
