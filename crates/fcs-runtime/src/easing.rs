@@ -156,7 +156,7 @@ impl EasingId {
             Self::EaseOutElastic => ease_out(Family::Elastic, input),
             Self::EaseInOutElastic => ease_in_out(Family::Elastic, input),
             Self::EaseInBounce => ease_in(Family::Bounce, input),
-            Self::EaseOutBounce => ease_out(Family::Bounce, input),
+            Self::EaseOutBounce => out_bounce(input),
             Self::EaseInOutBounce => ease_in_out(Family::Bounce, input),
         };
 
@@ -404,6 +404,14 @@ mod tests {
                 easing.name()
             );
         }
+    }
+
+    #[test]
+    fn ease_out_bounce_uses_normative_direct_operation_order() {
+        assert_eq!(
+            EasingId::EaseOutBounce.evaluate(0.1).unwrap().to_bits(),
+            0x3fb3_5c28_f5c2_8f5d
+        );
     }
 
     #[test]
