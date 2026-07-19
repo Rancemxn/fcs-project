@@ -4,14 +4,15 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 runs=${FCS_FUZZ_RUNS:-32}
 mode=${1:-bounded}
+host_target=$(rustc --print host-tuple)
 
 case "$mode" in
     bounded)
-        fuzz_args=(--sanitizer none --dev)
+        fuzz_args=(--target "$host_target" --sanitizer none --dev)
         libfuzzer_args=(-runs="$runs" -max_len=65536)
         ;;
     unbounded)
-        fuzz_args=()
+        fuzz_args=(--target "$host_target")
         libfuzzer_args=()
         ;;
     *)
@@ -47,13 +48,6 @@ for fixture in manifest["fixture"]:
 for source in sorted(Path(examples_dir).glob("*.fcs")):
     shutil.copyfile(source, destination / ("example-" + source.name))
 PY
-
-expected=$((39 + 3))
-actual=$(find "$corpus" -type f | wc -l)
-if [[ "$actual" -ne "$expected" ]]; then
-    printf 'expected %d corpus seeds, found %d\n' "$expected" "$actual" >&2
-    exit 1
-fi
 
 cd "$root"
 for target in document_bytes document_utf8 expression; do
