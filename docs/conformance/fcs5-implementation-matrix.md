@@ -102,6 +102,23 @@ lowering。
 | `fcs-conversion.md` 全部 | Parser/profile/Repair 分层、PGR/RPE/PEC conversion 与 report | manifest integrity API（test only） | `tests/conformance_manifest.rs`，未来 `fcs-converter` 依赖 `fcs-model` | 12-profile/7-dialect/56-rule/32-category registry、38 exact mapping 与 10 selection vectors（manifest only） | 5 invalid mapping、ambiguity/target-profile vectors（manifest only） | blocked-by-I6 | I5/I6/I8 | Registry/path/hash/cross-reference 已验证；活动 workspace 无 source parser、selector、converter、canonical golden 或 target reparse，旧 converter/IR 只在归档分支且不作为 canonical model |
 | `fcs-render.md` 全部 | Render source/canonical/section/raster/resource binding | test-only RenderSection writer/independent loader/restricted asset decoder；无产品 API | `tests/fcbc_render_section.rs`, `tests/support/fcbc_render_reference_{writer,loader,assets}.rs`；未来 `fcs-source` envelope 与 `fcs-render` | self-contained generated Render FCBC、PNG/WebP/TTF byte regeneration、decode/shaping、Core envelope（test only）；source/semantic/raster fixture仍为 manifest binding | glyph 0/numGlyphs/faceIndex、Node kind、attachment/follow-hidden CRC-aware mutation；source invalid fixtures仍为 manifest binding | blocked-by-I9 | I1/I9 | 当前 manifest 的 `binary_fixture` 为 0，不冒充缺失的 static golden/semantic/raster/mutation corpus；无 Render source parser、canonical scene、semantic evaluator、reference rasterizer或产品 codec。`image`/`serde_json` 仅为 pre-stage dev-dependency 例外，产品 ownership 不变；完整 artifact 与独立复审仍由 I9 交付 |
 
+## I4.4 Scroll composition delta
+
+The normative closure unit binds the following candidate surface before the
+product evaluator is implemented:
+
+- FCS §§10.1–10.4, 11.4, and 12.4 distinguish Line-local q/floor/velocity from
+  inherited effective values and fix the actual-parent-only ancestry rule.
+- FCBC §§11 and 15 keep Distance records Line-local and apply `inheritFlags`
+  bit4 only at query time; no second absolute-floor descriptor or parent cache
+  is permitted.
+- `source.valid.scroll-inheritance`, `expected/scroll-inheritance.json`, and
+  `conformance_manifest::i4_scroll_inheritance_fixture_binds_literal_composition_vectors`
+  bind 22 literal queries, Note distance, signed zero, and isolated `track.gap`.
+- This is static/evaluate-stage evidence only. Product descriptor lowering,
+  runtime integration, independent reference cross-check, and I4 completion
+  remain open under I4.4–I4.8.
+
 ## I0 更新规则
 
 - I0 每完成一个 task，更新受影响行的状态、路径和测试证据；

@@ -52,6 +52,14 @@ expect = "success"
 clauses = ["8.2", "8.3", "10.1", "10.2", "12.4"]
 
 [[fixture]]
+id = "source.valid.scroll-inheritance"
+path = "source/valid/scroll-inheritance.fcs"
+stage = "evaluate"
+expect = "success"
+expected = "expected/scroll-inheritance.json"
+clauses = ["8.3", "10.1", "10.2", "10.3", "10.4", "11.4", "12.4", "14.1", "18"]
+
+[[fixture]]
 id = "source.valid.runtime-choose"
 path = "source/valid/runtime-choose.fcs"
 stage = "canonical"

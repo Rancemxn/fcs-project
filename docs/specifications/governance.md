@@ -79,6 +79,26 @@ baseline 绑定的条款、fixture、expected、稳定 category 或前置公开 
 实现，不得以已有实现保住错误 baseline。完整规则见
 `docs/decisions/0010-stage-scoped-implementation-baselines.md`。
 
+I4.4 scroll-composition clarification reopens the affected Core/FCBC/Execution
+ABI candidate closure without changing the candidate SemVer values or wire
+layout. The active FCS corpus is 42 entries after adding the literal
+`source.valid.scroll-inheritance` evaluate-stage vector. Its fixed semantics
+are Line-local q/tempo/speed/origin/floor plus actual-parent-only effective
+floor/velocity composition, local reverse validation, direct seek, signed-zero
+and ancestry-scoped error isolation; product evaluator ownership remains
+I4.4, with DAG/Piecewise/integration and independent reference work still
+open. The implementation owner is the I4.4 Scroll evaluator; the affected
+candidate file hashes and exact merged SHA must be recorded in the delivery
+review before the stage baseline can be re-established. The candidate snapshot
+hashes are `fcs.md` `a19b4757fcee3e86ec647cb1248148a525824a012bf2f0cf721f54e38b712540`,
+`fcbc.md` `d3687c8e71c098c0f8334f9b5abd997c5dacf2a4d844a9d70b0f35696d4c293f`,
+the FCS manifest `91f6f544c186db31595ed27eebb2c0ed445a2c7ec5614658cda7a294f1a5806a`,
+the source vector `96d13fdf6aedb26c60ffd21ff0ff9410076103c4732bd897661fe0b883ad7838`,
+the expected vector `c940ecacc84a9b2629a28dccdd6a0f0c7193e2f088f6c616772010e65aded87d`,
+and the static binding `c536db2ebdc9d6b71971bd8f04287d6f4c6242b682c2fb3c722e55409fb57a73`.
+The exact merged SHA and same-head gate URL remain delivery evidence, not
+normative semantics.
+
 I10 conformance release candidate 仍要求五个版本域全部 Frozen、最终联合独立复审无未关闭
 Critical/Important finding，以及完整 source/canonical/runtime/FCBC/conversion/render/CLI executable
 conformance 通过。局部 baseline 不能替代该门槛。
