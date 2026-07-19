@@ -4,17 +4,21 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use fcs_model::{
-    AudioOffset, Beat as CanonicalBeat, CanonicalArtwork, CanonicalColor, CanonicalContributor,
-    CanonicalCredit, CanonicalMetadata, CanonicalObject, CanonicalObjectEntry, CanonicalPreview,
-    CanonicalResource, CanonicalResourceKind, CanonicalSync, CanonicalValue, CanonicalValueType,
-    DeclaredSha256,
+    AudioOffset, Beat as CanonicalBeat, CanonicalArtwork, CanonicalChart, CanonicalChartError,
+    CanonicalColor, CanonicalContributor, CanonicalCredit, CanonicalMetadata, CanonicalObject,
+    CanonicalObjectEntry, CanonicalPreview, CanonicalProfile, CanonicalProfileFeature,
+    CanonicalRequiredExtension, CanonicalResource, CanonicalResourceKind, CanonicalSourceVersion,
+    CanonicalSync, CanonicalValue, CanonicalValueType, DeclaredSha256,
 };
 
 use crate::ast::{
-    Definition, Document, FieldPath, MetaBlock, ResourceKind, SchemaField, SchemaValue,
-    SourceExpression, SourceLiteral, SourceSpan, SyncBlock, TypedValue,
+    Definition, Document, DocumentProfile, ExtensionRequirement, FieldPath, MetaBlock,
+    ProfileFeature, ResourceKind, SchemaField, SchemaValue, SourceExpression, SourceLiteral,
+    SourceSpan, SyncBlock, TypedValue,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLabel, DiagnosticStage};
+use crate::elaborator::{CompileTimeLimits, elaborate};
+use crate::schema::phase2_schema;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReferenceKind {
@@ -59,6 +63,57 @@ struct RawObjectEntry {
 }
 
 impl Document {
+    /// Compiles the parsed document into the immutable chart semantic product.
+    ///
+    /// Elaboration happens inside this boundary, so a caller cannot combine a
+    /// parsed envelope with an expanded result from another document.
+    pub fn canonical_chart(
+        &self,
+        limits: CompileTimeLimits,
+    ) -> Result<CanonicalChart, Vec<Diagnostic>> {
+        let expanded = elaborate(self, phase2_schema(), limits)?;
+        let metadata = self.canonical_metadata()?;
+        let time_map = expanded.canonical_time_map().map_err(|error| {
+            vec![canonical_diagnostic(
+                DiagnosticCode::TEMPO_INVALID,
+                error.to_string(),
+                self.format.span,
+            )]
+        })?;
+        let lines = self.canonical_line_graph()?;
+        let notes = expanded.canonical_notes(&time_map, &lines)?;
+        let tracks = expanded.canonical_tracks(&time_map, &lines)?;
+        let scroll = self.canonical_scroll_set(&time_map)?;
+        let source_version = CanonicalSourceVersion::new(self.source_version.to_string())
+            .map_err(|error| chart_diagnostic(error, self.format.span))?;
+        let required_extensions = self
+            .extensions
+            .iter()
+            .flat_map(|block| &block.declarations)
+            .filter(|declaration| declaration.requirement == ExtensionRequirement::Required)
+            .map(|declaration| {
+                CanonicalRequiredExtension::new(
+                    declaration.header.namespace.clone(),
+                    declaration.header.version.to_string(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| chart_diagnostic(error, self.format.span))?;
+
+        Ok(CanonicalChart::new(
+            source_version,
+            canonical_profile(self.profile),
+            canonical_features(self),
+            time_map,
+            metadata,
+            lines,
+            notes,
+            tracks,
+            scroll,
+            required_extensions,
+        ))
+    }
+
     /// Lowers the source metadata surface into an immutable canonical graph.
     ///
     /// This operation validates logical workspace member paths but never opens
@@ -67,6 +122,37 @@ impl Document {
     pub fn canonical_metadata(&self) -> Result<CanonicalMetadata, Vec<Diagnostic>> {
         lower_document(self)
     }
+}
+
+fn canonical_profile(profile: DocumentProfile) -> CanonicalProfile {
+    match profile {
+        DocumentProfile::Fragment => CanonicalProfile::Fragment,
+        DocumentProfile::Chart => CanonicalProfile::Chart,
+        DocumentProfile::Playable => CanonicalProfile::Playable,
+        DocumentProfile::Renderable => CanonicalProfile::Renderable,
+        DocumentProfile::Publishable => CanonicalProfile::Publishable,
+    }
+}
+
+fn canonical_features(document: &Document) -> Vec<CanonicalProfileFeature> {
+    document
+        .format
+        .features
+        .iter()
+        .flat_map(|features| features.features.iter())
+        .map(|feature| match feature.value {
+            ProfileFeature::Playable => CanonicalProfileFeature::Playable,
+            ProfileFeature::Renderable => CanonicalProfileFeature::Renderable,
+        })
+        .collect()
+}
+
+fn chart_diagnostic(error: CanonicalChartError, span: SourceSpan) -> Diagnostic {
+    canonical_diagnostic(
+        DiagnosticCode::TYPE_INVALID_OPERATION,
+        error.to_string(),
+        span,
+    )
 }
 
 fn lower_document(document: &Document) -> Result<CanonicalMetadata, Vec<Diagnostic>> {
