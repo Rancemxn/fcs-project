@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 mod line;
 mod metadata;
 mod note;
+mod scroll;
 mod time;
 mod track;
 
@@ -31,6 +32,11 @@ pub use note::{
     CanonicalJudgeShape, CanonicalNote, CanonicalNoteError, CanonicalNoteGameplay,
     CanonicalNoteKind, CanonicalNotePresentation, CanonicalNoteScorePolicy, CanonicalNoteSet,
     CanonicalNoteSide, CanonicalNoteSoundPolicy,
+};
+pub use scroll::{
+    CanonicalScrollCoordinate, CanonicalScrollLine, CanonicalScrollSet,
+    CanonicalScrollTempoPoint as CanonicalChartScrollTempoPoint, ScrollCoordinateError,
+    coordinate_for_tempo, global_coordinate,
 };
 pub use time::{AudioOffset, Beat, CanonicalTime, ChartTimeMap, TempoError, TempoPoint};
 pub use track::{

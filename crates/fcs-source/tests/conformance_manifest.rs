@@ -707,6 +707,23 @@ fn canonical_track_fixture(
     expanded.canonical_tracks(&time_map, &lines)
 }
 
+fn canonical_scroll_fixture(
+    fcs_base: &Path,
+    fixture: &FixtureEntry,
+) -> Result<fcs_model::CanonicalScrollSet, Vec<Diagnostic>> {
+    let source_path = fcs_base.join(&fixture.path);
+    let source = fs::read_to_string(&source_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", source_path.display()));
+    let document = parse_document(&source)
+        .into_result()
+        .unwrap_or_else(|errors| panic!("{} must parse: {errors:?}", fixture.id));
+    let expanded = elaborate(&document, phase2_schema(), fixture_limits(fixture))?;
+    let time_map = expanded
+        .canonical_time_map()
+        .unwrap_or_else(|error| panic!("{} tempo map failed: {error}", fixture.id));
+    document.canonical_scroll_set(&time_map)
+}
+
 fn expected_json(fcs_base: &Path, fixture: &FixtureEntry) -> serde_json::Value {
     let expected = fixture
         .expected
@@ -1041,6 +1058,19 @@ fn i3_track_fixtures_execute_at_the_canonical_boundary() {
             .as_deref()
             .expect("invalid Track fixture binds a diagnostic")
     );
+}
+
+#[test]
+fn i3_scroll_fixture_executes_at_the_canonical_boundary() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+    let fixture = fixture(&fcs, "source.valid.time-scroll-note");
+    assert_eq!(fixture.stage, FixtureStage::Evaluate);
+    assert_eq!(fixture.expect, FixtureExpectation::Success);
+    let scroll =
+        canonical_scroll_fixture(&fcs_base, fixture).expect("valid scroll fixture should lower");
+    assert_eq!(scroll.lines().len(), 1);
+    assert_eq!(scroll.lines()[0].coordinate().coordinate(1.0), Ok(2.0));
 }
 
 #[test]
