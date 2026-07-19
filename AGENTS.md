@@ -137,9 +137,9 @@
 - `Swatinem/rust-cache` 的 hit/miss 只影响性能，不改变命令、结论或验收。瞬时基础设施失败可以在同一 SHA
   重跑；代码、测试或配置失败必须修正后推送新 SHA，不能回退到本地编译。新 SHA 导致旧 run 被取消时，
   旧 run 只是过期证据，不是当前 SHA 的 gate 失败。
-- 只修改 Markdown、AGENTS、Issue/PR 模板、评论、label 或其他不参与构建的元数据时，Rust full gate 为
-  non-applicable；使用 diff、链接、Markdown/YAML/JSON schema 和相关 CLI smoke check。自动触发的 Action
-  run 不改变该分类。
+- 只修改 Markdown、AGENTS、Issue/PR 模板、评论、label 或其他不参与构建且不改变 gate 执行逻辑的元数据时，Rust
+  full gate 为 non-applicable；使用 diff、链接、Markdown/YAML/JSON/schema 和相关 CLI smoke check。`.github/workflows/full-gate.yml`
+  的实现变化属于适用 gate，自动触发的 Action run 不改变该分类。
 - 修改 source parser 或 elaborator 时先补充失败测试；red 和 green 都由固定 SHA 的 Action run 证明。
   converter、VM 和旧 bytecode 已不在活动
   workspace。未来跨格式语义变化必须针对 canonical model、ConversionReport、

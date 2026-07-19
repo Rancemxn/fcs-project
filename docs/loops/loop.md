@@ -141,7 +141,7 @@
   `Advisories`，并与 reviewer 的 `## Audit result` 明确区分。
 - `pass` 只表示当前固定快照没有未解决的 Critical/Important finding，适用 gate 已实际通过，且没有越权语义选择；
   通过后主会话可以 Ready、merge 并继续 frontier，不等待 reviewer。
-- Rust/build/dependency/test/executable-fixture 变更的 Full-gate evidence 必须包含 workflow/run URL、run ID、event、
+- Rust/build/dependency/test/executable-fixture 或 `.github/workflows/full-gate.yml` 实现变更的 Full-gate evidence 必须包含 workflow/run URL、run ID、event、
   精确 `headSha` 和 `success` conclusion。纯文档或非构建元数据写 `non-applicable` 及理由；缺失、运行中、失败、
   SHA 不匹配或 GitHub 不可确认时，verdict 只能是 `blocked` 或 `needs-info`。
 - 自审发现问题时，主会话必须在当前分支修复或路由 residual，追加 superseding Primary audit；不能把未解决 finding

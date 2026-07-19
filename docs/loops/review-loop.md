@@ -106,7 +106,8 @@
 
 1. **Bind:** 读取固定 Issue/PR/commit、head SHA、diff、规范/ADR/计划/fixture 路由和验收命令；记录
    不在 scope 内的内容。
-2. **Reproduce:** 适用时先复用目标同 SHA 的成功 full-gate evidence；Rust gate non-applicable 时核对理由，并在
+2. **Reproduce:** 适用时先复用目标同 SHA 的成功 full-gate evidence；只有纯文档或不改变执行逻辑的 workflow-policy
+   metadata 才可标记 Rust gate non-applicable，其他 workflow 实现变化必须核对适用 gate，并在
    隔离 worktree 做不产生构建产物的静态检查。不为“独立”重复同一 gate。若竞争性假设必须靠执行区分，先创建记录 unknown root cause/evidence gap 的 finding，
    在其独立 branch 提交最小诊断或回归测试，push 后对解析为该 SHA 的 ref 运行 `workflow_dispatch` full gate，
    并核对 run `headSha`。预期失败的 run 是 red evidence，不是 pass。

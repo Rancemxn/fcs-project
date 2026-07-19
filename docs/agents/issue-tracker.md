@@ -117,10 +117,10 @@ It also contains one substantive initial `Progress` checkpoint. Group the initia
 
 After the PR is created, every later meaningful checkpoint is a new PR comment. Post one after each material push, when blockers change, and before marking the PR ready so the latest message matches the current diff and commit set. Do not repeatedly edit the PR body or an earlier comment. Correct stale information with a new explicitly superseding comment. A single-checkpoint PR still needs one substantive initial message; it does not need one message per commit.
 
-Select validation according to `AGENTS.md`. Local work is limited to non-building static checks. A
-documentation/workflow-only PR has no required Rust full gate; a Rust/build/dependency/test/executable-fixture change
-must have a successful `.github/workflows/full-gate.yml` run whose `headSha` exactly matches the audited PR head before
-the PR is ready or merged. A cache miss is not a gate failure, and a local Cargo result cannot replace the Action run.
+Select validation according to `AGENTS.md`. Local work is limited to non-building static checks. A documentation-only or
+workflow-policy-documentation-only PR has no required Rust full gate; a `.github/workflows/full-gate.yml` implementation,
+Rust/build/dependency/test/executable-fixture change must have a successful same-SHA GitHub full-gate run before the PR is
+ready or merged. A cache miss is not a gate failure, and a local Cargo result cannot replace the Action run.
 
 Useful commands:
 
