@@ -10,6 +10,7 @@ mod eval;
 mod generator;
 mod resolve;
 mod scope;
+mod tracks;
 
 use crate::ast::{
     Definition, Document, ExpandedSourceDocument, ExtensionRequirement, SourceSpan, Type,
@@ -314,7 +315,8 @@ fn elaborate_inner(
         cycle::reject_cycles(definitions)?;
         eval::check_and_evaluate_with_context(definitions, schema, &context)?;
     }
-    let collections = entities::expand_collections(document, schema, context)?;
+    let collections = entities::expand_collections(document, schema, context.clone())?;
+    let tracks = tracks::expand_tracks(document, schema, context)?;
     let resource_kinds = document
         .resources
         .iter()
@@ -328,11 +330,12 @@ fn elaborate_inner(
         .filter(|extension| extension.requirement == ExtensionRequirement::Required)
         .map(|extension| extension.header.namespace.clone())
         .collect::<BTreeSet<_>>();
-    ExpandedSourceDocument::try_from_collections_with_declarations(
+    ExpandedSourceDocument::try_from_collections_with_declarations_and_tracks(
         document.source_version.clone(),
         document.profile,
         document.tempo_map.clone(),
         collections,
+        tracks,
         resource_kinds,
         required_extensions,
     )

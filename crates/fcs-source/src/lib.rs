@@ -6,6 +6,7 @@ mod line;
 mod note;
 pub mod parser;
 pub mod schema;
+mod track;
 pub mod version;
 
 pub use diagnostic::Diagnostic;

@@ -19,6 +19,9 @@ pub enum ExpandedInvariantViolation {
     EmptyFieldPath,
     FieldPathKeyMismatch,
     NonConcreteFieldValue,
+    EmptyTrackName,
+    EmptyTrackTarget,
+    NonConcreteTrackValue,
 }
 
 impl ExpandedInvariantViolation {
@@ -30,6 +33,9 @@ impl ExpandedInvariantViolation {
             Self::EmptyFieldPath => "expanded field path must not be empty",
             Self::FieldPathKeyMismatch => "expanded field map key must match its field path",
             Self::NonConcreteFieldValue => "expanded output contains a non-concrete field value",
+            Self::EmptyTrackName => "expanded Track name must not be empty",
+            Self::EmptyTrackTarget => "expanded Track target must not be empty",
+            Self::NonConcreteTrackValue => "expanded output contains a non-concrete Track value",
         }
     }
 }
@@ -39,6 +45,189 @@ impl ExpandedInvariantViolation {
 pub struct ExpandedCollection {
     name: String,
     entities: Vec<ExpandedEntity>,
+}
+
+/// A concrete Track segment produced after compile-time expansion.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExpandedTrackSegment {
+    start: TypedValue,
+    end: TypedValue,
+    start_value: TypedValue,
+    end_value: TypedValue,
+    interpolation: ExpandedTrackInterpolation,
+    span: SourceSpan,
+}
+
+impl ExpandedTrackSegment {
+    pub(crate) fn new(
+        start: TypedValue,
+        end: TypedValue,
+        start_value: TypedValue,
+        end_value: TypedValue,
+        interpolation: ExpandedTrackInterpolation,
+        span: SourceSpan,
+    ) -> Self {
+        Self {
+            start,
+            end,
+            start_value,
+            end_value,
+            interpolation,
+            span,
+        }
+    }
+
+    pub fn start(&self) -> &TypedValue {
+        &self.start
+    }
+
+    pub fn end(&self) -> &TypedValue {
+        &self.end
+    }
+
+    pub fn start_value(&self) -> &TypedValue {
+        &self.start_value
+    }
+
+    pub fn end_value(&self) -> &TypedValue {
+        &self.end_value
+    }
+
+    pub fn interpolation(&self) -> &ExpandedTrackInterpolation {
+        &self.interpolation
+    }
+
+    pub const fn span(&self) -> SourceSpan {
+        self.span
+    }
+}
+
+/// A concrete instantaneous Track point produced after compile-time expansion.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExpandedTrackPoint {
+    time: TypedValue,
+    value: TypedValue,
+    span: SourceSpan,
+}
+
+impl ExpandedTrackPoint {
+    pub(crate) fn new(time: TypedValue, value: TypedValue, span: SourceSpan) -> Self {
+        Self { time, value, span }
+    }
+
+    pub fn time(&self) -> &TypedValue {
+        &self.time
+    }
+
+    pub fn value(&self) -> &TypedValue {
+        &self.value
+    }
+
+    pub const fn span(&self) -> SourceSpan {
+        self.span
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExpandedTrackPiece {
+    Segment(ExpandedTrackSegment),
+    Point(ExpandedTrackPoint),
+}
+
+impl ExpandedTrackPiece {
+    pub const fn span(&self) -> SourceSpan {
+        match self {
+            Self::Segment(segment) => segment.span,
+            Self::Point(point) => point.span,
+        }
+    }
+}
+
+/// Interpolation syntax after expression evaluation, before canonical validation.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExpandedTrackInterpolation {
+    Value(TypedValue),
+    CubicBezier([TypedValue; 4]),
+}
+
+/// A concrete source Track retained outside the parser AST.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExpandedTrack {
+    owner: String,
+    name: String,
+    name_span: SourceSpan,
+    target: String,
+    target_span: SourceSpan,
+    value_type: Type,
+    settings: BTreeMap<String, ExpandedField>,
+    pieces: Vec<ExpandedTrackPiece>,
+    span: SourceSpan,
+}
+
+impl ExpandedTrack {
+    pub(crate) fn new(
+        owner: String,
+        name: String,
+        name_span: SourceSpan,
+        target: String,
+        target_span: SourceSpan,
+        value_type: Type,
+        settings: BTreeMap<String, ExpandedField>,
+        pieces: Vec<ExpandedTrackPiece>,
+        span: SourceSpan,
+    ) -> Self {
+        Self {
+            owner,
+            name,
+            name_span,
+            target,
+            target_span,
+            value_type,
+            settings,
+            pieces,
+            span,
+        }
+    }
+
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn name_span(&self) -> SourceSpan {
+        self.name_span
+    }
+
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+
+    pub const fn target_span(&self) -> SourceSpan {
+        self.target_span
+    }
+
+    pub fn value_type(&self) -> &Type {
+        &self.value_type
+    }
+
+    pub fn setting(&self, name: &str) -> Option<&ExpandedField> {
+        self.settings.get(name)
+    }
+
+    pub fn settings(&self) -> impl Iterator<Item = &ExpandedField> {
+        self.settings.values()
+    }
+
+    pub fn pieces(&self) -> &[ExpandedTrackPiece] {
+        &self.pieces
+    }
+
+    pub const fn span(&self) -> SourceSpan {
+        self.span
+    }
 }
 
 impl ExpandedCollection {
@@ -62,6 +251,7 @@ pub struct ExpandedSourceDocument {
     profile: DocumentProfile,
     tempo_map: Option<TempoMap>,
     collections: Vec<ExpandedCollection>,
+    tracks: Vec<ExpandedTrack>,
     resource_kinds: BTreeMap<String, ResourceKind>,
     required_extensions: std::collections::BTreeSet<String>,
 }
@@ -110,6 +300,10 @@ impl ExpandedSourceDocument {
 
     pub fn collections(&self) -> impl Iterator<Item = &ExpandedCollection> {
         self.collections.iter()
+    }
+
+    pub fn tracks(&self) -> &[ExpandedTrack] {
+        &self.tracks
     }
 
     pub(crate) fn resource_kind(&self, name: &str) -> Option<ResourceKind> {
@@ -281,11 +475,32 @@ impl ExpandedSourceDocument {
         resource_kinds: BTreeMap<String, ResourceKind>,
         required_extensions: std::collections::BTreeSet<String>,
     ) -> Result<Self, ExpandedInvariantViolation> {
+        Self::try_from_collections_with_declarations_and_tracks(
+            source_version,
+            profile,
+            tempo_map,
+            collections,
+            Vec::new(),
+            resource_kinds,
+            required_extensions,
+        )
+    }
+
+    pub(crate) fn try_from_collections_with_declarations_and_tracks(
+        source_version: Version,
+        profile: DocumentProfile,
+        tempo_map: Option<TempoMap>,
+        collections: Vec<ExpandedCollection>,
+        tracks: Vec<ExpandedTrack>,
+        resource_kinds: BTreeMap<String, ResourceKind>,
+        required_extensions: std::collections::BTreeSet<String>,
+    ) -> Result<Self, ExpandedInvariantViolation> {
         let document = Self {
             source_version,
             profile,
             tempo_map,
             collections,
+            tracks,
             resource_kinds,
             required_extensions,
         };
@@ -305,6 +520,54 @@ impl ExpandedSourceDocument {
             }
             for entity in &collection.entities {
                 entity.validate_invariants()?;
+            }
+        }
+        for track in &self.tracks {
+            if track.name.is_empty() {
+                return Err(ExpandedInvariantViolation::EmptyTrackName);
+            }
+            if track.target.is_empty() {
+                return Err(ExpandedInvariantViolation::EmptyTrackTarget);
+            }
+            if track
+                .settings
+                .iter()
+                .any(|(name, field)| name != field.path())
+            {
+                return Err(ExpandedInvariantViolation::FieldPathKeyMismatch);
+            }
+            if track
+                .settings
+                .values()
+                .any(|field| !field.value.is_concrete())
+            {
+                return Err(ExpandedInvariantViolation::NonConcreteTrackValue);
+            }
+            for piece in &track.pieces {
+                let concrete = match piece {
+                    ExpandedTrackPiece::Segment(segment) => {
+                        [
+                            &segment.start,
+                            &segment.end,
+                            &segment.start_value,
+                            &segment.end_value,
+                        ]
+                        .into_iter()
+                        .all(|value| value.is_concrete())
+                            && match &segment.interpolation {
+                                ExpandedTrackInterpolation::Value(value) => value.is_concrete(),
+                                ExpandedTrackInterpolation::CubicBezier(values) => {
+                                    values.iter().all(TypedValue::is_concrete)
+                                }
+                            }
+                    }
+                    ExpandedTrackPiece::Point(point) => {
+                        point.time.is_concrete() && point.value.is_concrete()
+                    }
+                };
+                if !concrete {
+                    return Err(ExpandedInvariantViolation::NonConcreteTrackValue);
+                }
             }
         }
         Ok(())

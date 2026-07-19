@@ -12,9 +12,10 @@ pub use color::Color;
 pub use entity::{
     CanonicalNoteTime, CanonicalNoteTimeError, CollectionBlock, CollectionItem, CollectionsBlock,
     EntityConstructor, EntityExpression, EntityField, ExpandedCollection, ExpandedEntity,
-    ExpandedField, ExpandedInvariantViolation, ExpandedSourceDocument, FieldPath, Generator,
-    GeneratorItem, GeneratorOwner, NoteVariant, SchemaField, SchemaValue, SourceEntityConstructor,
-    SourceEntityConstructorKind, SourceRange, WithExpression,
+    ExpandedField, ExpandedInvariantViolation, ExpandedSourceDocument, ExpandedTrack,
+    ExpandedTrackInterpolation, ExpandedTrackPiece, ExpandedTrackPoint, ExpandedTrackSegment,
+    FieldPath, Generator, GeneratorItem, GeneratorOwner, NoteVariant, SchemaField, SchemaValue,
+    SourceEntityConstructor, SourceEntityConstructorKind, SourceRange, WithExpression,
 };
 pub use extension::{
     ExtensionDeclaration, ExtensionHeader, ExtensionRequirement, ExtensionsBlock, OrderedObject,
@@ -35,7 +36,6 @@ pub use types::{
     SourceObjectEntry, SourceSpan, SourceType, SourceTypeKind, Type, TypedExpression,
     TypedExpressionKind, TypedValue, UnaryOperator,
 };
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct TempoMap {
     pub points: Vec<TempoPoint>,

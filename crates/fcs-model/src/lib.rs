@@ -13,6 +13,7 @@ mod line;
 mod metadata;
 mod note;
 mod time;
+mod track;
 
 pub use line::{
     CanonicalLine, CanonicalLineBase, CanonicalLineGraph, CanonicalLineInherit,
@@ -32,6 +33,11 @@ pub use note::{
     CanonicalNoteSide, CanonicalNoteSoundPolicy,
 };
 pub use time::{AudioOffset, Beat, CanonicalTime, ChartTimeMap, TempoError, TempoPoint};
+pub use track::{
+    CanonicalTrack, CanonicalTrackBlend, CanonicalTrackError, CanonicalTrackFill,
+    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackPoint, CanonicalTrackSegment,
+    CanonicalTrackSet, CanonicalTrackTarget, CanonicalTrackValue,
+};
 
 /// The textual namespace reserved for compiler-generated identities.
 pub const GENERATED_PREFIX: &str = "generated/";

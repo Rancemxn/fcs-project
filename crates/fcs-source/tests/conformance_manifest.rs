@@ -687,6 +687,26 @@ fn elaborate_fixture(
     elaborate(&document, phase2_schema(), fixture_limits(fixture))
 }
 
+fn canonical_track_fixture(
+    fcs_base: &Path,
+    fixture: &FixtureEntry,
+) -> Result<fcs_model::CanonicalTrackSet, Vec<Diagnostic>> {
+    let source_path = fcs_base.join(&fixture.path);
+    let source = fs::read_to_string(&source_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", source_path.display()));
+    let document = parse_document(&source)
+        .into_result()
+        .unwrap_or_else(|errors| panic!("{} must parse: {errors:?}", fixture.id));
+    let lines = document
+        .canonical_line_graph()
+        .unwrap_or_else(|errors| panic!("{} Line graph failed: {errors:?}", fixture.id));
+    let expanded = elaborate(&document, phase2_schema(), fixture_limits(fixture))?;
+    let time_map = expanded
+        .canonical_time_map()
+        .unwrap_or_else(|error| panic!("{} tempo map failed: {error}", fixture.id));
+    expanded.canonical_tracks(&time_map, &lines)
+}
+
 fn expected_json(fcs_base: &Path, fixture: &FixtureEntry) -> serde_json::Value {
     let expected = fixture
         .expected
@@ -992,6 +1012,35 @@ fn i2_elaborate_error_fixtures_keep_static_diagnostics_and_budget_trace() {
             }
         }
     }
+}
+
+#[test]
+fn i3_track_fixtures_execute_at_the_canonical_boundary() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+    let valid = fixture(&fcs, "source.valid.track-boundaries");
+    assert_eq!(valid.stage, FixtureStage::Canonical);
+    assert_eq!(valid.expect, FixtureExpectation::Success);
+    assert_eq!(
+        canonical_track_fixture(&fcs_base, valid)
+            .expect("valid Track fixture should lower")
+            .tracks()
+            .len(),
+        1
+    );
+
+    let invalid = fixture(&fcs, "source.invalid.track-overlap");
+    assert_eq!(invalid.stage, FixtureStage::Canonical);
+    assert_eq!(invalid.expect, FixtureExpectation::Error);
+    let errors = canonical_track_fixture(&fcs_base, invalid)
+        .expect_err("overlapping Track fixture should fail");
+    assert_eq!(
+        errors[0].code().as_str(),
+        invalid
+            .diagnostic
+            .as_deref()
+            .expect("invalid Track fixture binds a diagnostic")
+    );
 }
 
 #[test]
