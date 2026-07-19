@@ -84,28 +84,54 @@ tempoMap { 0beat -> 120bpm; }
 }
 
 #[test]
-fn canonical_chart_includes_lines_emitted_by_judgelines() {
+fn canonical_chart_includes_direct_template_and_generator_judgelines() {
     let chart = canonical(
         r#"#fcs 5.0.0
 format { profile: chart; }
 tempoMap { 0beat -> 120bpm; }
+definitions {
+    template Line makeJudge() {
+        return Line { id: "template"; };
+    }
+}
 collections {
-    judgelines { Line { id: "judge"; }; }
-    notes { tap { id: "tap"; line: @judge; gameplay.time: 1s; }; }
+    judgelines {
+        Line { id: "direct"; zOrder: 7; };
+        makeJudge();
+        generate i: int in 0..=0 step 1 {
+            emit Line { id: "generator"; };
+        }
+    }
+    notes {
+        tap { id: "direct-note"; line: @direct; gameplay.time: 1s; };
+        tap { id: "template-note"; line: @template; gameplay.time: 2s; };
+        tap { id: "generator-note"; line: @generator; gameplay.time: 3s; };
+    }
 }
 "#,
     );
 
-    assert_eq!(chart.lines().lines().count(), 1);
-    assert_eq!(chart.notes().notes().len(), 1);
+    assert_eq!(chart.lines().lines().count(), 3);
+    assert_eq!(chart.notes().notes().len(), 3);
+    assert_eq!(chart.scroll().lines().len(), 3);
+    let direct = chart
+        .lines()
+        .line_by_textual_id("direct")
+        .expect("direct emitted Line should enter the canonical graph");
+    assert_eq!(direct.base().z_order(), 7);
+    assert_eq!(direct.base().position().x(), 0.0);
+    assert_eq!(direct.base().position().y(), 0.0);
+    assert!(direct.inherit().position());
+    assert!(!direct.inherit().scroll());
     assert_eq!(
         chart
             .lines()
-            .line_by_textual_id("judge")
-            .expect("emitted Line should enter the canonical graph")
+            .line_by_textual_id("template")
+            .expect("template-produced Line should enter the canonical graph")
             .id()
             .textual()
             .as_str(),
-        "judge"
+        "template"
     );
+    assert!(chart.lines().line_by_textual_id("generator").is_some());
 }
