@@ -93,6 +93,7 @@ fn lower_track(
     let extrapolate_before =
         fill_setting(track, "extrapolateBefore", fill_name(fill), diagnostics)?;
     let extrapolate_after = fill_setting(track, "extrapolateAfter", fill_name(fill), diagnostics)?;
+    let diagnostic_count = diagnostics.len();
     let mut pieces = Vec::new();
     for (document_order, piece) in track.pieces().iter().enumerate() {
         let lowered = match piece {
@@ -142,6 +143,9 @@ fn lower_track(
             }
         };
         pieces.push(lowered);
+    }
+    if diagnostics.len() != diagnostic_count {
+        return None;
     }
     match CanonicalTrack::new(
         owner,
