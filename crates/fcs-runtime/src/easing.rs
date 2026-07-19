@@ -156,7 +156,7 @@ impl EasingId {
             Self::EaseOutElastic => ease_out(Family::Elastic, input),
             Self::EaseInOutElastic => ease_in_out(Family::Elastic, input),
             Self::EaseInBounce => ease_in(Family::Bounce, input),
-            Self::EaseOutBounce => ease_out(Family::Bounce, input),
+            Self::EaseOutBounce => out_bounce(input),
             Self::EaseInOutBounce => ease_in_out(Family::Bounce, input),
         };
 
@@ -407,17 +407,28 @@ mod tests {
     }
 
     #[test]
+    fn ease_out_bounce_uses_normative_direct_operation_order() {
+        assert_eq!(
+            EasingId::EaseOutBounce.evaluate(0.1).unwrap().to_bits(),
+            0x3fb3_5c28_f5c2_8f5d
+        );
+    }
+
+    #[test]
     fn every_family_obeys_the_normative_out_and_in_out_transforms() {
         for family_start in (1..=28).step_by(3) {
             let ease_in = EasingId::try_from(family_start).unwrap();
             let ease_out = EasingId::try_from(family_start + 1).unwrap();
             let ease_in_out = EasingId::try_from(family_start + 2).unwrap();
             for input in [0.125, 0.25, 0.625, 0.875] {
-                let reflected = 1.0 - ease_in.evaluate(1.0 - input).unwrap();
-                assert_eq!(
-                    ease_out.evaluate(input).unwrap().to_bits(),
-                    reflected.to_bits()
-                );
+                // Bounce defines its out form directly; only its in-out form reflects ease-in.
+                if family_start != EasingId::EaseInBounce.abi_id() {
+                    let reflected = 1.0 - ease_in.evaluate(1.0 - input).unwrap();
+                    assert_eq!(
+                        ease_out.evaluate(input).unwrap().to_bits(),
+                        reflected.to_bits()
+                    );
+                }
 
                 let transformed = if input < 0.5 {
                     ease_in.evaluate(2.0 * input).unwrap() / 2.0
