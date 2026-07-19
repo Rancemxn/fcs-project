@@ -219,6 +219,13 @@ enum Family {
 }
 
 fn ease_in(family: Family, input: f64) -> f64 {
+    if input == 0.0 {
+        return 0.0;
+    }
+    if input == 1.0 {
+        return 1.0;
+    }
+
     match family {
         Family::Sine => 1.0 - math::cos((std::f64::consts::PI * input) / 2.0),
         Family::Quad => input * input,
@@ -422,6 +429,22 @@ mod tests {
                     transformed.to_bits()
                 );
             }
+        }
+    }
+
+    #[test]
+    fn transformed_progress_reapplies_endpoint_pinning_after_rounding() {
+        let smallest_positive = f64::from_bits(1);
+        assert_eq!(1.0 - smallest_positive, 1.0);
+
+        for family_start in (1..=28).step_by(3) {
+            let ease_out = EasingId::try_from(family_start + 1).unwrap();
+            assert_eq!(
+                ease_out.evaluate(smallest_positive).unwrap().to_bits(),
+                0.0_f64.to_bits(),
+                "{}",
+                ease_out.name()
+            );
         }
     }
 
