@@ -1065,7 +1065,7 @@ fn i3_scroll_fixture_executes_at_the_canonical_boundary() {
     let (_, fcs) = load_manifests();
     let fcs_base = repository_root().join("docs/conformance/fcs5");
     let fixture = fixture(&fcs, "source.valid.time-scroll-note");
-    assert_eq!(fixture.stage, FixtureStage::Evaluate);
+    assert_eq!(fixture.stage, FixtureStage::Canonical);
     assert_eq!(fixture.expect, FixtureExpectation::Success);
     let scroll =
         canonical_scroll_fixture(&fcs_base, fixture).expect("valid scroll fixture should lower");
