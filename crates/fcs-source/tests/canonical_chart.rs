@@ -91,7 +91,7 @@ format { profile: chart; }
 tempoMap { 0beat -> 120bpm; }
 definitions {
     template Line makeJudge() {
-        return Line { id: "template"; };
+        return Line { id: "made"; };
     }
 }
 collections {
@@ -104,7 +104,7 @@ collections {
     }
     notes {
         tap { id: "direct-note"; line: @direct; gameplay.time: 1s; };
-        tap { id: "template-note"; line: @template; gameplay.time: 2s; };
+        tap { id: "template-note"; line: @made; gameplay.time: 2s; };
         tap { id: "generator-note"; line: @generator; gameplay.time: 3s; };
     }
 }
@@ -126,12 +126,12 @@ collections {
     assert_eq!(
         chart
             .lines()
-            .line_by_textual_id("template")
+            .line_by_textual_id("made")
             .expect("template-produced Line should enter the canonical graph")
             .id()
             .textual()
             .as_str(),
-        "template"
+        "made"
     );
     assert!(chart.lines().line_by_textual_id("generator").is_some());
 }
