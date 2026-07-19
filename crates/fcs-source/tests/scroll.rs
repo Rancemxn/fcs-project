@@ -30,7 +30,7 @@ fn global_scroll_uses_chart_time_and_line_defaults() {
     let line = &set.lines()[0];
     assert_eq!(line.coordinate().coordinate(-1.0).unwrap(), -2.0);
     assert_eq!(line.coordinate().coordinate(1.0).unwrap(), 2.0);
-    assert_eq!(line.scroll_bpm(1.0).unwrap(), 120.0);
+    assert_eq!(line.scroll_bpm(1.0).unwrap(), 60.0);
     assert_eq!(line.floor_position(1.0).unwrap(), 2.0);
 }
 
