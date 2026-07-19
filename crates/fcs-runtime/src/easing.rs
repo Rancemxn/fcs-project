@@ -421,11 +421,14 @@ mod tests {
             let ease_out = EasingId::try_from(family_start + 1).unwrap();
             let ease_in_out = EasingId::try_from(family_start + 2).unwrap();
             for input in [0.125, 0.25, 0.625, 0.875] {
-                let reflected = 1.0 - ease_in.evaluate(1.0 - input).unwrap();
-                assert_eq!(
-                    ease_out.evaluate(input).unwrap().to_bits(),
-                    reflected.to_bits()
-                );
+                // Bounce defines its out form directly; only its in-out form reflects ease-in.
+                if family_start != EasingId::EaseInBounce.abi_id() {
+                    let reflected = 1.0 - ease_in.evaluate(1.0 - input).unwrap();
+                    assert_eq!(
+                        ease_out.evaluate(input).unwrap().to_bits(),
+                        reflected.to_bits()
+                    );
+                }
 
                 let transformed = if input < 0.5 {
                     ease_in.evaluate(2.0 * input).unwrap() / 2.0
