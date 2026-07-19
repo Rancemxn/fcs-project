@@ -59,8 +59,13 @@ into `fcs-model`.
 - `canonical_chart_snapshot::direct_and_template_authoring_produce_the_checked_in_canonical_snapshot`
   proves the direct and template/preserve fixtures lower to byte-identical
   pretty snapshots matching one checked-in golden.
+- `canonical_chart_snapshot::canonical_snapshot_projects_nonempty_metadata_tracks_and_extensions`
+  exercises nonempty metadata/custom object order, contributors, credits,
+  resource identity/hash, sync, Track pieces/interpolation, profile features,
+  and required extension identity through the same adapter.
 - `canonical_chart_snapshot::canonical_snapshot_excludes_authoring_and_workspace_state`
-  recursively rejects source text, workspace paths, spans, template/generator/
-  local authoring nodes, and preserve payload state at the snapshot boundary.
+  recursively rejects source text, declared resource source paths, host
+  workspace paths, spans, template/generator/local authoring nodes, and
+  preserve payload state at the snapshot boundary.
 - The exact PR head must pass the repository full gate; local validation remains
   limited to formatting, diff, Markdown, and other non-building checks.
