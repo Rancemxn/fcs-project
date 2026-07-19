@@ -161,3 +161,38 @@ fn error_fill_is_preserved_and_equal_priority_replace_tracks_conflict() {
     ));
     assert_eq!(conflict[0].code(), DiagnosticCode::TRACK_REPLACE_CONFLICT);
 }
+
+#[test]
+fn same_time_point_is_shadowed_by_segment_for_cross_track_conflicts() {
+    let tracks = lower(&format!(
+        "{HEADER}lines {{ line main {{ tracks {{
+            track first -> alpha: float {{ segments {{ [0s, 1s): 0.0 -> 1.0 using \"linear\"; point 0s: 0.0; }} }}
+            track second -> alpha: float {{ segments {{ [1s, 2s): 1.0 -> 0.0 using \"linear\"; }} }}
+        }} }} }}"
+    ));
+    assert_eq!(tracks.tracks().len(), 2);
+}
+
+#[test]
+fn higher_priority_replace_shadows_lower_priority_overlap() {
+    let tracks = lower(&format!(
+        "{HEADER}lines {{ line main {{ tracks {{
+            track lowA -> alpha: float {{ priority: 0; segments {{ [0s, 2s): 0.0 -> 1.0 using \"linear\"; }} }}
+            track lowB -> alpha: float {{ priority: 0; segments {{ [1s, 3s): 1.0 -> 0.0 using \"linear\"; }} }}
+            track high -> alpha: float {{ priority: 1; segments {{ [0s, 3s): 0.0 -> 1.0 using \"linear\"; }} }}
+        }} }} }}"
+    ));
+    assert_eq!(tracks.tracks().len(), 3);
+}
+
+#[test]
+fn partially_uncovered_equal_priority_overlap_still_conflicts() {
+    let conflict = diagnostics(&format!(
+        "{HEADER}lines {{ line main {{ tracks {{
+            track lowA -> alpha: float {{ priority: 0; segments {{ [0s, 2s): 0.0 -> 1.0 using \"linear\"; }} }}
+            track lowB -> alpha: float {{ priority: 0; segments {{ [1s, 3s): 1.0 -> 0.0 using \"linear\"; }} }}
+            track high -> alpha: float {{ priority: 1; segments {{ [0s, 1.5s): 0.0 -> 1.0 using \"linear\"; }} }}
+        }} }} }}"
+    ));
+    assert_eq!(conflict[0].code(), DiagnosticCode::TRACK_REPLACE_CONFLICT);
+}
