@@ -1,6 +1,6 @@
 //! Deterministic evaluation of canonical Line transforms.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use fcs_model::{
@@ -110,8 +110,22 @@ pub fn evaluate_line_transform(
         });
     }
 
+    let mut required = BTreeSet::new();
+    let mut current = Some(line_id.value());
+    while let Some(id) = current {
+        required.insert(id);
+        current = lines
+            .line(id)
+            .and_then(CanonicalLine::parent)
+            .map(StableId::value);
+    }
+
     let mut evaluated = BTreeMap::<u64, EvaluatedLineTransform>::new();
-    for id in lines.topological_order() {
+    for id in lines
+        .topological_order()
+        .iter()
+        .filter(|id| required.contains(&id.value()))
+    {
         let line = lines
             .line(id.value())
             .expect("canonical topology only contains graph Lines");
@@ -942,6 +956,74 @@ mod tests {
         assert_eq!(
             evaluate_line_transform(&first, &empty_tracks(), &child_id, 0.0).unwrap(),
             evaluate_line_transform(&second, &empty_tracks(), &child_id, 0.0).unwrap()
+        );
+    }
+
+    #[test]
+    fn unrelated_line_errors_do_not_preempt_target_query() {
+        let mut ids = ids(&[
+            ("unrelated", EntityKind::Line),
+            ("target", EntityKind::Line),
+        ]);
+        ids.sort_by_key(StableId::value);
+        let unrelated_id = ids.remove(0);
+        let target_id = ids.remove(0);
+        let graph = CanonicalLineGraph::new([
+            line(
+                unrelated_id.clone(),
+                None,
+                0,
+                CanonicalLineBase::identity(),
+                CanonicalLineInherit::default(),
+            ),
+            line(
+                target_id.clone(),
+                None,
+                1,
+                CanonicalLineBase::identity(),
+                CanonicalLineInherit::default(),
+            ),
+        ])
+        .unwrap();
+        let gap_track = CanonicalTrack::new(
+            unrelated_id.clone(),
+            "position-gap",
+            CanonicalTrackTarget::Position,
+            CanonicalTrackBlend::Replace,
+            0,
+            CanonicalTrackFill::Error,
+            CanonicalTrackFill::Error,
+            CanonicalTrackFill::Error,
+            vec![CanonicalTrackPiece::Point(
+                CanonicalTrackPoint::new(
+                    CanonicalTime::from_chart_time_seconds(1.0).unwrap(),
+                    CanonicalTrackValue::Vec2Length(vec2(1.0, 1.0)),
+                    0,
+                )
+                .unwrap(),
+            )],
+        )
+        .unwrap();
+        let tracks = CanonicalTrackSet::new(vec![gap_track]).unwrap();
+
+        assert!(matches!(
+            evaluate_line_transform(&graph, &tracks, &unrelated_id, 0.0),
+            Err(LineTransformError::Track {
+                target: CanonicalTrackTarget::Position,
+                source: TrackEvaluationError::Gap { .. },
+                ..
+            })
+        ));
+        assert_eq!(
+            evaluate_line_transform(&graph, &tracks, &target_id, 0.0)
+                .unwrap()
+                .world(),
+            EvaluatedLineComponents {
+                position: vec2(0.0, 0.0),
+                rotation: 0.0,
+                scale: vec2(1.0, 1.0),
+                alpha: 1.0,
+            }
         );
     }
 
