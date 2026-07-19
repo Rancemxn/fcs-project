@@ -487,9 +487,11 @@ preserve 状态。I3.9 不建立产品或规范性 JSON 格式。其后 residual
 - **I4.9 Determinism/property**：seek=sequential、partition invariance、frame-rate independence、
   randomized legal Track 与 error bound property tests。
 
-当前交付状态：I4.1 implementation branch 建立产品 `fcs-runtime` crate、Core 31-ID easing catalog、
-规范公式/端点/有限性/overshoot evidence 与隔离的 transcendental math boundary。该 bounded unit 不声称
-I4 完成；Track/transform/scroll/DAG/Piecewise/integration 与 I4.8 correctly-rounded independent reference
+当前交付状态：I4.1 建立产品 `fcs-runtime` crate、Core 31-ID easing catalog、规范公式/端点/有限性/
+overshoot evidence 与隔离的 transcendental math boundary。I4.2 在 immutable canonical Track boundary 上
+增加 point/segment、fill/extrapolation、typed interpolation、稳定 blend ordering 与只在证明同一 correctly-rounded
+binary64 后返回的 adaptive cubic-Bezier evaluator；无法建立 enclosure 时返回 strict error，不退化为采样。
+这两个 bounded unit 不声称 I4 完成；transform/scroll/DAG/Piecewise/integration 与 I4.8 independent reference
 cross-check 仍是后续 residual，任何 sampled/BakedCurve 路径都不进入标准 runtime。
 
 ### I5：Metadata、resources、sync 与 fidelity
