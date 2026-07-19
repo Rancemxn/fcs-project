@@ -218,13 +218,7 @@ fn evaluate_segment(
     if !progress.is_finite() {
         return Err(TrackEvaluationError::NonFiniteProgress);
     }
-    let progress = if progress < 0.0 {
-        0.0
-    } else if progress > 1.0 {
-        1.0
-    } else {
-        progress
-    };
+    let progress = clamp_progress(progress);
     let progress = match segment.interpolation() {
         CanonicalTrackInterpolation::Step => unreachable!(),
         CanonicalTrackInterpolation::Linear => progress,
@@ -344,6 +338,17 @@ fn finite_scalar(value: f64) -> Result<f64, TrackEvaluationError> {
         .is_finite()
         .then_some(value)
         .ok_or(TrackEvaluationError::NonFiniteResult)
+}
+
+#[allow(clippy::manual_clamp)]
+fn clamp_progress(progress: f64) -> f64 {
+    if progress < 0.0 {
+        0.0
+    } else if progress > 1.0 {
+        1.0
+    } else {
+        progress
+    }
 }
 
 fn value_is_finite(value: CanonicalTrackValue) -> bool {
@@ -639,7 +644,7 @@ impl Expansion {
 
     fn round(&self) -> Result<f64, ()> {
         match self.sign() {
-            Ordering::Equal => return Ok(0.0),
+            Ordering::Equal => Ok(0.0),
             Ordering::Less => self.round_with_bounds(-f64::MAX, -0.0),
             Ordering::Greater => self.round_with_bounds(0.0, f64::MAX),
         }
