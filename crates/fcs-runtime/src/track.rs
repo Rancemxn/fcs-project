@@ -222,20 +222,24 @@ fn evaluate_segment(
     let progress = match segment.interpolation() {
         CanonicalTrackInterpolation::Step => unreachable!(),
         CanonicalTrackInterpolation::Linear => progress,
-        CanonicalTrackInterpolation::Easing(name) => {
-            let easing = EasingId::ALL
-                .into_iter()
-                .find(|easing| easing.name() == name)
-                .ok_or_else(|| TrackEvaluationError::InvalidEasing { name: name.clone() })?;
-            easing
-                .evaluate(progress)
-                .map_err(TrackEvaluationError::Easing)?
-        }
+        CanonicalTrackInterpolation::Easing(name) => evaluate_core_easing(name, progress)?,
         CanonicalTrackInterpolation::CubicBezier(control) => {
             cubic_bezier_progress(*control, progress)?
         }
     };
     interpolate(segment.start_value(), segment.end_value(), progress)
+}
+
+fn evaluate_core_easing(name: &str, progress: f64) -> Result<f64, TrackEvaluationError> {
+    let easing = EasingId::ALL
+        .into_iter()
+        .find(|easing| easing.name() == name)
+        .ok_or_else(|| TrackEvaluationError::InvalidEasing {
+            name: name.to_owned(),
+        })?;
+    easing
+        .evaluate(progress)
+        .map_err(TrackEvaluationError::Easing)
 }
 
 fn interpolate(
@@ -1137,6 +1141,20 @@ mod tests {
     }
 
     #[test]
+    fn core_easing_lookup_and_errors_map_to_track_errors() {
+        assert_eq!(
+            evaluate_core_easing("missing", 0.5),
+            Err(TrackEvaluationError::InvalidEasing {
+                name: "missing".to_owned()
+            })
+        );
+        assert_eq!(
+            evaluate_core_easing("linear", f64::NAN),
+            Err(TrackEvaluationError::Easing(EasingError::NonFiniteInput))
+        );
+    }
+
+    #[test]
     fn layered_blend_uses_priority_then_owner_local_track_identity() {
         let owner = owner("main");
         let tracks = CanonicalTrackSet::new(vec![
@@ -1305,7 +1323,23 @@ mod tests {
             CanonicalTrackValue::Float(1.0),
             CanonicalTrackInterpolation::Easing("easeInQuad".to_owned()),
         );
-        let tracks = CanonicalTrackSet::new(vec![alpha, position]).unwrap();
+        let rotation = segment_track(
+            owner.clone(),
+            "rotation",
+            CanonicalTrackTarget::Rotation,
+            CanonicalTrackValue::Angle(-2.0),
+            CanonicalTrackValue::Angle(2.0),
+            CanonicalTrackInterpolation::Linear,
+        );
+        let scale = segment_track(
+            owner.clone(),
+            "scale",
+            CanonicalTrackTarget::Scale,
+            CanonicalTrackValue::Vec2Float(CanonicalVec2::new(1.0, 2.0).unwrap()),
+            CanonicalTrackValue::Vec2Float(CanonicalVec2::new(3.0, 6.0).unwrap()),
+            CanonicalTrackInterpolation::Linear,
+        );
+        let tracks = CanonicalTrackSet::new(vec![alpha, position, rotation, scale]).unwrap();
         assert_eq!(
             evaluate_track_set(
                 &tracks,
@@ -1328,6 +1362,28 @@ mod tests {
             ),
             Ok(CanonicalTrackValue::Float(0.25))
         );
+        assert_eq!(
+            evaluate_track_set(
+                &tracks,
+                &owner,
+                CanonicalTrackTarget::Rotation,
+                1.0,
+                CanonicalTrackValue::Angle(9.0),
+            ),
+            Ok(CanonicalTrackValue::Angle(0.0))
+        );
+        assert_eq!(
+            evaluate_track_set(
+                &tracks,
+                &owner,
+                CanonicalTrackTarget::Scale,
+                1.0,
+                CanonicalTrackValue::Vec2Float(CanonicalVec2::new(9.0, 9.0).unwrap()),
+            ),
+            Ok(CanonicalTrackValue::Vec2Float(
+                CanonicalVec2::new(2.0, 4.0).unwrap()
+            ))
+        );
     }
 
     #[test]
@@ -1336,6 +1392,29 @@ mod tests {
         assert_eq!(cubic_bezier_progress([0.25, 2.0, 0.75, -1.0], 1.0), Ok(1.0));
         assert_eq!(cubic_bezier_progress([0.0, 0.0, 1.0, 1.0], 0.25), Ok(0.25));
         assert_eq!(cubic_bezier_progress([0.5, 2.0, 0.5, 2.0], 0.5), Ok(1.625));
+        let owner = owner("main");
+        let track = segment_track(
+            owner.clone(),
+            "bezier",
+            CanonicalTrackTarget::Alpha,
+            CanonicalTrackValue::Float(0.0),
+            CanonicalTrackValue::Float(2.0),
+            CanonicalTrackInterpolation::CubicBezier([0.5, 2.0, 0.5, 2.0]),
+        );
+        assert_eq!(
+            evaluate_track_set(
+                &CanonicalTrackSet::new(vec![track]).unwrap(),
+                &owner,
+                CanonicalTrackTarget::Alpha,
+                1.0,
+                CanonicalTrackValue::Float(0.0),
+            ),
+            Ok(CanonicalTrackValue::Float(3.25))
+        );
+        assert_eq!(
+            cubic_bezier_progress([-0.25, 0.0, 0.75, 1.0], 0.5),
+            Err(TrackEvaluationError::InvalidBezier)
+        );
         assert_eq!(
             cubic_bezier_progress([0.25, 0.5, 0.75, f64::from_bits(1)], 0.25),
             Err(TrackEvaluationError::BezierEnclosureUnavailable)
