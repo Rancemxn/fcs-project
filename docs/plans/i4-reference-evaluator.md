@@ -158,7 +158,7 @@ randomized partition/frame-rate/error-bound property corpus.
 ## I4.8 owned surface
 
 I4.8 adds a test-only independent reference lane without changing the product
-runtime API or evaluator:
+runtime API, and corrects the Float `pow` domain/signed-zero mismatch it exposes:
 
 - `fcs-runtime` dev tests use pinned `astro-float` 0.9.5 with defaults disabled
   and `std` enabled; difficult primitives use directed lower and upper bounds
@@ -168,8 +168,8 @@ runtime API or evaluator:
   dispatch and arithmetic. The reference side does not call product private
   math, nalgebra multiplication, cache, sampled curve, or FCBC evaluator;
 - `numeric-vectors.toml` uses typed `deny_unknown_fields` records, rejects
-  duplicate semantic identities, and executes literal difficult operation and
-  easing bits through both reference and product paths.
+  duplicate semantic identities, and executes literal difficult-operation bits,
+  stable domain errors, and easing bits through the product/reference boundary.
 
 I4.8 does not promote `astro-float` into a normal dependency, expose reference
 types, replace project-owned errors/enums, or close the randomized I4.9 corpus.
@@ -269,16 +269,18 @@ types, replace project-owned errors/enums, or close the randomized I4.9 corpus.
    easing branches, flat/overshooting cubic-Bezier controls, non-uniform
    inherited transforms, and linear/easing/Bezier scroll integrals.
 2. `docs/conformance/fcs5/expected/numeric-vectors.toml` contains literal bits
-   for 11 difficult Core operations and 21 easing family/branch vectors; the
-   executable test rejects unknown fields, duplicate entries, unknown
-   operations, malformed bits, and mismatched product/reference results.
+   for 24 difficult Core results, six stable domain-error cases, and 21 easing
+   family/branch vectors; the executable test rejects unknown fields,
+   duplicate entries, unknown operations/errors, malformed bits, and
+   mismatched product/reference results.
 3. The Astro oracle uses directed `Down`/`Up` bounds with adaptive precision for
    Core operations and guarded precision for easing primitives; only a shared
    binary64 result is accepted, and the dependency is absent from the normal
    `fcs-runtime` tree.
-4. Reference matrix multiplication uses plain arrays and the scroll lane uses
-   independent analytic integrals; neither calls the product Bezier, matrix,
-   integration, or caching implementation.
+4. Reference Bezier inversion uses a separate monotone bisection and polynomial,
+   matrix multiplication uses plain arrays, and the scroll lane uses independent
+   analytic integrals; none calls the product Bezier, matrix, integration, or
+   caching implementation.
 
 ## Delivery and residual gate
 

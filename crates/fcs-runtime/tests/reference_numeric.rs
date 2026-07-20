@@ -12,8 +12,8 @@ use fcs_model::{
     StableIdRegistry,
 };
 use fcs_runtime::{
-    EasingId, ExpressionEnvironment, evaluate_easing, evaluate_expression, evaluate_line_scroll,
-    evaluate_line_transform, evaluate_track_set,
+    EasingId, ExpressionEnvironment, ExpressionEvaluationError, evaluate_easing,
+    evaluate_expression, evaluate_line_scroll, evaluate_line_transform, evaluate_track_set,
 };
 use serde::Deserialize;
 
@@ -33,6 +33,8 @@ struct NumericVectors {
     operation: Vec<OperationVector>,
     #[serde(default)]
     difficult_operation: Vec<DifficultOperationVector>,
+    #[serde(default)]
+    domain_operation: Vec<DomainOperationVector>,
     #[serde(default)]
     easing: Vec<EasingVector>,
     #[serde(default)]
@@ -66,6 +68,15 @@ struct DifficultOperationVector {
     input_hex_bits: String,
     right_hex_bits: Option<String>,
     output_hex_bits: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DomainOperationVector {
+    opcode: String,
+    input_hex_bits: String,
+    right_hex_bits: Option<String>,
+    expected_error: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,6 +150,17 @@ fn big_float_to_f64(value: &BigFloat, constants: &mut Consts) -> f64 {
 }
 
 fn reference_unary(opcode: CanonicalExpressionOpcode, input: f64) -> f64 {
+    if input == 0.0 {
+        match opcode {
+            CanonicalExpressionOpcode::Sqrt
+            | CanonicalExpressionOpcode::Sin
+            | CanonicalExpressionOpcode::Tan
+            | CanonicalExpressionOpcode::Asin
+            | CanonicalExpressionOpcode::Atan => return input,
+            CanonicalExpressionOpcode::Exp | CanonicalExpressionOpcode::Cos => return 1.0,
+            _ => {}
+        }
+    }
     reference_value(|precision, rounding, constants| {
         let input = BigFloat::from_f64(input, precision);
         match opcode {
@@ -159,16 +181,39 @@ fn reference_unary(opcode: CanonicalExpressionOpcode, input: f64) -> f64 {
 fn reference_binary(opcode: CanonicalExpressionOpcode, left: f64, right: f64) -> f64 {
     match opcode {
         CanonicalExpressionOpcode::Atan2 => reference_atan2(left, right),
-        CanonicalExpressionOpcode::Pow => reference_value(|precision, rounding, constants| {
-            BigFloat::from_f64(left, precision).pow(
-                &BigFloat::from_f64(right, precision),
-                precision,
-                rounding,
-                constants,
-            )
-        }),
+        CanonicalExpressionOpcode::Pow if left == 0.0 => {
+            if right == 0.0 {
+                1.0
+            } else if left.is_sign_negative() && is_odd_binary64_integer(right) {
+                -0.0
+            } else {
+                0.0
+            }
+        }
+        CanonicalExpressionOpcode::Pow => {
+            assert!(left > 0.0 || right.fract() == 0.0);
+            let magnitude = reference_value(|precision, rounding, constants| {
+                BigFloat::from_f64(left.abs(), precision).pow(
+                    &BigFloat::from_f64(right, precision),
+                    precision,
+                    rounding,
+                    constants,
+                )
+            });
+            if left.is_sign_negative() && is_odd_binary64_integer(right) {
+                -magnitude
+            } else {
+                magnitude
+            }
+        }
         _ => panic!("unsupported binary reference opcode {opcode:?}"),
     }
+}
+
+fn is_odd_binary64_integer(value: f64) -> bool {
+    value.fract() == 0.0
+        && value.abs() < 9_007_199_254_740_992.0
+        && (value as i64).rem_euclid(2) == 1
 }
 
 fn reference_easing(easing: EasingId, input: f64) -> f64 {
@@ -357,7 +402,17 @@ fn constant(value: CanonicalExpressionValue) -> CanonicalExpressionNode {
 }
 
 fn product_unary(opcode: CanonicalExpressionOpcode, input: f64) -> f64 {
-    product_expression(
+    match product_unary_result(opcode, input).unwrap() {
+        CanonicalExpressionValue::Float(value) => value,
+        value => panic!("unexpected numeric result {value:?}"),
+    }
+}
+
+fn product_unary_result(
+    opcode: CanonicalExpressionOpcode,
+    input: f64,
+) -> Result<CanonicalExpressionValue, ExpressionEvaluationError> {
+    product_expression_result(
         vec![
             constant(CanonicalExpressionValue::Float(input)),
             CanonicalExpressionNode::new(
@@ -373,7 +428,18 @@ fn product_unary(opcode: CanonicalExpressionOpcode, input: f64) -> f64 {
 }
 
 fn product_binary(opcode: CanonicalExpressionOpcode, left: f64, right: f64) -> f64 {
-    product_expression(
+    match product_binary_result(opcode, left, right).unwrap() {
+        CanonicalExpressionValue::Float(value) => value,
+        value => panic!("unexpected numeric result {value:?}"),
+    }
+}
+
+fn product_binary_result(
+    opcode: CanonicalExpressionOpcode,
+    left: f64,
+    right: f64,
+) -> Result<CanonicalExpressionValue, ExpressionEvaluationError> {
+    product_expression_result(
         vec![
             constant(CanonicalExpressionValue::Float(left)),
             constant(CanonicalExpressionValue::Float(right)),
@@ -389,14 +455,14 @@ fn product_binary(opcode: CanonicalExpressionOpcode, left: f64, right: f64) -> f
     )
 }
 
-fn product_expression(nodes: Vec<CanonicalExpressionNode>, root: usize) -> f64 {
+fn product_expression_result(
+    nodes: Vec<CanonicalExpressionNode>,
+    root: usize,
+) -> Result<CanonicalExpressionValue, ExpressionEvaluationError> {
     let expression = CanonicalExpressionDag::new(nodes, root)
         .expect("reference fixture must be a valid expression");
     let environment = ExpressionEnvironment::new(0.0, 0.0, 0.0, 0.0).unwrap();
-    match evaluate_expression(&expression, environment).unwrap() {
-        CanonicalExpressionValue::Float(value) => value,
-        value => panic!("unexpected numeric result {value:?}"),
-    }
+    evaluate_expression(&expression, environment)
 }
 
 fn parse_bits(value: &str) -> Result<u64, String> {
@@ -457,6 +523,45 @@ fn bezier_product(controls: [f64; 4], progress: f64) -> f64 {
         CanonicalTrackValue::Float(value) => value,
         value => panic!("unexpected Bezier Track result {value:?}"),
     }
+}
+
+fn reference_bezier(controls: [f64; 4], progress: f64) -> f64 {
+    let [x1, y1, x2, y2] = controls;
+    if x1.to_bits() == y1.to_bits() && x2.to_bits() == y2.to_bits() {
+        return progress;
+    }
+
+    let coordinate = |first, second, parameter| {
+        let inverse = 1.0 - parameter;
+        ((3.0 * inverse * inverse * parameter * first)
+            + (3.0 * inverse * parameter * parameter * second))
+            + (parameter * parameter * parameter)
+    };
+    let mut lower = 0.0;
+    let mut upper = 1.0;
+    for _ in 0..128 {
+        let midpoint = (lower + upper) / 2.0;
+        let x = coordinate(x1, x2, midpoint);
+        if x == progress {
+            return coordinate(y1, y2, midpoint);
+        }
+        if x < progress {
+            lower = midpoint;
+        } else {
+            upper = midpoint;
+        }
+    }
+    let lower_error = (coordinate(x1, x2, lower) - progress).abs();
+    let upper_error = (coordinate(x1, x2, upper) - progress).abs();
+    coordinate(
+        y1,
+        y2,
+        if lower_error <= upper_error {
+            lower
+        } else {
+            upper
+        },
+    )
 }
 
 fn scroll_product(scroll_bpm: f64, chart_time: f64) -> (f64, f64) {
@@ -698,6 +803,84 @@ fn execute_vectors(source: &str) -> Result<(), String> {
             return Err(format!(
                 "difficult operation {} did not match {:016x}",
                 vector.opcode, expected
+            ));
+        }
+    }
+
+    let mut domain_operations_seen = BTreeSet::new();
+    for vector in vectors.domain_operation {
+        let identity = (
+            vector.opcode.clone(),
+            vector.input_hex_bits.clone(),
+            vector.right_hex_bits.clone(),
+        );
+        if !domain_operations_seen.insert(identity) {
+            return Err(format!("duplicate domain operation {:?}", vector.opcode));
+        }
+        if vector.expected_error != "domain" {
+            return Err(format!(
+                "unknown domain-operation error {:?}",
+                vector.expected_error
+            ));
+        }
+        let input = f64::from_bits(parse_bits(&vector.input_hex_bits)?);
+        let (result, expected_node) =
+            match vector.opcode.as_str() {
+                "sqrt" => {
+                    if vector.right_hex_bits.is_some() {
+                        return Err("sqrt domain vector must not have right_hex_bits".to_owned());
+                    }
+                    (
+                        product_unary_result(CanonicalExpressionOpcode::Sqrt, input),
+                        1,
+                    )
+                }
+                "ln" => {
+                    if vector.right_hex_bits.is_some() {
+                        return Err("ln domain vector must not have right_hex_bits".to_owned());
+                    }
+                    (
+                        product_unary_result(CanonicalExpressionOpcode::Ln, input),
+                        1,
+                    )
+                }
+                "asin" => {
+                    if vector.right_hex_bits.is_some() {
+                        return Err("asin domain vector must not have right_hex_bits".to_owned());
+                    }
+                    (
+                        product_unary_result(CanonicalExpressionOpcode::Asin, input),
+                        1,
+                    )
+                }
+                "acos" => {
+                    if vector.right_hex_bits.is_some() {
+                        return Err("acos domain vector must not have right_hex_bits".to_owned());
+                    }
+                    (
+                        product_unary_result(CanonicalExpressionOpcode::Acos, input),
+                        1,
+                    )
+                }
+                "pow" => {
+                    let right =
+                        f64::from_bits(parse_bits(vector.right_hex_bits.as_deref().ok_or_else(
+                            || "pow domain vector lacks right_hex_bits".to_owned(),
+                        )?)?);
+                    (
+                        product_binary_result(CanonicalExpressionOpcode::Pow, input, right),
+                        2,
+                    )
+                }
+                opcode => return Err(format!("unknown domain operation {opcode:?}")),
+            };
+        if !matches!(
+            result,
+            Err(ExpressionEvaluationError::Domain { node }) if node == expected_node
+        ) {
+            return Err(format!(
+                "domain operation {} did not return domain at node {}: {result:?}",
+                vector.opcode, expected_node
             ));
         }
     }
@@ -953,6 +1136,11 @@ fn independent_bezier_vectors_cover_flat_x_and_overshooting_y() {
     ];
     for (controls, progress, reference) in vectors {
         assert_eq!(
+            reference_bezier(controls, progress).to_bits(),
+            reference.to_bits(),
+            "independent controls={controls:?}, progress={progress}"
+        );
+        assert_eq!(
             bezier_product(controls, progress).to_bits(),
             reference.to_bits(),
             "controls={controls:?}, progress={progress}"
@@ -979,6 +1167,14 @@ fn numeric_vector_toml_is_strict_and_executable() {
         .is_err()
     );
     assert!(execute_vectors(&NUMERIC_VECTORS.replace("sqrt(4.0)", "sqrt(9.0)")).is_err());
+    assert!(
+        execute_vectors(&NUMERIC_VECTORS.replacen(
+            "expected_error = \"domain\"",
+            "expected_error = \"overflow\"",
+            1,
+        ))
+        .is_err()
+    );
     assert!(
         execute_vectors(
             &NUMERIC_VECTORS.replace("hex_bits = \"4000000000000000\"", "hex_bits = \"4000\"")

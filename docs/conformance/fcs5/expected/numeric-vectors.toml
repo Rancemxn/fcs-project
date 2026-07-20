@@ -98,6 +98,110 @@ input_hex_bits = "3ff0000000000001"
 right_hex_bits = "4330000000000000"
 output_hex_bits = "4005bf0a8b145769"
 
+[[difficult_operation]]
+opcode = "sqrt"
+input_hex_bits = "8000000000000000"
+output_hex_bits = "8000000000000000"
+
+[[difficult_operation]]
+opcode = "sin"
+input_hex_bits = "8000000000000000"
+output_hex_bits = "8000000000000000"
+
+[[difficult_operation]]
+opcode = "cos"
+input_hex_bits = "8000000000000000"
+output_hex_bits = "3ff0000000000000"
+
+[[difficult_operation]]
+opcode = "tan"
+input_hex_bits = "8000000000000000"
+output_hex_bits = "8000000000000000"
+
+[[difficult_operation]]
+opcode = "asin"
+input_hex_bits = "8000000000000000"
+output_hex_bits = "8000000000000000"
+
+[[difficult_operation]]
+opcode = "atan"
+input_hex_bits = "8000000000000000"
+output_hex_bits = "8000000000000000"
+
+[[difficult_operation]]
+opcode = "atan2"
+input_hex_bits = "0000000000000000"
+right_hex_bits = "bff0000000000000"
+output_hex_bits = "400921fb54442d18"
+
+[[difficult_operation]]
+opcode = "atan2"
+input_hex_bits = "8000000000000000"
+right_hex_bits = "bff0000000000000"
+output_hex_bits = "c00921fb54442d18"
+
+[[difficult_operation]]
+opcode = "atan2"
+input_hex_bits = "3ff0000000000000"
+right_hex_bits = "0000000000000000"
+output_hex_bits = "3ff921fb54442d18"
+
+[[difficult_operation]]
+opcode = "atan2"
+input_hex_bits = "bff0000000000000"
+right_hex_bits = "8000000000000000"
+output_hex_bits = "bff921fb54442d18"
+
+[[difficult_operation]]
+opcode = "pow"
+input_hex_bits = "0000000000000000"
+right_hex_bits = "0000000000000000"
+output_hex_bits = "3ff0000000000000"
+
+[[difficult_operation]]
+opcode = "pow"
+input_hex_bits = "8000000000000000"
+right_hex_bits = "4008000000000000"
+output_hex_bits = "8000000000000000"
+
+[[difficult_operation]]
+opcode = "pow"
+input_hex_bits = "8000000000000000"
+right_hex_bits = "4000000000000000"
+output_hex_bits = "0000000000000000"
+
+[[domain_operation]]
+opcode = "sqrt"
+input_hex_bits = "bff0000000000000"
+expected_error = "domain"
+
+[[domain_operation]]
+opcode = "ln"
+input_hex_bits = "0000000000000000"
+expected_error = "domain"
+
+[[domain_operation]]
+opcode = "asin"
+input_hex_bits = "3ff0000000000001"
+expected_error = "domain"
+
+[[domain_operation]]
+opcode = "acos"
+input_hex_bits = "bff0000000000001"
+expected_error = "domain"
+
+[[domain_operation]]
+opcode = "pow"
+input_hex_bits = "0000000000000000"
+right_hex_bits = "bff0000000000000"
+expected_error = "domain"
+
+[[domain_operation]]
+opcode = "pow"
+input_hex_bits = "c000000000000000"
+right_hex_bits = "3fe0000000000000"
+expected_error = "domain"
+
 [[easing]]
 name = "linear"
 x_hex_bits = "3fe0000000000000"

@@ -733,13 +733,41 @@ fn pow_values(
                 .ok_or(ExpressionEvaluationError::IntegerOverflow { node: index })
         }
         (CanonicalExpressionValue::Float(base), CanonicalExpressionValue::Float(exponent)) => {
-            finite_value(index, base.powf(exponent)).map(CanonicalExpressionValue::Float)
+            if base == 0.0 {
+                if exponent < 0.0 {
+                    return Err(ExpressionEvaluationError::Domain { node: index });
+                }
+                let result = if exponent == 0.0 {
+                    1.0
+                } else if base.is_sign_negative() && is_odd_binary64_integer(exponent) {
+                    -0.0
+                } else {
+                    0.0
+                };
+                return Ok(CanonicalExpressionValue::Float(result));
+            }
+            if base < 0.0 && exponent.fract() != 0.0 {
+                return Err(ExpressionEvaluationError::Domain { node: index });
+            }
+            let magnitude = base.abs().powf(exponent);
+            let result = if base.is_sign_negative() && is_odd_binary64_integer(exponent) {
+                -magnitude
+            } else {
+                magnitude
+            };
+            finite_value(index, result).map(CanonicalExpressionValue::Float)
         }
         _ => Err(ExpressionEvaluationError::TypeMismatch {
             node: index,
             opcode,
         }),
     }
+}
+
+fn is_odd_binary64_integer(value: f64) -> bool {
+    value.fract() == 0.0
+        && value.abs() < 9_007_199_254_740_992.0
+        && (value as i64).rem_euclid(2) == 1
 }
 
 fn map_float_pair(
