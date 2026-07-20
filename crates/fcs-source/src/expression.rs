@@ -21,8 +21,9 @@ pub fn lower_runtime_expression(
     };
     let root = lowerer.lower(expression)?;
     lowerer.builder.finish(root.index).map_err(|error| {
-        lowerer.error(
+        Diagnostic::new(
             DiagnosticCode::TYPE_INVALID_OPERATION,
+            DiagnosticStage::Canonical,
             error.to_string(),
             expression.span(),
         )
