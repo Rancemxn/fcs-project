@@ -358,13 +358,11 @@ fn evaluate_local_scroll(
             line: line_id,
             source,
         })?;
-    let speed = speed_at(tracks, line.id(), descriptor.speed(), chart_time)?;
-    if speed < 0.0 && !descriptor.allow_reverse_scroll() {
-        return Err(ScrollEvaluationError::ReverseNotAllowed {
-            line: line_id,
-            speed,
-        });
-    }
+    let speed = validate_speed_policy(
+        descriptor,
+        line.id(),
+        speed_at(tracks, line.id(), descriptor.speed(), chart_time)?,
+    )?;
     let bpm =
         descriptor
             .scroll_bpm(chart_time)
@@ -467,13 +465,22 @@ fn integrate_floor(
     let interval_tolerance =
         PORTABLE_EVALUABLE_ABSOLUTE_ERROR / (boundaries.len().saturating_sub(1) as f64).max(1.0);
     let mut integral = DoubleDouble::from_f64(0.0);
+    let mut evaluations = 0;
     for window in boundaries.windows(2) {
         let start = window[0];
         let end = window[1];
         let contribution = if requires_numeric_integration {
-            integrate_numeric_interval(descriptor, tracks, line_id, start, end, interval_tolerance)?
+            integrate_numeric_interval(
+                descriptor,
+                tracks,
+                line_id,
+                start,
+                end,
+                interval_tolerance,
+                &mut evaluations,
+            )?
         } else {
-            integrate_step_interval(descriptor, tracks, line_id, start, end)?
+            integrate_step_interval(descriptor, tracks, line_id, start, end, &mut evaluations)?
         };
         integral = integral.add(DoubleDouble::from_f64(contribution));
     }
@@ -490,9 +497,20 @@ fn integrate_step_interval(
     line_id: &StableId,
     start: f64,
     end: f64,
+    evaluations: &mut usize,
 ) -> Result<f64, ScrollEvaluationError> {
+    if *evaluations >= MAX_INTEGRATION_EVALUATIONS {
+        return Err(ScrollEvaluationError::IntegrationBudgetExceeded {
+            line: line_id.value(),
+        });
+    }
     let sample = midpoint(start, end);
-    let speed = speed_at(tracks, line_id, descriptor.speed(), sample)?;
+    let speed = validate_speed_policy(
+        descriptor,
+        line_id,
+        speed_at(tracks, line_id, descriptor.speed(), sample)?,
+    )?;
+    *evaluations += 1;
     let q_start = descriptor
         .coordinate()
         .coordinate(start)
@@ -520,13 +538,13 @@ fn integrate_numeric_interval(
     start: f64,
     end: f64,
     tolerance: f64,
+    evaluations: &mut usize,
 ) -> Result<f64, ScrollEvaluationError> {
     if start == end {
         return Ok(0.0);
     }
-    let mut evaluations = 0;
     let (estimate, error) =
-        gauss_kronrod_panel(descriptor, tracks, line_id, start, end, &mut evaluations)?;
+        gauss_kronrod_panel(descriptor, tracks, line_id, start, end, evaluations)?;
     let mut panels = vec![IntegrationPanel {
         start,
         end,
@@ -564,21 +582,10 @@ fn integrate_numeric_interval(
             line_id,
             panel.start,
             middle,
-            &mut evaluations,
+            evaluations,
         )?;
-        let right = gauss_kronrod_panel(
-            descriptor,
-            tracks,
-            line_id,
-            middle,
-            panel.end,
-            &mut evaluations,
-        )?;
-        if evaluations > MAX_INTEGRATION_EVALUATIONS {
-            return Err(ScrollEvaluationError::IntegrationBudgetExceeded {
-                line: line_id.value(),
-            });
-        }
+        let right =
+            gauss_kronrod_panel(descriptor, tracks, line_id, middle, panel.end, evaluations)?;
         total = total
             .add(DoubleDouble::from_f64(left.0))
             .add(DoubleDouble::from_f64(right.0))
@@ -684,13 +691,11 @@ fn integrand(
     line_id: &StableId,
     chart_time: f64,
 ) -> Result<f64, ScrollEvaluationError> {
-    let speed = speed_at(tracks, line_id, descriptor.speed(), chart_time)?;
-    if speed < 0.0 && !descriptor.allow_reverse_scroll() {
-        return Err(ScrollEvaluationError::ReverseNotAllowed {
-            line: line_id.value(),
-            speed,
-        });
-    }
+    let speed = validate_speed_policy(
+        descriptor,
+        line_id,
+        speed_at(tracks, line_id, descriptor.speed(), chart_time)?,
+    )?;
     let bpm =
         descriptor
             .scroll_bpm(chart_time)
@@ -703,6 +708,20 @@ fn integrand(
         "floor integration integrand",
         speed * bpm / 60.0,
     )
+}
+
+fn validate_speed_policy(
+    descriptor: &CanonicalScrollLine,
+    line_id: &StableId,
+    speed: f64,
+) -> Result<f64, ScrollEvaluationError> {
+    if speed < 0.0 && !descriptor.allow_reverse_scroll() {
+        return Err(ScrollEvaluationError::ReverseNotAllowed {
+            line: line_id.value(),
+            speed,
+        });
+    }
+    Ok(speed)
 }
 
 fn midpoint(start: f64, end: f64) -> f64 {
@@ -1025,19 +1044,99 @@ mod tests {
     }
 
     #[test]
-    fn integration_budget_exhaustion_has_a_stable_error() {
+    fn step_integration_enforces_reverse_policy_inside_the_interval() {
+        let mut registry = StableIdRegistry::new();
+        let line_id = id(&mut registry, "step-reverse-policy");
+        let graph = graph(line_id.clone());
+        let scroll = CanonicalScrollSet::new(vec![
+            CanonicalScrollLine::new(
+                line_id.clone(),
+                CanonicalScrollCoordinate::new([
+                    CanonicalChartScrollTempoPoint::new(0.0, 120.0).unwrap()
+                ])
+                .unwrap(),
+                1.0,
+                false,
+                10.0,
+                0.0,
+                0.0,
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let tracks = CanonicalTrackSet::new(vec![
+            CanonicalTrack::new(
+                line_id.clone(),
+                "step-reverse",
+                CanonicalTrackTarget::ScrollSpeed,
+                CanonicalTrackBlend::Replace,
+                0,
+                CanonicalTrackFill::HoldAfter,
+                CanonicalTrackFill::HoldBefore,
+                CanonicalTrackFill::HoldAfter,
+                vec![
+                    CanonicalTrackPiece::Segment(
+                        CanonicalTrackSegment::new(
+                            time(0.0),
+                            time(1.0),
+                            CanonicalTrackValue::Float(-1.0),
+                            CanonicalTrackValue::Float(-1.0),
+                            CanonicalTrackInterpolation::Step,
+                            0,
+                        )
+                        .unwrap(),
+                    ),
+                    CanonicalTrackPiece::Segment(
+                        CanonicalTrackSegment::new(
+                            time(1.0),
+                            time(2.0),
+                            CanonicalTrackValue::Float(1.0),
+                            CanonicalTrackValue::Float(1.0),
+                            CanonicalTrackInterpolation::Step,
+                            1,
+                        )
+                        .unwrap(),
+                    ),
+                ],
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+
+        assert!(matches!(
+            evaluate_line_scroll(&graph, &scroll, &tracks, &line_id, 2.0),
+            Err(ScrollEvaluationError::ReverseNotAllowed { line, speed })
+                if line == line_id.value() && speed == -1.0
+        ));
+    }
+
+    #[test]
+    fn integration_budget_is_shared_across_intervals() {
         let mut registry = StableIdRegistry::new();
         let line_id = id(&mut registry, "budget");
         let descriptor = descriptor(line_id.clone(), 1.0, 0.0, 0.0);
         let tracks = CanonicalTrackSet::new(Vec::<CanonicalTrack>::new()).unwrap();
-        let mut evaluations = MAX_INTEGRATION_EVALUATIONS - 14;
-        assert!(matches!(
-            gauss_kronrod_panel(
+        let mut evaluations = MAX_INTEGRATION_EVALUATIONS - 29;
+        assert!(
+            integrate_numeric_interval(
                 &descriptor,
                 &tracks,
                 &line_id,
                 0.0,
                 1.0,
+                PORTABLE_EVALUABLE_ABSOLUTE_ERROR,
+                &mut evaluations,
+            )
+            .is_ok()
+        );
+        assert!(matches!(
+            integrate_numeric_interval(
+                &descriptor,
+                &tracks,
+                &line_id,
+                1.0,
+                2.0,
+                PORTABLE_EVALUABLE_ABSOLUTE_ERROR,
                 &mut evaluations,
             ),
             Err(ScrollEvaluationError::IntegrationBudgetExceeded { line })
