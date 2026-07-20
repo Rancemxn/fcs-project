@@ -1,0 +1,7 @@
+#fcs 5.0.0
+format { profile: fragment; }
+contributors {
+    person unnamed {
+        aliases: ["No canonical display name"];
+    }
+}

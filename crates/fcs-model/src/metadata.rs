@@ -235,53 +235,215 @@ pub enum CanonicalArrayError {
     TypeMismatch,
 }
 
-/// A validated contributor declaration. Field order is not semantic and is
-/// therefore stored in a deterministic key order.
+/// A validated contributor declaration with FCBC-ready typed fields.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalContributor {
     id: String,
-    fields: BTreeMap<String, CanonicalValue>,
+    name: String,
+    aliases: Vec<String>,
+    identifiers: CanonicalObject,
 }
 
 impl CanonicalContributor {
-    pub fn new(id: impl Into<String>, fields: BTreeMap<String, CanonicalValue>) -> Self {
-        Self {
-            id: id.into(),
-            fields,
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        aliases: Vec<String>,
+        identifiers: CanonicalObject,
+    ) -> Result<Self, CanonicalContributorError> {
+        let id = id.into();
+        if id.is_empty() {
+            return Err(CanonicalContributorError::EmptyId);
         }
+        let name = name.into();
+        if name.is_empty() {
+            return Err(CanonicalContributorError::EmptyName);
+        }
+        if let Some(entry) = identifiers
+            .entries()
+            .iter()
+            .find(|entry| !matches!(entry.value(), CanonicalValue::String(_)))
+        {
+            return Err(CanonicalContributorError::NonStringIdentifier {
+                key: entry.key().to_owned(),
+            });
+        }
+        Ok(Self {
+            id,
+            name,
+            aliases,
+            identifiers,
+        })
     }
 
     pub fn id(&self) -> &str {
         &self.id
     }
 
-    pub fn fields(&self) -> &BTreeMap<String, CanonicalValue> {
-        &self.fields
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
-    pub fn field(&self, name: &str) -> Option<&CanonicalValue> {
-        self.fields.get(name)
+    pub fn aliases(&self) -> &[String] {
+        &self.aliases
     }
+
+    pub const fn identifiers(&self) -> &CanonicalObject {
+        &self.identifiers
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CanonicalContributorError {
+    EmptyId,
+    EmptyName,
+    NonStringIdentifier { key: String },
+}
+
+/// One of the twelve standard FCS 5 credit roles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CanonicalStandardCreditRole {
+    Composer,
+    Arranger,
+    Lyricist,
+    Vocalist,
+    Instrumentalist,
+    Mixer,
+    Mastering,
+    Charter,
+    Illustrator,
+    Designer,
+    Programmer,
+    Publisher,
+}
+
+impl CanonicalStandardCreditRole {
+    pub const ALL: [Self; 12] = [
+        Self::Composer,
+        Self::Arranger,
+        Self::Lyricist,
+        Self::Vocalist,
+        Self::Instrumentalist,
+        Self::Mixer,
+        Self::Mastering,
+        Self::Charter,
+        Self::Illustrator,
+        Self::Designer,
+        Self::Programmer,
+        Self::Publisher,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Composer => "composer",
+            Self::Arranger => "arranger",
+            Self::Lyricist => "lyricist",
+            Self::Vocalist => "vocalist",
+            Self::Instrumentalist => "instrumentalist",
+            Self::Mixer => "mixer",
+            Self::Mastering => "mastering",
+            Self::Charter => "charter",
+            Self::Illustrator => "illustrator",
+            Self::Designer => "designer",
+            Self::Programmer => "programmer",
+            Self::Publisher => "publisher",
+        }
+    }
+
+    pub fn from_name(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|role| role.as_str() == value)
+    }
+}
+
+/// A classified standard role or an exact custom ASCII role ID.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CanonicalCreditRole {
+    Standard(CanonicalStandardCreditRole),
+    Custom(String),
+}
+
+impl CanonicalCreditRole {
+    pub fn parse(value: impl Into<String>) -> Result<Self, CanonicalCreditRoleError> {
+        let value = value.into();
+        if let Some(role) = CanonicalStandardCreditRole::from_name(&value) {
+            return Ok(Self::Standard(role));
+        }
+        if value
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphabetic())
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            Ok(Self::Custom(value))
+        } else {
+            Err(CanonicalCreditRoleError::InvalidCustomId(value))
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Standard(role) => role.as_str(),
+            Self::Custom(role) => role,
+        }
+    }
+
+    pub const fn standard(&self) -> Option<CanonicalStandardCreditRole> {
+        match self {
+            Self::Standard(role) => Some(*role),
+            Self::Custom(_) => None,
+        }
+    }
+
+    pub fn custom(&self) -> Option<&str> {
+        match self {
+            Self::Standard(_) => None,
+            Self::Custom(role) => Some(role),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CanonicalCreditRoleError {
+    InvalidCustomId(String),
 }
 
 /// An ordered display credit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalCredit {
-    role: String,
+    role: CanonicalCreditRole,
     label: Option<String>,
     contributors: Vec<String>,
 }
 
 impl CanonicalCredit {
-    pub fn new(role: impl Into<String>, label: Option<String>, contributors: Vec<String>) -> Self {
-        Self {
-            role: role.into(),
+    pub fn new(
+        role: CanonicalCreditRole,
+        label: Option<String>,
+        contributors: Vec<String>,
+    ) -> Result<Self, CanonicalCreditError> {
+        let mut unique = std::collections::BTreeSet::new();
+        if let Some(duplicate) = contributors
+            .iter()
+            .find(|contributor| !unique.insert(contributor.as_str()))
+        {
+            return Err(CanonicalCreditError::DuplicateContributor(
+                duplicate.clone(),
+            ));
+        }
+        Ok(Self {
+            role,
             label,
             contributors,
-        }
+        })
     }
 
     pub fn role(&self) -> &str {
+        self.role.as_str()
+    }
+
+    pub const fn role_kind(&self) -> &CanonicalCreditRole {
         &self.role
     }
 
@@ -292,6 +454,11 @@ impl CanonicalCredit {
     pub fn contributors(&self) -> &[String] {
         &self.contributors
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CanonicalCreditError {
+    DuplicateContributor(String),
 }
 
 /// The resource kinds defined by FCS Core.
@@ -517,5 +684,52 @@ impl CanonicalMetadata {
 
     pub fn sync(&self) -> Option<&CanonicalSync> {
         self.sync.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credit_roles_classify_every_standard_name_and_exact_custom_ids() {
+        for expected in CanonicalStandardCreditRole::ALL {
+            let role = CanonicalCreditRole::parse(expected.as_str()).unwrap();
+            assert_eq!(role.standard(), Some(expected));
+            assert_eq!(role.as_str(), expected.as_str());
+        }
+
+        let artist = CanonicalCreditRole::parse("artist").unwrap();
+        assert_eq!(artist.custom(), Some("artist"));
+        for invalid in ["", "1artist", "chart effects", "custom(role)", "特效"] {
+            assert!(CanonicalCreditRole::parse(invalid).is_err(), "{invalid:?}");
+        }
+    }
+
+    #[test]
+    fn contributor_and_credit_constructors_defend_canonical_invariants() {
+        let empty = CanonicalObject::new(Vec::new()).unwrap();
+        assert_eq!(
+            CanonicalContributor::new("alice", "", Vec::new(), empty.clone()),
+            Err(CanonicalContributorError::EmptyName)
+        );
+
+        let non_string = CanonicalObject::new(vec![CanonicalObjectEntry::new(
+            "provider",
+            CanonicalValue::Int(1),
+        )])
+        .unwrap();
+        assert_eq!(
+            CanonicalContributor::new("alice", "Alice", Vec::new(), non_string),
+            Err(CanonicalContributorError::NonStringIdentifier {
+                key: "provider".into()
+            })
+        );
+
+        let role = CanonicalCreditRole::parse("charter").unwrap();
+        assert_eq!(
+            CanonicalCredit::new(role, None, vec!["alice".into(), "alice".into()]),
+            Err(CanonicalCreditError::DuplicateContributor("alice".into()))
+        );
     }
 }

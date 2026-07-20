@@ -1,0 +1,9 @@
+#fcs 5.0.0
+format { profile: fragment; }
+contributors { person alice { name: "Alice"; } }
+credits {
+    credit {
+        role: "charter";
+        contributors: [@alice, @alice];
+    }
+}

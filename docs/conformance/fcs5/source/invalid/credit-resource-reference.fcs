@@ -1,0 +1,14 @@
+#fcs 5.0.0
+format { profile: fragment; }
+resources {
+    binary blob {
+        source: "blob.bin";
+        mediaType: "application/octet-stream";
+    }
+}
+credits {
+    credit {
+        role: "designer";
+        contributors: [@blob];
+    }
+}

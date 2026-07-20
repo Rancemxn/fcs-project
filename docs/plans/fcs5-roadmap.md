@@ -536,9 +536,12 @@ sampled/BakedCurve 路径都不进入标准 runtime。
 当前交付状态：I5.1 的实现单元新增 canonical-stage
 `Document::validate_profile_requirements`，覆盖五种 primary profile、正交 playable/renderable
 capability、publishable metadata/credit/声明 hash，以及当前 Core AST 可表示的 Render envelope；
-`Document::canonical_chart` 复用同一 gate。详细边界与证据见
+`Document::canonical_chart` 复用同一 gate。I5.2 将 contributor 从通用字段 map 收紧为 typed
+ID/name/aliases/ordered identifiers，并将十二个标准 credit role 与 byte-exact custom ASCII role
+区分；credit 和 contributor-reference 顺序保持，重复、unknown 和 wrong-kind contributor reference
+在 canonical boundary 拒绝，`artist` 只保留为 custom role。详细边界与证据见
 `docs/plans/i5-canonical-compilation.md`。Render payload/scene/reference closure 仍归 I9，resource
-bytes/hash verification 与 `CanonicalResourceBundle` 仍归 I5.3；I5.2–I5.7 和整个 I5 stage 尚未完成。
+bytes/hash verification 与 `CanonicalResourceBundle` 仍归 I5.3；I5.3–I5.7 和整个 I5 stage 尚未完成。
 
 ### I6：PGR/RPE/PEC importer
 

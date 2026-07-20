@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fcs_model::{
     AudioOffset, Beat as CanonicalBeat, CanonicalArtwork, CanonicalChart, CanonicalChartError,
-    CanonicalColor, CanonicalContributor, CanonicalCredit, CanonicalLineGraph, CanonicalMetadata,
-    CanonicalObject, CanonicalObjectEntry, CanonicalPreview, CanonicalProfile,
+    CanonicalColor, CanonicalContributor, CanonicalCredit, CanonicalCreditRole, CanonicalLineGraph,
+    CanonicalMetadata, CanonicalObject, CanonicalObjectEntry, CanonicalPreview, CanonicalProfile,
     CanonicalProfileFeature, CanonicalRequiredExtension, CanonicalResource, CanonicalResourceKind,
     CanonicalSourceVersion, CanonicalSync, CanonicalValue, CanonicalValueType, DeclaredSha256,
 };
@@ -521,9 +521,41 @@ fn lower_contributors(
             diagnostics,
             "contributor",
         );
+        let Some(name) = string_field(
+            &fields,
+            "name",
+            person.span,
+            diagnostics,
+            "contributor name",
+        ) else {
+            continue;
+        };
+        if name.is_empty() {
+            diagnostics.push(canonical_diagnostic(
+                DiagnosticCode::TYPE_INVALID_OPERATION,
+                "contributor name must not be empty",
+                person.span,
+            ));
+            continue;
+        }
+        let aliases = fields
+            .get("aliases")
+            .and_then(array_values)
+            .map(|values| values.iter().filter_map(string_value).collect())
+            .unwrap_or_default();
+        let identifiers = fields
+            .get("identifiers")
+            .and_then(|value| match value {
+                CanonicalValue::Object(object) => Some(object.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                CanonicalObject::new(Vec::new()).expect("an empty canonical object is valid")
+            });
         output.insert(
             person.name.clone(),
-            CanonicalContributor::new(person.name.clone(), fields),
+            CanonicalContributor::new(person.name.clone(), name, aliases, identifiers)
+                .expect("source validation establishes canonical contributor invariants"),
         );
     }
     output
@@ -559,14 +591,14 @@ fn lower_credits(
         else {
             continue;
         };
-        if !valid_credit_role(&role) {
+        let Ok(role) = CanonicalCreditRole::parse(role) else {
             diagnostics.push(canonical_diagnostic(
                 DiagnosticCode::TYPE_INVALID_OPERATION,
                 "credit role must be a standard role or a non-empty ASCII custom ID",
                 entry.span,
             ));
             continue;
-        }
+        };
         let label = fields.get("label").and_then(string_value);
         let credit_contributors = fields
             .get("contributors")
@@ -581,7 +613,14 @@ fn lower_credits(
                     .collect()
             })
             .unwrap_or_default();
-        output.push(CanonicalCredit::new(role, label, credit_contributors));
+        match CanonicalCredit::new(role, label, credit_contributors) {
+            Ok(credit) => output.push(credit),
+            Err(_) => diagnostics.push(canonical_diagnostic(
+                DiagnosticCode::NAME_DUPLICATE,
+                "a credit contributor reference must be unique within its credit",
+                entry.span,
+            )),
+        }
     }
     output
 }
@@ -1563,31 +1602,6 @@ fn valid_workspace_member_path(path: &str) -> bool {
     !path
         .split('/')
         .any(|component| component.is_empty() || component == "." || component == "..")
-}
-
-fn valid_credit_role(role: &str) -> bool {
-    const STANDARD: &[&str] = &[
-        "composer",
-        "arranger",
-        "lyricist",
-        "vocalist",
-        "instrumentalist",
-        "mixer",
-        "mastering",
-        "charter",
-        "illustrator",
-        "designer",
-        "programmer",
-        "publisher",
-    ];
-    STANDARD.contains(&role)
-        || (role
-            .bytes()
-            .next()
-            .is_some_and(|byte| byte.is_ascii_alphabetic())
-            && role
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')))
 }
 
 fn type_mismatch(expected: &Expected, actual: &str, span: SourceSpan) -> Diagnostic {

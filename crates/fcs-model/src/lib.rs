@@ -40,9 +40,11 @@ pub use line::{
 };
 pub use metadata::{
     CanonicalArrayError, CanonicalArtwork, CanonicalColor, CanonicalColorError,
-    CanonicalContributor, CanonicalCredit, CanonicalMetadata, CanonicalObject,
+    CanonicalContributor, CanonicalContributorError, CanonicalCredit, CanonicalCreditError,
+    CanonicalCreditRole, CanonicalCreditRoleError, CanonicalMetadata, CanonicalObject,
     CanonicalObjectEntry, CanonicalObjectError, CanonicalPreview, CanonicalResource,
-    CanonicalResourceKind, CanonicalSync, CanonicalValue, CanonicalValueType, DeclaredSha256,
+    CanonicalResourceKind, CanonicalStandardCreditRole, CanonicalSync, CanonicalValue,
+    CanonicalValueType, DeclaredSha256,
 };
 pub use note::{
     CanonicalJudgeShape, CanonicalNote, CanonicalNoteError, CanonicalNoteGameplay,
