@@ -41,6 +41,167 @@ type = "bool"
 value = true
 note = "rhs is not evaluated"
 
+[[difficult_operation]]
+opcode = "sqrt"
+input_hex_bits = "4000000000000001"
+output_hex_bits = "3ff6a09e667f3bcd"
+
+[[difficult_operation]]
+opcode = "exp"
+input_hex_bits = "3fd5555555555555"
+output_hex_bits = "3ff6546db1ba2d13"
+
+[[difficult_operation]]
+opcode = "ln"
+input_hex_bits = "3ff0000000000001"
+output_hex_bits = "3cafffffffffffff"
+
+[[difficult_operation]]
+opcode = "sin"
+input_hex_bits = "4415af1d78b58c40"
+output_hex_bits = "bfe4a5e605fd6450"
+
+[[difficult_operation]]
+opcode = "cos"
+input_hex_bits = "4415af1d78b58c40"
+output_hex_bits = "3fe872720fc60d3d"
+
+[[difficult_operation]]
+opcode = "tan"
+input_hex_bits = "4415af1d78b58c40"
+output_hex_bits = "bfeb06fbbe995394"
+
+[[difficult_operation]]
+opcode = "asin"
+input_hex_bits = "3fefffffffffffff"
+output_hex_bits = "3ff921fb50442d18"
+
+[[difficult_operation]]
+opcode = "acos"
+input_hex_bits = "3fefffffffffffff"
+output_hex_bits = "3e50000000000000"
+
+[[difficult_operation]]
+opcode = "atan"
+input_hex_bits = "7fefffffffffffff"
+output_hex_bits = "3ff921fb54442d18"
+
+[[difficult_operation]]
+opcode = "atan2"
+input_hex_bits = "7e37e43c8800759c"
+right_hex_bits = "81a56e1fc2f8f359"
+output_hex_bits = "3ff921fb54442d18"
+
+[[difficult_operation]]
+opcode = "pow"
+input_hex_bits = "3ff0000000000001"
+right_hex_bits = "4330000000000000"
+output_hex_bits = "4005bf0a8b145769"
+
+[[difficult_operation]]
+opcode = "sqrt"
+input_hex_bits = "8000000000000000"
+output_hex_bits = "8000000000000000"
+
+[[difficult_operation]]
+opcode = "sin"
+input_hex_bits = "8000000000000000"
+output_hex_bits = "8000000000000000"
+
+[[difficult_operation]]
+opcode = "cos"
+input_hex_bits = "8000000000000000"
+output_hex_bits = "3ff0000000000000"
+
+[[difficult_operation]]
+opcode = "tan"
+input_hex_bits = "8000000000000000"
+output_hex_bits = "8000000000000000"
+
+[[difficult_operation]]
+opcode = "asin"
+input_hex_bits = "8000000000000000"
+output_hex_bits = "8000000000000000"
+
+[[difficult_operation]]
+opcode = "atan"
+input_hex_bits = "8000000000000000"
+output_hex_bits = "8000000000000000"
+
+[[difficult_operation]]
+opcode = "atan2"
+input_hex_bits = "0000000000000000"
+right_hex_bits = "bff0000000000000"
+output_hex_bits = "400921fb54442d18"
+
+[[difficult_operation]]
+opcode = "atan2"
+input_hex_bits = "8000000000000000"
+right_hex_bits = "bff0000000000000"
+output_hex_bits = "c00921fb54442d18"
+
+[[difficult_operation]]
+opcode = "atan2"
+input_hex_bits = "3ff0000000000000"
+right_hex_bits = "0000000000000000"
+output_hex_bits = "3ff921fb54442d18"
+
+[[difficult_operation]]
+opcode = "atan2"
+input_hex_bits = "bff0000000000000"
+right_hex_bits = "8000000000000000"
+output_hex_bits = "bff921fb54442d18"
+
+[[difficult_operation]]
+opcode = "pow"
+input_hex_bits = "0000000000000000"
+right_hex_bits = "0000000000000000"
+output_hex_bits = "3ff0000000000000"
+
+[[difficult_operation]]
+opcode = "pow"
+input_hex_bits = "8000000000000000"
+right_hex_bits = "4008000000000000"
+output_hex_bits = "8000000000000000"
+
+[[difficult_operation]]
+opcode = "pow"
+input_hex_bits = "8000000000000000"
+right_hex_bits = "4000000000000000"
+output_hex_bits = "0000000000000000"
+
+[[domain_operation]]
+opcode = "sqrt"
+input_hex_bits = "bff0000000000000"
+expected_error = "domain"
+
+[[domain_operation]]
+opcode = "ln"
+input_hex_bits = "0000000000000000"
+expected_error = "domain"
+
+[[domain_operation]]
+opcode = "asin"
+input_hex_bits = "3ff0000000000001"
+expected_error = "domain"
+
+[[domain_operation]]
+opcode = "acos"
+input_hex_bits = "bff0000000000001"
+expected_error = "domain"
+
+[[domain_operation]]
+opcode = "pow"
+input_hex_bits = "0000000000000000"
+right_hex_bits = "bff0000000000000"
+expected_error = "domain"
+
+[[domain_operation]]
+opcode = "pow"
+input_hex_bits = "c000000000000000"
+right_hex_bits = "3fe0000000000000"
+expected_error = "domain"
+
 [[easing]]
 name = "linear"
 x_hex_bits = "3fe0000000000000"
@@ -55,6 +216,111 @@ y_hex_bits = "3fd0000000000000"
 name = "easeOutQuad"
 x_hex_bits = "3fe0000000000000"
 y_hex_bits = "3fe8000000000000"
+
+[[easing]]
+name = "linear"
+x_hex_bits = "3fdfffffffffffff"
+y_hex_bits = "3fdfffffffffffff"
+
+[[easing]]
+name = "easeInSine"
+x_hex_bits = "3fb999999999999a"
+y_hex_bits = "3f8936daf406e900"
+
+[[easing]]
+name = "easeOutSine"
+x_hex_bits = "3fe6666666666666"
+y_hex_bits = "3fec83201d3d2c6d"
+
+[[easing]]
+name = "easeInOutSine"
+x_hex_bits = "3fdfffffffffffff"
+y_hex_bits = "3fdffffffffffffd"
+
+[[easing]]
+name = "easeInQuad"
+x_hex_bits = "3fe6666666666666"
+y_hex_bits = "3fdf5c28f5c28f5b"
+
+[[easing]]
+name = "easeInCubic"
+x_hex_bits = "3fe6666666666666"
+y_hex_bits = "3fd5f3b645a1cabf"
+
+[[easing]]
+name = "easeInQuart"
+x_hex_bits = "3fe6666666666666"
+y_hex_bits = "3fcebb98c7e2823e"
+
+[[easing]]
+name = "easeInQuint"
+x_hex_bits = "3fe6666666666666"
+y_hex_bits = "3fc5835158b827f8"
+
+[[easing]]
+name = "easeInExpo"
+x_hex_bits = "3fb999999999999a"
+y_hex_bits = "3f60000000000000"
+
+[[easing]]
+name = "easeOutExpo"
+x_hex_bits = "3fe6666666666666"
+y_hex_bits = "3fefc00000000000"
+
+[[easing]]
+name = "easeInOutExpo"
+x_hex_bits = "3fdfffffffffffff"
+y_hex_bits = "3fdffffffffffff5"
+
+[[easing]]
+name = "easeInCirc"
+x_hex_bits = "3fe6666666666666"
+y_hex_bits = "3fd24b7bd1512d1e"
+
+[[easing]]
+name = "easeOutCirc"
+x_hex_bits = "3fb999999999999a"
+y_hex_bits = "3fdbe59eba3a1658"
+
+[[easing]]
+name = "easeInOutCirc"
+x_hex_bits = "3fdfffffffffffff"
+y_hex_bits = "3fdffffff8000000"
+
+[[easing]]
+name = "easeInBack"
+x_hex_bits = "3fe6666666666666"
+y_hex_bits = "3fb7c62e22274738"
+
+[[easing]]
+name = "easeInElastic"
+x_hex_bits = "3fb999999999999a"
+y_hex_bits = "3f60000000000000"
+
+[[easing]]
+name = "easeOutElastic"
+x_hex_bits = "3fe6666666666666"
+y_hex_bits = "3ff0100000000000"
+
+[[easing]]
+name = "easeInOutElastic"
+x_hex_bits = "3fdfffffffffffff"
+y_hex_bits = "3fdffffffffffff5"
+
+[[easing]]
+name = "easeInBounce"
+x_hex_bits = "3fb999999999999a"
+y_hex_bits = "3f8851eb851eb880"
+
+[[easing]]
+name = "easeOutBounce"
+x_hex_bits = "3fe6666666666666"
+y_hex_bits = "3fedc7ae147ae148"
+
+[[easing]]
+name = "easeInOutBounce"
+x_hex_bits = "3fdfffffffffffff"
+y_hex_bits = "3fe0000000000000"
 
 [[tempo]]
 bpm = 120.0

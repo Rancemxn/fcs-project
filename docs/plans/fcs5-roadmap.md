@@ -24,6 +24,9 @@ Reviewed Implementation Baseline 驱动 Rust 参考实现，再在完整 executa
   条件满足后自动进入下一阶段，无需逐阶段取得用户确认；该 baseline 不改变版本状态。
 - I10 conformance RC 仍要求五个版本域全部 Frozen、最终联合独立复审和完整 executable
   conformance 通过。
+- 直接第三方依赖使用精确 Cargo 版本，并按
+  `docs/plans/fcs5-dependency-baseline.md` 固定 crates.io 发布 commit、feature 和用途边界；
+  `refer/dependencies/` 只提供同版本源码证据，不作为 path dependency，也不能替代规范语义。
 
 ## 3. 版本基线
 
@@ -484,7 +487,8 @@ preserve 状态。I3.9 不建立产品或规范性 JSON 格式。其后 residual
 - **I4.7 Exact integration validation**：对 portable-evaluable integrand 实现确定性求值/积分误差界、
   direct-seek 与 analytic cross-check；不输出采样曲线或 BakedCurve。
 - **I4.8 Independent reference path**：reference evaluator 不复用 production caching/SIMD shortcut；
-  production 与 reference cross-check。
+  dev-only 使用 cataloged `astro-float` 直接高精度 API 建立困难输入 oracle，production 与
+  reference cross-check；不得把该依赖带入产品求值路径。
 - **I4.9 Determinism/property**：seek=sequential、partition invariance、frame-rate independence、
   randomized legal Track 与 error bound property tests。
 
@@ -505,9 +509,11 @@ work-unit 的交付证据；Issue #227 现已将直接 runtime field 接到 sour
 Piecewise descriptor table、完整 partition/cycle/domain 校验、结构 interning、deterministic postorder
 和 selected-Piece `EnvP` 求值。Issue #233 已将现有 canonical scroll/Track 产品路径的 step-only
 限制替换为 boundary-aware adaptive Gauss-Kronrod direct-seek integration，保留 constant/step analytic
-路径，并以固定误差/深度/求值预算拒绝无法收敛的查询。I4.8–I4.9 的独立 reference、困难输入与
-property cross-check 仍是后续 residual；FCBC descriptor assembly/serialization 仍归 I7，任何
-sampled/BakedCurve 路径都不进入标准 runtime。
+路径，并以固定误差/深度/求值预算拒绝无法收敛的查询。I4.8 已加入 dev-only Astro-float
+independent reference、24 个困难 Core 结果位向量、6 个 domain error 向量、21 个 easing
+family/branch 向量、独立 Bezier solve、矩阵/scroll cross-check 和严格可执行 numeric corpus；I4.9 的随机
+partition/frame-rate/error-bound property cross-check 仍是后续 residual。FCBC descriptor
+assembly/serialization 仍归 I7，任何 sampled/BakedCurve 路径都不进入标准 runtime。
 
 ### I5：Metadata、resources、sync 与 fidelity
 
@@ -546,7 +552,9 @@ sampled/BakedCurve 路径都不进入标准 runtime。
 ### I7：FCBC writer、loader 与 ABI
 
 - **I7.1 Primitive codec**：使用标准库 `to_le_bytes`/`from_le_bytes` 实现 little-endian、Value、
-  Record、StringTable、ConstantPool 和 canonical zero；不引入 `byteorder`。
+  Record、StringTable、ConstantPool 和 canonical zero；cataloged `num_enum` 只生成已闭合 wire enum
+  的 checked primitive conversion，cataloged `bitflags` 只表示已验证的 wire mask；不引入
+  `byteorder`，也不得截断未知 enum/flag。
 - **I7.2 Container writer**：激活 cataloged `crc` 的 CRC-32/ISO-HDLC 与 `sha2`，实现 128-byte
   header、40-byte entries、alignment/padding、checksum、source hash 和 deterministic sections。
 - **I7.3 Core sections**：Meta through Distance、required ResourceData 的 record writer/reader、原始
@@ -566,8 +574,9 @@ sampled/BakedCurve 路径都不进入标准 runtime。
 
 ### I8：FCS 和外部格式 exporter
 
-- **I8.1 Canonical FCS formatter**：唯一 whitespace/order/literal/unit policy，parse-format-parse
-  semantic idempotence。
+- **I8.1 Canonical FCS formatter**：cataloged `ryu` 只生成 finite binary64 的 shortest-roundtrip
+  decimal 候选，再由 FCS 固定唯一 whitespace、exponent、signed-zero、literal 和 unit policy；
+  parse-format-parse semantic idempotence，不能让 crate 输出本身成为规范。
 - **I8.2 CapabilitySet**：每个目标版本声明 time/Note/Track/graph/expression/resource/limit 能力。
 - **I8.3 Negotiation**：direct/equivalent/bake/preserve/drop/unsupported 在写目标前完成并入 report。
 - **I8.4 Boundary-preserving bake**：先固定 tempo/Note/Hold/event，再优化 continuous segment；量化
@@ -590,9 +599,11 @@ sampled/BakedCurve 路径都不进入标准 runtime。
   version/feature/Resources/ResourceData validation；section 不保存 path/payload/source text/cluster。
 - **I9.5 Semantic evaluator**：transform/opacity/active/visibility/clip/attachment/composite draw list。
 - **I9.6 Reference rasterizer**：为 render crate 激活 defaults-disabled `image`，只开启规范/fixture
-  需要的 codec并设置 dimension/allocation limits；实现 fixed resources、path coverage、linear
-  compositing、image sampling、embedded-font glyph run 和 RGBA8 output，不能让 image crate behavior
-  定义规范或访问外部 asset/system font。
+  需要的 codec并设置 dimension/allocation limits；cataloged defaults-disabled `ttf-parser` 只用于
+  bounded TrueType table/outline decoding，项目仍负责允许的 sfnt/cmap profile、checksum、limit、
+  binary64 geometry、8x8 coverage 和错误 precedence；实现 fixed resources、path coverage、linear
+  compositing、image sampling、embedded-font glyph run 和 RGBA8 output，不能让依赖 behavior 定义
+  规范或访问外部 asset/system font。
 - **I9.7 Raster fixtures**：每种 node/paint/clip/composite、line/note attachment、dynamic boundary 和
   malformed resource；在 S15 semantic binding fixture 上增加可解码 image/font FCBC payload 并比较
   规范容差。
@@ -613,6 +624,11 @@ sampled/BakedCurve 路径都不进入标准 runtime。
 - **I10.6 文档/fixture闭环**：四规范每个 normative example 可执行，CLI `--version` 同版本表。
 - **I10.7 最终验证**：workspace gates、all profiles/goldens/round-trips/rasters、property/fuzz smoke、
   optional copyright fixtures；发布 conformance manifest。
+
+`tempfile` 可用于 filesystem fixture 和 CLI 同目录原子输出；`thiserror` 可用于新建或正在实质修改的
+typed error boundary。二者都不能把稳定 diagnostic category、rule ID、JSON schema 或 source span
+降格为通用字符串。I0-I4 已完成模块不为“使用新依赖”而批量重写；只有触及对应模块且能减少实际
+重复、保持 public API/错误文本/raw-bit 行为时，才随所属 work-unit 渐进迁移。
 
 ## 7. 每个实施阶段的质量门
 
