@@ -65,6 +65,22 @@ impl CanonicalExpressionType {
             _ => true,
         }
     }
+
+    pub(crate) fn append_structural_key(&self, output: &mut Vec<u8>) {
+        match self {
+            Self::Bool => output.push(0),
+            Self::Int => output.push(1),
+            Self::Float => output.push(2),
+            Self::Time => output.push(3),
+            Self::Beat => output.push(4),
+            Self::Length => output.push(5),
+            Self::Angle => output.push(6),
+            Self::Vec2(element) => {
+                output.push(7);
+                element.append_structural_key(output);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -123,6 +139,23 @@ impl CanonicalExpressionValue {
             _ => true,
         }
     }
+
+    pub(crate) fn append_structural_key(&self, output: &mut Vec<u8>) {
+        self.value_type().append_structural_key(output);
+        match self {
+            Self::Bool(value) => output.push(u8::from(*value)),
+            Self::Int(value) => output.extend_from_slice(&value.to_le_bytes()),
+            Self::Float(value)
+            | Self::Time(value)
+            | Self::Beat(value)
+            | Self::Length(value)
+            | Self::Angle(value) => output.extend_from_slice(&value.to_bits().to_le_bytes()),
+            Self::Vec2(x, y) => {
+                append_key(output, |key| x.append_structural_key(key));
+                append_key(output, |key| y.append_structural_key(key));
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -134,6 +167,7 @@ pub enum CanonicalExpressionEnvironment {
     P,
 }
 
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CanonicalExpressionOpcode {
     Constant,
@@ -287,6 +321,33 @@ impl CanonicalExpressionDag {
         values
     }
 
+    pub(crate) fn append_structural_key(&self, output: &mut Vec<u8>) {
+        self.append_node_key(self.root, output);
+    }
+
+    fn append_node_key(&self, index: usize, output: &mut Vec<u8>) {
+        let node = &self.nodes[index];
+        output.push(node.opcode as u8);
+        node.result_type.append_structural_key(output);
+        output.extend_from_slice(&node.immediate.to_le_bytes());
+        match &node.constant {
+            Some(value) => {
+                output.push(1);
+                append_key(output, |key| value.append_structural_key(key));
+            }
+            None => output.push(0),
+        }
+        for operand in node.operands {
+            match operand {
+                Some(operand) => {
+                    output.push(1);
+                    append_key(output, |key| self.append_node_key(operand, key));
+                }
+                None => output.push(0),
+            }
+        }
+    }
+
     fn validate(&self) -> Result<(), CanonicalExpressionError> {
         for (index, node) in self.nodes.iter().enumerate() {
             for operand in node.operands.iter().flatten() {
@@ -306,6 +367,13 @@ impl CanonicalExpressionDag {
         }
         Ok(())
     }
+}
+
+fn append_key(output: &mut Vec<u8>, append: impl FnOnce(&mut Vec<u8>)) {
+    let mut key = Vec::new();
+    append(&mut key);
+    output.extend_from_slice(&(key.len() as u32).to_le_bytes());
+    output.extend_from_slice(&key);
 }
 
 #[derive(Debug, Default)]

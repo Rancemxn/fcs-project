@@ -5,12 +5,14 @@
 //! adds direct-seek Line scroll evaluation. Expression DAG and independent
 //! reference evaluation remain later I4 units.
 
+mod descriptor;
 mod easing;
 mod expression;
 mod scroll;
 mod track;
 mod transform;
 
+pub use descriptor::{DescriptorEvaluationError, evaluate_descriptor};
 pub use easing::{EasingError, EasingId, evaluate_easing};
 pub use expression::{ExpressionEnvironment, ExpressionEvaluationError, evaluate_expression};
 pub use scroll::{
