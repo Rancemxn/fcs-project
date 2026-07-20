@@ -7,26 +7,27 @@ fixture 使用稳定 ID，并引用权威规范条款、输入文件和预期结
 32 项；这些条目闭合完整顶级 envelope、escaped NUL、header whitespace/leading-zero、duplicate
 block、generator placement、extension delimiter、mixed-Beat rejection 和 unresolved schema enum。
 
-后续 authoring/canonical closure 增加 7 项，当前 FCS manifest 共 39 项：canonical-equivalent
+后续 authoring/canonical closure 最初增加 7 项：canonical-equivalent
 direct/template、exact Expression DAG、Note policy、disabled sound policy、workspace path escape 和
 resource hash mismatch。Root/FCS manifest schema 升为 2：root 使用 `candidate_baseline`，resource
 fixture 可以声明 `workspace_root`，resolver 只能在该目录内读取 opaque member bytes。原 32 项
-grammar baseline 继续作为 Reviewed 范围的历史证据；当前 39 项
+grammar baseline 继续作为 Reviewed 范围的历史证据；后续 I3–I5 stage-scoped fixture 持续追加，当前
+manifest 共 50 项。I5.3 新增 `source.invalid.resource-missing-member`，并把 existing valid resource、
+path escape 与 hash mismatch 向量接到显式 workspace bundle resolver。当前 50 项
 candidate 仍随五个 Draft/联合重审版本域审查，不是 Frozen baseline。当前状态和后续 re-freeze gate
 以 `docs/specifications/governance.md`、路线图与
 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md` 为准；后者是联合候选自检，不是独立
 review 或 Frozen 声明。
 
-I4.4 scroll-composition closure adds the evaluate-stage
+I4.4 scroll-composition closure added the evaluate-stage
 `source.valid.scroll-inheritance` vector and its literal expected output to the
-active corpus. The active FCS manifest therefore contains 42 entries; the
-product evaluator now executes this vector, while exact-head full-gate and
-independent-review evidence remain required before the binding can support a
+active corpus. The product evaluator executes this vector; exact-head full-gate
+and Primary Self-Audit evidence remain required before a new binding supports a
 stage claim.
 
 I4.9 adds the bounded deterministic runtime-property lane documented in
 `fcs5-runtime-properties.md`. It uses the pinned dev-only `proptest` source and
-does not add manifest fixtures or change the 42-entry active FCS corpus.
+does not add manifest fixtures.
 
 S15 FCBC/Execution ABI closure 把 root `candidate_baseline` 更新为
 `2026-07-15-s15-cross-spec-closure`，并引入 FCBC manifest schema 2。当前两个 FCBC golden 都固定

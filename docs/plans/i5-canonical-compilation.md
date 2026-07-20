@@ -1,7 +1,7 @@
 # I5 CanonicalCompilation, metadata, resources, sync, and fidelity
 
-Status: I5.1-I5.2 implementation establishes the canonical profile-requirement
-and contributor/credit boundaries. I5.3-I5.7 remain open and this plan does not claim a complete
+Status: I5.1-I5.3 implementation establishes the canonical profile-requirement,
+contributor/credit, and opaque workspace-resource boundaries. I5.4-I5.7 remain open and this plan does not claim a complete
 `CanonicalCompilation`, Render scene, converter, FCBC product, or FCS 5 release.
 
 ## Normative dependency closure
@@ -98,14 +98,61 @@ and contributor/credit boundaries. I5.3-I5.7 remain open and this plan does not 
 - Acceptance requires the exact PR head to pass `.github/workflows/full-gate.yml`
   and a passing Primary Self-Audit with no unresolved Critical/Important finding.
 
+## I5.3 owned surface
+
+- `Document::canonical_resource_bundle` is the only filesystem-bearing source
+  boundary in this work unit. It requires an explicit workspace root and public
+  `ResourceLimits`; parsing, static checking, `canonical_metadata`, and
+  `canonical_chart` remain filesystem-free.
+- Logical member spelling is validated before filesystem access. Resolution
+  canonicalizes the supplied root and member, accepts only regular files whose
+  resolved target remains below that root, accepts an in-root symlink target,
+  and reports missing, directory, non-regular, and escaping targets as
+  `resource.unknown-reference` without embedding host paths in the model.
+- Resource count, maximum single-resource bytes, and maximum total bytes are
+  public implementation limits. Metadata length is checked before allocation;
+  reads are additionally bounded against concurrent growth. Every failure uses
+  `resource.limit-exceeded` with kind, limit, observed value, and source span.
+- `CanonicalContentSha256`, `CanonicalBundledResource`, and
+  `CanonicalResourceBundle` retain computed SHA-256 and exact opaque bytes under
+  the stable textual resource ID. Constructors reject a declared/computed hash
+  mismatch and duplicate bundle IDs. A bundle retains unused declarations and
+  does not merge distinct IDs with equal bytes or hashes.
+- Image and texture descriptors materialize `colorSpace`, `alpha`, and
+  `sampling` in the Render-defined canonical order and validate their exact
+  enums. Standard `font/ttf` descriptors materialize the exact Core
+  `fontProfile`, `shapingProfile`, and `faceCount` object. Other resource kinds
+  do not inherit these fields.
+- The resolver never decodes, guesses, transcodes, normalizes, or repairs media.
+  PNG/WebP capability and TrueType table validation remain I9-owned; FCBC
+  resource u64 identity, record assembly, and byte layout remain I7-owned.
+- Production hashing uses the already active cataloged `sha2` 0.11.0 source.
+  Cataloged `tempfile` 3.27.0 is activated only as an `fcs-source` dev dependency
+  for isolated filesystem and symlink integration tests.
+
+## I5.3 acceptance evidence
+
+- `resource_bundle` covers deterministic ID order, opaque invalid-codec bytes,
+  unused resources, equal-content distinct IDs, computed/matching/mismatched
+  hashes, no path-bearing model field, image/texture/font metadata order and
+  defaults, missing/directory/non-regular members, in-root and escaping
+  symlinks, all three public budgets, and the filesystem-free metadata boundary.
+- `fcs_model::metadata::tests::resource_bundle_constructors_defend_hash_and_logical_id_invariants`
+  proves the source-free constructors reject inconsistent hashes and duplicate
+  logical IDs.
+- `source.valid.metadata-credits-resources-sync`,
+  `source.invalid.resource-path-escape`,
+  `source.invalid.resource-hash-mismatch`, and
+  `source.invalid.resource-missing-member` execute through
+  `conformance_manifest::i5_resource_fixtures_execute_at_the_workspace_bundle_boundary`.
+- Acceptance requires the exact PR head to pass `.github/workflows/full-gate.yml`
+  and a passing Primary Self-Audit with no unresolved Critical/Important finding.
+
 ## Remaining I5 work
 
-- I5.3 resolves component-normalized workspace paths, enforces root/symlink
-  safety, reads opaque bytes, computes SHA-256, verifies declarations, and
-  builds `CanonicalResourceBundle`.
 - I5.4 closes the sync/preview formula and shared player/converter vectors.
 - I5.5 binds typed custom value limits and FCBC-compatible restrictions.
 - I5.6 adds provenance and stale-dependency tracking without source AST leakage
   into `CanonicalChart`.
 - I5.7 adds the deterministic report/repair model. None of these residuals is
-  implemented or claimed by I5.1-I5.2.
+  implemented or claimed by I5.1-I5.3.

@@ -376,6 +376,15 @@ diagnostic = "resource.hash-mismatch"
 clauses = ["1.4", "7.3", "17"]
 
 [[fixture]]
+id = "source.invalid.resource-missing-member"
+path = "source/invalid/resource-missing-member.fcs"
+workspace_root = "source/invalid"
+stage = "canonical"
+expect = "error"
+diagnostic = "resource.unknown-reference"
+clauses = ["1.4", "7.3", "17", "Appendix C"]
+
+[[fixture]]
 id = "source.invalid.generator-budget"
 path = "source/valid/compile-time-generator.fcs"
 stage = "elaborate"

@@ -39,12 +39,13 @@ pub use line::{
     ScrollTempoError, ScrollTempoKey,
 };
 pub use metadata::{
-    CanonicalArrayError, CanonicalArtwork, CanonicalColor, CanonicalColorError,
-    CanonicalContributor, CanonicalContributorError, CanonicalCredit, CanonicalCreditError,
-    CanonicalCreditRole, CanonicalCreditRoleError, CanonicalMetadata, CanonicalObject,
-    CanonicalObjectEntry, CanonicalObjectError, CanonicalPreview, CanonicalResource,
-    CanonicalResourceKind, CanonicalStandardCreditRole, CanonicalSync, CanonicalValue,
-    CanonicalValueType, DeclaredSha256,
+    CanonicalArrayError, CanonicalArtwork, CanonicalBundledResource, CanonicalBundledResourceError,
+    CanonicalColor, CanonicalColorError, CanonicalContentSha256, CanonicalContributor,
+    CanonicalContributorError, CanonicalCredit, CanonicalCreditError, CanonicalCreditRole,
+    CanonicalCreditRoleError, CanonicalMetadata, CanonicalObject, CanonicalObjectEntry,
+    CanonicalObjectError, CanonicalPreview, CanonicalResource, CanonicalResourceBundle,
+    CanonicalResourceBundleError, CanonicalResourceKind, CanonicalStandardCreditRole,
+    CanonicalSync, CanonicalValue, CanonicalValueType, DeclaredSha256,
 };
 pub use note::{
     CanonicalJudgeShape, CanonicalNote, CanonicalNoteError, CanonicalNoteGameplay,

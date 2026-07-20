@@ -9,6 +9,7 @@ use fcs_runtime::{
     ExpressionEnvironment, ScrollEvaluationError, evaluate_expression, evaluate_line_scroll,
     evaluate_note_distance,
 };
+use fcs_source::ResourceLimits;
 use fcs_source::ast::{Beat, ExpandedSourceDocument, Type, TypedValue};
 use fcs_source::diagnostic::{Diagnostic, DiagnosticStage, ExpansionTraceKind};
 use fcs_source::elaborator::{CompileTimeLimits, elaborate};
@@ -763,7 +764,7 @@ fn typed_manifests_load_with_bound_counts() {
     assert_eq!(render.schema_version, 3);
     assert_eq!(conversion.schema_version, 2);
     assert_eq!(root.suite.len(), 6);
-    assert_eq!(fcs.fixture.len(), 49);
+    assert_eq!(fcs.fixture.len(), 50);
     assert_eq!(fcbc.fixture.len(), 3);
     assert_eq!(render.binary_fixture.len(), 0);
     assert_eq!(render.fixture.len(), 1);
@@ -837,7 +838,7 @@ fn fcs_source_fixtures_execute_at_the_declared_frontend_boundary() {
 
     assert_eq!(parse_success, 3);
     assert_eq!(parse_error, 9);
-    assert_eq!(later_stage, 37);
+    assert_eq!(later_stage, 38);
 }
 
 #[test]
@@ -1134,6 +1135,67 @@ fn i5_contributor_credit_fixtures_execute_at_the_canonical_boundary() {
             .unwrap_or_else(|errors| panic!("{id} must parse: {errors:?}"))
             .canonical_metadata()
             .expect_err("invalid contributor/credit fixture must fail canonical lowering");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code().as_str() == expected),
+            "{id} expected {expected}, got {diagnostics:?}"
+        );
+        assert!(diagnostics.iter().all(|diagnostic| {
+            diagnostic.stage() == DiagnosticStage::Canonical
+                && diagnostic.primary_span().end <= source.len()
+                && source.is_char_boundary(diagnostic.primary_span().start)
+                && source.is_char_boundary(diagnostic.primary_span().end)
+        }));
+    }
+}
+
+#[test]
+fn i5_resource_fixtures_execute_at_the_workspace_bundle_boundary() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+
+    let valid = fixture(&fcs, "source.valid.metadata-credits-resources-sync");
+    let valid_source = fs::read_to_string(fcs_base.join(&valid.path))
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", valid.path));
+    let valid_workspace = valid
+        .workspace_root
+        .as_deref()
+        .expect("resource fixture must declare a workspace root");
+    let bundle = parse_document(&valid_source)
+        .into_result()
+        .unwrap_or_else(|errors| panic!("{} must parse: {errors:?}", valid.id))
+        .canonical_resource_bundle(fcs_base.join(valid_workspace), ResourceLimits::default())
+        .unwrap_or_else(|errors| panic!("{} must resolve: {errors:?}", valid.id));
+    assert_eq!(bundle.len(), 1);
+    let resource = bundle.get("empty").expect("fixture resource retained");
+    assert_eq!(resource.bytes().len(), 29);
+    assert_eq!(
+        sha256_lower(resource.bytes()),
+        "66eb55e69c42345c65021ea9364fc43c61d2151dde67a89dc02362543b289903"
+    );
+
+    for id in [
+        "source.invalid.resource-path-escape",
+        "source.invalid.resource-hash-mismatch",
+        "source.invalid.resource-missing-member",
+    ] {
+        let invalid = fixture(&fcs, id);
+        let source = fs::read_to_string(fcs_base.join(&invalid.path))
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", invalid.path));
+        let workspace = invalid
+            .workspace_root
+            .as_deref()
+            .expect("resource fixture must declare a workspace root");
+        let diagnostics = parse_document(&source)
+            .into_result()
+            .unwrap_or_else(|errors| panic!("{id} must parse: {errors:?}"))
+            .canonical_resource_bundle(fcs_base.join(workspace), ResourceLimits::default())
+            .expect_err("invalid resource fixture must fail bundle resolution");
+        let expected = invalid
+            .diagnostic
+            .as_deref()
+            .expect("invalid resource fixture must bind a diagnostic");
         assert!(
             diagnostics
                 .iter()
@@ -2831,6 +2893,10 @@ fn manifests_preserve_integrity_invariants() {
         (
             "source.invalid.resource-hash-mismatch",
             "resource.hash-mismatch",
+        ),
+        (
+            "source.invalid.resource-missing-member",
+            "resource.unknown-reference",
         ),
     ] {
         let entry = fixture(&fcs, id);

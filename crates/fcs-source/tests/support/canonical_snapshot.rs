@@ -186,7 +186,7 @@ fn resource_value(resource: &CanonicalResource) -> Value {
                 string(hex)
             })),
         ),
-        ("metadata", canonical_value_map(resource.metadata())),
+        ("metadata", canonical_object_entries(resource.metadata())),
     ])
 }
 

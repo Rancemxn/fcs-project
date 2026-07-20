@@ -1,12 +1,14 @@
-//! Immutable canonical metadata, logical resource, and sync values.
+//! Immutable canonical metadata, resource, and sync values.
 //!
 //! This module deliberately contains no source-AST or filesystem concerns.  A
 //! source adapter may validate an authoring path before constructing a resource,
-//! but the canonical descriptor carries only the logical resource identity and
-//! declared metadata.  Input bytes and computed hashes belong to I5.
+//! but canonical values carry only logical resource identity, declared metadata,
+//! computed hashes, and exact opaque bytes. They never retain workspace paths.
 
 use std::collections::BTreeMap;
 use std::fmt;
+
+use sha2::{Digest, Sha256};
 
 use crate::{AudioOffset, Beat};
 
@@ -513,7 +515,7 @@ pub struct CanonicalResource {
     kind: CanonicalResourceKind,
     media_type: String,
     declared_sha256: Option<DeclaredSha256>,
-    metadata: BTreeMap<String, CanonicalValue>,
+    metadata: CanonicalObject,
 }
 
 impl CanonicalResource {
@@ -522,7 +524,7 @@ impl CanonicalResource {
         kind: CanonicalResourceKind,
         media_type: impl Into<String>,
         declared_sha256: Option<DeclaredSha256>,
-        metadata: BTreeMap<String, CanonicalValue>,
+        metadata: CanonicalObject,
     ) -> Self {
         Self {
             id: id.into(),
@@ -549,9 +551,136 @@ impl CanonicalResource {
         self.declared_sha256
     }
 
-    pub fn metadata(&self) -> &BTreeMap<String, CanonicalValue> {
+    pub fn metadata(&self) -> &CanonicalObject {
         &self.metadata
     }
+}
+
+/// A SHA-256 digest computed over exact opaque resource bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CanonicalContentSha256([u8; 32]);
+
+impl CanonicalContentSha256 {
+    pub fn digest(bytes: &[u8]) -> Self {
+        let digest = Sha256::digest(bytes);
+        let mut output = [0; 32];
+        output.copy_from_slice(&digest);
+        Self(output)
+    }
+
+    pub const fn as_bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+/// One canonical resource descriptor paired with its exact workspace payload.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CanonicalBundledResource {
+    resource: CanonicalResource,
+    content_sha256: CanonicalContentSha256,
+    bytes: Box<[u8]>,
+}
+
+impl CanonicalBundledResource {
+    pub fn new(
+        resource: CanonicalResource,
+        bytes: Vec<u8>,
+    ) -> Result<Self, CanonicalBundledResourceError> {
+        let content_sha256 = CanonicalContentSha256::digest(&bytes);
+        if let Some(declared) = resource.declared_sha256()
+            && declared.as_bytes() != content_sha256.as_bytes()
+        {
+            return Err(CanonicalBundledResourceError::HashMismatch {
+                declared,
+                computed: content_sha256,
+            });
+        }
+        Ok(Self {
+            resource,
+            content_sha256,
+            bytes: bytes.into_boxed_slice(),
+        })
+    }
+
+    pub fn resource(&self) -> &CanonicalResource {
+        &self.resource
+    }
+
+    pub fn id(&self) -> &str {
+        self.resource.id()
+    }
+
+    pub const fn content_sha256(&self) -> CanonicalContentSha256 {
+        self.content_sha256
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanonicalBundledResourceError {
+    HashMismatch {
+        declared: DeclaredSha256,
+        computed: CanonicalContentSha256,
+    },
+}
+
+impl CanonicalBundledResourceError {
+    pub const fn declared(self) -> DeclaredSha256 {
+        match self {
+            Self::HashMismatch { declared, .. } => declared,
+        }
+    }
+
+    pub const fn computed(self) -> CanonicalContentSha256 {
+        match self {
+            Self::HashMismatch { computed, .. } => computed,
+        }
+    }
+}
+
+/// The deterministic, logical-resource-ID keyed opaque payload closure.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CanonicalResourceBundle {
+    resources: BTreeMap<String, CanonicalBundledResource>,
+}
+
+impl CanonicalResourceBundle {
+    pub fn new(
+        resources: Vec<CanonicalBundledResource>,
+    ) -> Result<Self, CanonicalResourceBundleError> {
+        let mut by_id = BTreeMap::new();
+        for resource in resources {
+            let id = resource.id().to_owned();
+            if by_id.insert(id.clone(), resource).is_some() {
+                return Err(CanonicalResourceBundleError::DuplicateId(id));
+            }
+        }
+        Ok(Self { resources: by_id })
+    }
+
+    pub fn len(&self) -> usize {
+        self.resources.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.resources.is_empty()
+    }
+
+    pub fn get(&self, id: &str) -> Option<&CanonicalBundledResource> {
+        self.resources.get(id)
+    }
+
+    pub fn resources(&self) -> &BTreeMap<String, CanonicalBundledResource> {
+        &self.resources
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CanonicalResourceBundleError {
+    DuplicateId(String),
 }
 
 /// The artwork graph, currently consisting of the optional primary image.
@@ -730,6 +859,36 @@ mod tests {
         assert_eq!(
             CanonicalCredit::new(role, None, vec!["alice".into(), "alice".into()]),
             Err(CanonicalCreditError::DuplicateContributor("alice".into()))
+        );
+    }
+
+    #[test]
+    fn resource_bundle_constructors_defend_hash_and_logical_id_invariants() {
+        let metadata = CanonicalObject::new(Vec::new()).unwrap();
+        let declared = DeclaredSha256::from_lower_hex(&"0".repeat(64)).unwrap();
+        let mismatched = CanonicalResource::new(
+            "payload",
+            CanonicalResourceKind::Binary,
+            "application/octet-stream",
+            Some(declared),
+            metadata.clone(),
+        );
+        assert!(matches!(
+            CanonicalBundledResource::new(mismatched, b"not empty".to_vec()),
+            Err(CanonicalBundledResourceError::HashMismatch { .. })
+        ));
+
+        let resource = CanonicalResource::new(
+            "payload",
+            CanonicalResourceKind::Binary,
+            "application/octet-stream",
+            None,
+            metadata,
+        );
+        let bundled = CanonicalBundledResource::new(resource, b"opaque".to_vec()).unwrap();
+        assert_eq!(
+            CanonicalResourceBundle::new(vec![bundled.clone(), bundled]),
+            Err(CanonicalResourceBundleError::DuplicateId("payload".into()))
         );
     }
 }

@@ -539,9 +539,13 @@ capability、publishable metadata/credit/声明 hash，以及当前 Core AST 可
 `Document::canonical_chart` 复用同一 gate。I5.2 将 contributor 从通用字段 map 收紧为 typed
 ID/name/aliases/ordered identifiers，并将十二个标准 credit role 与 byte-exact custom ASCII role
 区分；credit 和 contributor-reference 顺序保持，重复、unknown 和 wrong-kind contributor reference
-在 canonical boundary 拒绝，`artist` 只保留为 custom role。详细边界与证据见
-`docs/plans/i5-canonical-compilation.md`。Render payload/scene/reference closure 仍归 I9，resource
-bytes/hash verification 与 `CanonicalResourceBundle` 仍归 I5.3；I5.3–I5.7 和整个 I5 stage 尚未完成。
+在 canonical boundary 拒绝，`artist` 只保留为 custom role。I5.3 新增显式 workspace root/public
+resource limits 的 bundle boundary，解析 canonicalized member/symlink 后拒绝 root escape、目录、缺失和
+非普通文件，bounded 读取 opaque bytes，计算并校验 SHA-256，保留 equal-content distinct ID 与未引用
+声明，并物化 image/texture/font Core metadata exact order。`tempfile` 3.27.0 只用于 dev filesystem
+tests；生产 hash 使用既有 `sha2` 0.11.0。详细边界与证据见
+`docs/plans/i5-canonical-compilation.md`。Render payload/scene/reference/codec closure 仍归 I9，FCBC
+resource u64 ID 与 assembly 仍归 I7；I5.4–I5.7 和整个 I5 stage 尚未完成。
 
 ### I6：PGR/RPE/PEC importer
 
