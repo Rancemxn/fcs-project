@@ -214,6 +214,7 @@ dependencies = [
  "astro-float",
  "fcs-model",
  "nalgebra",
+ "proptest",
  "serde",
  "toml",
 ]

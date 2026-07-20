@@ -4,7 +4,7 @@
 //! evaluation, I4.3 adds deterministic Line transforms, and I4.4-I4.7 add
 //! direct-seek Line scroll evaluation through bounded exact integration.
 //! I4.8 keeps the Astro-float independent reference lane in dev-only tests;
-//! I4.9 still owns randomized determinism and error-bound properties.
+//! I4.9 adds bounded deterministic runtime properties.
 
 mod descriptor;
 mod easing;

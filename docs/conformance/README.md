@@ -24,6 +24,10 @@ product evaluator now executes this vector, while exact-head full-gate and
 independent-review evidence remain required before the binding can support a
 stage claim.
 
+I4.9 adds the bounded deterministic runtime-property lane documented in
+`fcs5-runtime-properties.md`. It uses the pinned dev-only `proptest` source and
+does not add manifest fixtures or change the 42-entry active FCS corpus.
+
 S15 FCBC/Execution ABI closure 把 root `candidate_baseline` 更新为
 `2026-07-15-s15-cross-spec-closure`，并引入 FCBC manifest schema 2。当前两个 FCBC golden 都固定
 14 个 required section（原 1–13 加 ResourceData 20）和 `chart_count=1`：

@@ -511,9 +511,13 @@ Piecewise descriptor table、完整 partition/cycle/domain 校验、结构 inter
 限制替换为 boundary-aware adaptive Gauss-Kronrod direct-seek integration，保留 constant/step analytic
 路径，并以固定误差/深度/求值预算拒绝无法收敛的查询。I4.8 已加入 dev-only Astro-float
 independent reference、24 个困难 Core 结果位向量、6 个 domain error 向量、21 个 easing
-family/branch 向量、独立 Bezier solve、矩阵/scroll cross-check 和严格可执行 numeric corpus；I4.9 的随机
-partition/frame-rate/error-bound property cross-check 仍是后续 residual。FCBC descriptor
-assembly/serialization 仍归 I7，任何 sampled/BakedCurve 路径都不进入标准 runtime。
+family/branch 向量、独立 Bezier solve、矩阵/scroll cross-check 和严格可执行 numeric corpus。I4.9
+已激活 dev-only `proptest` 1.11.0，以固定 ChaCha seed、96 cases 和最多 16 个 frame partition 覆盖
+constant/step/linear/Core easing/Bezier、正反向 direct-seek、partition/frame-rate invariance、独立
+linear analytic error bound、raw-bit repeatability、Track/Line declaration order、randomized transform
+inherit 以及 stable reverse/non-finite error。I4.1–I4.9 的计划实现单元已闭合；这不改变任何规范
+version-domain 状态，也不宣称 FCS 5 完成。FCBC descriptor assembly/serialization 仍归 I7，任何
+sampled/BakedCurve 路径都不进入标准 runtime。
 
 ### I5：Metadata、resources、sync 与 fidelity
 

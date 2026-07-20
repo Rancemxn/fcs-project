@@ -174,6 +174,28 @@ runtime API, and corrects the Float `pow` domain/signed-zero mismatch it exposes
 I4.8 does not promote `astro-float` into a normal dependency, expose reference
 types, replace project-owned errors/enums, or close the randomized I4.9 corpus.
 
+## I4.9 owned surface
+
+I4.9 closes the bounded randomized residual without changing the product API:
+
+- `fcs-runtime` activates the pinned workspace `proptest` 1.11.0 only as a dev
+  dependency and uses a fixed ChaCha seed with 96 cases, generator depth one,
+  one Track segment, at most 16 frame partitions/18 public queries, and finite
+  dyadic inputs over the implemented Track domains;
+- randomized constant, step, linear, Core easing, and cubic-Bezier speed Tracks
+  compare direct seek with independently re-originated interval queries in both
+  chart-time directions within the ABI 1.0 `0x1p-32` target;
+- the linear lane compares the product integral with a separate analytic
+  primitive, while repeated queries require raw-bit stability;
+- shuffled Track and Line declarations prove canonical blend/topology ordering,
+  and randomized transform inheritance flags preserve identical result bits;
+- stable reverse-policy and non-finite query errors remain executable alongside
+  the existing gap and fixed integration-budget tests.
+
+The property lane is bounded diagnostic/conformance evidence. It does not add
+runtime randomness, sampled curves, caches, FCBC assembly, or a new production
+dependency.
+
 ## Explicit non-goals
 
 - FCBC descriptor assembly/serialization and generic loader-facing Distance
@@ -282,12 +304,28 @@ types, replace project-owned errors/enums, or close the randomized I4.9 corpus.
    analytic integrals; none calls the product Bezier, matrix, integration, or
    caching implementation.
 
+## I4.9 acceptance evidence
+
+1. `crates/fcs-runtime/tests/runtime_properties.rs` fixes seed `0xF0C54901`,
+   disables failure persistence, and bounds the corpus to 96 cases and 16 frame
+   partitions per generated query.
+2. Constant, step, linear, three representative Core easing paths, and two
+   legal cubic-Bezier families cover forward and reverse interval integration;
+   direct and partitioned results stay within `8 * 0x1p-32` after bounded
+   binary64 frame accumulation.
+3. The linear property uses an independent analytic integral within the same
+   bound; repeated Track/scroll queries and reordered Track/Line declarations
+   preserve exact result bits.
+4. Randomized transform bases and inherit flags remain declaration-order
+   independent, while reverse-policy and non-finite query errors retain stable
+   structured categories.
+
 ## Delivery and residual gate
 
-The Rust/build/test gate runs on an exact draft-PR SHA through
-`.github/workflows/full-gate.yml`; the user-authorized temporary local full
-gate is recorded separately while Actions is unstable. I4.1 through I4.8 are
-bounded `partial` transitions: they do not close the FCS section 14 matrix row
-or the I4 stage; I4.9 still owns randomized determinism/property closure.
-I4.7 owns the product exact-integration path and I4.8 owns the independent
-cross-check; FCBC descriptor assembly remains I7.
+The Rust/build/test acceptance gate runs on an exact draft-PR SHA through
+`.github/workflows/full-gate.yml`. Local commands are diagnostic only and are
+recorded separately from Action evidence. I4.1 through I4.9 close the planned
+reference-evaluator implementation units, but do not by themselves change any
+specification version-domain state or complete FCS 5. I4.7 owns the product
+exact-integration path, I4.8 owns the independent cross-check, and I4.9 owns the
+bounded deterministic property corpus; FCBC descriptor assembly remains I7.

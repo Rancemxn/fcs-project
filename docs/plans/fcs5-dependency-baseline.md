@@ -54,15 +54,15 @@ toolchain 和 full gate 为实际兼容性证据。
 | `ttf-parser` 0.25.1 | `default-features = false` | MIT OR Apache-2.0 | 1.63.0 | 无必需运行时依赖；不得隐式激活 OpenType/Apple layout、variable-font、glyph-name 或 std profile |
 | `thiserror` 2.0.19 | default `std` | MIT OR Apache-2.0 | 1.71 | `thiserror-impl` 2.0.19 及其 proc-macro 闭包；derive output 不能改变稳定 diagnostic surface |
 
-只有 `astro-float` 在 I4.8 立即进入 `fcs-runtime` dev graph。其余六项先作为精确版本的 workspace
-catalog，分别到 owning stage 才写入 crate manifest 和 lockfile；catalog entry 本身不能被描述为已
-实现能力。
+`astro-float` 在 I4.8、`proptest` 在 I4.9 进入 `fcs-runtime` dev graph；两者都不进入 production
+dependency tree。其余六项先作为精确版本的 workspace catalog，分别到 owning stage 才写入 crate
+manifest 和 lockfile；catalog entry 本身不能被描述为已实现能力。
 
 ## 已完成代码的迁移边界
 
 - 保留 project-owned ordered object、stable ID、canonical enum、descriptor、binary64 evaluator 和错误
   category。`indexmap`、`ordered-float` 或依赖的默认错误字符串不替换这些领域类型。
-- I4 及以前唯一立即需要的新依赖是 I4.8 的 dev-only `astro-float`。现有 `EasingId::try_from`、
+- I4 及以前的新增依赖限于 I4.8 dev-only `astro-float` 与 I4.9 dev-only `proptest`。现有 `EasingId::try_from`、
   canonical opcode、feature list 和 handwritten finite checks较短且携带领域错误，不改为
   `num_enum`、`bitflags` 或通用 numeric wrapper。
 - `thiserror` 只在一个 error enum 正被功能性修改时用于保持等价的 `Display`、`source` 与 public

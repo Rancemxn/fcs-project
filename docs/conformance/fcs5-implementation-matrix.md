@@ -102,6 +102,20 @@ lowering。
 | `fcs-conversion.md` 全部 | Parser/profile/Repair 分层、PGR/RPE/PEC conversion 与 report | manifest integrity API（test only） | `tests/conformance_manifest.rs`，未来 `fcs-converter` 依赖 `fcs-model` | 12-profile/7-dialect/56-rule/32-category registry、38 exact mapping 与 10 selection vectors（manifest only） | 5 invalid mapping、ambiguity/target-profile vectors（manifest only） | blocked-by-I6 | I5/I6/I8 | Registry/path/hash/cross-reference 已验证；活动 workspace 无 source parser、selector、converter、canonical golden 或 target reparse，旧 converter/IR 只在归档分支且不作为 canonical model |
 | `fcs-render.md` 全部 | Render source/canonical/section/raster/resource binding | test-only RenderSection writer/independent loader/restricted asset decoder；无产品 API | `tests/fcbc_render_section.rs`, `tests/support/fcbc_render_reference_{writer,loader,assets}.rs`；未来 `fcs-source` envelope 与 `fcs-render` | self-contained generated Render FCBC、PNG/WebP/TTF byte regeneration、decode/shaping、Core envelope（test only）；source/semantic/raster fixture仍为 manifest binding | glyph 0/numGlyphs/faceIndex、Node kind、attachment/follow-hidden CRC-aware mutation；source invalid fixtures仍为 manifest binding | blocked-by-I9 | I1/I9 | 当前 manifest 的 `binary_fixture` 为 0，不冒充缺失的 static golden/semantic/raster/mutation corpus；无 Render source parser、canonical scene、semantic evaluator、reference rasterizer或产品 codec。`image`/`serde_json` 仅为 pre-stage dev-dependency 例外，产品 ownership 不变；完整 artifact 与独立复审仍由 I9 交付 |
 
+## I4.9 runtime-property delta
+
+Rows `fcs.md` 9.1–9.5, 10.1–10.4, 11.1–11.5, 13.1–13.4, and 14.1–14.3
+previously identified randomized property closure as an open residual. That
+residual is now covered by
+`crates/fcs-runtime/tests/runtime_properties.rs` and
+`docs/conformance/fcs5-runtime-properties.md`: fixed-seed bounded Track/scroll
+properties cover direct-seek versus re-originated frame partitions in both
+directions, an independent linear analytic bound, raw-bit repeatability,
+declaration-order invariance for blends and Line topology, randomized transform
+inheritance, and stable reverse/non-finite errors. The matrix remains `partial`
+because later FCBC/runtime assembly and the remaining version-domain work are
+not part of I4.9.
+
 ## I4.4 Scroll composition delta
 
 The normative closure and product work unit bind the following surface while
@@ -119,9 +133,10 @@ keeping I4 stage completion open:
   a static expected object.
 - `crates/fcs-runtime/src/scroll.rs` owns direct-seek local evaluation,
   actual-parent-only composition, high-precision floor accumulation, Track
-  speed overrides, Note distance, and stable error isolation. Exact-head gate,
-  DAG/Piecewise integration, and I4.9 randomized/property closure remain open;
-  I4.8 independent reference cross-checks are now present in the evidence set.
+  speed overrides, Note distance, and stable error isolation. I4.9's bounded
+  randomized/property closure is recorded in the runtime-property delta above;
+  exact-head gate evidence and DAG/Piecewise integration remain stage-scoped,
+  while I4.8 independent reference cross-checks remain in the evidence set.
 
 ## I0 更新规则
 
