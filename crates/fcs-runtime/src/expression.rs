@@ -528,10 +528,10 @@ fn add_values(
         ) => vector_pair(
             index,
             CanonicalExpressionOpcode::Add,
-            left_x,
-            left_y,
-            right_x,
-            right_y,
+            *left_x,
+            *left_y,
+            *right_x,
+            *right_y,
             add_values,
         ),
         (left, right) => map_float_pair(
@@ -560,10 +560,10 @@ fn sub_values(
         ) => vector_pair(
             index,
             CanonicalExpressionOpcode::Sub,
-            left_x,
-            left_y,
-            right_x,
-            right_y,
+            *left_x,
+            *left_y,
+            *right_x,
+            *right_y,
             sub_values,
         ),
         (left, right) => map_float_pair(
@@ -590,10 +590,10 @@ fn binary_mul(
             .map(CanonicalExpressionValue::Int)
             .ok_or(ExpressionEvaluationError::IntegerOverflow { node: index }),
         (CanonicalExpressionValue::Vec2(x, y), scalar) => {
-            scale_vector(index, opcode, x, y, scalar, false)
+            scale_vector(index, opcode, *x, *y, scalar, false)
         }
         (scalar, CanonicalExpressionValue::Vec2(x, y)) => {
-            scale_vector(index, opcode, x, y, scalar, false)
+            scale_vector(index, opcode, *x, *y, scalar, false)
         }
         (left, right) => {
             scalar_unit_operation(index, opcode, left, right, |left, right| left * right)
@@ -620,7 +620,7 @@ fn binary_div(
     }
     match (left, right) {
         (CanonicalExpressionValue::Vec2(x, y), scalar) => {
-            scale_vector(index, opcode, x, y, scalar, true)
+            scale_vector(index, opcode, *x, *y, scalar, true)
         }
         (CanonicalExpressionValue::Int(left), CanonicalExpressionValue::Int(right)) => left
             .checked_div(right)
@@ -633,18 +633,18 @@ fn binary_div(
 fn vector_pair(
     index: usize,
     opcode: CanonicalExpressionOpcode,
-    left_x: Box<CanonicalExpressionValue>,
-    left_y: Box<CanonicalExpressionValue>,
-    right_x: Box<CanonicalExpressionValue>,
-    right_y: Box<CanonicalExpressionValue>,
+    left_x: CanonicalExpressionValue,
+    left_y: CanonicalExpressionValue,
+    right_x: CanonicalExpressionValue,
+    right_y: CanonicalExpressionValue,
     operation: fn(
         usize,
         CanonicalExpressionValue,
         CanonicalExpressionValue,
     ) -> Result<CanonicalExpressionValue, ExpressionEvaluationError>,
 ) -> Result<CanonicalExpressionValue, ExpressionEvaluationError> {
-    let x = operation(index, *left_x, *right_x)?;
-    let y = operation(index, *left_y, *right_y)?;
+    let x = operation(index, left_x, right_x)?;
+    let y = operation(index, left_y, right_y)?;
     if x.value_type() != y.value_type() {
         return Err(ExpressionEvaluationError::TypeMismatch {
             node: index,
@@ -657,13 +657,13 @@ fn vector_pair(
 fn scale_vector(
     index: usize,
     opcode: CanonicalExpressionOpcode,
-    x: Box<CanonicalExpressionValue>,
-    y: Box<CanonicalExpressionValue>,
+    x: CanonicalExpressionValue,
+    y: CanonicalExpressionValue,
     scalar: CanonicalExpressionValue,
     divide: bool,
 ) -> Result<CanonicalExpressionValue, ExpressionEvaluationError> {
-    let x = scale_value(index, opcode, *x, scalar.clone(), divide)?;
-    let y = scale_value(index, opcode, *y, scalar, divide)?;
+    let x = scale_value(index, opcode, x, scalar.clone(), divide)?;
+    let y = scale_value(index, opcode, y, scalar, divide)?;
     if x.value_type() != y.value_type() {
         return Err(ExpressionEvaluationError::TypeMismatch {
             node: index,
