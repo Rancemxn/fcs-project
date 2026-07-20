@@ -31,6 +31,40 @@ impl CanonicalExpressionType {
     pub fn is_vector(&self) -> bool {
         matches!(self, Self::Vec2(_))
     }
+
+    fn is_scalar(&self) -> bool {
+        matches!(self, Self::Int | Self::Float)
+    }
+
+    fn is_unit(&self) -> bool {
+        matches!(self, Self::Time | Self::Beat | Self::Length | Self::Angle)
+    }
+
+    fn vector_scalar_result(&self, scalar: &Self) -> Option<Self> {
+        let Self::Vec2(element) = self else {
+            return None;
+        };
+        if !scalar.is_scalar() {
+            return None;
+        }
+        let result_element = if element.is_unit() || **element == Self::Float {
+            (**element).clone()
+        } else if **element == Self::Int && *scalar == Self::Float {
+            Self::Float
+        } else if **element == Self::Int && *scalar == Self::Int {
+            Self::Int
+        } else {
+            return None;
+        };
+        Some(Self::Vec2(Box::new(result_element)))
+    }
+
+    fn is_valid(&self) -> bool {
+        match self {
+            Self::Vec2(element) => element.is_numeric(),
+            _ => true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -75,6 +109,18 @@ impl CanonicalExpressionValue {
             | Self::Length(value)
             | Self::Angle(value) => value.is_finite(),
             Self::Vec2(x, y) => x.is_finite() && y.is_finite(),
+        }
+    }
+
+    fn is_valid(&self) -> bool {
+        match self {
+            Self::Vec2(x, y) => {
+                x.is_valid()
+                    && y.is_valid()
+                    && x.value_type() == y.value_type()
+                    && x.value_type().is_numeric()
+            }
+            _ => true,
         }
     }
 }
@@ -456,11 +502,17 @@ fn validate_node(
             actual: arity,
         });
     }
+    if !node.result_type.is_valid() {
+        return Err(CanonicalExpressionError::OperandType { node: index });
+    }
     if node.opcode == CanonicalExpressionOpcode::Constant {
         let Some(constant) = node.constant.as_ref() else {
             return Err(CanonicalExpressionError::MissingConstant { node: index });
         };
-        if constant.value_type() != node.result_type || !constant.is_finite() {
+        if constant.value_type() != node.result_type
+            || !constant.is_valid()
+            || !constant.is_finite()
+        {
             return Err(CanonicalExpressionError::ConstantType { node: index });
         }
     } else if node.constant.is_some() {
@@ -472,25 +524,165 @@ fn validate_node(
     if node.opcode == CanonicalExpressionOpcode::Easing && node.immediate > 30 {
         return Err(CanonicalExpressionError::EasingId { node: index });
     }
-    if node.opcode == CanonicalExpressionOpcode::Choose {
-        let predicate = node.operands[0]
+    let operand_type = |slot: usize| {
+        node.operands[slot]
             .and_then(|operand| nodes.get(operand))
-            .ok_or(CanonicalExpressionError::OperandType { node: index })?;
-        if predicate.result_type != CanonicalExpressionType::Bool {
-            return Err(CanonicalExpressionError::OperandType { node: index });
+            .map(|operand| &operand.result_type)
+            .ok_or(CanonicalExpressionError::OperandType { node: index })
+    };
+    let same = |left: usize, right: usize| {
+        operand_type(left)
+            .and_then(|left_type| operand_type(right).map(|right_type| left_type == right_type))
+    };
+    let scalar_numeric = |slot: usize| operand_type(slot).map(CanonicalExpressionType::is_numeric);
+    let valid_vector =
+        |slot: usize| operand_type(slot).map(|operand| operand.is_valid() && operand.is_vector());
+    let valid = match node.opcode {
+        CanonicalExpressionOpcode::Constant => true,
+        CanonicalExpressionOpcode::EnvS => node.result_type == CanonicalExpressionType::Time,
+        CanonicalExpressionOpcode::EnvB => node.result_type == CanonicalExpressionType::Beat,
+        CanonicalExpressionOpcode::EnvQ | CanonicalExpressionOpcode::EnvP => {
+            node.result_type == CanonicalExpressionType::Float
         }
-        let true_value = node.operands[1]
-            .and_then(|operand| nodes.get(operand))
-            .ok_or(CanonicalExpressionError::OperandType { node: index })?;
-        let false_value = node.operands[2]
-            .and_then(|operand| nodes.get(operand))
-            .ok_or(CanonicalExpressionError::OperandType { node: index })?;
-        if true_value.result_type != node.result_type || false_value.result_type != node.result_type
-        {
-            return Err(CanonicalExpressionError::OperandType { node: index });
+        CanonicalExpressionOpcode::EnvD => node.result_type == CanonicalExpressionType::Length,
+        CanonicalExpressionOpcode::Neg | CanonicalExpressionOpcode::Abs => {
+            scalar_numeric(0)? && operand_type(0)? == &node.result_type
         }
+        CanonicalExpressionOpcode::Not => {
+            operand_type(0)? == &CanonicalExpressionType::Bool
+                && node.result_type == CanonicalExpressionType::Bool
+        }
+        CanonicalExpressionOpcode::Add | CanonicalExpressionOpcode::Sub => {
+            same(0, 1)?
+                && (scalar_numeric(0)? || (valid_vector(0)? && node.result_type.is_valid()))
+                && operand_type(0)? == &node.result_type
+        }
+        CanonicalExpressionOpcode::Mul => {
+            let left = operand_type(0)?;
+            let right = operand_type(1)?;
+            if left == right && left.is_scalar() {
+                node.result_type == *left
+            } else if let Some(expected) = left.vector_scalar_result(right) {
+                node.result_type == expected
+            } else if let Some(expected) = right.vector_scalar_result(left) {
+                node.result_type == expected
+            } else if left.is_unit() && right.is_scalar() {
+                node.result_type == *left
+            } else if right.is_unit() && left.is_scalar() {
+                node.result_type == *right
+            } else {
+                false
+            }
+        }
+        CanonicalExpressionOpcode::Div => {
+            let left = operand_type(0)?;
+            let right = operand_type(1)?;
+            if left == right && left.is_unit() {
+                node.result_type == CanonicalExpressionType::Float
+            } else if let Some(expected) = left.vector_scalar_result(right) {
+                node.result_type == expected
+            } else if left.is_unit() && right.is_scalar() {
+                node.result_type == *left
+            } else {
+                left == right && left.is_scalar() && node.result_type == *left
+            }
+        }
+        CanonicalExpressionOpcode::Mod => {
+            same(0, 1)?
+                && operand_type(0)? == &CanonicalExpressionType::Int
+                && node.result_type == CanonicalExpressionType::Int
+        }
+        CanonicalExpressionOpcode::Pow => {
+            same(0, 1)? && operand_type(0)? == &node.result_type && operand_type(0)?.is_scalar()
+        }
+        CanonicalExpressionOpcode::Eq | CanonicalExpressionOpcode::Ne => {
+            same(0, 1)?
+                && operand_type(0)?.is_valid()
+                && node.result_type == CanonicalExpressionType::Bool
+        }
+        CanonicalExpressionOpcode::Lt
+        | CanonicalExpressionOpcode::Le
+        | CanonicalExpressionOpcode::Gt
+        | CanonicalExpressionOpcode::Ge => {
+            same(0, 1)? && scalar_numeric(0)? && node.result_type == CanonicalExpressionType::Bool
+        }
+        CanonicalExpressionOpcode::And | CanonicalExpressionOpcode::Or => {
+            operand_type(0)? == &CanonicalExpressionType::Bool
+                && operand_type(1)? == &CanonicalExpressionType::Bool
+                && node.result_type == CanonicalExpressionType::Bool
+        }
+        CanonicalExpressionOpcode::ApproxEq => {
+            operand_type(0)? == &CanonicalExpressionType::Float
+                && operand_type(1)? == &CanonicalExpressionType::Float
+                && operand_type(2)? == &CanonicalExpressionType::Float
+                && node.result_type == CanonicalExpressionType::Bool
+        }
+        CanonicalExpressionOpcode::Min | CanonicalExpressionOpcode::Max => {
+            same(0, 1)? && scalar_numeric(0)? && operand_type(0)? == &node.result_type
+        }
+        CanonicalExpressionOpcode::Clamp => {
+            same(0, 1)?
+                && same(0, 2)?
+                && scalar_numeric(0)?
+                && operand_type(0)? == &node.result_type
+        }
+        CanonicalExpressionOpcode::Floor
+        | CanonicalExpressionOpcode::Ceil
+        | CanonicalExpressionOpcode::Round
+        | CanonicalExpressionOpcode::Sqrt
+        | CanonicalExpressionOpcode::Exp
+        | CanonicalExpressionOpcode::Ln
+        | CanonicalExpressionOpcode::Sin
+        | CanonicalExpressionOpcode::Cos
+        | CanonicalExpressionOpcode::Tan
+        | CanonicalExpressionOpcode::Asin
+        | CanonicalExpressionOpcode::Acos
+        | CanonicalExpressionOpcode::Atan
+        | CanonicalExpressionOpcode::Easing => {
+            operand_type(0)? == &CanonicalExpressionType::Float
+                && node.result_type == CanonicalExpressionType::Float
+        }
+        CanonicalExpressionOpcode::Atan2 => {
+            operand_type(0)? == &CanonicalExpressionType::Float
+                && operand_type(1)? == &CanonicalExpressionType::Float
+                && node.result_type == CanonicalExpressionType::Float
+        }
+        CanonicalExpressionOpcode::ToFloat => {
+            operand_type(0)? == &CanonicalExpressionType::Int
+                && node.result_type == CanonicalExpressionType::Float
+        }
+        CanonicalExpressionOpcode::Seconds => {
+            operand_type(0)? == &CanonicalExpressionType::Time
+                && node.result_type == CanonicalExpressionType::Float
+        }
+        CanonicalExpressionOpcode::Radians => {
+            operand_type(0)? == &CanonicalExpressionType::Angle
+                && node.result_type == CanonicalExpressionType::Float
+        }
+        CanonicalExpressionOpcode::Choose => {
+            operand_type(0)? == &CanonicalExpressionType::Bool
+                && operand_type(1)? == &node.result_type
+                && operand_type(2)? == &node.result_type
+        }
+        CanonicalExpressionOpcode::Vec2 => {
+            same(0, 1)?
+                && scalar_numeric(0)?
+                && node.result_type
+                    == CanonicalExpressionType::Vec2(Box::new(operand_type(0)?.clone()))
+        }
+        CanonicalExpressionOpcode::Vec2X | CanonicalExpressionOpcode::Vec2Y => {
+            let operand = operand_type(0)?;
+            let CanonicalExpressionType::Vec2(element) = operand else {
+                return Err(CanonicalExpressionError::OperandType { node: index });
+            };
+            element.is_numeric() && node.result_type == **element
+        }
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(CanonicalExpressionError::OperandType { node: index })
     }
-    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -580,3 +772,127 @@ impl fmt::Display for CanonicalExpressionError {
 }
 
 impl std::error::Error for CanonicalExpressionError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(
+        opcode: CanonicalExpressionOpcode,
+        result_type: CanonicalExpressionType,
+        operands: [Option<usize>; 3],
+    ) -> CanonicalExpressionNode {
+        CanonicalExpressionNode::new(opcode, result_type, operands, None, 0)
+    }
+
+    fn constant(value: CanonicalExpressionValue) -> CanonicalExpressionNode {
+        CanonicalExpressionNode::new(
+            CanonicalExpressionOpcode::Constant,
+            value.value_type(),
+            [None; 3],
+            Some(value),
+            0,
+        )
+    }
+
+    #[test]
+    fn validation_rejects_non_topological_and_unreachable_nodes() {
+        let non_topological = CanonicalExpressionDag::new(
+            vec![node(
+                CanonicalExpressionOpcode::Neg,
+                CanonicalExpressionType::Float,
+                [Some(1), None, None],
+            )],
+            0,
+        )
+        .expect_err("forward operand must be rejected");
+        assert!(matches!(
+            non_topological,
+            CanonicalExpressionError::NonTopologicalOperand { .. }
+        ));
+
+        let unreachable = CanonicalExpressionDag::new(
+            vec![
+                constant(CanonicalExpressionValue::Float(1.0)),
+                constant(CanonicalExpressionValue::Float(2.0)),
+            ],
+            0,
+        )
+        .expect_err("unreachable node must be rejected");
+        assert!(matches!(
+            unreachable,
+            CanonicalExpressionError::UnreachableNode { node: 1 }
+        ));
+    }
+
+    #[test]
+    fn validation_rejects_malformed_types_and_vectors() {
+        let invalid_add = CanonicalExpressionDag::new(
+            vec![
+                constant(CanonicalExpressionValue::Bool(true)),
+                constant(CanonicalExpressionValue::Bool(false)),
+                node(
+                    CanonicalExpressionOpcode::Add,
+                    CanonicalExpressionType::Bool,
+                    [Some(0), Some(1), None],
+                ),
+            ],
+            2,
+        )
+        .expect_err("boolean addition must be rejected");
+        assert!(matches!(
+            invalid_add,
+            CanonicalExpressionError::OperandType { node: 2 }
+        ));
+
+        let invalid_vector = CanonicalExpressionDag::new(
+            vec![CanonicalExpressionNode::new(
+                CanonicalExpressionOpcode::Constant,
+                CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Float)),
+                [None; 3],
+                Some(CanonicalExpressionValue::Vec2(
+                    Box::new(CanonicalExpressionValue::Int(1)),
+                    Box::new(CanonicalExpressionValue::Float(2.0)),
+                )),
+                0,
+            )],
+            0,
+        )
+        .expect_err("mixed vector elements must be rejected");
+        assert!(matches!(
+            invalid_vector,
+            CanonicalExpressionError::ConstantType { node: 0 }
+        ));
+    }
+
+    #[test]
+    fn validation_accepts_vector_arithmetic_and_projects_environments() {
+        let graph = CanonicalExpressionDag::new(
+            vec![
+                node(
+                    CanonicalExpressionOpcode::EnvD,
+                    CanonicalExpressionType::Length,
+                    [None; 3],
+                ),
+                constant(CanonicalExpressionValue::Length(1.0)),
+                node(
+                    CanonicalExpressionOpcode::Vec2,
+                    CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Length)),
+                    [Some(0), Some(1), None],
+                ),
+                constant(CanonicalExpressionValue::Float(2.0)),
+                node(
+                    CanonicalExpressionOpcode::Mul,
+                    CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Length)),
+                    [Some(2), Some(3), None],
+                ),
+            ],
+            4,
+        )
+        .expect("valid vector graph");
+        assert_eq!(
+            graph.required_environment(),
+            vec![CanonicalExpressionEnvironment::D]
+        );
+    }
+}

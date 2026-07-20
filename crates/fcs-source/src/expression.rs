@@ -595,11 +595,17 @@ fn binary_result_type(
         {
             Some(left.clone())
         }
-        Op::Multiply if left.is_vector() && is_scalar(right) => Some(left.clone()),
-        Op::Multiply if is_scalar(left) && right.is_vector() => Some(right.clone()),
+        Op::Multiply if vector_scalar_result(left, right).is_some() => {
+            vector_scalar_result(left, right)
+        }
+        Op::Multiply if vector_scalar_result(right, left).is_some() => {
+            vector_scalar_result(right, left)
+        }
         Op::Multiply if is_unit(left) && is_scalar(right) => Some(left.clone()),
         Op::Multiply if is_scalar(left) && is_unit(right) => Some(right.clone()),
-        Op::Divide if left.is_vector() && is_scalar(right) => Some(left.clone()),
+        Op::Divide if vector_scalar_result(left, right).is_some() => {
+            vector_scalar_result(left, right)
+        }
         Op::Divide
             if left == right
                 && matches!(
@@ -632,6 +638,29 @@ fn is_scalar(value: &CanonicalExpressionType) -> bool {
         value,
         CanonicalExpressionType::Int | CanonicalExpressionType::Float
     )
+}
+
+fn vector_scalar_result(
+    vector: &CanonicalExpressionType,
+    scalar: &CanonicalExpressionType,
+) -> Option<CanonicalExpressionType> {
+    let CanonicalExpressionType::Vec2(element) = vector else {
+        return None;
+    };
+    if !is_scalar(scalar) {
+        return None;
+    }
+    let result_element = if is_unit(element) || **element == CanonicalExpressionType::Float {
+        (**element).clone()
+    } else if **element == CanonicalExpressionType::Int && *scalar == CanonicalExpressionType::Float
+    {
+        CanonicalExpressionType::Float
+    } else if **element == CanonicalExpressionType::Int && *scalar == CanonicalExpressionType::Int {
+        CanonicalExpressionType::Int
+    } else {
+        return None;
+    };
+    Some(CanonicalExpressionType::Vec2(Box::new(result_element)))
 }
 
 fn is_unit(value: &CanonicalExpressionType) -> bool {

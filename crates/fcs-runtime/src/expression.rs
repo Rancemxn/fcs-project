@@ -522,6 +522,18 @@ fn add_values(
             .checked_add(right)
             .map(CanonicalExpressionValue::Int)
             .ok_or(ExpressionEvaluationError::IntegerOverflow { node: index }),
+        (
+            CanonicalExpressionValue::Vec2(left_x, left_y),
+            CanonicalExpressionValue::Vec2(right_x, right_y),
+        ) => vector_pair(
+            index,
+            CanonicalExpressionOpcode::Add,
+            left_x,
+            left_y,
+            right_x,
+            right_y,
+            add_values,
+        ),
         (left, right) => map_float_pair(
             index,
             left,
@@ -542,6 +554,18 @@ fn sub_values(
             .checked_sub(right)
             .map(CanonicalExpressionValue::Int)
             .ok_or(ExpressionEvaluationError::IntegerOverflow { node: index }),
+        (
+            CanonicalExpressionValue::Vec2(left_x, left_y),
+            CanonicalExpressionValue::Vec2(right_x, right_y),
+        ) => vector_pair(
+            index,
+            CanonicalExpressionOpcode::Sub,
+            left_x,
+            left_y,
+            right_x,
+            right_y,
+            sub_values,
+        ),
         (left, right) => map_float_pair(
             index,
             left,
@@ -565,6 +589,12 @@ fn binary_mul(
             .checked_mul(right)
             .map(CanonicalExpressionValue::Int)
             .ok_or(ExpressionEvaluationError::IntegerOverflow { node: index }),
+        (CanonicalExpressionValue::Vec2(x, y), scalar) => {
+            scale_vector(index, opcode, x, y, scalar, false)
+        }
+        (scalar, CanonicalExpressionValue::Vec2(x, y)) => {
+            scale_vector(index, opcode, x, y, scalar, false)
+        }
         (left, right) => {
             scalar_unit_operation(index, opcode, left, right, |left, right| left * right)
         }
@@ -589,11 +619,99 @@ fn binary_div(
         return Err(ExpressionEvaluationError::DivisionByZero { node: index });
     }
     match (left, right) {
+        (CanonicalExpressionValue::Vec2(x, y), scalar) => {
+            scale_vector(index, opcode, x, y, scalar, true)
+        }
         (CanonicalExpressionValue::Int(left), CanonicalExpressionValue::Int(right)) => left
             .checked_div(right)
             .map(CanonicalExpressionValue::Int)
             .ok_or(ExpressionEvaluationError::IntegerOverflow { node: index }),
         (left, right) => scalar_unit_div(index, opcode, left, right),
+    }
+}
+
+fn vector_pair(
+    index: usize,
+    opcode: CanonicalExpressionOpcode,
+    left_x: Box<CanonicalExpressionValue>,
+    left_y: Box<CanonicalExpressionValue>,
+    right_x: Box<CanonicalExpressionValue>,
+    right_y: Box<CanonicalExpressionValue>,
+    operation: fn(
+        usize,
+        CanonicalExpressionValue,
+        CanonicalExpressionValue,
+    ) -> Result<CanonicalExpressionValue, ExpressionEvaluationError>,
+) -> Result<CanonicalExpressionValue, ExpressionEvaluationError> {
+    let x = operation(index, *left_x, *right_x)?;
+    let y = operation(index, *left_y, *right_y)?;
+    if x.value_type() != y.value_type() {
+        return Err(ExpressionEvaluationError::TypeMismatch {
+            node: index,
+            opcode,
+        });
+    }
+    Ok(CanonicalExpressionValue::Vec2(Box::new(x), Box::new(y)))
+}
+
+fn scale_vector(
+    index: usize,
+    opcode: CanonicalExpressionOpcode,
+    x: Box<CanonicalExpressionValue>,
+    y: Box<CanonicalExpressionValue>,
+    scalar: CanonicalExpressionValue,
+    divide: bool,
+) -> Result<CanonicalExpressionValue, ExpressionEvaluationError> {
+    let x = scale_value(index, opcode, *x, scalar.clone(), divide)?;
+    let y = scale_value(index, opcode, *y, scalar, divide)?;
+    if x.value_type() != y.value_type() {
+        return Err(ExpressionEvaluationError::TypeMismatch {
+            node: index,
+            opcode,
+        });
+    }
+    Ok(CanonicalExpressionValue::Vec2(Box::new(x), Box::new(y)))
+}
+
+fn scale_value(
+    index: usize,
+    opcode: CanonicalExpressionOpcode,
+    value: CanonicalExpressionValue,
+    scalar: CanonicalExpressionValue,
+    divide: bool,
+) -> Result<CanonicalExpressionValue, ExpressionEvaluationError> {
+    let operation = |left: f64, right: f64| if divide { left / right } else { left * right };
+    match (value, scalar) {
+        (CanonicalExpressionValue::Int(left), CanonicalExpressionValue::Int(right)) => {
+            if divide {
+                left.checked_div(right)
+                    .map(CanonicalExpressionValue::Int)
+                    .ok_or(ExpressionEvaluationError::IntegerOverflow { node: index })
+            } else {
+                left.checked_mul(right)
+                    .map(CanonicalExpressionValue::Int)
+                    .ok_or(ExpressionEvaluationError::IntegerOverflow { node: index })
+            }
+        }
+        (CanonicalExpressionValue::Int(left), CanonicalExpressionValue::Float(right)) => {
+            finite_value(index, operation(left as f64, right)).map(CanonicalExpressionValue::Float)
+        }
+        (CanonicalExpressionValue::Float(left), CanonicalExpressionValue::Int(right)) => {
+            finite_value(index, operation(left, right as f64)).map(CanonicalExpressionValue::Float)
+        }
+        (CanonicalExpressionValue::Float(left), CanonicalExpressionValue::Float(right)) => {
+            finite_value(index, operation(left, right)).map(CanonicalExpressionValue::Float)
+        }
+        (value, CanonicalExpressionValue::Int(right)) => {
+            map_unit_scalar(index, opcode, value, right as f64, operation)
+        }
+        (value, CanonicalExpressionValue::Float(right)) => {
+            map_unit_scalar(index, opcode, value, right, operation)
+        }
+        _ => Err(ExpressionEvaluationError::TypeMismatch {
+            node: index,
+            opcode,
+        }),
     }
 }
 
@@ -678,11 +796,27 @@ fn scalar_unit_operation(
         (CanonicalExpressionValue::Float(left), CanonicalExpressionValue::Float(right)) => {
             finite_value(index, operation(left, right)).map(CanonicalExpressionValue::Float)
         }
+        (CanonicalExpressionValue::Int(left), CanonicalExpressionValue::Int(right)) => {
+            finite_value(index, operation(left as f64, right as f64))
+                .map(CanonicalExpressionValue::Float)
+        }
+        (CanonicalExpressionValue::Float(left), CanonicalExpressionValue::Int(right)) => {
+            finite_value(index, operation(left, right as f64)).map(CanonicalExpressionValue::Float)
+        }
+        (CanonicalExpressionValue::Int(left), CanonicalExpressionValue::Float(right)) => {
+            finite_value(index, operation(left as f64, right)).map(CanonicalExpressionValue::Float)
+        }
         (CanonicalExpressionValue::Float(left), right) => {
             map_unit_scalar(index, opcode, right, left, operation)
         }
+        (CanonicalExpressionValue::Int(left), right) => {
+            map_unit_scalar(index, opcode, right, left as f64, operation)
+        }
         (left, CanonicalExpressionValue::Float(right)) => {
             map_unit_scalar(index, opcode, left, right, operation)
+        }
+        (left, CanonicalExpressionValue::Int(right)) => {
+            map_unit_scalar(index, opcode, left, right as f64, operation)
         }
         _ => Err(ExpressionEvaluationError::TypeMismatch {
             node: index,
@@ -900,6 +1034,18 @@ fn select_min_max(
         (CanonicalExpressionValue::Float(left), CanonicalExpressionValue::Float(right)) => Ok(
             CanonicalExpressionValue::Float(select_float(left, right, maximum)),
         ),
+        (CanonicalExpressionValue::Time(left), CanonicalExpressionValue::Time(right)) => Ok(
+            CanonicalExpressionValue::Time(select_float(left, right, maximum)),
+        ),
+        (CanonicalExpressionValue::Beat(left), CanonicalExpressionValue::Beat(right)) => Ok(
+            CanonicalExpressionValue::Beat(select_float(left, right, maximum)),
+        ),
+        (CanonicalExpressionValue::Length(left), CanonicalExpressionValue::Length(right)) => Ok(
+            CanonicalExpressionValue::Length(select_float(left, right, maximum)),
+        ),
+        (CanonicalExpressionValue::Angle(left), CanonicalExpressionValue::Angle(right)) => Ok(
+            CanonicalExpressionValue::Angle(select_float(left, right, maximum)),
+        ),
         _ => Err(ExpressionEvaluationError::TypeMismatch {
             node,
             opcode: if maximum {
@@ -959,8 +1105,46 @@ fn clamp_value(
                 value
             }))
         }
+        (
+            CanonicalExpressionValue::Time(value),
+            CanonicalExpressionValue::Time(low),
+            CanonicalExpressionValue::Time(high),
+        ) => clamp_float_value(index, value, low, high).map(CanonicalExpressionValue::Time),
+        (
+            CanonicalExpressionValue::Beat(value),
+            CanonicalExpressionValue::Beat(low),
+            CanonicalExpressionValue::Beat(high),
+        ) => clamp_float_value(index, value, low, high).map(CanonicalExpressionValue::Beat),
+        (
+            CanonicalExpressionValue::Length(value),
+            CanonicalExpressionValue::Length(low),
+            CanonicalExpressionValue::Length(high),
+        ) => clamp_float_value(index, value, low, high).map(CanonicalExpressionValue::Length),
+        (
+            CanonicalExpressionValue::Angle(value),
+            CanonicalExpressionValue::Angle(low),
+            CanonicalExpressionValue::Angle(high),
+        ) => clamp_float_value(index, value, low, high).map(CanonicalExpressionValue::Angle),
         _ => Err(ExpressionEvaluationError::TypeMismatch { node, opcode }),
     }
+}
+
+fn clamp_float_value(
+    node: usize,
+    value: f64,
+    low: f64,
+    high: f64,
+) -> Result<f64, ExpressionEvaluationError> {
+    if low > high {
+        return Err(ExpressionEvaluationError::Domain { node });
+    }
+    Ok(if value < low {
+        low
+    } else if value > high {
+        high
+    } else {
+        value
+    })
 }
 
 #[cfg(test)]
@@ -1118,5 +1302,175 @@ mod tests {
             .unwrap();
         assert_eq!(first, second);
         assert_eq!(builder.nodes().len(), 1);
+    }
+
+    #[test]
+    fn vector_arithmetic_and_unit_extrema_are_evaluated_exactly() {
+        let expression = CanonicalExpressionDag::new(
+            vec![
+                constant(CanonicalExpressionValue::Vec2(
+                    Box::new(CanonicalExpressionValue::Float(1.0)),
+                    Box::new(CanonicalExpressionValue::Float(2.0)),
+                )),
+                constant(CanonicalExpressionValue::Vec2(
+                    Box::new(CanonicalExpressionValue::Float(3.0)),
+                    Box::new(CanonicalExpressionValue::Float(4.0)),
+                )),
+                node(
+                    CanonicalExpressionOpcode::Add,
+                    CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Float)),
+                    [Some(0), Some(1), None],
+                ),
+                constant(CanonicalExpressionValue::Float(2.0)),
+                node(
+                    CanonicalExpressionOpcode::Mul,
+                    CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Float)),
+                    [Some(2), Some(3), None],
+                ),
+            ],
+            4,
+        )
+        .unwrap();
+        let environment = ExpressionEnvironment::new(0.0, 0.0, 0.0, 0.0).unwrap();
+        assert_eq!(
+            evaluate_expression(&expression, environment).unwrap(),
+            CanonicalExpressionValue::Vec2(
+                Box::new(CanonicalExpressionValue::Float(8.0)),
+                Box::new(CanonicalExpressionValue::Float(12.0)),
+            )
+        );
+
+        let extrema = CanonicalExpressionDag::new(
+            vec![
+                constant(CanonicalExpressionValue::Time(2.0)),
+                constant(CanonicalExpressionValue::Time(1.0)),
+                node(
+                    CanonicalExpressionOpcode::Min,
+                    CanonicalExpressionType::Time,
+                    [Some(0), Some(1), None],
+                ),
+            ],
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluate_expression(&extrema, environment).unwrap(),
+            CanonicalExpressionValue::Time(1.0)
+        );
+    }
+
+    #[test]
+    fn and_or_short_circuit_unavailable_piece_environment() {
+        let and_expression = CanonicalExpressionDag::new(
+            vec![
+                constant(CanonicalExpressionValue::Bool(false)),
+                node(
+                    CanonicalExpressionOpcode::EnvP,
+                    CanonicalExpressionType::Float,
+                    [None; 3],
+                ),
+                constant(CanonicalExpressionValue::Float(1.0)),
+                node(
+                    CanonicalExpressionOpcode::Eq,
+                    CanonicalExpressionType::Bool,
+                    [Some(1), Some(2), None],
+                ),
+                node(
+                    CanonicalExpressionOpcode::And,
+                    CanonicalExpressionType::Bool,
+                    [Some(0), Some(3), None],
+                ),
+            ],
+            4,
+        )
+        .unwrap();
+        let or_expression = CanonicalExpressionDag::new(
+            vec![
+                constant(CanonicalExpressionValue::Bool(true)),
+                node(
+                    CanonicalExpressionOpcode::EnvP,
+                    CanonicalExpressionType::Float,
+                    [None; 3],
+                ),
+                constant(CanonicalExpressionValue::Float(1.0)),
+                node(
+                    CanonicalExpressionOpcode::Eq,
+                    CanonicalExpressionType::Bool,
+                    [Some(1), Some(2), None],
+                ),
+                node(
+                    CanonicalExpressionOpcode::Or,
+                    CanonicalExpressionType::Bool,
+                    [Some(0), Some(3), None],
+                ),
+            ],
+            4,
+        )
+        .unwrap();
+        let environment = ExpressionEnvironment::new(0.0, 0.0, 0.0, 0.0).unwrap();
+        assert_eq!(
+            evaluate_expression(&and_expression, environment).unwrap(),
+            CanonicalExpressionValue::Bool(false)
+        );
+        assert_eq!(
+            evaluate_expression(&or_expression, environment).unwrap(),
+            CanonicalExpressionValue::Bool(true)
+        );
+    }
+
+    #[test]
+    fn arithmetic_errors_and_signed_zero_are_structured() {
+        let division = CanonicalExpressionDag::new(
+            vec![
+                constant(CanonicalExpressionValue::Float(1.0)),
+                constant(CanonicalExpressionValue::Float(0.0)),
+                node(
+                    CanonicalExpressionOpcode::Div,
+                    CanonicalExpressionType::Float,
+                    [Some(0), Some(1), None],
+                ),
+            ],
+            2,
+        )
+        .unwrap();
+        let square_root = CanonicalExpressionDag::new(
+            vec![
+                constant(CanonicalExpressionValue::Float(-1.0)),
+                node(
+                    CanonicalExpressionOpcode::Sqrt,
+                    CanonicalExpressionType::Float,
+                    [Some(0), None, None],
+                ),
+            ],
+            1,
+        )
+        .unwrap();
+        let signed_zero = CanonicalExpressionDag::new(
+            vec![
+                constant(CanonicalExpressionValue::Float(0.0)),
+                node(
+                    CanonicalExpressionOpcode::Neg,
+                    CanonicalExpressionType::Float,
+                    [Some(0), None, None],
+                ),
+            ],
+            1,
+        )
+        .unwrap();
+        let environment = ExpressionEnvironment::new(0.0, 0.0, 0.0, 0.0).unwrap();
+        assert!(matches!(
+            evaluate_expression(&division, environment),
+            Err(ExpressionEvaluationError::DivisionByZero { node: 2 })
+        ));
+        assert!(matches!(
+            evaluate_expression(&square_root, environment),
+            Err(ExpressionEvaluationError::Domain { node: 1 })
+        ));
+        let CanonicalExpressionValue::Float(value) =
+            evaluate_expression(&signed_zero, environment).unwrap()
+        else {
+            panic!("expected float signed zero");
+        };
+        assert_eq!(value.to_bits(), (-0.0_f64).to_bits());
     }
 }
