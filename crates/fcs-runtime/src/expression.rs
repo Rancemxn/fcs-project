@@ -322,9 +322,9 @@ fn evaluate_node_inner(
             if tolerance < 0.0 {
                 Err(ExpressionEvaluationError::Domain { node: index })
             } else {
-                let difference = left - right;
-                finite_float(index, difference.abs() <= tolerance)
-                    .map(CanonicalExpressionValue::Bool)
+                let difference = finite_value(index, left - right)?;
+                let distance = finite_value(index, difference.abs())?;
+                Ok(CanonicalExpressionValue::Bool(distance <= tolerance))
             }
         }
         CanonicalExpressionOpcode::Abs => unary_numeric(
@@ -912,11 +912,6 @@ fn finite_value(node: usize, value: f64) -> Result<f64, ExpressionEvaluationErro
         .ok_or(ExpressionEvaluationError::NonFiniteResult { node })
 }
 
-fn finite_float(node: usize, value: bool) -> Result<bool, ExpressionEvaluationError> {
-    let _ = node;
-    Ok(value)
-}
-
 fn unary_math(
     node: usize,
     opcode: CanonicalExpressionOpcode,
@@ -1472,5 +1467,28 @@ mod tests {
             panic!("expected float signed zero");
         };
         assert_eq!(value.to_bits(), (-0.0_f64).to_bits());
+    }
+
+    #[test]
+    fn approx_eq_rejects_non_finite_intermediate_subtraction() {
+        let expression = CanonicalExpressionDag::new(
+            vec![
+                constant(CanonicalExpressionValue::Float(1e308)),
+                constant(CanonicalExpressionValue::Float(-1e308)),
+                constant(CanonicalExpressionValue::Float(0.0)),
+                node(
+                    CanonicalExpressionOpcode::ApproxEq,
+                    CanonicalExpressionType::Bool,
+                    [Some(0), Some(1), Some(2)],
+                ),
+            ],
+            3,
+        )
+        .unwrap();
+        let environment = ExpressionEnvironment::new(0.0, 0.0, 0.0, 0.0).unwrap();
+        assert!(matches!(
+            evaluate_expression(&expression, environment),
+            Err(ExpressionEvaluationError::NonFiniteResult { node: 3 })
+        ));
     }
 }
