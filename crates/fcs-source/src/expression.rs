@@ -67,6 +67,7 @@ impl Document {
             _ => {
                 return Err(Diagnostic::new(
                     DiagnosticCode::TYPE_INVALID_OPERATION,
+                    DiagnosticStage::Canonical,
                     "runtime expression fixture requires a direct entity constructor",
                     item.span(),
                 ));
