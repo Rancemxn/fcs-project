@@ -4,7 +4,10 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use crc::{CRC_32_ISO_HDLC, Crc};
-use fcs_runtime::{ScrollEvaluationError, evaluate_line_scroll, evaluate_note_distance};
+use fcs_runtime::{
+    ExpressionEnvironment, ScrollEvaluationError, evaluate_expression, evaluate_line_scroll,
+    evaluate_note_distance,
+};
 use fcs_source::ast::{Beat, ExpandedSourceDocument, Type, TypedValue};
 use fcs_source::diagnostic::{Diagnostic, DiagnosticStage, ExpansionTraceKind};
 use fcs_source::elaborator::{CompileTimeLimits, elaborate};
@@ -1072,6 +1075,117 @@ fn i3_scroll_fixture_executes_at_the_canonical_boundary() {
         canonical_scroll_fixture(&fcs_base, fixture).expect("valid scroll fixture should lower");
     assert_eq!(scroll.lines().len(), 1);
     assert_eq!(scroll.lines()[0].coordinate().coordinate(1.0), Ok(2.0));
+}
+
+#[test]
+fn i4_expression_fixtures_execute_at_the_canonical_boundary() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+
+    let runtime_fixture = fixture(&fcs, "source.valid.runtime-choose");
+    assert_eq!(runtime_fixture.stage, FixtureStage::Canonical);
+    assert_eq!(runtime_fixture.expect, FixtureExpectation::Success);
+    let runtime_source = fs::read_to_string(fcs_base.join(&runtime_fixture.path))
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", runtime_fixture.path));
+    let runtime_document = parse_document(&runtime_source)
+        .into_result()
+        .expect("runtime-choose fixture must parse");
+    let runtime_dag = runtime_document
+        .canonical_runtime_expression("notes", 0, "presentation.alpha")
+        .expect("runtime-choose alpha must lower to an ExpressionDAG");
+    let runtime_expected = expected_json(&fcs_base, runtime_fixture);
+    assert_eq!(
+        runtime_dag.result_type(),
+        &fcs_model::CanonicalExpressionType::Float
+    );
+    assert_eq!(
+        runtime_dag
+            .required_environment()
+            .iter()
+            .map(|environment| match environment {
+                fcs_model::CanonicalExpressionEnvironment::D => "d",
+                fcs_model::CanonicalExpressionEnvironment::S => "s",
+                fcs_model::CanonicalExpressionEnvironment::B => "b",
+                fcs_model::CanonicalExpressionEnvironment::Q => "q",
+                fcs_model::CanonicalExpressionEnvironment::P => "p",
+            })
+            .collect::<Vec<_>>(),
+        runtime_expected["requiredInputs"]
+            .as_array()
+            .expect("runtime requiredInputs must be an array")
+            .iter()
+            .map(|value| value.as_str().expect("runtime input must be a string"))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        runtime_dag
+            .nodes()
+            .iter()
+            .any(|node| node.opcode() == fcs_model::CanonicalExpressionOpcode::Choose)
+    );
+    assert!(
+        !runtime_dag
+            .nodes()
+            .iter()
+            .any(|node| node.opcode() == fcs_model::CanonicalExpressionOpcode::Sin)
+    );
+    assert_eq!(runtime_expected["descriptorKind"], "ExpressionDAG");
+    assert_eq!(runtime_expected["containsChoose"], true);
+    assert_eq!(
+        runtime_expected["forbiddenDescriptorKinds"],
+        serde_json::json!(["BakedCurve"])
+    );
+
+    let environment = ExpressionEnvironment::new(1.0, 0.0, 0.0, 50.0).unwrap();
+    assert_eq!(
+        evaluate_expression(&runtime_dag, environment).unwrap(),
+        fcs_model::CanonicalExpressionValue::Float(1.0)
+    );
+    let environment = ExpressionEnvironment::new(1.0, 0.0, 0.0, 150.0).unwrap();
+    assert_eq!(
+        evaluate_expression(&runtime_dag, environment).unwrap(),
+        fcs_model::CanonicalExpressionValue::Float(0.25)
+    );
+
+    let exact_fixture = fixture(&fcs, "source.valid.exact-expression-dag");
+    let exact_source = fs::read_to_string(fcs_base.join(&exact_fixture.path))
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", exact_fixture.path));
+    let exact_document = parse_document(&exact_source)
+        .into_result()
+        .expect("exact-expression-dag fixture must parse");
+    let exact_dag = exact_document
+        .canonical_runtime_expression("notes", 0, "presentation.alpha")
+        .expect("exact expression alpha must lower to an ExpressionDAG");
+    let exact_expected = expected_json(&fcs_base, exact_fixture);
+    assert_eq!(
+        exact_dag.result_type(),
+        &fcs_model::CanonicalExpressionType::Float
+    );
+    assert!(
+        exact_dag
+            .nodes()
+            .iter()
+            .any(|node| node.opcode() == fcs_model::CanonicalExpressionOpcode::Choose)
+    );
+    assert!(
+        exact_dag
+            .nodes()
+            .iter()
+            .any(|node| node.opcode() == fcs_model::CanonicalExpressionOpcode::Sin)
+    );
+    assert_eq!(exact_expected["descriptorKind"], "ExpressionDAG");
+    assert_eq!(exact_expected["containsChoose"], true);
+    assert_eq!(exact_expected["containsSin"], true);
+    assert_eq!(
+        exact_expected["forbiddenDescriptorKinds"],
+        serde_json::json!(["BakedCurve"])
+    );
+    let exact_environment = ExpressionEnvironment::new(1.0, 0.0, 0.0, 50.0).unwrap();
+    let value = evaluate_expression(&exact_dag, exact_environment).unwrap();
+    let fcs_model::CanonicalExpressionValue::Float(value) = value else {
+        panic!("exact expression must evaluate to float");
+    };
+    assert_eq!(value.to_bits(), (0.5 + 0.5 * 1.0_f64.sin()).to_bits());
 }
 
 #[test]

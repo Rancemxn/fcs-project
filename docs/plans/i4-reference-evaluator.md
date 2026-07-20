@@ -98,10 +98,29 @@ gap. The product evaluator now executes this vector at the canonical boundary;
 the exact-head gate and independent reference closure remain delivery evidence
 and later I4 residuals.
 
+## I4.5 owned surface
+
+I4.5 adds the product Expression DAG boundary and direct fixture execution:
+
+- `fcs-model` owns source-free typed nodes, exact constants, topological operands,
+  environment dependency projection, structural validation, and deterministic
+  shared-subgraph interning;
+- `fcs-runtime` evaluates the Core scalar/vector node set with finite/domain,
+  checked-integer, signed-zero, and structured error behavior; `and`, `or`, and
+  `choose` remain lazy and do not evaluate unselected operands;
+- `fcs-source` lowers direct runtime fields to the canonical DAG without exposing
+  parser types to the runtime crate, and rejects direct `EnvP` without Piece
+  context;
+- `source.valid.runtime-choose` and `source.valid.exact-expression-dag` bind
+  expected descriptor properties and execute through the product evaluator.
+
+I4.5 deliberately does not claim Piecewise/EnvP lowering, expanded
+template/generator expression ownership, descriptor-wide cycle analysis,
+independent correctly-rounded reference evaluation, or property/fuzz closure.
+
 ## Explicit non-goals
 
-- Typed Expression DAG, Piecewise lowering, and exact integration validation
-  (I4.5-I4.7).
+- Piecewise lowering and exact integration validation (I4.6-I4.7).
 - A claim that platform `f64` transcendental calls already satisfy the complete
   difficult-input correct-rounding requirement. I4.8 owns that independent
   reference closure and production/transform cross-check.
@@ -171,11 +190,11 @@ and later I4 residuals.
 ## Delivery and residual gate
 
 The Rust/build/test gate runs only on an exact draft-PR SHA through
-`.github/workflows/full-gate.yml`. I4.1 through I4.4 are bounded `partial`
+`.github/workflows/full-gate.yml`. I4.1 through I4.5 are bounded `partial`
 transitions: they do not close the FCS section 14 matrix row or the I4 stage.
 I4.4 now includes product scroll evaluation and canonical conformance execution,
 but its exact-head gate and independent review evidence remain required.
-I4.5-I4.7 still own DAG, Piecewise, and integration; I4.8 must bind difficult
+I4.6-I4.7 still own Piecewise and integration; I4.8 must bind difficult
 transcendental/cubic-Bezier/transform vectors, an independent implementation
 path, and production/reference cross-checks before strict-runtime conformance
 can pass.

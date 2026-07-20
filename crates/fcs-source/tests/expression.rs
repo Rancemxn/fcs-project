@@ -1,5 +1,6 @@
 use fcs_source::ast::{BinaryOperator, SourceExpression, SourceLiteral, SourceSpan, UnaryOperator};
 use fcs_source::diagnostic::DiagnosticCode;
+use fcs_source::lower_runtime_expression;
 use fcs_source::parser::{ParseLimits, parse_expression, parse_expression_with_limits};
 
 fn binary(
@@ -218,4 +219,17 @@ fn parser_keeps_unresolved_schema_enum_words_as_name_references() {
         SourceExpression::Name { name, span }
             if name == "above" && span == SourceSpan::new(0, 5)
     ));
+}
+
+#[test]
+fn canonical_lowering_rejects_unknown_and_piece_only_environments() {
+    for (source, expected) in [
+        ("unknown", DiagnosticCode::NAME_UNKNOWN),
+        ("p", DiagnosticCode::EXPRESSION_ENVIRONMENT_UNAVAILABLE),
+    ] {
+        let expression = parse_expression(source).into_result().unwrap();
+        let diagnostic = lower_runtime_expression(&expression)
+            .expect_err("unsupported environment must fail at canonical lowering");
+        assert_eq!(diagnostic.code(), expected);
+    }
 }

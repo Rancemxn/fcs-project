@@ -1,0 +1,8 @@
+{
+  "property": "presentation.alpha",
+  "descriptorKind": "ExpressionDAG",
+  "requiredInputs": ["d"],
+  "containsChoose": true,
+  "containsSin": false,
+  "forbiddenDescriptorKinds": ["BakedCurve"]
+}
