@@ -560,8 +560,8 @@ fn two_sum(left: f64, right: f64) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use fcs_model::{
-        CanonicalLineBase, CanonicalLineInherit, CanonicalScrollCoordinate,
-        CanonicalScrollTempoPoint, CanonicalTextualId, CanonicalTime, CanonicalTrack,
+        CanonicalChartScrollTempoPoint, CanonicalLineBase, CanonicalLineInherit,
+        CanonicalScrollCoordinate, CanonicalTextualId, CanonicalTime, CanonicalTrack,
         CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackPiece, CanonicalTrackSegment,
         EntityKind, StableIdRegistry,
     };
@@ -616,8 +616,8 @@ mod tests {
         CanonicalScrollLine::new(
             id,
             CanonicalScrollCoordinate::new([
-                CanonicalScrollTempoPoint::new(0.0, 120.0).unwrap(),
-                CanonicalScrollTempoPoint::new(2.0, 60.0).unwrap(),
+                CanonicalChartScrollTempoPoint::new(0.0, 120.0).unwrap(),
+                CanonicalChartScrollTempoPoint::new(2.0, 60.0).unwrap(),
             ])
             .unwrap(),
             speed,
@@ -644,9 +644,10 @@ mod tests {
         .unwrap();
         let graph = CanonicalLineGraph::new([line]).unwrap();
         let scroll =
-            CanonicalScrollSet::new([descriptor(line_id.clone(), 1.0, -0.0, 0.0)]).unwrap();
+            CanonicalScrollSet::new(vec![descriptor(line_id.clone(), 1.0, -0.0, 0.0)]).unwrap();
         let tracks =
-            CanonicalTrackSet::new([speed_track(line_id.clone(), "speed", 0.0, 2.0, 0.0)]).unwrap();
+            CanonicalTrackSet::new(vec![speed_track(line_id.clone(), "speed", 0.0, 2.0, 0.0)])
+                .unwrap();
 
         let origin = evaluate_line_scroll(&graph, &scroll, &tracks, &line_id, 0.0).unwrap();
         assert_eq!(origin.effective_floor().to_bits(), 0x8000_0000_0000_0000);
@@ -670,7 +671,8 @@ mod tests {
         )
         .unwrap();
         let graph = CanonicalLineGraph::new([line]).unwrap();
-        let scroll = CanonicalScrollSet::new([descriptor(line_id.clone(), 2.0, 3.0, 0.0)]).unwrap();
+        let scroll =
+            CanonicalScrollSet::new(vec![descriptor(line_id.clone(), 2.0, 3.0, 0.0)]).unwrap();
         let tracks = CanonicalTrackSet::new(Vec::<CanonicalTrack>::new()).unwrap();
 
         let result = evaluate_line_scroll(&graph, &scroll, &tracks, &line_id, 1.0).unwrap();
@@ -712,13 +714,13 @@ mod tests {
         )
         .unwrap();
         let graph = CanonicalLineGraph::new([root, child, detached]).unwrap();
-        let scroll = CanonicalScrollSet::new([
+        let scroll = CanonicalScrollSet::new(vec![
             descriptor(root_id.clone(), 1.0, 2.0, 0.0),
             descriptor(child_id.clone(), 1.0, 3.0, 0.0),
             descriptor(detached_id.clone(), 1.0, 5.0, 0.0),
         ])
         .unwrap();
-        let tracks = CanonicalTrackSet::new([
+        let tracks = CanonicalTrackSet::new(vec![
             speed_track(root_id.clone(), "speed", 0.0, 1.0, 1.0),
             speed_track(child_id.clone(), "speed", 0.0, 1.0, 1.0),
             speed_track(detached_id.clone(), "speed", 0.0, 1.0, 1.0),
