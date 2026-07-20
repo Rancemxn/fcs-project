@@ -6,11 +6,13 @@
 //! reference evaluation remain later I4 units.
 
 mod easing;
+mod expression;
 mod scroll;
 mod track;
 mod transform;
 
 pub use easing::{EasingError, EasingId, evaluate_easing};
+pub use expression::{ExpressionEnvironment, ExpressionEvaluationError, evaluate_expression};
 pub use scroll::{
     EvaluatedLineScroll, LineScrollDistance, ScrollEvaluationError, evaluate_line_scroll,
     evaluate_note_distance,
