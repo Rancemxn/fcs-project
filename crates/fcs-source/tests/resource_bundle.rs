@@ -310,8 +310,8 @@ fn metadata_lowering_remains_filesystem_free_and_validates_core_contract_values(
         r#"#fcs 5.0.0
 format { profile: fragment; }
 resources {
-    image image { source: "missing.png"; mediaType: "image/png"; sampling: "cubic"; }
-    font font { source: "missing.ttf"; mediaType: "font/ttf"; faceCount: 2; }
+    image sprite { source: "missing.png"; mediaType: "image/png"; sampling: "cubic"; }
+    font face { source: "missing.ttf"; mediaType: "font/ttf"; faceCount: 2; }
 }
 "#,
     );
