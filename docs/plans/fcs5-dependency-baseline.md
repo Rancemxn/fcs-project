@@ -32,7 +32,7 @@
 | `serde` | 1.0.228 | `a866b336f14aa57a07f0d0be9f8762746e64ecb4` | typed manifest/report/import data boundary |
 | `serde_json` | 1.0.150 | `a1ae73ac6a6940a4a57c673aebaa13ed4dfe3e8c` | conformance、I6 JSON source 和 I10 JSON output；lossless order/duplicate handling由 owning parser 固定 |
 | `sha2` | 0.11.0 | `ffe093984c004769747e998f77da8ff7c0e7a765` | canonical ID、resource、FCBC 和 manifest SHA-256 |
-| `tempfile` | 3.27.0 | `5c8fa12eb584931b4f1bccfde87eb72fbfa7dc61` | filesystem tests与 I10 同目录原子输出；resolver policy 仍由项目检查 |
+| `tempfile` | 3.27.0 | `5c8fa12eb584931b4f1bccfde87eb72fbfa7dc61` | I5 workspace resolver filesystem/symlink tests与 I10 同目录原子输出；resolver policy 仍由项目检查 |
 | `thiserror` | 2.0.19 | `e13a7854338e446f184725fc8b9c9e86a0a537d2` | 新建或实质修改的 typed error boilerplate；不替代稳定 category/rule ID |
 | `toml` | 1.1.3 | `eb251609a333580bf005cae27df853bb63dffdbe` | conformance manifest 和可执行测试 corpus |
 | `ttf-parser` | 0.25.1 | `56c33b910b03ca152f78363ec471c5dfd97c3069` | I9 defaults-disabled bounded TrueType table/outline decode；不使用其 shaping/raster policy |
@@ -55,8 +55,10 @@ toolchain 和 full gate 为实际兼容性证据。
 | `thiserror` 2.0.19 | default `std` | MIT OR Apache-2.0 | 1.71 | `thiserror-impl` 2.0.19 及其 proc-macro 闭包；derive output 不能改变稳定 diagnostic surface |
 
 `astro-float` 在 I4.8、`proptest` 在 I4.9 进入 `fcs-runtime` dev graph；两者都不进入 production
-dependency tree。其余六项先作为精确版本的 workspace catalog，分别到 owning stage 才写入 crate
-manifest 和 lockfile；catalog entry 本身不能被描述为已实现能力。
+dependency tree。I5.3 复用 `fcs-model` 已激活的 `sha2` 0.11.0 计算 exact resource bytes digest，并将
+`tempfile` 3.27.0 仅加入 `fcs-source` dev graph，以隔离 workspace/symlink/非普通文件测试；resolver
+production graph 不依赖 `tempfile`。其余五项先作为精确版本的 workspace catalog，分别到 owning
+stage 才写入 crate manifest 和 lockfile；catalog entry 本身不能被描述为已实现能力。
 
 ## 已完成代码的迁移边界
 
@@ -67,5 +69,6 @@ manifest 和 lockfile；catalog entry 本身不能被描述为已实现能力。
   `num_enum`、`bitflags` 或通用 numeric wrapper。
 - `thiserror` 只在一个 error enum 正被功能性修改时用于保持等价的 `Display`、`source` 与 public
   shape；不单独发起全仓机械迁移。
-- `tempfile` 随 I5 resource resolver/I10 CLI 激活，并可在触及现有 filesystem tests 时替换手写
-  temporary path cleanup；不会为单纯依赖迁移重开已完成阶段。
+- `tempfile` 已随 I5.3 resource resolver 的 dev-only integration tests 激活；I10 可继续用于同目录
+  原子输出测试，并可在触及现有 filesystem tests 时替换手写 temporary path cleanup；不会为单纯
+  依赖迁移重开已完成阶段。

@@ -62,6 +62,22 @@ struct RawObjectEntry {
     value: RawValue,
 }
 
+pub(crate) struct LoweredDocument {
+    pub(crate) metadata: CanonicalMetadata,
+    pub(crate) resource_sources: BTreeMap<String, LoweredResourceSource>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LoweredResourceSource {
+    pub(crate) logical_path: String,
+    pub(crate) span: SourceSpan,
+}
+
+struct LoweredResources {
+    resources: BTreeMap<String, CanonicalResource>,
+    sources: BTreeMap<String, LoweredResourceSource>,
+}
+
 impl Document {
     /// Compiles the parsed document into the immutable chart semantic product.
     ///
@@ -122,7 +138,8 @@ impl Document {
     ///
     /// This operation validates logical workspace member paths but never opens
     /// them, follows symlinks, reads bytes, or compares a declared hash with an
-    /// input file. Those operations are owned by I5.
+    /// input file. Use `canonical_resource_bundle` for that explicit-root I5
+    /// boundary.
     pub fn canonical_metadata(&self) -> Result<CanonicalMetadata, Vec<Diagnostic>> {
         lower_document(self)
     }
@@ -348,6 +365,12 @@ fn chart_diagnostic(error: CanonicalChartError, span: SourceSpan) -> Diagnostic 
 }
 
 fn lower_document(document: &Document) -> Result<CanonicalMetadata, Vec<Diagnostic>> {
+    lower_document_with_sources(document).map(|lowered| lowered.metadata)
+}
+
+pub(crate) fn lower_document_with_sources(
+    document: &Document,
+) -> Result<LoweredDocument, Vec<Diagnostic>> {
     let contributor_names = contributor_names(document.contributors.as_ref());
     let resource_kinds = resource_kinds(document.resources.as_ref());
     let mut diagnostics = Vec::new();
@@ -397,14 +420,17 @@ fn lower_document(document: &Document) -> Result<CanonicalMetadata, Vec<Diagnost
             .then_with(|| left.code().cmp(&right.code()))
     });
     if diagnostics.is_empty() {
-        Ok(CanonicalMetadata::new(
-            meta,
-            contributors,
-            credits,
-            resources,
-            artwork,
-            sync,
-        ))
+        Ok(LoweredDocument {
+            metadata: CanonicalMetadata::new(
+                meta,
+                contributors,
+                credits,
+                resources.resources,
+                artwork,
+                sync,
+            ),
+            resource_sources: resources.sources,
+        })
     } else {
         Err(diagnostics)
     }
@@ -629,9 +655,15 @@ fn lower_resources(
     block: Option<&crate::ast::ResourcesBlock>,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     diagnostics: &mut Vec<Diagnostic>,
-) -> BTreeMap<String, CanonicalResource> {
+) -> LoweredResources {
     let mut output = BTreeMap::new();
-    let Some(block) = block else { return output };
+    let mut sources = BTreeMap::new();
+    let Some(block) = block else {
+        return LoweredResources {
+            resources: output,
+            sources,
+        };
+    };
     let empty_contributors = BTreeSet::new();
     let empty_resources = BTreeMap::new();
     let mut previous = BTreeMap::<String, SourceSpan>::new();
@@ -661,6 +693,9 @@ fn lower_resources(
         expected.insert("colorSpace", Expected::String);
         expected.insert("alpha", Expected::String);
         expected.insert("sampling", Expected::String);
+        expected.insert("fontProfile", Expected::String);
+        expected.insert("shapingProfile", Expected::String);
+        expected.insert("faceCount", Expected::Int);
         let mut fields = lower_fields(
             &declaration.fields,
             &expected,
@@ -730,17 +765,25 @@ fn lower_resources(
         };
         fields.remove("source");
         fields.remove("mediaType");
-        if declaration.kind == ResourceKind::Image {
-            fields
-                .entry("colorSpace".to_owned())
-                .or_insert_with(|| CanonicalValue::String("srgb".into()));
-            fields
-                .entry("alpha".to_owned())
-                .or_insert_with(|| CanonicalValue::String("straight".into()));
-            fields
-                .entry("sampling".to_owned())
-                .or_insert_with(|| CanonicalValue::String("linear".into()));
-        }
+        let metadata = canonical_resource_metadata(
+            declaration.kind,
+            &media_type,
+            fields,
+            declaration.span,
+            diagnostics,
+        );
+        let source_span = declaration
+            .fields
+            .iter()
+            .find(|field| field.path.segments.len() == 1 && field.path.segments[0] == "source")
+            .map_or(declaration.span, |field| field.value.span());
+        sources.insert(
+            declaration.name.clone(),
+            LoweredResourceSource {
+                logical_path: source,
+                span: source_span,
+            },
+        );
         output.insert(
             declaration.name.clone(),
             CanonicalResource::new(
@@ -748,11 +791,202 @@ fn lower_resources(
                 canonical_resource_kind(declaration.kind),
                 media_type,
                 declared_sha256,
-                fields,
+                metadata,
             ),
         );
     }
-    output
+    LoweredResources {
+        resources: output,
+        sources,
+    }
+}
+
+fn canonical_resource_metadata(
+    kind: ResourceKind,
+    media_type: &str,
+    mut fields: BTreeMap<String, CanonicalValue>,
+    span: SourceSpan,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> CanonicalObject {
+    let entries = match kind {
+        ResourceKind::Image | ResourceKind::Texture => {
+            reject_resource_metadata_fields(
+                &mut fields,
+                &["fontProfile", "shapingProfile", "faceCount"],
+                kind,
+                span,
+                diagnostics,
+            );
+            let color_space = resource_string_metadata(
+                &mut fields,
+                "colorSpace",
+                "srgb",
+                &["srgb", "linear-srgb"],
+                span,
+                diagnostics,
+            );
+            let alpha = resource_string_metadata(
+                &mut fields,
+                "alpha",
+                "straight",
+                &["straight", "premultiplied"],
+                span,
+                diagnostics,
+            );
+            let sampling = resource_string_metadata(
+                &mut fields,
+                "sampling",
+                "linear",
+                &["nearest", "linear"],
+                span,
+                diagnostics,
+            );
+            vec![
+                CanonicalObjectEntry::new("colorSpace", CanonicalValue::String(color_space)),
+                CanonicalObjectEntry::new("alpha", CanonicalValue::String(alpha)),
+                CanonicalObjectEntry::new("sampling", CanonicalValue::String(sampling)),
+            ]
+        }
+        ResourceKind::Font if media_type == "font/ttf" => {
+            reject_resource_metadata_fields(
+                &mut fields,
+                &["colorSpace", "alpha", "sampling"],
+                kind,
+                span,
+                diagnostics,
+            );
+            let font_profile = resource_exact_string_metadata(
+                &mut fields,
+                "fontProfile",
+                "truetype-glyf-1",
+                span,
+                diagnostics,
+            );
+            let shaping_profile = resource_exact_string_metadata(
+                &mut fields,
+                "shapingProfile",
+                "simple-ltr-1",
+                span,
+                diagnostics,
+            );
+            let face_count = match fields.remove("faceCount") {
+                Some(CanonicalValue::Int(1)) | None => 1,
+                Some(CanonicalValue::Int(value)) => {
+                    diagnostics.push(canonical_diagnostic(
+                        DiagnosticCode::TYPE_INVALID_OPERATION,
+                        format!("font/ttf resource faceCount must be 1, got {value}"),
+                        span,
+                    ));
+                    value
+                }
+                Some(_) => unreachable!("lower_fields enforces resource faceCount type"),
+            };
+            vec![
+                CanonicalObjectEntry::new("fontProfile", CanonicalValue::String(font_profile)),
+                CanonicalObjectEntry::new(
+                    "shapingProfile",
+                    CanonicalValue::String(shaping_profile),
+                ),
+                CanonicalObjectEntry::new("faceCount", CanonicalValue::Int(face_count)),
+            ]
+        }
+        _ => {
+            let names = fields.keys().cloned().collect::<Vec<_>>();
+            for name in names {
+                diagnostics.push(canonical_diagnostic(
+                    DiagnosticCode::SCHEMA_UNKNOWN_FIELD,
+                    format!(
+                        "{} resource has no canonical metadata field {name}",
+                        resource_kind_name(kind)
+                    ),
+                    span,
+                ));
+            }
+            Vec::new()
+        }
+    };
+    CanonicalObject::new(entries).expect("resource metadata keys are statically unique")
+}
+
+fn reject_resource_metadata_fields(
+    fields: &mut BTreeMap<String, CanonicalValue>,
+    names: &[&str],
+    kind: ResourceKind,
+    span: SourceSpan,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for name in names {
+        if fields.remove(*name).is_some() {
+            diagnostics.push(canonical_diagnostic(
+                DiagnosticCode::SCHEMA_UNKNOWN_FIELD,
+                format!(
+                    "{} resource has no canonical metadata field {name}",
+                    resource_kind_name(kind)
+                ),
+                span,
+            ));
+        }
+    }
+}
+
+fn resource_string_metadata(
+    fields: &mut BTreeMap<String, CanonicalValue>,
+    name: &str,
+    default: &str,
+    allowed: &[&str],
+    span: SourceSpan,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> String {
+    let value = match fields.remove(name) {
+        Some(CanonicalValue::String(value)) => value,
+        None => default.to_owned(),
+        Some(_) => unreachable!("lower_fields enforces resource metadata string type"),
+    };
+    if !allowed.contains(&value.as_str()) {
+        diagnostics.push(canonical_diagnostic(
+            DiagnosticCode::TYPE_INVALID_OPERATION,
+            format!(
+                "resource {name} must be one of {}, got {value}",
+                allowed.join(", ")
+            ),
+            span,
+        ));
+    }
+    value
+}
+
+fn resource_exact_string_metadata(
+    fields: &mut BTreeMap<String, CanonicalValue>,
+    name: &str,
+    expected: &str,
+    span: SourceSpan,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> String {
+    let value = match fields.remove(name) {
+        Some(CanonicalValue::String(value)) => value,
+        None => expected.to_owned(),
+        Some(_) => unreachable!("lower_fields enforces resource metadata string type"),
+    };
+    if value != expected {
+        diagnostics.push(canonical_diagnostic(
+            DiagnosticCode::TYPE_INVALID_OPERATION,
+            format!("resource {name} must be {expected}, got {value}"),
+            span,
+        ));
+    }
+    value
+}
+
+const fn resource_kind_name(kind: ResourceKind) -> &'static str {
+    match kind {
+        ResourceKind::Audio => "audio",
+        ResourceKind::Image => "image",
+        ResourceKind::Font => "font",
+        ResourceKind::Texture => "texture",
+        ResourceKind::Path => "path",
+        ResourceKind::Shader => "shader",
+        ResourceKind::Binary => "binary",
+    }
 }
 
 fn lower_artwork(

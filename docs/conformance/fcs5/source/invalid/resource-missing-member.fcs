@@ -1,0 +1,8 @@
+#fcs 5.0.0
+format { profile: fragment; }
+resources {
+    binary missing {
+        source: "assets/does-not-exist.bin";
+        mediaType: "application/octet-stream";
+    }
+}
