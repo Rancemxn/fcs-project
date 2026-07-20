@@ -28,7 +28,7 @@ fn one_binary(path: &str, hash: Option<&str>) -> String {
         r#"#fcs 5.0.0
 format {{ profile: fragment; }}
 resources {{
-    binary payload {{
+    binary blob {{
         source: "{path}";
         {hash}
         mediaType: "application/octet-stream";
@@ -168,7 +168,7 @@ fn verifies_declared_sha256_only_after_reading_safe_exact_bytes() {
     let bundle = matching
         .canonical_resource_bundle(workspace.path(), ResourceLimits::default())
         .expect("matching digest must pass");
-    assert_eq!(bundle.get("payload").expect("payload").bytes(), bytes);
+    assert_eq!(bundle.get("blob").expect("binary resource").bytes(), bytes);
 
     let zero_hash = "0".repeat(64);
     let mismatch = parse(&one_binary("payload.bin", Some(&zero_hash)));
@@ -228,7 +228,10 @@ fn accepts_in_root_symlink_and_rejects_symlink_escape() {
     let inside = parse(&one_binary("inside-link.bin", None))
         .canonical_resource_bundle(&workspace, ResourceLimits::default())
         .expect("in-root symlink must resolve");
-    assert_eq!(inside.get("payload").expect("payload").bytes(), b"inside");
+    assert_eq!(
+        inside.get("blob").expect("binary resource").bytes(),
+        b"inside"
+    );
 
     let outside = container.path().join("outside.bin");
     fs::write(&outside, b"outside").expect("outside payload");
