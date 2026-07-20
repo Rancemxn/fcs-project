@@ -763,7 +763,7 @@ fn typed_manifests_load_with_bound_counts() {
     assert_eq!(render.schema_version, 3);
     assert_eq!(conversion.schema_version, 2);
     assert_eq!(root.suite.len(), 6);
-    assert_eq!(fcs.fixture.len(), 45);
+    assert_eq!(fcs.fixture.len(), 49);
     assert_eq!(fcbc.fixture.len(), 3);
     assert_eq!(render.binary_fixture.len(), 0);
     assert_eq!(render.fixture.len(), 1);
