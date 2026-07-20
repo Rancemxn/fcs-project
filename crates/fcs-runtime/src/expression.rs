@@ -2,7 +2,7 @@ use std::fmt;
 
 use fcs_model::{
     CanonicalExpressionDag, CanonicalExpressionEnvironment, CanonicalExpressionNode,
-    CanonicalExpressionOpcode, CanonicalExpressionType, CanonicalExpressionValue,
+    CanonicalExpressionOpcode, CanonicalExpressionValue,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -372,14 +372,19 @@ fn evaluate_node_inner(
         }
         CanonicalExpressionOpcode::Easing => {
             let value = expect_float(index, opcode, operand(0)?)?;
-            crate::EasingId::try_from(node.immediate())
-                .map_err(|_| ExpressionEvaluationError::InvalidOperation {
+            crate::EasingId::try_from(u16::try_from(node.immediate()).map_err(|_| {
+                ExpressionEvaluationError::InvalidOperation {
                     node: index,
                     opcode,
-                })?
-                .evaluate(value)
-                .map(CanonicalExpressionValue::Float)
-                .map_err(|_| ExpressionEvaluationError::NonFiniteResult { node: index })
+                }
+            })?)
+            .map_err(|_| ExpressionEvaluationError::InvalidOperation {
+                node: index,
+                opcode,
+            })?
+            .evaluate(value)
+            .map(CanonicalExpressionValue::Float)
+            .map_err(|_| ExpressionEvaluationError::NonFiniteResult { node: index })
         }
         CanonicalExpressionOpcode::ToFloat => match operand(0)? {
             CanonicalExpressionValue::Int(value) => {
