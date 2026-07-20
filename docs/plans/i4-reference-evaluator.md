@@ -135,9 +135,30 @@ I4.6 adds the source-free exact Piecewise descriptor boundary:
 I4.6 does not add FCBC serialization, source Track-to-descriptor assembly,
 exact integration, an independent reference path, or property/fuzz closure.
 
+## I4.7 owned surface
+
+I4.7 replaces the product scroll evaluator's step-only restriction with a
+deterministic direct-seek integration path:
+
+- split at the exact origin/query, scroll-tempo, Track segment, and Track point
+  boundaries already present in the canonical inputs;
+- retain the constant and step analytic q-delta path, while varying linear,
+  Core easing, and cubic-Bezier intervals use deterministic adaptive 15-point
+  Gauss-Kronrod refinement;
+- divide the ABI 1.0 `0x1p-32` target across known intervals and return
+  `IntegrationBudgetExceeded` at a fixed depth/evaluation ceiling rather than
+  frame accumulation, a sampled cache, or a `BakedCurve`;
+- bind analytic area vectors, reverse integration, origin bits, repeated
+  out-of-order queries, and the stable budget failure.
+
+I4.7 is the product-side bounded estimator. I4.8 still owns the independent
+reference implementation and difficult-input cross-check; I4.9 owns the
+randomized partition/frame-rate/error-bound property corpus.
+
 ## Explicit non-goals
 
-- Source Track-to-descriptor assembly and exact integration validation (I4.7).
+- FCBC descriptor assembly/serialization and generic loader-facing Distance
+  records (I7).
 - A claim that platform `f64` transcendental calls already satisfy the complete
   difficult-input correct-rounding requirement. I4.8 owns that independent
   reference closure and production/transform cross-check.
@@ -213,14 +234,23 @@ exact integration, an independent reference path, or property/fuzz closure.
 3. Runtime tests bind half-open boundaries, a final inclusive endpoint, nested
    progress rebinding, and the fixed progress values for unbounded sides.
 
+## I4.7 acceptance evidence
+
+1. Known tempo and Track discontinuities are explicit integration boundaries;
+   no uniform sample grid or retained frame state exists.
+2. Constant/step inputs keep the analytic path, while linear, Core easing, and
+   cubic-Bezier speed inputs use the bounded adaptive path.
+3. Focused vectors bind analytic areas within `0x1p-32`, forward/reverse direct
+   seek, exact origin bits, repeatability, and stable budget exhaustion.
+
 ## Delivery and residual gate
 
-The Rust/build/test gate runs only on an exact draft-PR SHA through
-`.github/workflows/full-gate.yml`. I4.1 through I4.6 are bounded `partial`
+The Rust/build/test gate runs on an exact draft-PR SHA through
+`.github/workflows/full-gate.yml`; the user-authorized temporary local full
+gate is recorded separately while Actions is unstable. I4.1 through I4.7 are bounded `partial`
 transitions: they do not close the FCS section 14 matrix row or the I4 stage.
-I4.4 now includes product scroll evaluation and canonical conformance execution,
-but its exact-head gate and independent review evidence remain required.
-I4.7 still owns exact integration and source Track-to-descriptor assembly; I4.8 must bind difficult
+I4.7 now owns the product exact-integration path; FCBC descriptor assembly remains
+I7. I4.8 must bind difficult
 transcendental/cubic-Bezier/transform vectors, an independent implementation
 path, and production/reference cross-checks before strict-runtime conformance
 can pass.
