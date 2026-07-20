@@ -1,9 +1,9 @@
 //! Product-owned evaluation foundations for FCS runtime descriptors.
 //!
 //! I4.1 establishes the Core easing catalog, I4.2 adds canonical Track
-//! evaluation, I4.3 adds deterministic Line transform evaluation, and I4.4
-//! adds direct-seek Line scroll evaluation. Expression DAG and independent
-//! reference evaluation remain later I4 units.
+//! evaluation, I4.3 adds deterministic Line transforms, and I4.4-I4.7 add
+//! direct-seek Line scroll evaluation through bounded exact integration.
+//! Independent reference evaluation remains a later I4 unit.
 
 mod descriptor;
 mod easing;

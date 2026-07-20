@@ -503,8 +503,10 @@ work-unit 的交付证据；Issue #227 现已将直接 runtime field 接到 sour
 并由 `runtime-choose` 与 `exact-expression-dag` fixture 执行 lazy Choose、环境依赖和 finite math。
 精确 head 的 full gate 与 Primary Self-Audit 是当前 I4.5 交付证据；Issue #231 已建立 source-free
 Piecewise descriptor table、完整 partition/cycle/domain 校验、结构 interning、deterministic postorder
-和 selected-Piece `EnvP` 求值。I4.7–I4.9 的 source Track assembly/integration、独立 reference 与
-property cross-check 仍是后续 residual，任何
+和 selected-Piece `EnvP` 求值。Issue #233 已将现有 canonical scroll/Track 产品路径的 step-only
+限制替换为 boundary-aware adaptive Gauss-Kronrod direct-seek integration，保留 constant/step analytic
+路径，并以固定误差/深度/求值预算拒绝无法收敛的查询。I4.8–I4.9 的独立 reference、困难输入与
+property cross-check 仍是后续 residual；FCBC descriptor assembly/serialization 仍归 I7，任何
 sampled/BakedCurve 路径都不进入标准 runtime。
 
 ### I5：Metadata、resources、sync 与 fidelity
