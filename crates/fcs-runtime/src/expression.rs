@@ -1109,22 +1109,22 @@ fn clamp_value(
             CanonicalExpressionValue::Time(value),
             CanonicalExpressionValue::Time(low),
             CanonicalExpressionValue::Time(high),
-        ) => clamp_float_value(index, value, low, high).map(CanonicalExpressionValue::Time),
+        ) => clamp_float_value(node, value, low, high).map(CanonicalExpressionValue::Time),
         (
             CanonicalExpressionValue::Beat(value),
             CanonicalExpressionValue::Beat(low),
             CanonicalExpressionValue::Beat(high),
-        ) => clamp_float_value(index, value, low, high).map(CanonicalExpressionValue::Beat),
+        ) => clamp_float_value(node, value, low, high).map(CanonicalExpressionValue::Beat),
         (
             CanonicalExpressionValue::Length(value),
             CanonicalExpressionValue::Length(low),
             CanonicalExpressionValue::Length(high),
-        ) => clamp_float_value(index, value, low, high).map(CanonicalExpressionValue::Length),
+        ) => clamp_float_value(node, value, low, high).map(CanonicalExpressionValue::Length),
         (
             CanonicalExpressionValue::Angle(value),
             CanonicalExpressionValue::Angle(low),
             CanonicalExpressionValue::Angle(high),
-        ) => clamp_float_value(index, value, low, high).map(CanonicalExpressionValue::Angle),
+        ) => clamp_float_value(node, value, low, high).map(CanonicalExpressionValue::Angle),
         _ => Err(ExpressionEvaluationError::TypeMismatch { node, opcode }),
     }
 }
