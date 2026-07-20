@@ -64,6 +64,7 @@ id = "source.valid.runtime-choose"
 path = "source/valid/runtime-choose.fcs"
 stage = "canonical"
 expect = "success"
+expected = "expected/runtime-choose.json"
 clauses = ["13.1", "13.3"]
 
 [[fixture]]

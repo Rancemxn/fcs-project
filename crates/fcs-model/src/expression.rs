@@ -217,6 +217,10 @@ impl CanonicalExpressionDag {
         self.root
     }
 
+    pub fn result_type(&self) -> &CanonicalExpressionType {
+        self.nodes[self.root].result_type()
+    }
+
     pub fn required_environment(&self) -> Vec<CanonicalExpressionEnvironment> {
         let mut values = Vec::new();
         for node in &self.nodes {
