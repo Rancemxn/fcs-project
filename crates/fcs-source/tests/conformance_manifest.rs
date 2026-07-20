@@ -836,7 +836,7 @@ fn fcs_source_fixtures_execute_at_the_declared_frontend_boundary() {
 
     assert_eq!(parse_success, 3);
     assert_eq!(parse_error, 9);
-    assert_eq!(later_stage, 30);
+    assert_eq!(later_stage, 33);
 }
 
 #[test]
