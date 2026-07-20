@@ -155,6 +155,25 @@ I4.7 is the product-side bounded estimator. I4.8 still owns the independent
 reference implementation and difficult-input cross-check; I4.9 owns the
 randomized partition/frame-rate/error-bound property corpus.
 
+## I4.8 owned surface
+
+I4.8 adds a test-only independent reference lane without changing the product
+runtime API or evaluator:
+
+- `fcs-runtime` dev tests use pinned `astro-float` 0.9.5 with defaults disabled
+  and `std` enabled; difficult primitives use directed lower and upper bounds
+  and are accepted only when both round to one binary64 bit pattern;
+- Core transcendental operations, easing formulas, cubic-Bezier inversion,
+  scroll integration, and 3x3 matrix composition use separate test-side
+  dispatch and arithmetic. The reference side does not call product private
+  math, nalgebra multiplication, cache, sampled curve, or FCBC evaluator;
+- `numeric-vectors.toml` uses typed `deny_unknown_fields` records, rejects
+  duplicate semantic identities, and executes literal difficult operation and
+  easing bits through both reference and product paths.
+
+I4.8 does not promote `astro-float` into a normal dependency, expose reference
+types, replace project-owned errors/enums, or close the randomized I4.9 corpus.
+
 ## Explicit non-goals
 
 - FCBC descriptor assembly/serialization and generic loader-facing Distance
@@ -243,14 +262,30 @@ randomized partition/frame-rate/error-bound property corpus.
 3. Focused vectors bind analytic areas within `0x1p-32`, forward/reverse direct
    seek, exact origin bits, repeatability, and stable budget exhaustion.
 
+## I4.8 acceptance evidence
+
+1. `crates/fcs-runtime/tests/reference_numeric.rs` independently evaluates all
+   Core transcendental families, explicit `atan2` axis/signed-zero cases,
+   easing branches, flat/overshooting cubic-Bezier controls, non-uniform
+   inherited transforms, and linear/easing/Bezier scroll integrals.
+2. `docs/conformance/fcs5/expected/numeric-vectors.toml` contains literal bits
+   for 11 difficult Core operations and 21 easing family/branch vectors; the
+   executable test rejects unknown fields, duplicate entries, unknown
+   operations, malformed bits, and mismatched product/reference results.
+3. The Astro oracle uses directed `Down`/`Up` bounds with adaptive precision for
+   Core operations and guarded precision for easing primitives; only a shared
+   binary64 result is accepted, and the dependency is absent from the normal
+   `fcs-runtime` tree.
+4. Reference matrix multiplication uses plain arrays and the scroll lane uses
+   independent analytic integrals; neither calls the product Bezier, matrix,
+   integration, or caching implementation.
+
 ## Delivery and residual gate
 
 The Rust/build/test gate runs on an exact draft-PR SHA through
 `.github/workflows/full-gate.yml`; the user-authorized temporary local full
-gate is recorded separately while Actions is unstable. I4.1 through I4.7 are bounded `partial`
-transitions: they do not close the FCS section 14 matrix row or the I4 stage.
-I4.7 now owns the product exact-integration path; FCBC descriptor assembly remains
-I7. I4.8 must bind difficult
-transcendental/cubic-Bezier/transform vectors, an independent implementation
-path, and production/reference cross-checks before strict-runtime conformance
-can pass.
+gate is recorded separately while Actions is unstable. I4.1 through I4.8 are
+bounded `partial` transitions: they do not close the FCS section 14 matrix row
+or the I4 stage; I4.9 still owns randomized determinism/property closure.
+I4.7 owns the product exact-integration path and I4.8 owns the independent
+cross-check; FCBC descriptor assembly remains I7.
