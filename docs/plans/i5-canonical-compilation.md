@@ -48,6 +48,11 @@ boundary. I5.2-I5.7 remain open and this plan does not claim a complete
 - `profile_validation::every_legal_primary_profile_and_orthogonal_feature_combination_is_accepted`
   enumerates the legal five-profile matrix, including empty fragment features,
   redundant idempotent capabilities, orthogonal additions, and both features.
+- `profile_validation::minimal_profiles_do_not_inherit_orthogonal_or_publishable_requirements`
+  proves the minimal chart, playable, renderable, publishable-playable, and
+  publishable-renderable closures without unrelated capability inputs;
+  `playable_capability_counts_a_line_created_only_by_elaboration` binds a Line
+  that exists only after template expansion.
 - The remaining `profile_validation` tests isolate missing tempo, sync, primary
   audio, gameplay Line, Render envelope, publishable feature, metadata, credit,
   and declared hash, plus diagnostic precedence/order and the fragment/chart

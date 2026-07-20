@@ -99,6 +99,68 @@ fn every_legal_primary_profile_and_orthogonal_feature_combination_is_accepted() 
 }
 
 #[test]
+fn minimal_profiles_do_not_inherit_orthogonal_or_publishable_requirements() {
+    let cases = [
+        (
+            "chart",
+            r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+"#,
+        ),
+        (
+            "playable",
+            r#"#fcs 5.0.0
+format { profile: playable; }
+resources { audio song { source: "song.ogg"; mediaType: "audio/ogg"; } }
+sync { primaryAudio: @song; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+"#,
+        ),
+        (
+            "renderable",
+            r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {}
+"#,
+        ),
+        (
+            "publishable-playable",
+            r#"#fcs 5.0.0
+format { profile: publishable; features: [playable]; }
+meta { title: "P"; documentId: "p"; chartVersion: "1"; license: "CC0-1.0"; }
+credits { credit { role: "charter"; } }
+resources { audio song {
+    source: "song.ogg";
+    hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    mediaType: "audio/ogg";
+} }
+sync { primaryAudio: @song; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+"#,
+        ),
+        (
+            "publishable-renderable",
+            r#"#fcs 5.0.0
+format { profile: publishable; features: [renderable]; }
+meta { title: "P"; documentId: "p"; chartVersion: "1"; license: "CC0-1.0"; }
+credits { credit { role: "charter"; } }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {}
+"#,
+        ),
+    ];
+
+    for (name, source) in cases {
+        validate(source)
+            .unwrap_or_else(|diagnostics| panic!("minimal {name} failed: {diagnostics:?}"));
+    }
+}
+
+#[test]
 fn fragment_allows_missing_chart_inputs_but_rejects_each_declared_capability() {
     let minimal = "#fcs 5.0.0\nformat { profile: fragment; features: []; }\n";
     validate(minimal).expect("an empty fragment feature list declares no capability");
@@ -153,6 +215,24 @@ fn playable_capability_requires_sync_primary_audio_and_an_elaborated_line() {
             .iter()
             .any(|diagnostic| diagnostic.message().contains("Render scene envelope"))
     );
+}
+
+#[test]
+fn playable_capability_counts_a_line_created_only_by_elaboration() {
+    let source = r#"#fcs 5.0.0
+format { profile: playable; }
+resources { audio song { source: "song.ogg"; mediaType: "audio/ogg"; } }
+sync { primaryAudio: @song; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+    template Line makeLine() {
+        return Line { id: "generated"; };
+    }
+}
+collections { judgelines { makeLine(); } }
+"#;
+
+    validate(source).expect("a template-produced Line satisfies the playable requirement");
 }
 
 #[test]
