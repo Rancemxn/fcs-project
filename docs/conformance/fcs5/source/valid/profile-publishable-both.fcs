@@ -1,0 +1,20 @@
+#fcs 5.0.0
+format { profile: publishable; features: [playable, renderable]; }
+meta {
+    title: "Publishable Profile";
+    documentId: "org.fcs.conformance.publishable-profile";
+    chartVersion: "1";
+    license: "CC0-1.0";
+}
+credits { credit { role: "charter"; } }
+resources {
+    audio song {
+        source: "assets/opaque-resource.bin";
+        hash: "sha256:66eb55e69c42345c65021ea9364fc43c61d2151dde67a89dc02362543b289903";
+        mediaType: "audio/ogg";
+    }
+}
+sync { primaryAudio: @song; audioOffset: 0s; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+render profile 1.0.0 {}

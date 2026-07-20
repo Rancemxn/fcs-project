@@ -5,16 +5,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fcs_model::{
     AudioOffset, Beat as CanonicalBeat, CanonicalArtwork, CanonicalChart, CanonicalChartError,
-    CanonicalColor, CanonicalContributor, CanonicalCredit, CanonicalMetadata, CanonicalObject,
-    CanonicalObjectEntry, CanonicalPreview, CanonicalProfile, CanonicalProfileFeature,
-    CanonicalRequiredExtension, CanonicalResource, CanonicalResourceKind, CanonicalSourceVersion,
-    CanonicalSync, CanonicalValue, CanonicalValueType, DeclaredSha256,
+    CanonicalColor, CanonicalContributor, CanonicalCredit, CanonicalLineGraph, CanonicalMetadata,
+    CanonicalObject, CanonicalObjectEntry, CanonicalPreview, CanonicalProfile,
+    CanonicalProfileFeature, CanonicalRequiredExtension, CanonicalResource, CanonicalResourceKind,
+    CanonicalSourceVersion, CanonicalSync, CanonicalValue, CanonicalValueType, DeclaredSha256,
 };
 
 use crate::ast::{
     Definition, Document, DocumentProfile, ExtensionRequirement, FieldPath, MetaBlock,
     ProfileFeature, ResourceKind, SchemaField, SchemaValue, SourceExpression, SourceLiteral,
-    SourceSpan, SyncBlock, TypedValue,
+    SourceSpan, SyncBlock, TopLevelBlockKind, TypedValue,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLabel, DiagnosticStage};
 use crate::elaborator::{CompileTimeLimits, elaborate};
@@ -73,6 +73,11 @@ impl Document {
     ) -> Result<CanonicalChart, Vec<Diagnostic>> {
         let expanded = elaborate(self, phase2_schema(), limits)?;
         let metadata = self.canonical_metadata()?;
+        let lines = self.canonical_line_graph_with_expanded(&expanded)?;
+        let profile_diagnostics = profile_requirement_diagnostics(self, &metadata, &lines);
+        if !profile_diagnostics.is_empty() {
+            return Err(profile_diagnostics);
+        }
         let time_map = expanded.canonical_time_map().map_err(|error| {
             vec![canonical_diagnostic(
                 DiagnosticCode::TEMPO_INVALID,
@@ -80,7 +85,6 @@ impl Document {
                 self.format.span,
             )]
         })?;
-        let lines = self.canonical_line_graph_with_expanded(&expanded)?;
         let notes = expanded.canonical_notes(&time_map, &lines)?;
         let tracks = expanded.canonical_tracks(&time_map, &lines)?;
         let scroll = self.canonical_scroll_set_for_graph(&time_map, &lines)?;
@@ -122,6 +126,194 @@ impl Document {
     pub fn canonical_metadata(&self) -> Result<CanonicalMetadata, Vec<Diagnostic>> {
         lower_document(self)
     }
+
+    /// Validates the canonical requirements added by the declared profile and
+    /// its orthogonal feature capabilities.
+    ///
+    /// A tempo-less `fragment` can pass this boundary because that profile does
+    /// not require a chart time model. Building a [`CanonicalChart`] remains a
+    /// stronger operation: FCS section 17 requires that product to contain a
+    /// tempo map.
+    pub fn validate_profile_requirements(
+        &self,
+        limits: CompileTimeLimits,
+    ) -> Result<(), Vec<Diagnostic>> {
+        let expanded = elaborate(self, phase2_schema(), limits)?;
+        let metadata = self.canonical_metadata()?;
+        let lines = self.canonical_line_graph_with_expanded(&expanded)?;
+        let diagnostics = profile_requirement_diagnostics(self, &metadata, &lines);
+        if !diagnostics.is_empty() {
+            return Err(diagnostics);
+        }
+
+        if self.profile != DocumentProfile::Fragment || self.tempo_map.is_some() {
+            expanded.canonical_time_map().map_err(|error| {
+                vec![canonical_diagnostic(
+                    DiagnosticCode::TEMPO_INVALID,
+                    error.to_string(),
+                    self.format.span,
+                )]
+            })?;
+        }
+        Ok(())
+    }
+}
+
+fn profile_requirement_diagnostics(
+    document: &Document,
+    metadata: &CanonicalMetadata,
+    lines: &CanonicalLineGraph,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    if document.profile == DocumentProfile::Fragment {
+        if let Some(features) = &document.format.features {
+            for feature in &features.features {
+                diagnostics.push(profile_diagnostic(
+                    format!(
+                        "fragment profile cannot declare the {} feature",
+                        profile_feature_name(feature.value)
+                    ),
+                    feature.span,
+                ));
+            }
+        }
+        return diagnostics;
+    }
+
+    if document.tempo_map.is_none() {
+        diagnostics.push(profile_diagnostic(
+            "chart-capable profile requires a tempoMap",
+            document.format.profile.span,
+        ));
+    }
+
+    if let Some(span) = capability_span(document, ProfileFeature::Playable) {
+        match metadata.sync() {
+            None => diagnostics.push(profile_diagnostic(
+                "playable capability requires a sync block",
+                span,
+            )),
+            Some(sync) if sync.primary_audio().is_none() => diagnostics.push(profile_diagnostic(
+                "playable capability requires sync.primaryAudio",
+                document
+                    .sync
+                    .as_ref()
+                    .map_or(span, |sync_block| sync_block.span),
+            )),
+            Some(_) => {}
+        }
+        if lines.lines().next().is_none() {
+            diagnostics.push(profile_diagnostic(
+                "playable capability requires at least one gameplay Line",
+                span,
+            ));
+        }
+    }
+
+    if let Some(span) = capability_span(document, ProfileFeature::Renderable)
+        && document.top_level(TopLevelBlockKind::Render).is_none()
+    {
+        diagnostics.push(profile_diagnostic(
+            "renderable capability requires a Render scene envelope",
+            span,
+        ));
+    }
+
+    if document.profile == DocumentProfile::Publishable {
+        let profile_span = document.format.profile.span;
+        if explicit_features(document).next().is_none() {
+            diagnostics.push(profile_diagnostic(
+                "publishable profile requires at least one playable or renderable feature",
+                profile_span,
+            ));
+        }
+
+        let meta = metadata.meta();
+        let meta_span = document
+            .meta
+            .as_ref()
+            .map_or(profile_span, |block| block.span);
+        for field in ["title", "documentId", "chartVersion", "license"] {
+            if meta.is_none_or(|values| !values.contains_key(field)) {
+                diagnostics.push(profile_diagnostic(
+                    format!("publishable profile requires meta.{field}"),
+                    meta_span,
+                ));
+            }
+        }
+
+        if metadata.credits().is_empty() {
+            diagnostics.push(profile_diagnostic(
+                "publishable profile requires at least one credit",
+                document
+                    .credits
+                    .as_ref()
+                    .map_or(profile_span, |block| block.span),
+            ));
+        }
+
+        if let Some(resources) = &document.resources {
+            for declaration in &resources.resources {
+                if metadata
+                    .resources()
+                    .get(&declaration.name)
+                    .is_some_and(|resource| resource.declared_sha256().is_none())
+                {
+                    diagnostics.push(profile_diagnostic(
+                        format!(
+                            "publishable resource {} requires a declared SHA-256 hash",
+                            declaration.name
+                        ),
+                        declaration.name_span,
+                    ));
+                }
+            }
+        }
+    }
+
+    diagnostics.sort_by(|left, right| {
+        left.primary_span()
+            .start
+            .cmp(&right.primary_span().start)
+            .then_with(|| left.primary_span().end.cmp(&right.primary_span().end))
+            .then_with(|| left.message().cmp(right.message()))
+    });
+    diagnostics
+}
+
+fn explicit_features(document: &Document) -> impl Iterator<Item = &crate::ast::FormatFeature> {
+    document
+        .format
+        .features
+        .iter()
+        .flat_map(|features| features.features.iter())
+}
+
+fn capability_span(document: &Document, capability: ProfileFeature) -> Option<SourceSpan> {
+    let primary_has_capability = matches!(
+        (document.profile, capability),
+        (DocumentProfile::Playable, ProfileFeature::Playable)
+            | (DocumentProfile::Renderable, ProfileFeature::Renderable)
+    );
+    primary_has_capability
+        .then_some(document.format.profile.span)
+        .or_else(|| {
+            explicit_features(document)
+                .find(|feature| feature.value == capability)
+                .map(|feature| feature.span)
+        })
+}
+
+const fn profile_feature_name(feature: ProfileFeature) -> &'static str {
+    match feature {
+        ProfileFeature::Playable => "playable",
+        ProfileFeature::Renderable => "renderable",
+    }
+}
+
+fn profile_diagnostic(message: impl Into<String>, span: SourceSpan) -> Diagnostic {
+    canonical_diagnostic(DiagnosticCode::PROFILE_REQUIREMENT_MISSING, message, span)
 }
 
 fn canonical_profile(profile: DocumentProfile) -> CanonicalProfile {

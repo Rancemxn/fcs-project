@@ -533,6 +533,13 @@ sampled/BakedCurve 路径都不进入标准 runtime。
 - **I5.7 Report/repair model**：stable category/rule ID、status aggregation、deterministic entries 和
   old/new typed values。
 
+当前交付状态：I5.1 的实现单元新增 canonical-stage
+`Document::validate_profile_requirements`，覆盖五种 primary profile、正交 playable/renderable
+capability、publishable metadata/credit/声明 hash，以及当前 Core AST 可表示的 Render envelope；
+`Document::canonical_chart` 复用同一 gate。详细边界与证据见
+`docs/plans/i5-canonical-compilation.md`。Render payload/scene/reference closure 仍归 I9，resource
+bytes/hash verification 与 `CanonicalResourceBundle` 仍归 I5.3；I5.2–I5.7 和整个 I5 stage 尚未完成。
+
 ### I6：PGR/RPE/PEC importer
 
 - **I6.1 Shared import IR boundary**：激活 cataloged `serde`/`serde_json`，source parser 先输出

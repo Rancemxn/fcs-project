@@ -30,6 +30,14 @@ expect = "success"
 clauses = ["5.2", "8.2"]
 
 [[fixture]]
+id = "source.valid.profile-publishable-both"
+path = "source/valid/profile-publishable-both.fcs"
+workspace_root = "source/valid"
+stage = "canonical"
+expect = "success"
+clauses = ["5.2", "7.1", "7.2", "7.3", "7.4", "11", "16"]
+
+[[fixture]]
 id = "source.valid.compile-time-generator"
 path = "source/valid/compile-time-generator.fcs"
 stage = "elaborate"
@@ -156,6 +164,22 @@ stage = "parse"
 expect = "error"
 diagnostic = "version.missing-header"
 clauses = ["2.2"]
+
+[[fixture]]
+id = "source.invalid.profile-fragment-feature"
+path = "source/invalid/profile-fragment-feature.fcs"
+stage = "canonical"
+expect = "error"
+diagnostic = "profile.requirement-missing"
+clauses = ["5.2", "16", "Appendix C"]
+
+[[fixture]]
+id = "source.invalid.profile-publishable-requirements"
+path = "source/invalid/profile-publishable-requirements.fcs"
+stage = "canonical"
+expect = "error"
+diagnostic = "profile.requirement-missing"
+clauses = ["5.2", "7.1", "7.2", "16", "Appendix C"]
 
 [[fixture]]
 id = "source.invalid.header-extra-space"
