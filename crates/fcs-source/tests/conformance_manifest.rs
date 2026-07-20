@@ -1131,45 +1131,35 @@ fn i4_scroll_inheritance_fixture_binds_literal_composition_vectors() {
             -2.0,
             -4.0,
             2.0,
-            -6.0,
+            -4.0,
             2.0,
-            6.0,
-            "4018000000000000",
+            8.0,
+            "4020000000000000",
         ),
         (
             "grandchild",
             0.0,
             0.0,
             2.0,
-            -2.0,
+            0.0,
             2.0,
-            10.0,
-            "4024000000000000",
+            12.0,
+            "4028000000000000",
         ),
         (
             "grandchild",
             1.0,
             2.0,
             2.0,
-            0.0,
+            2.0,
             3.0,
-            12.0,
-            "4028000000000000",
+            14.0,
+            "402c000000000000",
         ),
         (
             "grandchild",
             2.0,
             4.0,
-            2.0,
-            2.0,
-            2.0,
-            15.0,
-            "402e000000000000",
-        ),
-        (
-            "grandchild",
-            3.0,
-            6.0,
             2.0,
             4.0,
             2.0,
@@ -1178,13 +1168,23 @@ fn i4_scroll_inheritance_fixture_binds_literal_composition_vectors() {
         ),
         (
             "grandchild",
-            4.0,
-            8.0,
+            3.0,
+            6.0,
             2.0,
             6.0,
             3.0,
-            20.0,
-            "4034000000000000",
+            19.0,
+            "4033000000000000",
+        ),
+        (
+            "grandchild",
+            4.0,
+            8.0,
+            2.0,
+            8.0,
+            3.0,
+            22.0,
+            "4036000000000000",
         ),
         ("detached", 0.0, 0.0, 2.0, 3.0, 2.0, 3.0, "4008000000000000"),
         (
@@ -1328,8 +1328,8 @@ fn i4_scroll_inheritance_fixture_binds_literal_composition_vectors() {
     let note = &expected["note"];
     assert_eq!(note["id"].as_str(), Some("grandchild-note"));
     assert_eq!(note["line"].as_str(), Some("grandchild"));
-    assert_eq!(note["effectiveFloorAtNote"].as_f64(), Some(20.0));
-    assert_eq!(note["effectiveFloorAtQuery"].as_f64(), Some(10.0));
+    assert_eq!(note["effectiveFloorAtNote"].as_f64(), Some(22.0));
+    assert_eq!(note["effectiveFloorAtQuery"].as_f64(), Some(12.0));
     assert_eq!(note["floorScale"].as_f64(), Some(10.0));
     assert_eq!(note["scrollFactor"].as_f64(), Some(0.5));
     assert_eq!(note["distancePx"].as_f64(), Some(50.0));
