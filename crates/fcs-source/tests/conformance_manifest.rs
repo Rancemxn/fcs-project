@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use crc::{CRC_32_ISO_HDLC, Crc};
+use fcs_runtime::{ScrollEvaluationError, evaluate_line_scroll, evaluate_note_distance};
 use fcs_source::ast::{Beat, ExpandedSourceDocument, Type, TypedValue};
 use fcs_source::diagnostic::{Diagnostic, DiagnosticStage, ExpansionTraceKind};
 use fcs_source::elaborator::{CompileTimeLimits, elaborate};
@@ -1092,6 +1093,27 @@ fn i4_scroll_inheritance_fixture_binds_literal_composition_vectors() {
         .expect("scroll inheritance expected queries must be an array");
     assert_eq!(queries.len(), 22);
 
+    let source_path = fcs_base.join(&fixture.path);
+    let source = fs::read_to_string(&source_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", source_path.display()));
+    let document = parse_document(&source)
+        .into_result()
+        .unwrap_or_else(|errors| panic!("{} must parse: {errors:?}", fixture.id));
+    let expanded = elaborate(&document, phase2_schema(), fixture_limits(fixture))
+        .unwrap_or_else(|errors| panic!("{} must elaborate: {errors:?}", fixture.id));
+    let time_map = expanded
+        .canonical_time_map()
+        .unwrap_or_else(|error| panic!("{} tempo map failed: {error}", fixture.id));
+    let lines = document
+        .canonical_line_graph()
+        .unwrap_or_else(|errors| panic!("{} Line graph failed: {errors:?}", fixture.id));
+    let scroll = document
+        .canonical_scroll_set(&time_map)
+        .unwrap_or_else(|errors| panic!("{} scroll lowering failed: {errors:?}", fixture.id));
+    let tracks = expanded
+        .canonical_tracks(&time_map, &lines)
+        .unwrap_or_else(|errors| panic!("{} Track lowering failed: {errors:?}", fixture.id));
+
     let literal_queries = [
         ("root", -2.0, -4.0, -1.0, 5.0, -1.0, 5.0, "4014000000000000"),
         ("root", 0.0, 0.0, -1.0, 3.0, -1.0, 3.0, "4008000000000000"),
@@ -1244,6 +1266,36 @@ fn i4_scroll_inheritance_fixture_binds_literal_composition_vectors() {
             ),
             effective_floor_bits
         );
+
+        let line_id = lines
+            .line_by_textual_id(line)
+            .unwrap_or_else(|| panic!("missing canonical Line {line}"))
+            .id();
+        let actual = evaluate_line_scroll(&lines, &scroll, &tracks, line_id, chart_time)
+            .unwrap_or_else(|error| {
+                panic!("product scroll query {line} at {chart_time}s failed: {error}")
+            });
+        assert_eq!(actual.local_q(), local_q, "{line} at {chart_time}s");
+        assert_eq!(
+            actual.local_velocity(),
+            local_velocity,
+            "{line} at {chart_time}s"
+        );
+        assert_eq!(actual.local_floor(), local_floor, "{line} at {chart_time}s");
+        assert_eq!(
+            actual.effective_velocity(),
+            effective_velocity,
+            "{line} at {chart_time}s"
+        );
+        assert_eq!(
+            actual.effective_floor(),
+            effective_floor,
+            "{line} at {chart_time}s"
+        );
+        assert_eq!(
+            actual.effective_floor().to_bits(),
+            u64::from_str_radix(effective_floor_bits, 16).unwrap()
+        );
     }
 
     let signed_zero_origin = queries
@@ -1284,6 +1336,21 @@ fn i4_scroll_inheritance_fixture_binds_literal_composition_vectors() {
     assert_eq!(note["distanceBits"].as_str(), Some("4049000000000000"));
     assert_eq!(note["localYPx"].as_f64(), Some(50.0));
 
+    let notes = expanded
+        .canonical_notes(&time_map, &lines)
+        .unwrap_or_else(|errors| panic!("{} Note lowering failed: {errors:?}", fixture.id));
+    let note_entity = notes
+        .note_by_textual_id("grandchild-note")
+        .expect("grandchild note must lower canonically");
+    let distance = evaluate_note_distance(&lines, &scroll, &tracks, note_entity, 0.0)
+        .unwrap_or_else(|error| panic!("product Note distance failed: {error}"));
+    assert_eq!(distance.distance(), note["distancePx"].as_f64().unwrap());
+    assert_eq!(
+        distance.distance().to_bits(),
+        u64::from_str_radix(note["distanceBits"].as_str().unwrap(), 16).unwrap()
+    );
+    assert_eq!(distance.local_y(), note["localYPx"].as_f64().unwrap());
+
     assert_eq!(
         expected["isolatedError"]["line"].as_str(),
         Some("unrelated_gap")
@@ -1292,6 +1359,14 @@ fn i4_scroll_inheritance_fixture_binds_literal_composition_vectors() {
         expected["isolatedError"]["category"].as_str(),
         Some("track.gap")
     );
+    let isolated_id = lines
+        .line_by_textual_id("unrelated_gap")
+        .expect("isolated error Line must lower")
+        .id();
+    assert!(matches!(
+        evaluate_line_scroll(&lines, &scroll, &tracks, isolated_id, 0.0),
+        Err(ScrollEvaluationError::Track { .. })
+    ));
 }
 
 #[test]

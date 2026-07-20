@@ -11,6 +11,7 @@ pub enum CanonicalTrackTarget {
     Rotation,
     Scale,
     Alpha,
+    ScrollSpeed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -63,6 +64,7 @@ impl CanonicalTrackValue {
                 | (CanonicalTrackTarget::Rotation, Self::Angle(_))
                 | (CanonicalTrackTarget::Scale, Self::Vec2Float(_))
                 | (CanonicalTrackTarget::Alpha, Self::Float(_))
+                | (CanonicalTrackTarget::ScrollSpeed, Self::Float(_))
         )
     }
 }

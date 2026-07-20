@@ -11,6 +11,7 @@ fcs-model = { path = "../fcs-model" }
 
 [dev-dependencies]
 crc.workspace = true
+fcs-runtime = { path = "../fcs-runtime" }
 image = { workspace = true, features = ["png", "webp"] }
 proptest.workspace = true
 serde.workspace = true
