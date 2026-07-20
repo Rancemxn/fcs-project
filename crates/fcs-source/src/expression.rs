@@ -704,10 +704,8 @@ fn validate_call_types(
                 return Err(format!("{name} requires two floats"));
             }
         }
-        "approxEq" => {
-            if !same(&CanonicalExpressionType::Float) {
-                return Err("approxEq requires three floats".into());
-            }
+        "approxEq" if !same(&CanonicalExpressionType::Float) => {
+            return Err("approxEq requires three floats".into());
         }
         _ => {}
     }
