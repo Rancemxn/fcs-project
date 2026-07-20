@@ -762,7 +762,7 @@ fn typed_manifests_load_with_bound_counts() {
     assert_eq!(render.schema_version, 3);
     assert_eq!(conversion.schema_version, 2);
     assert_eq!(root.suite.len(), 6);
-    assert_eq!(fcs.fixture.len(), 42);
+    assert_eq!(fcs.fixture.len(), 45);
     assert_eq!(fcbc.fixture.len(), 3);
     assert_eq!(render.binary_fixture.len(), 0);
     assert_eq!(render.fixture.len(), 1);
@@ -1032,6 +1032,55 @@ fn i2_elaborate_error_fixtures_keep_static_diagnostics_and_budget_trace() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn i5_profile_fixtures_execute_at_the_canonical_validation_boundary() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+
+    let valid = fixture(&fcs, "source.valid.profile-publishable-both");
+    assert_eq!(valid.stage, FixtureStage::Canonical);
+    assert_eq!(valid.expect, FixtureExpectation::Success);
+    let valid_source = fs::read_to_string(fcs_base.join(&valid.path))
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", valid.path));
+    parse_document(&valid_source)
+        .into_result()
+        .unwrap_or_else(|errors| panic!("{} must parse: {errors:?}", valid.id))
+        .validate_profile_requirements(fixture_limits(valid))
+        .unwrap_or_else(|errors| panic!("{} must validate: {errors:?}", valid.id));
+
+    for id in [
+        "source.invalid.profile-fragment-feature",
+        "source.invalid.profile-publishable-requirements",
+    ] {
+        let invalid = fixture(&fcs, id);
+        assert_eq!(invalid.stage, FixtureStage::Canonical, "{id}");
+        assert_eq!(invalid.expect, FixtureExpectation::Error, "{id}");
+        let expected = invalid
+            .diagnostic
+            .as_deref()
+            .expect("invalid profile fixture must bind a diagnostic");
+        let source = fs::read_to_string(fcs_base.join(&invalid.path))
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", invalid.path));
+        let diagnostics = parse_document(&source)
+            .into_result()
+            .unwrap_or_else(|errors| panic!("{id} must parse: {errors:?}"))
+            .validate_profile_requirements(fixture_limits(invalid))
+            .expect_err("invalid profile fixture must fail canonical validation");
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code().as_str() == expected),
+            "{id} produced unexpected diagnostics: {diagnostics:?}"
+        );
+        assert!(diagnostics.iter().all(|diagnostic| {
+            diagnostic.stage() == DiagnosticStage::Canonical
+                && diagnostic.primary_span().end <= source.len()
+                && source.is_char_boundary(diagnostic.primary_span().start)
+                && source.is_char_boundary(diagnostic.primary_span().end)
+        }));
     }
 }
 

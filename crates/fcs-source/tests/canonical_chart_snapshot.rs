@@ -106,8 +106,16 @@ fn canonical_snapshot_projects_nonempty_metadata_tracks_and_extensions() {
     let extensions = chart_value(&canonical(
         r#"#fcs 5.0.0
 format { profile: chart; features: [playable,]; }
+resources {
+    audio song {
+        source: "song.ogg";
+        mediaType: "audio/ogg";
+    }
+}
+sync { primaryAudio: @song; audioOffset: 0s; }
 extensions { extension("org.test.snapshot", 1.0.0) required { "mode": "test", } }
 tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
 "#,
     ));
     assert_eq!(

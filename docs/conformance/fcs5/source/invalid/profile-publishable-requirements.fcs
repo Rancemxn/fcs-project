@@ -1,0 +1,3 @@
+#fcs 5.0.0
+format { profile: publishable; }
+tempoMap { 0beat -> 120bpm; }
