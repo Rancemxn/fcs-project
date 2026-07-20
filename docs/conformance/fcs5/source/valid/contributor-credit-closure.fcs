@@ -1,0 +1,28 @@
+#fcs 5.0.0
+format { profile: fragment; }
+contributors {
+    person alice {
+        name: "Alice";
+        aliases: ["AliceP"];
+        identifiers: { "musicbrainz": "mbid", "local": "alice" };
+    }
+    person bob { name: "Bob"; }
+}
+resources {
+    binary alice {
+        source: "assets/opaque-resource.bin";
+        mediaType: "application/octet-stream";
+    }
+}
+credits {
+    credit {
+        role: "composer";
+        label: "Music";
+        contributors: [@bob, @alice];
+    }
+    credit {
+        role: "artist";
+        label: "Source artist";
+        contributors: [@alice];
+    }
+}

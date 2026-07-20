@@ -109,7 +109,12 @@ fn metadata_value(metadata: &CanonicalMetadata) -> Value {
             array(metadata.contributors().values().map(|contributor| {
                 object([
                     ("id", string(contributor.id())),
-                    ("fields", canonical_value_map(contributor.fields())),
+                    ("name", string(contributor.name())),
+                    ("aliases", array(contributor.aliases().iter().map(string))),
+                    (
+                        "identifiers",
+                        canonical_object_entries(contributor.identifiers()),
+                    ),
                 ])
             })),
         ),

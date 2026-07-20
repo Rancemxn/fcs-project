@@ -1,4 +1,6 @@
-use fcs_model::{CanonicalValue, CanonicalValueType};
+use fcs_model::{
+    CanonicalCreditRole, CanonicalStandardCreditRole, CanonicalValue, CanonicalValueType,
+};
 use fcs_source::diagnostic::DiagnosticCode;
 use fcs_source::parser::parse_document;
 
@@ -172,6 +174,173 @@ contributors { person bob { name: "Bob"; } person alice { name: "Alice"; } }
     assert_eq!(first, reordered);
     assert_eq!(first.credits()[0].role(), "composer");
     assert_eq!(first.credits()[1].role(), "charter");
+}
+
+#[test]
+fn contributor_fields_are_typed_and_identifier_insertion_order_is_preserved() {
+    let metadata = canonical(
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+contributors {
+    person alice {
+        name: "Alice";
+        aliases: ["AliceP", "A"];
+        identifiers: { "musicbrainz": "mbid", "local": "alice" };
+    }
+    person defaults { name: "Defaults"; }
+}
+"#,
+    );
+
+    let alice = &metadata.contributors()["alice"];
+    assert_eq!(alice.id(), "alice");
+    assert_eq!(alice.name(), "Alice");
+    assert_eq!(alice.aliases(), &["AliceP", "A"]);
+    assert_eq!(alice.identifiers().entries()[0].key(), "musicbrainz");
+    assert_eq!(alice.identifiers().entries()[1].key(), "local");
+    assert_eq!(
+        alice.identifiers().entries()[0].value(),
+        &CanonicalValue::String("mbid".into())
+    );
+
+    let defaults = &metadata.contributors()["defaults"];
+    assert!(defaults.aliases().is_empty());
+    assert!(defaults.identifiers().entries().is_empty());
+}
+
+#[test]
+fn every_standard_credit_role_is_typed_and_custom_artist_is_not_rewritten() {
+    let standard_credits = CanonicalStandardCreditRole::ALL
+        .iter()
+        .map(|role| format!("credit {{ role: \"{}\"; }}", role.as_str()))
+        .collect::<String>();
+    let source = format!(
+        "#fcs 5.0.0\nformat {{ profile: fragment; }}\ncredits {{ {standard_credits} credit {{ role: \"artist\"; }} }}\n"
+    );
+    let metadata = canonical(&source);
+
+    for (credit, expected) in metadata
+        .credits()
+        .iter()
+        .zip(CanonicalStandardCreditRole::ALL)
+    {
+        assert_eq!(credit.role_kind().standard(), Some(expected));
+        assert_eq!(credit.role(), expected.as_str());
+    }
+    let artist = metadata.credits().last().expect("custom artist credit");
+    assert_eq!(artist.role(), "artist");
+    assert_eq!(artist.role_kind().custom(), Some("artist"));
+    assert!(matches!(artist.role_kind(), CanonicalCreditRole::Custom(_)));
+}
+
+#[test]
+fn credit_and_contributor_order_are_normative_but_declaration_maps_are_not() {
+    let first = canonical(
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+contributors { person alice { name: "Alice"; } person bob { name: "Bob"; } }
+credits {
+    credit { role: "composer"; contributors: [@bob, @alice]; }
+    credit { role: "charter"; contributors: [@alice]; }
+}
+"#,
+    );
+    let reversed = canonical(
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+contributors { person bob { name: "Bob"; } person alice { name: "Alice"; } }
+credits {
+    credit { role: "charter"; contributors: [@alice]; }
+    credit { role: "composer"; contributors: [@bob, @alice]; }
+}
+"#,
+    );
+
+    assert_eq!(first.credits()[0].contributors(), &["bob", "alice"]);
+    assert_eq!(reversed.credits()[0].role(), "charter");
+    assert_ne!(first, reversed);
+}
+
+#[test]
+fn contributor_typed_references_reject_duplicates_unknowns_and_resource_only_names() {
+    let document = parse_document(
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+contributors { person alice { name: "Alice"; } }
+resources {
+    binary alice { source: "same.bin"; mediaType: "application/octet-stream"; }
+    binary blob { source: "blob.bin"; mediaType: "application/octet-stream"; }
+}
+credits {
+    credit { role: "composer"; contributors: [@alice, @alice]; }
+    credit { role: "charter"; contributors: [@missing]; }
+    credit { role: "designer"; contributors: [@blob]; }
+}
+"#,
+    )
+    .into_result()
+    .unwrap();
+    let diagnostics = document.canonical_metadata().unwrap_err();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code() == DiagnosticCode::NAME_DUPLICATE })
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code() == DiagnosticCode::NAME_UNKNOWN })
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code() == DiagnosticCode::RESOURCE_TYPE_MISMATCH })
+    );
+}
+
+#[test]
+fn contributor_names_identifiers_and_custom_roles_enforce_the_frozen_boundaries() {
+    let document = parse_document(
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+contributors {
+    person missing {}
+    person empty { name: ""; }
+    person wrong { name: "Wrong"; identifiers: { "provider": 1 }; }
+    person duplicate { name: "Duplicate"; identifiers: { "same": "a", "same": "b" }; }
+}
+credits {
+    credit { role: ""; }
+    credit { role: "特效"; }
+    credit { role: "custom(role)"; }
+}
+"#,
+    )
+    .into_result()
+    .unwrap();
+    let diagnostics = document.canonical_metadata().unwrap_err();
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code() == DiagnosticCode::SCHEMA_MISSING_REQUIRED_FIELD
+        })
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code() == DiagnosticCode::TYPE_MISMATCH })
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code() == DiagnosticCode::SCHEMA_DUPLICATE_FIELD })
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| { diagnostic.code() == DiagnosticCode::TYPE_INVALID_OPERATION })
+            .count()
+            >= 4
+    );
 }
 
 #[test]

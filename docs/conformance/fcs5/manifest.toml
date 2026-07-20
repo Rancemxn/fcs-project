@@ -158,6 +158,37 @@ expected = "expected/metadata-credits-resources-sync.json"
 clauses = ["7.1", "7.2", "7.3", "7.4", "7.5"]
 
 [[fixture]]
+id = "source.valid.contributor-credit-closure"
+path = "source/valid/contributor-credit-closure.fcs"
+stage = "canonical"
+expect = "success"
+clauses = ["2.9", "7.2", "16", "17", "18"]
+
+[[fixture]]
+id = "source.invalid.contributor-missing-name"
+path = "source/invalid/contributor-missing-name.fcs"
+stage = "canonical"
+expect = "error"
+diagnostic = "schema.missing-required-field"
+clauses = ["7.2", "16", "17", "18"]
+
+[[fixture]]
+id = "source.invalid.credit-duplicate-contributor"
+path = "source/invalid/credit-duplicate-contributor.fcs"
+stage = "canonical"
+expect = "error"
+diagnostic = "name.duplicate"
+clauses = ["7.2", "16", "17", "18"]
+
+[[fixture]]
+id = "source.invalid.credit-resource-reference"
+path = "source/invalid/credit-resource-reference.fcs"
+stage = "canonical"
+expect = "error"
+diagnostic = "resource.type-mismatch"
+clauses = ["2.9", "7.2", "16", "17", "18"]
+
+[[fixture]]
 id = "source.invalid.missing-header"
 path = "source/invalid/missing-header.fcs"
 stage = "parse"

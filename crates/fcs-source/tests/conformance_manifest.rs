@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use crc::{CRC_32_ISO_HDLC, Crc};
+use fcs_model::{CanonicalCreditRole, CanonicalStandardCreditRole};
 use fcs_runtime::{
     ExpressionEnvironment, ScrollEvaluationError, evaluate_expression, evaluate_line_scroll,
     evaluate_note_distance,
@@ -836,7 +837,7 @@ fn fcs_source_fixtures_execute_at_the_declared_frontend_boundary() {
 
     assert_eq!(parse_success, 3);
     assert_eq!(parse_error, 9);
-    assert_eq!(later_stage, 33);
+    assert_eq!(later_stage, 37);
 }
 
 #[test]
@@ -1074,6 +1075,70 @@ fn i5_profile_fixtures_execute_at_the_canonical_validation_boundary() {
                 .iter()
                 .all(|diagnostic| diagnostic.code().as_str() == expected),
             "{id} produced unexpected diagnostics: {diagnostics:?}"
+        );
+        assert!(diagnostics.iter().all(|diagnostic| {
+            diagnostic.stage() == DiagnosticStage::Canonical
+                && diagnostic.primary_span().end <= source.len()
+                && source.is_char_boundary(diagnostic.primary_span().start)
+                && source.is_char_boundary(diagnostic.primary_span().end)
+        }));
+    }
+}
+
+#[test]
+fn i5_contributor_credit_fixtures_execute_at_the_canonical_boundary() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+
+    let valid = fixture(&fcs, "source.valid.contributor-credit-closure");
+    assert_eq!(valid.stage, FixtureStage::Canonical);
+    assert_eq!(valid.expect, FixtureExpectation::Success);
+    let valid_source = fs::read_to_string(fcs_base.join(&valid.path))
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", valid.path));
+    let metadata = parse_document(&valid_source)
+        .into_result()
+        .unwrap_or_else(|errors| panic!("{} must parse: {errors:?}", valid.id))
+        .canonical_metadata()
+        .unwrap_or_else(|errors| panic!("{} must lower: {errors:?}", valid.id));
+    let alice = &metadata.contributors()["alice"];
+    assert_eq!(alice.name(), "Alice");
+    assert_eq!(alice.aliases(), &["AliceP"]);
+    assert_eq!(alice.identifiers().entries()[0].key(), "musicbrainz");
+    assert_eq!(alice.identifiers().entries()[1].key(), "local");
+    assert_eq!(metadata.credits()[0].contributors(), &["bob", "alice"]);
+    assert_eq!(
+        metadata.credits()[0].role_kind().standard(),
+        Some(CanonicalStandardCreditRole::Composer)
+    );
+    assert!(matches!(
+        metadata.credits()[1].role_kind(),
+        CanonicalCreditRole::Custom(role) if role == "artist"
+    ));
+
+    for id in [
+        "source.invalid.contributor-missing-name",
+        "source.invalid.credit-duplicate-contributor",
+        "source.invalid.credit-resource-reference",
+    ] {
+        let invalid = fixture(&fcs, id);
+        assert_eq!(invalid.stage, FixtureStage::Canonical, "{id}");
+        assert_eq!(invalid.expect, FixtureExpectation::Error, "{id}");
+        let expected = invalid
+            .diagnostic
+            .as_deref()
+            .expect("invalid contributor/credit fixture must bind a diagnostic");
+        let source = fs::read_to_string(fcs_base.join(&invalid.path))
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", invalid.path));
+        let diagnostics = parse_document(&source)
+            .into_result()
+            .unwrap_or_else(|errors| panic!("{id} must parse: {errors:?}"))
+            .canonical_metadata()
+            .expect_err("invalid contributor/credit fixture must fail canonical lowering");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code().as_str() == expected),
+            "{id} expected {expected}, got {diagnostics:?}"
         );
         assert!(diagnostics.iter().all(|diagnostic| {
             diagnostic.stage() == DiagnosticStage::Canonical

@@ -1,7 +1,7 @@
 # I5 CanonicalCompilation, metadata, resources, sync, and fidelity
 
-Status: I5.1 implementation establishes the canonical profile-requirement
-boundary. I5.2-I5.7 remain open and this plan does not claim a complete
+Status: I5.1-I5.2 implementation establishes the canonical profile-requirement
+and contributor/credit boundaries. I5.3-I5.7 remain open and this plan does not claim a complete
 `CanonicalCompilation`, Render scene, converter, FCBC product, or FCS 5 release.
 
 ## Normative dependency closure
@@ -64,10 +64,42 @@ boundary. I5.2-I5.7 remain open and this plan does not claim a complete
 - Acceptance requires the exact PR head to pass `.github/workflows/full-gate.yml`
   and a passing Primary Self-Audit with no unresolved Critical/Important finding.
 
+## I5.2 owned surface
+
+- `CanonicalContributor` is no longer a generic standard-field bag. It exposes
+  the exact source ID, required non-empty name, ordered aliases, and an
+  insertion-ordered identifier object whose values are statically strings.
+  Omitted aliases and identifiers become typed empty collections.
+- `CanonicalCreditRole` separates the twelve standard roles from exact custom
+  ASCII IDs. The ambiguous spelling `artist` remains a custom role and is never
+  rewritten to `composer`; empty, non-ASCII, and `custom(...)` spellings fail.
+- The canonical credit vector retains source display order, and each credit's
+  contributor vector retains its declared order. A reference is accepted only
+  through the contributor-typed schema; unknown, resource-only, or repeated
+  references fail without namespace inference.
+- Contributor declarations remain a deterministic ID-keyed map, so their
+  declaration order is non-semantic. Credit order remains semantic and changes
+  canonical equality when reordered.
+- Credit stable-ID generation and FCBC record assembly remain I7-owned. FCS 5
+  fixes exact generated textual identity only for Line and Note, so I5.2 does
+  not invent a generated credit ID spelling.
+
+## I5.2 acceptance evidence
+
+- The `metadata_graph` suite covers typed contributor fields and defaults,
+  identifier insertion order/string typing/duplicate keys, all twelve standard
+  roles, exact custom `artist`, contributor and credit order, missing/empty
+  names, invalid custom roles, and duplicate/unknown/wrong-kind references.
+- `source.valid.contributor-credit-closure`,
+  `source.invalid.contributor-missing-name`,
+  `source.invalid.credit-duplicate-contributor`, and
+  `source.invalid.credit-resource-reference` are manifest-bound and execute
+  through `conformance_manifest::i5_contributor_credit_fixtures_execute_at_the_canonical_boundary`.
+- Acceptance requires the exact PR head to pass `.github/workflows/full-gate.yml`
+  and a passing Primary Self-Audit with no unresolved Critical/Important finding.
+
 ## Remaining I5 work
 
-- I5.2 completes contributor/credit role, display-order, identifier, and typed
-  reference behavior beyond the count consumed by I5.1.
 - I5.3 resolves component-normalized workspace paths, enforces root/symlink
   safety, reads opaque bytes, computes SHA-256, verifies declarations, and
   builds `CanonicalResourceBundle`.
@@ -76,4 +108,4 @@ boundary. I5.2-I5.7 remain open and this plan does not claim a complete
 - I5.6 adds provenance and stale-dependency tracking without source AST leakage
   into `CanonicalChart`.
 - I5.7 adds the deterministic report/repair model. None of these residuals is
-  implemented or claimed by I5.1.
+  implemented or claimed by I5.1-I5.2.
