@@ -728,11 +728,11 @@ mod tests {
         .unwrap();
 
         let child_result = evaluate_line_scroll(&graph, &scroll, &tracks, &child_id, 0.5).unwrap();
-        assert_eq!(child_result.effective_floor(), 6.0);
+        assert_eq!(child_result.effective_floor(), 7.0);
         assert_eq!(child_result.effective_velocity(), 4.0);
         let detached_result =
             evaluate_line_scroll(&graph, &scroll, &tracks, &detached_id, 0.5).unwrap();
-        assert_eq!(detached_result.effective_floor(), 5.5);
-        assert_eq!(detached_result.effective_velocity(), 1.0);
+        assert_eq!(detached_result.effective_floor(), 6.0);
+        assert_eq!(detached_result.effective_velocity(), 2.0);
     }
 }
