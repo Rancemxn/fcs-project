@@ -185,7 +185,7 @@ fn evaluate_node_inner(
 ) -> Result<CanonicalExpressionValue, ExpressionEvaluationError> {
     let opcode = node.opcode();
     let operands = node.operands();
-    let operand = |slot: usize| -> Result<CanonicalExpressionValue, ExpressionEvaluationError> {
+    let mut operand = |slot: usize| -> Result<CanonicalExpressionValue, ExpressionEvaluationError> {
         let Some(operand) = operands[slot] else {
             return Err(ExpressionEvaluationError::TypeMismatch {
                 node: index,
