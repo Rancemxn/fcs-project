@@ -334,6 +334,7 @@ fn identity(
             .map(CanonicalTrackValue::Vec2Float)
             .map_err(|_| TrackEvaluationError::NonFiniteResult),
         CanonicalTrackTarget::Alpha => Ok(CanonicalTrackValue::Float(value)),
+        CanonicalTrackTarget::ScrollSpeed => Ok(CanonicalTrackValue::Float(value)),
     }
 }
 
@@ -377,6 +378,10 @@ fn value_matches_target(value: CanonicalTrackValue, target: CanonicalTrackTarget
             CanonicalTrackTarget::Scale,
             CanonicalTrackValue::Vec2Float(_)
         ) | (CanonicalTrackTarget::Alpha, CanonicalTrackValue::Float(_))
+            | (
+                CanonicalTrackTarget::ScrollSpeed,
+                CanonicalTrackValue::Float(_),
+            )
     )
 }
 

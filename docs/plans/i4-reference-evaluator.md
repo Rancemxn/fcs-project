@@ -94,8 +94,9 @@ effective result:
 The literal `source.valid.scroll-inheritance` vector binds a three-Line chain,
 detached inheritance, boundary continuity, reverse/zero speed, signed zero,
 Note distance, direct-seek values in both directions, and an unrelated Track
-gap. The vector is an evaluate-stage contract only until the product evaluator
-owns its execution.
+gap. The product evaluator now executes this vector at the canonical boundary;
+the exact-head gate and independent reference closure remain delivery evidence
+and later I4 residuals.
 
 ## Explicit non-goals
 
@@ -172,7 +173,9 @@ owns its execution.
 The Rust/build/test gate runs only on an exact draft-PR SHA through
 `.github/workflows/full-gate.yml`. I4.1 through I4.4 are bounded `partial`
 transitions: they do not close the FCS section 14 matrix row or the I4 stage.
-I4.5-I4.7 still own DAG, Piecewise, and integration; I4.8 must bind
-difficult transcendental/cubic-Bezier/transform vectors, an independent
-implementation path, and production/reference cross-checks before strict-runtime
-conformance can pass.
+I4.4 now includes product scroll evaluation and canonical conformance execution,
+but its exact-head gate and independent review evidence remain required.
+I4.5-I4.7 still own DAG, Piecewise, and integration; I4.8 must bind difficult
+transcendental/cubic-Bezier/transform vectors, an independent implementation
+path, and production/reference cross-checks before strict-runtime conformance
+can pass.

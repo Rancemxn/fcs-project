@@ -181,6 +181,7 @@ fn target(
             Type::Vec2(Box::new(Type::Float)),
         ),
         "alpha" => (CanonicalTrackTarget::Alpha, Type::Float),
+        "scrollSpeed" => (CanonicalTrackTarget::ScrollSpeed, Type::Float),
         _ => {
             diagnostics.push(Diagnostic::new(
                 DiagnosticCode::SCHEMA_DYNAMIC_FIELD_FORBIDDEN,
@@ -260,6 +261,9 @@ fn lower_value(
 ) -> Option<CanonicalTrackValue> {
     let lowered = match (target, value) {
         (CanonicalTrackTarget::Alpha, TypedValue::Float(value)) => {
+            Some(CanonicalTrackValue::Float(*value))
+        }
+        (CanonicalTrackTarget::ScrollSpeed, TypedValue::Float(value)) => {
             Some(CanonicalTrackValue::Float(*value))
         }
         (CanonicalTrackTarget::Rotation, TypedValue::Angle(value)) => {

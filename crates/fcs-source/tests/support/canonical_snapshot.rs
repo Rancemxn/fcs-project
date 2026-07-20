@@ -492,6 +492,7 @@ fn track_target(value: CanonicalTrackTarget) -> &'static str {
         CanonicalTrackTarget::Rotation => "rotation",
         CanonicalTrackTarget::Scale => "scale",
         CanonicalTrackTarget::Alpha => "alpha",
+        CanonicalTrackTarget::ScrollSpeed => "scrollSpeed",
     }
 }
 
