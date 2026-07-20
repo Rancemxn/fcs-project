@@ -118,9 +118,26 @@ I4.5 deliberately does not claim Piecewise/EnvP lowering, expanded
 template/generator expression ownership, descriptor-wide cycle analysis,
 independent correctly-rounded reference evaluation, or property/fuzz closure.
 
+## I4.6 owned surface
+
+I4.6 adds the source-free exact Piecewise descriptor boundary:
+
+- `fcs-model` validates finite/unbounded descriptor domains, complete ordered
+  Piece partitions, child type/domain coverage, reachability, cycles, and direct
+  `EnvP` misuse;
+- structurally identical descriptors are interned without table indexes in
+  their keys, while sorted direct roots and child-first postorder produce one
+  declaration-order-independent table;
+- `fcs-runtime` selects half-open/final-inclusive Pieces and rebinds normalized
+  progress only for the selected child, including the fixed unbounded-side
+  values required by FCBC 13.2.
+
+I4.6 does not add FCBC serialization, source Track-to-descriptor assembly,
+exact integration, an independent reference path, or property/fuzz closure.
+
 ## Explicit non-goals
 
-- Piecewise lowering and exact integration validation (I4.6-I4.7).
+- Source Track-to-descriptor assembly and exact integration validation (I4.7).
 - A claim that platform `f64` transcendental calls already satisfy the complete
   difficult-input correct-rounding requirement. I4.8 owns that independent
   reference closure and production/transform cross-check.
@@ -187,14 +204,23 @@ independent correctly-rounded reference evaluation, or property/fuzz closure.
 5. An unrelated `track.gap` is recorded as an isolated error and cannot fail a
    target on the root-to-target ancestry.
 
+## I4.6 acceptance evidence
+
+1. Model tests reject partition gaps, invalid endpoint placement, insufficient
+   child domains, cycles, unreachable descriptors, and direct `EnvP` roots.
+2. Structurally equal descriptors intern globally, signed-zero constants remain
+   distinct, and reversed declaration/root input produces the same table.
+3. Runtime tests bind half-open boundaries, a final inclusive endpoint, nested
+   progress rebinding, and the fixed progress values for unbounded sides.
+
 ## Delivery and residual gate
 
 The Rust/build/test gate runs only on an exact draft-PR SHA through
-`.github/workflows/full-gate.yml`. I4.1 through I4.5 are bounded `partial`
+`.github/workflows/full-gate.yml`. I4.1 through I4.6 are bounded `partial`
 transitions: they do not close the FCS section 14 matrix row or the I4 stage.
 I4.4 now includes product scroll evaluation and canonical conformance execution,
 but its exact-head gate and independent review evidence remain required.
-I4.6-I4.7 still own Piecewise and integration; I4.8 must bind difficult
+I4.7 still owns exact integration and source Track-to-descriptor assembly; I4.8 must bind difficult
 transcendental/cubic-Bezier/transform vectors, an independent implementation
 path, and production/reference cross-checks before strict-runtime conformance
 can pass.

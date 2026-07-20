@@ -10,6 +10,7 @@ use std::fmt;
 use sha2::{Digest, Sha256};
 
 mod chart;
+mod descriptor;
 mod expression;
 mod line;
 mod metadata;
@@ -21,6 +22,10 @@ mod track;
 pub use chart::{
     CanonicalChart, CanonicalChartError, CanonicalProfile, CanonicalProfileFeature,
     CanonicalRequiredExtension, CanonicalSourceVersion,
+};
+pub use descriptor::{
+    CanonicalDescriptorDomain, CanonicalDescriptorError, CanonicalDescriptorKind,
+    CanonicalDescriptorRoot, CanonicalDescriptorTable, CanonicalPiece, CanonicalPropertyDescriptor,
 };
 pub use expression::{
     CanonicalExpressionBuilder, CanonicalExpressionDag, CanonicalExpressionEnvironment,
