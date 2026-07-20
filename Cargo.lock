@@ -184,6 +184,7 @@ dependencies = [
  "chumsky",
  "crc",
  "fcs-model",
+ "fcs-runtime",
  "image",
  "proptest",
  "serde",
