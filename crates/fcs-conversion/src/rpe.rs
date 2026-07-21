@@ -344,6 +344,22 @@ impl RpeSourceNote {
         self.is_fake.as_ref()
     }
 
+    pub fn alpha(&self) -> Option<&ExactDecimal> {
+        self.alpha.as_ref()
+    }
+
+    pub fn size(&self) -> Option<&ExactDecimal> {
+        self.size.as_ref()
+    }
+
+    pub fn visible_time(&self) -> Option<&ExactDecimal> {
+        self.visible_time.as_ref()
+    }
+
+    pub fn y_offset(&self) -> Option<&ExactDecimal> {
+        self.y_offset.as_ref()
+    }
+
     pub fn hitsound(&self) -> Option<&str> {
         self.hitsound.as_ref().map(LosslessJsonString::value)
     }
