@@ -942,9 +942,7 @@ pub fn chart_time_delta_seconds(
     validate_positive_finite(bpmfactor, "bpmfactor", "bpmfactor")?;
     let sixty = integer(60);
     let seconds = match mode {
-        RpeFactorMode::Divide => {
-            beat_delta.value() * &sixty * bpmfactor.value() / list_bpm.value()
-        }
+        RpeFactorMode::Divide => beat_delta.value() * &sixty * bpmfactor.value() / list_bpm.value(),
         RpeFactorMode::Multiply => {
             beat_delta.value() * &sixty / (list_bpm.value() * bpmfactor.value())
         }
@@ -963,10 +961,7 @@ pub fn resolve_beat(
     let denominator =
         require_integer(&beat.denominator, &format!("{path}[2]"), "Beat denominator")?;
     if denominator.is_zero() {
-        if profile.accepts_zero_zero_integer_beat()
-            && numerator.is_zero()
-            && whole.is_integer()
-        {
+        if profile.accepts_zero_zero_integer_beat() && numerator.is_zero() && whole.is_integer() {
             return Ok(ExactRational::from_integer(
                 whole.to_i64().map(BigInt::from).ok_or_else(|| {
                     RpeError::new(SOURCE_INVALID, path, "Beat whole is out of integer range")
@@ -1377,7 +1372,11 @@ fn parse_meta(value: &LosslessJsonValue, limits: RpeLimits) -> Result<RpeSourceM
     };
     Ok(RpeSourceMeta {
         rpe_version,
-        offset: number(required(members, "offset", "$.META")?, "$.META.offset", limits)?,
+        offset: number(
+            required(members, "offset", "$.META")?,
+            "$.META.offset",
+            limits,
+        )?,
         name: optional_string(members, "name", "$.META")?,
         level: optional_string(members, "level", "$.META")?,
         charter: optional_string(members, "charter", "$.META")?,
@@ -1417,7 +1416,11 @@ fn parse_bpm_point(
             &format!("{path}.startTime"),
             limits,
         )?,
-        bpm: number(required(members, "bpm", &path)?, &format!("{path}.bpm"), limits)?,
+        bpm: number(
+            required(members, "bpm", &path)?,
+            &format!("{path}.bpm"),
+            limits,
+        )?,
         unknown_fields: unknown(members, &["startTime", "bpm"]),
     })
 }
@@ -1561,7 +1564,9 @@ fn parse_optional_common_list(
             let events = values
                 .iter()
                 .enumerate()
-                .map(|(index, event)| parse_common_event(event, &format!("{path}[{index}]"), limits))
+                .map(|(index, event)| {
+                    parse_common_event(event, &format!("{path}[{index}]"), limits)
+                })
                 .collect::<Result<Vec<_>, RpeError>>()?;
             Ok(RpeOptionalEventList::Present(events))
         }
@@ -1613,8 +1618,16 @@ fn parse_common_event(
             &format!("{path}.endTime"),
             limits,
         )?,
-        start: number(required(members, "start", path)?, &format!("{path}.start"), limits)?,
-        end: number(required(members, "end", path)?, &format!("{path}.end"), limits)?,
+        start: number(
+            required(members, "start", path)?,
+            &format!("{path}.start"),
+            limits,
+        )?,
+        end: number(
+            required(members, "end", path)?,
+            &format!("{path}.end"),
+            limits,
+        )?,
         easing_type: optional_number(members, "easingType", path, limits)?,
         easing_left: optional_number(members, "easingLeft", path, limits)?,
         easing_right: optional_number(members, "easingRight", path, limits)?,
@@ -1656,8 +1669,16 @@ fn parse_speed_event(
             &format!("{path}.endTime"),
             limits,
         )?,
-        start: number(required(members, "start", path)?, &format!("{path}.start"), limits)?,
-        end: number(required(members, "end", path)?, &format!("{path}.end"), limits)?,
+        start: number(
+            required(members, "start", path)?,
+            &format!("{path}.start"),
+            limits,
+        )?,
+        end: number(
+            required(members, "end", path)?,
+            &format!("{path}.end"),
+            limits,
+        )?,
         easing_type: optional_number(members, "easingType", path, limits)?,
         easing_left: optional_number(members, "easingLeft", path, limits)?,
         easing_right: optional_number(members, "easingRight", path, limits)?,
@@ -1689,7 +1710,11 @@ fn parse_note(
 ) -> Result<RpeSourceNote, RpeError> {
     let members = object(value, path)?;
     Ok(RpeSourceNote {
-        kind: number(required(members, "type", path)?, &format!("{path}.type"), limits)?,
+        kind: number(
+            required(members, "type", path)?,
+            &format!("{path}.type"),
+            limits,
+        )?,
         start_time: parse_beat(
             required(members, "startTime", path)?,
             &format!("{path}.startTime"),
@@ -1705,7 +1730,11 @@ fn parse_note(
             &format!("{path}.positionX"),
             limits,
         )?,
-        speed: number(required(members, "speed", path)?, &format!("{path}.speed"), limits)?,
+        speed: number(
+            required(members, "speed", path)?,
+            &format!("{path}.speed"),
+            limits,
+        )?,
         above: optional_number(members, "above", path, limits)?,
         is_fake: optional_number(members, "isFake", path, limits)?,
         alpha: optional_number(members, "alpha", path, limits)?,
@@ -2071,7 +2100,12 @@ mod tests {
     }"#;
 
     fn artifact(bytes: &str) -> SourceArtifact {
-        SourceArtifact::new("charts/main.rpe.json", ArtifactRole::Chart, bytes.as_bytes()).unwrap()
+        SourceArtifact::new(
+            "charts/main.rpe.json",
+            ArtifactRole::Chart,
+            bytes.as_bytes(),
+        )
+        .unwrap()
     }
 
     fn parse_minimal() -> RpeSourceDocument {
@@ -2155,10 +2189,7 @@ mod tests {
         match source.lines()[0].event_layers() {
             RpeEventLayersField::Present(slots) => match &slots[0] {
                 RpeEventLayerSlot::Layer(layer) => {
-                    assert!(matches!(
-                        layer.move_x_events(),
-                        RpeOptionalEventList::Null
-                    ));
+                    assert!(matches!(layer.move_x_events(), RpeOptionalEventList::Null));
                     assert!(matches!(
                         layer.speed_events(),
                         RpeOptionalSpeedList::Missing
@@ -2190,10 +2221,7 @@ mod tests {
             &RpeProfileBinding::docs_example_multiply(RpeSpeedMode::ModernEased),
         )
         .unwrap();
-        assert_eq!(
-            multiply.profile().factor_mode(),
-            RpeFactorMode::Multiply
-        );
+        assert_eq!(multiply.profile().factor_mode(), RpeFactorMode::Multiply);
         assert!(multiply.lines()[0].rotate_with_father());
 
         let phichain =
@@ -2205,11 +2233,8 @@ mod tests {
             interpret_rpe_timing(&source, &RpeProfileBinding::phira_legacy_speed()).unwrap();
         assert!(!legacy.lines()[0].rotate_with_father());
 
-        let modern = interpret_rpe_timing(
-            &source,
-            &RpeProfileBinding::phira_rpe170_speed(None),
-        )
-        .unwrap();
+        let modern =
+            interpret_rpe_timing(&source, &RpeProfileBinding::phira_rpe170_speed(None)).unwrap();
         assert_eq!(modern.rpe_version_era(), Some(RpeVersionEra::Pre170));
     }
 
@@ -2231,11 +2256,9 @@ mod tests {
         let parsed = parse_json_document(SourceFormat::Rpe, &artifact(&chart)).unwrap();
         let source = parse_rpe_document(&parsed, RpeLimits::default()).unwrap();
         assert!(source.meta().rpe_version().is_none());
-        let missing_era = interpret_rpe_timing(
-            &source,
-            &RpeProfileBinding::phira_rpe170_speed(None),
-        )
-        .unwrap_err();
+        let missing_era =
+            interpret_rpe_timing(&source, &RpeProfileBinding::phira_rpe170_speed(None))
+                .unwrap_err();
         assert_eq!(missing_era.category(), PROFILE_PARAMETER_INVALID);
         let with_era = interpret_rpe_timing(
             &source,
@@ -2314,9 +2337,7 @@ mod tests {
         );
         let layer = ignore.lines()[0].event_layers()[1].as_ref().unwrap();
         assert_eq!(
-            layer.move_x_events()[0]
-                .end_time()
-                .chart_time_seconds(),
+            layer.move_x_events()[0].end_time().chart_time_seconds(),
             &exact("1/2")
         );
     }
@@ -2502,7 +2523,12 @@ mod tests {
                 .unwrap_err(),
                 _ => continue,
             };
-            assert_eq!(error.category(), vector.diagnostic.as_str(), "{}", vector.id);
+            assert_eq!(
+                error.category(),
+                vector.diagnostic.as_str(),
+                "{}",
+                vector.id
+            );
             invalid_executed += 1;
         }
         assert_eq!(invalid_executed, 2);
