@@ -72,10 +72,19 @@ fn format_rejects_invalid_source() {
 }
 
 #[test]
-fn compile_emits_loadable_fcbc_from_minimal_chart() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let source = root.join("docs/conformance/fcs5/source/valid/minimal-chart.fcs");
+fn compile_emits_loadable_fcbc_from_chart_with_line_and_note() {
     let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("chart.fcs");
+    fs::write(
+        &source,
+        r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
+"#,
+    )
+    .unwrap();
     let out = dir.path().join("out.fcbc");
     let output = bin()
         .arg("compile")
@@ -105,5 +114,5 @@ fn compile_emits_loadable_fcbc_from_minimal_chart() {
         String::from_utf8_lossy(&inspect.stderr)
     );
     let stdout = String::from_utf8_lossy(&inspect.stdout);
-    assert!(stdout.contains("\"coreLoaded\":true") || stdout.contains("lineCount"));
+    assert!(stdout.contains("\"lineCount\":1") || stdout.contains("\"coreLoaded\":true"));
 }
