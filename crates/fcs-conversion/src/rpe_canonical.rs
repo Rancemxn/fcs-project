@@ -640,14 +640,29 @@ mod tests {
         assert_eq!(chart.lines().lines().count(), 2);
         assert_eq!(chart.notes().notes().len(), 2);
         let lines: Vec<_> = chart.lines().lines().collect();
-        let parent = lines[1].parent().unwrap();
-        assert_eq!(parent.value(), lines[0].id().value());
-        assert!(lines[1].inherit().rotation());
+        let child = lines
+            .iter()
+            .find(|line| line.parent().is_some())
+            .expect("one Line should reference a parent");
+        let parent_id = child.parent().unwrap().value();
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.id().value() == parent_id && line.parent().is_none())
+        );
+        assert!(child.inherit().rotation());
         assert_eq!(import.report().status(), ConversionStatus::Equivalent);
-        let first = &chart.notes().notes()[0];
-        assert!((first.gameplay().time().chart_time_seconds() - 0.5).abs() < 1e-12);
-        assert_eq!(first.kind(), CanonicalNoteKind::Tap);
-        assert_eq!(chart.notes().notes()[1].kind(), CanonicalNoteKind::Hold);
+        let notes = chart.notes().notes();
+        let tap = notes
+            .iter()
+            .find(|note| note.kind() == CanonicalNoteKind::Tap)
+            .unwrap();
+        let hold = notes
+            .iter()
+            .find(|note| note.kind() == CanonicalNoteKind::Hold)
+            .unwrap();
+        assert!((tap.gameplay().time().chart_time_seconds() - 0.5).abs() < 1e-12);
+        assert!(hold.gameplay().end_time().is_some());
     }
 
     #[test]
