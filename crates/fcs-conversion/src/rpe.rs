@@ -2651,11 +2651,23 @@ mod tests {
     }
 
     fn exact(expected: &str) -> ExactRational {
-        let (numerator, denominator) = expected.split_once('/').unwrap_or((expected, "1"));
-        ExactRational(BigRational::new(
-            BigInt::parse_bytes(numerator.as_bytes(), 10).unwrap(),
-            BigInt::parse_bytes(denominator.as_bytes(), 10).unwrap(),
-        ))
+        if expected.contains('/') {
+            let (numerator, denominator) = expected.split_once('/').unwrap();
+            ExactRational(BigRational::new(
+                BigInt::parse_bytes(numerator.as_bytes(), 10).unwrap(),
+                BigInt::parse_bytes(denominator.as_bytes(), 10).unwrap(),
+            ))
+        } else if expected.contains('.') || expected.contains(['e', 'E']) {
+            ExactDecimal::parse(expected, DecimalLimits::default())
+                .unwrap()
+                .exact()
+                .clone()
+        } else {
+            ExactRational(BigRational::new(
+                BigInt::parse_bytes(expected.as_bytes(), 10).unwrap(),
+                BigInt::one(),
+            ))
+        }
     }
 
     fn beat(a: i64, b: i64, c: i64) -> RpeBeat {
