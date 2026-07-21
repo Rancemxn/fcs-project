@@ -342,11 +342,11 @@ fn cmd_convert(
         Ok((status, lines, notes)) => {
             if json {
                 println!(
-                    r#"{{"status":{status},"lines":{lines},"notes":{notes},"profile":{profile}}}"#,
-                    status = json_string(status),
-                    lines = lines,
-                    notes = notes,
-                    profile = json_string(profile)
+                    r#"{{"status":{},"lines":{},"notes":{},"profile":{}}}"#,
+                    json_string(&status),
+                    lines,
+                    notes,
+                    json_string(profile)
                 );
             } else {
                 println!("converted status={status} lines={lines} notes={notes} profile={profile}");
