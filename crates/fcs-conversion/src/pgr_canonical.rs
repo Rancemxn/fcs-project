@@ -476,6 +476,7 @@ fn add_track(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_track_with_fills(
     tracks: &mut Vec<CanonicalTrack>,
     owner: &StableId,
@@ -744,6 +745,7 @@ fn exact_f64(value: &ExactRational, path: &str) -> Result<f64, PgrError> {
         .map_err(|error| PgrError::new(CANONICAL_INVALID, path, error.to_string()))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fact(
     id: &str,
     artifact: &SourceArtifact,
