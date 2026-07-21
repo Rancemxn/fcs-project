@@ -1,0 +1,7 @@
+id = "rpe-extreme"
+expected_status = "equivalent"
+expected_lines = 2
+expected_notes = 5
+required_categories = []
+required_provenance_keys = ["rpe/artifact", "rpe/profile"]
+empty_resources = true

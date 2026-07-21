@@ -250,16 +250,28 @@ pub fn lower_rpe_to_canonical(
                 RpeNoteSide::Above => CanonicalNoteSide::Above,
                 RpeNoteSide::Below => CanonicalNoteSide::Below,
             };
+            let judgment_enabled = note.judgment_enabled();
+            let (sound_policy, score_policy) = if judgment_enabled {
+                (
+                    CanonicalNoteSoundPolicy::Default,
+                    CanonicalNoteScorePolicy::Default,
+                )
+            } else {
+                (
+                    CanonicalNoteSoundPolicy::None,
+                    CanonicalNoteScorePolicy::None,
+                )
+            };
             let gameplay = CanonicalNoteGameplay::new(
                 kind,
                 line_id.clone(),
                 start,
                 end,
                 side,
-                note.judgment_enabled(),
+                judgment_enabled,
                 fcs_model::CanonicalJudgeShape::LineDefault,
-                CanonicalNoteSoundPolicy::Default,
-                CanonicalNoteScorePolicy::Default,
+                sound_policy,
+                score_policy,
             )
             .map_err(|error| canonical_error(&note_path, error))?;
             let alpha = note

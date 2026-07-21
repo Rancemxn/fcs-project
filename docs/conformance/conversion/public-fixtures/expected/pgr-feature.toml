@@ -1,0 +1,7 @@
+id = "pgr-feature"
+expected_status = "equivalent"
+expected_lines = 2
+expected_notes = 4
+required_categories = []
+required_provenance_keys = ["pgr/artifact", "pgr/profile", "pgr/offset", "pgr/line/0", "pgr/line/1"]
+empty_resources = true

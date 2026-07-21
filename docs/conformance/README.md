@@ -73,6 +73,7 @@ conversion/mapping-rules.toml     56 个 versioned mapping rule contract
 conversion/diagnostic-categories.toml 32 个 diagnostic/report category
 conversion/mapping-vectors.toml   38 个 exact mapping 与 5 个 invalid boundary
 conversion/selection-vectors.toml 10 个 evidence/profile ambiguity decision
+conversion/public-fixtures/ I6.7 可执行公开 importer fixtures + expected report keys
 conversion/profiles/        各 profile 的完整、逐文件 hash-bound descriptor
 ```
 
