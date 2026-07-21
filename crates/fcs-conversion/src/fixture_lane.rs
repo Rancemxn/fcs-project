@@ -23,8 +23,7 @@ use crate::{
 pub const COPYRIGHT_FIXTURE_ROOT_ENV: &str = "FCS_COPYRIGHT_FIXTURE_ROOT";
 
 /// Relative path from the `fcs-conversion` crate to the public fixture corpus.
-pub const PUBLIC_FIXTURE_RELATIVE: &str =
-    "../../docs/conformance/conversion/public-fixtures";
+pub const PUBLIC_FIXTURE_RELATIVE: &str = "../../docs/conformance/conversion/public-fixtures";
 
 /// Outcome of consulting the copyright lane without loading chart bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,8 +191,7 @@ pub fn copyright_lane_status() -> CopyrightLaneStatus {
                 CopyrightLaneStatus::Active { root }
             } else {
                 CopyrightLaneStatus::Skipped {
-                    reason:
-                        "FCS_COPYRIGHT_FIXTURE_ROOT does not point at an existing directory; lane skipped",
+                    reason: "FCS_COPYRIGHT_FIXTURE_ROOT does not point at an existing directory; lane skipped",
                 }
             }
         }
@@ -270,10 +268,7 @@ pub fn run_import_fixture(
 }
 
 /// Observe products for comparison against an expectation.
-pub fn observe_products(
-    fixture_id: &str,
-    products: &FixtureImportProducts,
-) -> FixtureObservation {
+pub fn observe_products(fixture_id: &str, products: &FixtureImportProducts) -> FixtureObservation {
     let chart = products.compilation.chart();
     let categories = products
         .report
@@ -366,11 +361,7 @@ pub fn assert_expectation(
         }
     }
     for key in &expected.required_provenance_keys {
-        if !observation
-            .provenance_keys
-            .iter()
-            .any(|value| value == key)
-        {
+        if !observation.provenance_keys.iter().any(|value| value == key) {
             return Err(FixtureLaneError::Mismatch {
                 fixture_id: observation.fixture_id.clone(),
                 message: format!("missing required provenance key {key}"),
@@ -407,24 +398,24 @@ fn run_pgr(
     artifact: &SourceArtifact,
 ) -> Result<FixtureImportProducts, FixtureLaneError> {
     let profile = parse_pgr_profile(&fixture.profile)?;
-    let floor = fixture.floor_scale_px.as_deref().ok_or_else(|| {
-        FixtureLaneError::Import {
+    let floor = fixture
+        .floor_scale_px
+        .as_deref()
+        .ok_or_else(|| FixtureLaneError::Import {
             fixture_id: fixture.id.clone(),
             message: "PGR fixtures require floor_scale_px".into(),
-        }
-    })?;
+        })?;
     let floor_scale = ExactDecimal::parse(floor, DecimalLimits::default()).map_err(|error| {
         FixtureLaneError::Import {
             fixture_id: fixture.id.clone(),
             message: error.to_string(),
         }
     })?;
-    let binding = PgrProfileBinding::new(profile, floor_scale).map_err(|error| {
-        FixtureLaneError::Import {
+    let binding =
+        PgrProfileBinding::new(profile, floor_scale).map_err(|error| FixtureLaneError::Import {
             fixture_id: fixture.id.clone(),
             message: error.to_string(),
-        }
-    })?;
+        })?;
     let parsed = parse_json_document(SourceFormat::Pgr, artifact).map_err(|error| {
         FixtureLaneError::Import {
             fixture_id: fixture.id.clone(),
@@ -441,12 +432,11 @@ fn run_pgr(
         fixture_id: fixture.id.clone(),
         message: error.to_string(),
     })?;
-    let import = lower_pgr_to_canonical(&semantic, artifact).map_err(|error| {
-        FixtureLaneError::Import {
+    let import =
+        lower_pgr_to_canonical(&semantic, artifact).map_err(|error| FixtureLaneError::Import {
             fixture_id: fixture.id.clone(),
             message: error.to_string(),
-        }
-    })?;
+        })?;
     let (compilation, report) = import.into_parts();
     Ok(FixtureImportProducts {
         compilation,
@@ -471,18 +461,16 @@ fn run_rpe(
             message: error.to_string(),
         }
     })?;
-    let semantic = interpret_rpe_semantics(&source, &binding).map_err(|error| {
-        FixtureLaneError::Import {
+    let semantic =
+        interpret_rpe_semantics(&source, &binding).map_err(|error| FixtureLaneError::Import {
             fixture_id: fixture.id.clone(),
             message: error.to_string(),
-        }
-    })?;
-    let import = lower_rpe_to_canonical(&semantic, artifact).map_err(|error| {
-        FixtureLaneError::Import {
+        })?;
+    let import =
+        lower_rpe_to_canonical(&semantic, artifact).map_err(|error| FixtureLaneError::Import {
             fixture_id: fixture.id.clone(),
             message: error.to_string(),
-        }
-    })?;
+        })?;
     let (compilation, report) = import.into_parts();
     Ok(FixtureImportProducts {
         compilation,
@@ -495,24 +483,24 @@ fn run_pec(
     artifact: &SourceArtifact,
 ) -> Result<FixtureImportProducts, FixtureLaneError> {
     let profile = parse_pec_profile(&fixture.profile)?;
-    let floor = fixture.floor_scale_px.as_deref().ok_or_else(|| {
-        FixtureLaneError::Import {
+    let floor = fixture
+        .floor_scale_px
+        .as_deref()
+        .ok_or_else(|| FixtureLaneError::Import {
             fixture_id: fixture.id.clone(),
             message: "PEC fixtures require floor_scale_px".into(),
-        }
-    })?;
+        })?;
     let floor_scale = ExactDecimal::parse(floor, DecimalLimits::default()).map_err(|error| {
         FixtureLaneError::Import {
             fixture_id: fixture.id.clone(),
             message: error.to_string(),
         }
     })?;
-    let binding = PecProfileBinding::new(profile, floor_scale).map_err(|error| {
-        FixtureLaneError::Import {
+    let binding =
+        PecProfileBinding::new(profile, floor_scale).map_err(|error| FixtureLaneError::Import {
             fixture_id: fixture.id.clone(),
             message: error.to_string(),
-        }
-    })?;
+        })?;
     let source = parse_pec_document(artifact, PecLimits::default()).map_err(|error| {
         FixtureLaneError::Import {
             fixture_id: fixture.id.clone(),
@@ -523,12 +511,11 @@ fn run_pec(
         fixture_id: fixture.id.clone(),
         message: error.to_string(),
     })?;
-    let import = lower_pec_to_canonical(&semantic, artifact).map_err(|error| {
-        FixtureLaneError::Import {
+    let import =
+        lower_pec_to_canonical(&semantic, artifact).map_err(|error| FixtureLaneError::Import {
             fixture_id: fixture.id.clone(),
             message: error.to_string(),
-        }
-    })?;
+        })?;
     let (compilation, report) = import.into_parts();
     Ok(FixtureImportProducts {
         compilation,
@@ -553,9 +540,9 @@ fn parse_rpe_binding(id: &str) -> Result<RpeProfileBinding, FixtureLaneError> {
         "rpe.phira.legacy-speed" => Ok(RpeProfileBinding::phira_legacy_speed()),
         "rpe.phira.rpe170-speed" => Ok(RpeProfileBinding::phira_rpe170_speed(None)),
         "rpe.phichain-import" => Ok(RpeProfileBinding::phichain_import()),
-        "rpe.community.divide-bpmfactor" => {
-            Ok(RpeProfileBinding::community_divide(RpeSpeedMode::LegacyLinear))
-        }
+        "rpe.community.divide-bpmfactor" => Ok(RpeProfileBinding::community_divide(
+            RpeSpeedMode::LegacyLinear,
+        )),
         "rpe.docs-example.multiply-bpmfactor" => Ok(RpeProfileBinding::docs_example_multiply(
             RpeSpeedMode::LegacyLinear,
         )),
@@ -590,7 +577,10 @@ mod tests {
         );
         let observations = run_fixture_corpus(&root).expect("public fixture corpus must pass");
         assert_eq!(observations.len(), 6);
-        let ids: Vec<_> = observations.iter().map(|item| item.fixture_id.as_str()).collect();
+        let ids: Vec<_> = observations
+            .iter()
+            .map(|item| item.fixture_id.as_str())
+            .collect();
         assert_eq!(
             ids,
             [
