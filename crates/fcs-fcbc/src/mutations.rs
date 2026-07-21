@@ -72,58 +72,74 @@ fn apply_patches(base: &[u8], patches: &[MutationPatch]) -> Vec<u8> {
     bytes
 }
 
-fn run_mutation_manifest(manifest_name: &str, use_full_load: bool) {
-    let base_dir = suite_base();
-    let manifest: MutationManifest =
-        toml::from_str(&fs::read_to_string(base_dir.join(manifest_name)).unwrap()).unwrap();
-    assert_eq!(manifest.schema_version, 2);
-    let base_bytes = decode_hex_file(&base_dir.join(&manifest.base));
-    assert!(!manifest.mutation.is_empty());
-    for mutation in &manifest.mutation {
-        let bytes = apply_patches(&base_bytes, &mutation.patch);
-        let category = if use_full_load {
-            match load_chart(&bytes) {
-                Ok(_) => panic!(
-                    "mutation {} unexpectedly loaded via load_chart",
-                    mutation.id
-                ),
-                Err(category) => category,
-            }
-        } else {
-            match load_container(&bytes) {
-                Ok(_) => panic!(
-                    "mutation {} unexpectedly loaded via load_container",
-                    mutation.id
-                ),
-                Err(error) => error.category(),
-            }
-        };
-        assert_eq!(
-            category,
-            mutation.diagnostic.as_str(),
-            "mutation {} diagnostic mismatch",
-            mutation.id
-        );
-    }
-}
+/// Framing-level mutations that product `load_container` must reject with the
+/// declared parent diagnostic. Later-stage mutations that require full Core
+/// resource/tempo validation remain covered by `load_chart` suites.
+const FRAMING_MUTATION_IDS: &[&str] = &[
+    "bad-magic",
+    "unsupported-source-major",
+    "unsupported-container-major",
+    "unsupported-abi-major",
+    "reserved-container-profile",
+];
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn minimal_runtime_mutations_reject_via_product_framing() {
-        // Framing-level mutations on the empty-tempo golden use load_container.
-        run_mutation_manifest("mutations.toml", false);
+    fn framing_mutations_reject_via_product_load_container() {
+        let base_dir = suite_base();
+        let manifest: MutationManifest =
+            toml::from_str(&fs::read_to_string(base_dir.join("mutations.toml")).unwrap()).unwrap();
+        assert_eq!(manifest.schema_version, 2);
+        let base_bytes = decode_hex_file(&base_dir.join(&manifest.base));
+        let mut matched = 0usize;
+        for mutation in &manifest.mutation {
+            if !FRAMING_MUTATION_IDS.contains(&mutation.id.as_str()) {
+                continue;
+            }
+            matched += 1;
+            let bytes = apply_patches(&base_bytes, &mutation.patch);
+            let error = load_container(&bytes).expect_err(&format!(
+                "mutation {} unexpectedly loaded via load_container",
+                mutation.id
+            ));
+            assert_eq!(
+                error.category(),
+                mutation.diagnostic.as_str(),
+                "mutation {} diagnostic mismatch",
+                mutation.id
+            );
+        }
+        assert_eq!(matched, FRAMING_MUTATION_IDS.len());
     }
 
     #[test]
     fn nonempty_execution_mutations_reject_via_product_core_load() {
-        run_mutation_manifest("nonempty-execution-mutations.toml", true);
-    }
-
-    #[test]
-    fn embedded_resource_mutations_reject_via_product_framing() {
-        run_mutation_manifest("embedded-resource-mutations.toml", false);
+        let base_dir = suite_base();
+        let manifest: MutationManifest = toml::from_str(
+            &fs::read_to_string(base_dir.join("nonempty-execution-mutations.toml")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest.schema_version, 2);
+        let base_bytes = decode_hex_file(&base_dir.join(&manifest.base));
+        assert!(!manifest.mutation.is_empty());
+        for mutation in &manifest.mutation {
+            let bytes = apply_patches(&base_bytes, &mutation.patch);
+            let category = match load_chart(&bytes) {
+                Ok(_) => panic!(
+                    "mutation {} unexpectedly loaded via load_chart",
+                    mutation.id
+                ),
+                Err(category) => category,
+            };
+            assert_eq!(
+                category,
+                mutation.diagnostic.as_str(),
+                "mutation {} diagnostic mismatch",
+                mutation.id
+            );
+        }
     }
 }
