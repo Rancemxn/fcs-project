@@ -38,6 +38,8 @@ fn lowers_the_metadata_fixture_without_retaining_workspace_source_paths() {
     assert_eq!(resource.media_type(), "application/octet-stream");
     assert!(resource.metadata().get("source").is_none());
     assert_eq!(metadata.sync().unwrap().audio_offset().seconds(), 0.1);
+    assert_eq!(metadata.sync().unwrap().audio_time(1.0).unwrap(), 1.1);
+    assert_eq!(metadata.sync().unwrap().chart_time(1.1).unwrap(), 1.0);
 }
 
 #[test]
@@ -125,6 +127,25 @@ meta { custom: { "person": @alice, "sound": @song }; }
     assert_eq!(
         metadata.sync().unwrap().preview().unwrap().start_seconds(),
         30.0
+    );
+    assert_eq!(
+        metadata.sync().unwrap().preview().unwrap().end_seconds(),
+        45.0
+    );
+    assert!(
+        metadata
+            .sync()
+            .unwrap()
+            .preview_contains_chart_time(30.1)
+            .unwrap()
+    );
+    // audioOffset -0.1 => chartTime 45.1 maps to audioTime 45.0, exclusive.
+    assert!(
+        !metadata
+            .sync()
+            .unwrap()
+            .preview_contains_chart_time(45.1)
+            .unwrap()
     );
     let CanonicalValue::ContributorReference(person) = metadata
         .meta()
@@ -445,4 +466,29 @@ sync { primaryAudio: @missing; }
             .iter()
             .any(|diagnostic| { diagnostic.code() == DiagnosticCode::NAME_UNKNOWN })
     );
+}
+
+#[test]
+fn rejects_preview_without_primary_audio_and_invalid_preview_domain() {
+    let missing_audio = parse_document(include_str!(
+        "../../../docs/conformance/fcs5/source/invalid/sync-preview-without-audio.fcs"
+    ))
+    .into_result()
+    .unwrap();
+    let diagnostics = missing_audio.canonical_metadata().unwrap_err();
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code() == DiagnosticCode::RESOURCE_UNKNOWN_REFERENCE
+            && diagnostic.message().contains("primaryAudio")
+    }));
+
+    let domain = parse_document(include_str!(
+        "../../../docs/conformance/fcs5/source/invalid/sync-preview-domain.fcs"
+    ))
+    .into_result()
+    .unwrap();
+    let diagnostics = domain.canonical_metadata().unwrap_err();
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code() == DiagnosticCode::TYPE_INVALID_OPERATION
+            && diagnostic.message().contains("preview")
+    }));
 }

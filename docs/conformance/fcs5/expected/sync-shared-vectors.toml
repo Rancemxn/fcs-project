@@ -1,0 +1,35 @@
+# Shared player/converter vectors for FCS §7.4.
+# audioTime = chartTime + audioOffset
+# chartTime = audioTime - audioOffset
+# preview membership is half-open on the audio-time domain: [start, end).
+
+schema_version = 1
+domain = "fcs.sync"
+clauses = ["7.4", "17"]
+
+[[formula]]
+id = "positive-offset-at-one-second"
+audio_offset_seconds = 0.1
+chart_time_seconds = 1.0
+audio_time_seconds = 1.1
+
+[[formula]]
+id = "zero-offset-identity"
+audio_offset_seconds = 0.0
+chart_time_seconds = -2.5
+audio_time_seconds = -2.5
+
+[[formula]]
+id = "negative-offset-at-one-second"
+audio_offset_seconds = -0.1
+chart_time_seconds = 1.0
+audio_time_seconds = 0.9
+
+[[preview]]
+id = "half-open-audio-preview"
+audio_offset_seconds = 0.1
+preview_start_seconds = 30.0
+preview_end_seconds = 45.0
+# chartTime -> audioTime membership samples
+contains_chart_times = [29.9, 30.0, 44.899]
+excludes_chart_times = [29.899999999999, 44.9, 45.0]

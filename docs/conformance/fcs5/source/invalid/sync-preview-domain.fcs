@@ -1,0 +1,12 @@
+#fcs 5.0.0
+format { profile: fragment; }
+resources {
+    audio song {
+        source: "song.ogg";
+        mediaType: "audio/ogg";
+    }
+}
+sync {
+    primaryAudio: @song;
+    preview: [-1s, 1s);
+}

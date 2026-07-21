@@ -764,7 +764,7 @@ fn typed_manifests_load_with_bound_counts() {
     assert_eq!(render.schema_version, 3);
     assert_eq!(conversion.schema_version, 2);
     assert_eq!(root.suite.len(), 6);
-    assert_eq!(fcs.fixture.len(), 50);
+    assert_eq!(fcs.fixture.len(), 52);
     assert_eq!(fcbc.fixture.len(), 3);
     assert_eq!(render.binary_fixture.len(), 0);
     assert_eq!(render.fixture.len(), 1);
@@ -838,7 +838,7 @@ fn fcs_source_fixtures_execute_at_the_declared_frontend_boundary() {
 
     assert_eq!(parse_success, 3);
     assert_eq!(parse_error, 9);
-    assert_eq!(later_stage, 38);
+    assert_eq!(later_stage, 40);
 }
 
 #[test]
@@ -1196,6 +1196,67 @@ fn i5_resource_fixtures_execute_at_the_workspace_bundle_boundary() {
             .diagnostic
             .as_deref()
             .expect("invalid resource fixture must bind a diagnostic");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code().as_str() == expected),
+            "{id} expected {expected}, got {diagnostics:?}"
+        );
+        assert!(diagnostics.iter().all(|diagnostic| {
+            diagnostic.stage() == DiagnosticStage::Canonical
+                && diagnostic.primary_span().end <= source.len()
+                && source.is_char_boundary(diagnostic.primary_span().start)
+                && source.is_char_boundary(diagnostic.primary_span().end)
+        }));
+    }
+}
+
+#[test]
+fn i5_sync_fixtures_execute_at_the_canonical_boundary() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+
+    let valid = fixture(&fcs, "source.valid.metadata-credits-resources-sync");
+    let valid_source = fs::read_to_string(fcs_base.join(&valid.path))
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", valid.path));
+    let metadata = parse_document(&valid_source)
+        .into_result()
+        .unwrap_or_else(|errors| panic!("{} must parse: {errors:?}", valid.id))
+        .canonical_metadata()
+        .unwrap_or_else(|errors| panic!("{} must lower sync: {errors:?}", valid.id));
+    let expected = expected_json(&fcs_base, valid);
+    let sync = metadata.sync().expect("valid sync fixture has sync");
+    assert_eq!(
+        sync.audio_offset().seconds(),
+        expected["audioOffsetSeconds"]
+            .as_f64()
+            .expect("audioOffsetSeconds")
+    );
+    let chart = expected["offsetEquationAtChartTime1"]["chartTime"]
+        .as_f64()
+        .expect("chartTime");
+    let audio = expected["offsetEquationAtChartTime1"]["audioTime"]
+        .as_f64()
+        .expect("audioTime");
+    assert_eq!(sync.audio_time(chart).unwrap(), audio);
+    assert_eq!(sync.chart_time(audio).unwrap(), chart);
+
+    for id in [
+        "source.invalid.sync-preview-without-audio",
+        "source.invalid.sync-preview-domain",
+    ] {
+        let invalid = fixture(&fcs, id);
+        let source = fs::read_to_string(fcs_base.join(&invalid.path))
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", invalid.path));
+        let diagnostics = parse_document(&source)
+            .into_result()
+            .unwrap_or_else(|errors| panic!("{id} must parse: {errors:?}"))
+            .canonical_metadata()
+            .expect_err("invalid sync fixture must fail metadata lowering");
+        let expected = invalid
+            .diagnostic
+            .as_deref()
+            .expect("invalid sync fixture must bind a diagnostic");
         assert!(
             diagnostics
                 .iter()

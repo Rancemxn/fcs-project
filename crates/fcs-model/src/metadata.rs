@@ -10,7 +10,7 @@ use std::fmt;
 
 use sha2::{Digest, Sha256};
 
-use crate::{AudioOffset, Beat};
+use crate::{AudioOffset, Beat, TempoError};
 
 /// A linear RGBA color value carried by canonical typed custom data.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -725,6 +725,13 @@ impl CanonicalPreview {
     pub const fn end_seconds(self) -> f64 {
         self.end_seconds
     }
+
+    /// Returns whether `audio_time` lies in the half-open audio-domain interval
+    /// `[start, end)`. Chart-time values must be converted through [`AudioOffset`]
+    /// before membership is tested.
+    pub fn contains_audio_time(self, audio_time: f64) -> bool {
+        audio_time.is_finite() && audio_time >= self.start_seconds && audio_time < self.end_seconds
+    }
 }
 
 /// The single-clock audio synchronization boundary.
@@ -740,12 +747,15 @@ impl CanonicalSync {
         primary_audio: Option<String>,
         audio_offset: AudioOffset,
         preview: Option<CanonicalPreview>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, CanonicalSyncError> {
+        if preview.is_some() && primary_audio.is_none() {
+            return Err(CanonicalSyncError::PreviewRequiresPrimaryAudio);
+        }
+        Ok(Self {
             primary_audio,
             audio_offset,
             preview,
-        }
+        })
     }
 
     pub fn primary_audio(&self) -> Option<&str> {
@@ -759,7 +769,42 @@ impl CanonicalSync {
     pub const fn preview(&self) -> Option<CanonicalPreview> {
         self.preview
     }
+
+    /// Shared player/converter forward map: `audioTime = chartTime + audioOffset`.
+    pub fn audio_time(&self, chart_time: f64) -> Result<f64, TempoError> {
+        self.audio_offset.audio_time(chart_time)
+    }
+
+    /// Shared player/converter inverse map: `chartTime = audioTime - audioOffset`.
+    pub fn chart_time(&self, audio_time: f64) -> Result<f64, TempoError> {
+        self.audio_offset.chart_time(audio_time)
+    }
+
+    /// Preview membership after converting `chart_time` into the audio domain.
+    pub fn preview_contains_chart_time(&self, chart_time: f64) -> Result<bool, TempoError> {
+        let Some(preview) = self.preview else {
+            return Ok(false);
+        };
+        Ok(preview.contains_audio_time(self.audio_time(chart_time)?))
+    }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanonicalSyncError {
+    PreviewRequiresPrimaryAudio,
+}
+
+impl fmt::Display for CanonicalSyncError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PreviewRequiresPrimaryAudio => {
+                write!(formatter, "sync preview requires primaryAudio")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CanonicalSyncError {}
 
 /// The complete I3.3 canonical metadata graph.
 #[derive(Debug, Clone, PartialEq)]
@@ -890,5 +935,39 @@ mod tests {
             CanonicalResourceBundle::new(vec![bundled.clone(), bundled]),
             Err(CanonicalResourceBundleError::DuplicateId("payload".into()))
         );
+    }
+
+    #[test]
+    fn preview_is_half_open_on_audio_time() {
+        let preview = CanonicalPreview::new(30.0, 45.0).unwrap();
+        assert!(preview.contains_audio_time(30.0));
+        assert!(preview.contains_audio_time(44.999));
+        assert!(!preview.contains_audio_time(45.0));
+        assert!(!preview.contains_audio_time(29.999));
+        assert!(!preview.contains_audio_time(f64::NAN));
+        assert!(CanonicalPreview::new(-0.0, 1.0).is_some());
+        assert!(CanonicalPreview::new(1.0, 1.0).is_none());
+        assert!(CanonicalPreview::new(2.0, 1.0).is_none());
+        assert!(CanonicalPreview::new(-1.0, 1.0).is_none());
+        assert!(CanonicalPreview::new(0.0, f64::INFINITY).is_none());
+    }
+
+    #[test]
+    fn sync_shares_offset_formula_and_requires_primary_audio_for_preview() {
+        let offset = AudioOffset::new(0.1).unwrap();
+        let preview = CanonicalPreview::new(30.0, 45.0);
+        let sync = CanonicalSync::new(Some("song".into()), offset, preview).unwrap();
+        assert_eq!(sync.audio_time(1.0).unwrap(), 1.1);
+        assert_eq!(sync.chart_time(1.1).unwrap(), 1.0);
+        // chartTime 29.9 + 0.1 = audioTime 30.0, which is preview-inclusive.
+        assert!(sync.preview_contains_chart_time(29.9).unwrap());
+        // chartTime 44.9 + 0.1 = audioTime 45.0, which is preview-exclusive.
+        assert!(!sync.preview_contains_chart_time(44.9).unwrap());
+        assert_eq!(
+            CanonicalSync::new(None, offset, preview),
+            Err(CanonicalSyncError::PreviewRequiresPrimaryAudio)
+        );
+        let no_preview = CanonicalSync::new(None, offset, None).unwrap();
+        assert!(!no_preview.preview_contains_chart_time(0.0).unwrap());
     }
 }

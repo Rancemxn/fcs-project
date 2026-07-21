@@ -1,0 +1,6 @@
+#fcs 5.0.0
+format { profile: fragment; }
+sync {
+    audioOffset: 0s;
+    preview: [30s, 45s);
+}

@@ -45,7 +45,7 @@ pub use metadata::{
     CanonicalCreditRoleError, CanonicalMetadata, CanonicalObject, CanonicalObjectEntry,
     CanonicalObjectError, CanonicalPreview, CanonicalResource, CanonicalResourceBundle,
     CanonicalResourceBundleError, CanonicalResourceKind, CanonicalStandardCreditRole,
-    CanonicalSync, CanonicalValue, CanonicalValueType, DeclaredSha256,
+    CanonicalSync, CanonicalSyncError, CanonicalValue, CanonicalValueType, DeclaredSha256,
 };
 pub use note::{
     CanonicalJudgeShape, CanonicalNote, CanonicalNoteError, CanonicalNoteGameplay,

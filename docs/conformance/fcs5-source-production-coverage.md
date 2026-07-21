@@ -35,7 +35,7 @@ remain wrapped in the smallest legal document/block fixture.
 | `examples/fcs/chart.fcs` | `frontend::parses_public_fcs5_fixtures` | complete chart document with tempo map |
 | `examples/fcs/templates.fcs` | `compile_time::parses_and_elaborates_the_public_template_fixture` | complete template/collection document |
 | `docs/conformance/fcs5/source/valid/complete-source-grammar.fcs` | `source_ast::complete_source_grammar_fixture_parses_with_all_top_level_kinds` and `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary` | complete Appendix B envelope |
-| all 50 entries in `docs/conformance/fcs5/manifest.toml` | `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary` | 3 parse-success, 9 parse-error, 38 later-stage syntax-acceptance entries; owning canonical/evaluate tests execute the applicable later boundary |
+| all 52 entries in `docs/conformance/fcs5/manifest.toml` | `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary` | 3 parse-success, 9 parse-error, 40 later-stage syntax-acceptance entries; owning canonical/evaluate tests execute the applicable later boundary |
 
 ## Document, format, and lexical envelope
 

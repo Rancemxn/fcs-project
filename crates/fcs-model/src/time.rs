@@ -407,16 +407,38 @@ mod tests {
 
     #[test]
     fn audio_offset_is_an_affine_boundary_not_a_second_clock() {
-        let offset = AudioOffset::new(0.1).unwrap();
-        assert_eq!(offset.audio_time(1.0).unwrap(), 1.1);
-        assert_eq!(offset.chart_time(1.1).unwrap(), 1.0);
+        // Shared player/converter vectors: audioTime = chartTime + audioOffset.
+        let positive = AudioOffset::new(0.1).unwrap();
+        assert_eq!(positive.audio_time(1.0).unwrap(), 1.1);
+        assert_eq!(positive.chart_time(1.1).unwrap(), 1.0);
+
+        let zero = AudioOffset::new(0.0).unwrap();
+        assert_eq!(zero.audio_time(-2.5).unwrap(), -2.5);
+        assert_eq!(zero.chart_time(-2.5).unwrap(), -2.5);
+
+        let negative = AudioOffset::new(-0.1).unwrap();
+        assert_eq!(negative.audio_time(1.0).unwrap(), 0.9);
+        assert_eq!(negative.chart_time(0.9).unwrap(), 1.0);
     }
 
     #[test]
     fn finite_inputs_cannot_produce_non_finite_offset_or_inverse_values() {
+        assert_eq!(
+            AudioOffset::new(f64::NAN),
+            Err(TempoError::NonFiniteAudioOffset)
+        );
+        assert_eq!(
+            AudioOffset::new(f64::INFINITY),
+            Err(TempoError::NonFiniteAudioOffset)
+        );
+
         let offset = AudioOffset::new(f64::MAX).unwrap();
         assert_eq!(
             offset.audio_time(f64::MAX),
+            Err(TempoError::NonFiniteChartTime)
+        );
+        assert_eq!(
+            offset.chart_time(f64::NEG_INFINITY),
             Err(TempoError::NonFiniteChartTime)
         );
 

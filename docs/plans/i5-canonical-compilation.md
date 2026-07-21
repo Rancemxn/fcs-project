@@ -1,7 +1,7 @@
 # I5 CanonicalCompilation, metadata, resources, sync, and fidelity
 
-Status: I5.1-I5.3 implementation establishes the canonical profile-requirement,
-contributor/credit, and opaque workspace-resource boundaries. I5.4-I5.7 remain open and this plan does not claim a complete
+Status: I5.1-I5.4 implementation establishes the canonical profile-requirement,
+contributor/credit, opaque workspace-resource, and sync formula/preview boundaries. I5.5-I5.7 remain open and this plan does not claim a complete
 `CanonicalCompilation`, Render scene, converter, FCBC product, or FCS 5 release.
 
 ## Normative dependency closure
@@ -148,11 +148,40 @@ contributor/credit, and opaque workspace-resource boundaries. I5.4-I5.7 remain o
 - Acceptance requires the exact PR head to pass `.github/workflows/full-gate.yml`
   and a passing Primary Self-Audit with no unresolved Critical/Important finding.
 
+## I5.4 owned surface
+
+- `AudioOffset` remains the only public affine map between chart time and audio
+  time: `audioTime = chartTime + audioOffset` and the exact inverse. Positive,
+  zero, and negative offsets share one implementation used by player and
+  converter consumers.
+- `CanonicalPreview` is an audio-domain half-open interval with
+  `end > start >= 0` and `contains_audio_time` membership on `[start, end)`.
+- `CanonicalSync` constructs only legal products: preview requires
+  `primaryAudio`; shared helpers expose `audio_time`, `chart_time`, and
+  chart-time preview membership through the same formula.
+- Source lowering reuses those constructors. Invalid preview domains emit
+  `type.invalid-operation`; preview without primary audio emits
+  `resource.unknown-reference`.
+- Shared vectors in `docs/conformance/fcs5/expected/sync-shared-vectors.toml`
+  and the existing metadata fixture expected offset equation execute through
+  model methods and the canonical metadata boundary.
+
+## I5.4 acceptance evidence
+
+- Model tests pin bidirectional formula vectors, non-finite rejection, half-open
+  preview membership, and constructor rejection of preview without primary audio.
+- `sync_shared_vectors` executes the TOML shared vectors and the metadata fixture
+  expected equation.
+- `metadata_graph` and
+  `conformance_manifest::i5_sync_fixtures_execute_at_the_canonical_boundary`
+  execute the valid sync fixture and the two invalid preview fixtures.
+- Acceptance requires the exact PR head to pass `.github/workflows/full-gate.yml`
+  and a passing Primary Self-Audit with no unresolved Critical/Important finding.
+
 ## Remaining I5 work
 
-- I5.4 closes the sync/preview formula and shared player/converter vectors.
 - I5.5 binds typed custom value limits and FCBC-compatible restrictions.
 - I5.6 adds provenance and stale-dependency tracking without source AST leakage
   into `CanonicalChart`.
 - I5.7 adds the deterministic report/repair model. None of these residuals is
-  implemented or claimed by I5.1-I5.3.
+  implemented or claimed by I5.1-I5.4.
