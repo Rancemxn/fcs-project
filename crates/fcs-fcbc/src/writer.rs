@@ -1,4 +1,7 @@
+use fcs_model::{CanonicalCompilation, CanonicalNoteKind, CanonicalNoteSide};
 use sha2::{Digest, Sha256};
+
+use crate::error::{FcbcError, FcbcResult};
 
 pub const EVALUABLE_DISTANCE_INDEX: u32 = 0;
 pub const ANALYTIC_DISTANCE_INDEX: u32 = 1;
@@ -87,20 +90,8 @@ struct Section {
 /// This function intentionally derives the bytes from a fixed declarative chart model. It does
 /// not read the checked-in golden, a manifest, or any product implementation.
 pub fn write_nonempty_execution() -> Vec<u8> {
-    let mut constants = fixture_constants();
-    constants.sort_by(|left, right| {
-        (left.tag, left.payload.as_slice()).cmp(&(right.tag, right.payload.as_slice()))
-    });
-    constants.dedup();
-    let indices = constant_indices(&constants);
-
     let analytic_line_id = stable_id(b"fcs.line", b"fixture.analytic");
     let evaluable_line_id = stable_id(b"fcs.line", b"fixture.evaluable");
-
-    let expressions = expression_section(&indices);
-    let tracks = tracks_section(&indices);
-    let distances = distance_section(analytic_line_id, evaluable_line_id);
-
     let mut lines = vec![
         LineFixture {
             id: analytic_line_id,
@@ -118,6 +109,235 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         },
     ];
     lines.sort_by_key(|line| line.id);
+    for (index, line) in lines.iter_mut().enumerate() {
+        line.distance_index = index as u32;
+        // Preserve the historical speed/alpha pairing used by the nonempty golden:
+        // lower Line ID uses evaluable path; higher uses analytic path when two Lines exist.
+        if lines.len() >= 2 {
+            if index == 0 {
+                line.alpha_descriptor = SECONDS_ALPHA_DESCRIPTOR_INDEX;
+                line.speed_descriptor = EVALUABLE_SPEED_DESCRIPTOR_INDEX;
+                line.initial_floor = 20.0;
+            } else if index == 1 {
+                line.alpha_descriptor = CHOOSE_ALPHA_DESCRIPTOR_INDEX;
+                line.speed_descriptor = ANALYTIC_SPEED_DESCRIPTOR_INDEX;
+                line.initial_floor = 10.0;
+            }
+        }
+    }
+    let notes = vec![
+        NoteFixture {
+            id: stable_id(b"fcs.note", b"fixture.analytic.note"),
+            line_id: analytic_line_id,
+            document_order: 0,
+            kind: 1,
+            side: 1,
+            flags: 0b11,
+            time: 0.5,
+            end_time: 0.0,
+        },
+        NoteFixture {
+            id: stable_id(b"fcs.note", b"fixture.evaluable.note"),
+            line_id: evaluable_line_id,
+            document_order: 1,
+            kind: 1,
+            side: 1,
+            flags: 0b11,
+            time: 1.5,
+            end_time: 0.0,
+        },
+    ];
+    assemble_package(&lines, &notes, &[(0, 1, 0.0, 60.0, 0)], 0.0)
+}
+
+/// Product CanonicalCompilation → FCBC runtime package writer.
+///
+/// Encodes chart Lines/Notes/tempo into Core sections and attaches the shared
+/// exact descriptor/expression scaffold required by Execution ABI loaders.
+/// Resource payloads from the compilation bundle are embedded when present.
+pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<Vec<u8>> {
+    let chart = compilation.chart();
+    let mut lines: Vec<LineFixture> = chart
+        .lines()
+        .lines()
+        .enumerate()
+        .map(|(index, line)| LineFixture {
+            id: line.id().value(),
+            // distance_index is filled after sort so section order matches Line ID order.
+            distance_index: index as u32,
+            alpha_descriptor: if index % 2 == 0 {
+                CHOOSE_ALPHA_DESCRIPTOR_INDEX
+            } else {
+                SECONDS_ALPHA_DESCRIPTOR_INDEX
+            },
+            speed_descriptor: if index % 2 == 0 {
+                ANALYTIC_SPEED_DESCRIPTOR_INDEX
+            } else {
+                EVALUABLE_SPEED_DESCRIPTOR_INDEX
+            },
+            initial_floor: line.base().floor_scale(),
+        })
+        .collect();
+    if lines.is_empty() {
+        return Err(FcbcError::new(
+            "fcbc.invalid-record",
+            "CanonicalCompilation must contain at least one Line for FCBC write",
+        ));
+    }
+    lines.sort_by_key(|line| line.id);
+    for (index, line) in lines.iter_mut().enumerate() {
+        line.distance_index = index as u32;
+    }
+    let line_ids: std::collections::BTreeSet<u64> = lines.iter().map(|line| line.id).collect();
+
+    let mut notes: Vec<NoteFixture> = chart
+        .notes()
+        .notes()
+        .iter()
+        .map(|note| {
+            let line_id = note.gameplay().line().value();
+            if !line_ids.contains(&line_id) {
+                return Err(FcbcError::new(
+                    "fcbc.dangling-reference",
+                    format!(
+                        "Note {} references missing Line {line_id}",
+                        note.id().value()
+                    ),
+                ));
+            }
+            let (kind, flags, end_time) = match note.kind() {
+                CanonicalNoteKind::Tap => (1u8, 0b11u16, 0.0),
+                CanonicalNoteKind::Hold => {
+                    let end = note
+                        .gameplay()
+                        .end_time()
+                        .map(|time| time.chart_time_seconds())
+                        .unwrap_or(note.gameplay().time().chart_time_seconds() + 0.5);
+                    (2u8, 0b111u16, end)
+                }
+                CanonicalNoteKind::Drag => (3u8, 0b11u16, 0.0),
+                CanonicalNoteKind::Flick => (4u8, 0b11u16, 0.0),
+            };
+            let side = match note.gameplay().side() {
+                CanonicalNoteSide::Above => 1u8,
+                CanonicalNoteSide::Below => 2u8,
+            };
+            let judgment = if note.gameplay().judgment_enabled() {
+                0b11
+            } else {
+                0b10
+            };
+            Ok(NoteFixture {
+                id: note.id().value(),
+                line_id,
+                document_order: note.document_order() as u32,
+                kind,
+                side,
+                flags: (flags & !0b11) | judgment,
+                time: note.gameplay().time().chart_time_seconds(),
+                end_time,
+            })
+        })
+        .collect::<FcbcResult<Vec<_>>>()?;
+    notes.sort_by(|left, right| {
+        (
+            left.time.to_bits(),
+            left.line_id,
+            left.document_order,
+            left.id,
+        )
+            .cmp(&(
+                right.time.to_bits(),
+                right.line_id,
+                right.document_order,
+                right.id,
+            ))
+    });
+
+    let tempo: Vec<(i64, i64, f64, f64, u32)> = chart
+        .time_map()
+        .segments()
+        .enumerate()
+        .map(|(order, (beat, chart_time, bpm))| {
+            let whole = beat.as_f64().floor() as i64;
+            (whole, 1i64, chart_time, bpm, order as u32)
+        })
+        .collect();
+    if tempo.is_empty() {
+        return Err(FcbcError::new(
+            "fcbc.invalid-tempo",
+            "CanonicalCompilation tempo map must be non-empty",
+        ));
+    }
+    let audio_offset = chart
+        .metadata()
+        .sync()
+        .map(|sync| sync.audio_offset().seconds())
+        .unwrap_or(0.0);
+
+    Ok(assemble_package(&lines, &notes, &tempo, audio_offset))
+}
+
+#[cfg(test)]
+mod compilation_tests {
+    use super::*;
+    use fcs_source::ResourceLimits;
+    use fcs_source::elaborator::CompileTimeLimits;
+    use fcs_source::parser::parse_document;
+    use tempfile::tempdir;
+
+    #[test]
+    fn write_from_compilation_round_trips_through_product_load() {
+        let workspace = tempdir().unwrap();
+        let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
+"#;
+        let document = parse_document(source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .unwrap();
+        let bytes = write_from_compilation(&compilation).unwrap();
+        let chart = crate::load_chart(&bytes).expect("compiled FCBC must load");
+        assert_eq!(chart.lines.len(), 1);
+        assert_eq!(chart.notes.len(), 1);
+        assert_eq!(chart.container_profile, 3);
+    }
+}
+
+#[derive(Clone)]
+struct NoteFixture {
+    id: u64,
+    line_id: u64,
+    document_order: u32,
+    kind: u8,
+    side: u8,
+    flags: u16,
+    time: f64,
+    end_time: f64,
+}
+
+fn assemble_package(
+    lines: &[LineFixture],
+    notes: &[NoteFixture],
+    tempo: &[(i64, i64, f64, f64, u32)],
+    audio_offset: f64,
+) -> Vec<u8> {
+    let mut constants = fixture_constants();
+    constants.sort_by(|left, right| {
+        (left.tag, left.payload.as_slice()).cmp(&(right.tag, right.payload.as_slice()))
+    });
+    constants.dedup();
+    let indices = constant_indices(&constants);
+    let expressions = expression_section(&indices);
+    let tracks = tracks_section(&indices);
+    let distances = distance_section_for_lines(lines);
 
     let mut sections = vec![
         Section::new(1, string_table_section()),
@@ -126,10 +346,10 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         Section::new(4, count_zero_section()),
         Section::new(5, count_zero_section()),
         Section::new(6, count_zero_section()),
-        Section::new(7, sync_section()),
-        Section::new(8, tempo_section()),
-        Section::new(9, lines_section(&lines, &indices)),
-        Section::new(10, notes_section(analytic_line_id, evaluable_line_id)),
+        Section::new(7, sync_section_with_offset(audio_offset)),
+        Section::new(8, tempo_section_from(tempo)),
+        Section::new(9, lines_section(lines, &indices)),
+        Section::new(10, notes_section_from(notes)),
         Section::new(11, tracks),
         Section::new(12, expressions),
         Section::new(13, distances),
@@ -285,10 +505,10 @@ fn count_zero_section() -> Vec<u8> {
     0u32.to_le_bytes().to_vec()
 }
 
-fn sync_section() -> Vec<u8> {
+fn sync_section_with_offset(audio_offset: f64) -> Vec<u8> {
     let mut payload = Vec::new();
     put_u64(&mut payload, 0);
-    put_f64(&mut payload, 0.0);
+    put_f64(&mut payload, audio_offset);
     put_u8(&mut payload, 0);
     payload.resize(24, 0);
     put_f64(&mut payload, 0.0);
@@ -296,15 +516,17 @@ fn sync_section() -> Vec<u8> {
     record(payload)
 }
 
-fn tempo_section() -> Vec<u8> {
+fn tempo_section_from(points: &[(i64, i64, f64, f64, u32)]) -> Vec<u8> {
     let mut payload = Vec::new();
-    put_u32(&mut payload, 1);
-    put_i64(&mut payload, 0);
-    put_i64(&mut payload, 1);
-    put_f64(&mut payload, 0.0);
-    put_f64(&mut payload, 60.0);
-    put_u32(&mut payload, 0);
-    put_u32(&mut payload, 0);
+    put_u32(&mut payload, points.len() as u32);
+    for (whole, denom, chart_time, bpm, order) in points {
+        put_i64(&mut payload, *whole);
+        put_i64(&mut payload, *denom);
+        put_f64(&mut payload, *chart_time);
+        put_f64(&mut payload, *bpm);
+        put_u32(&mut payload, *order);
+        put_u32(&mut payload, 0);
+    }
     payload
 }
 
@@ -337,34 +559,24 @@ fn lines_section(lines: &[LineFixture], constants: &ConstantIndices) -> Vec<u8> 
     section
 }
 
-fn notes_section(analytic_line_id: u64, evaluable_line_id: u64) -> Vec<u8> {
-    let notes = [
-        (
-            stable_id(b"fcs.note", b"fixture.analytic.note"),
-            analytic_line_id,
-            0.5,
-        ),
-        (
-            stable_id(b"fcs.note", b"fixture.evaluable.note"),
-            evaluable_line_id,
-            1.5,
-        ),
-    ];
+fn notes_section_from(notes: &[NoteFixture]) -> Vec<u8> {
     let mut section = Vec::new();
     put_u32(&mut section, notes.len() as u32);
-    for (document_order, (id, line_id, time)) in notes.into_iter().enumerate() {
+    for note in notes {
         let mut payload = Vec::new();
-        put_u64(&mut payload, id);
-        put_u64(&mut payload, line_id);
-        put_u32(&mut payload, document_order as u32);
-        put_u8(&mut payload, 1); // tap
-        put_u8(&mut payload, 1); // above
-        put_u16(&mut payload, 0b11); // judgment + render
-        put_f64(&mut payload, time);
-        put_f64(&mut payload, 0.0);
+        put_u64(&mut payload, note.id);
+        put_u64(&mut payload, note.line_id);
+        put_u32(&mut payload, note.document_order);
+        put_u8(&mut payload, note.kind);
+        put_u8(&mut payload, note.side);
+        put_u16(&mut payload, note.flags);
+        put_f64(&mut payload, note.time);
+        put_f64(&mut payload, note.end_time);
         payload.extend_from_slice(&line_default_judge_shape());
-        put_u16(&mut payload, 2); // no sound
-        put_u16(&mut payload, 1); // default score
+        // judgment-enabled uses default sound/score; disabled uses none policies.
+        let judgment_enabled = note.flags & 0b1 != 0;
+        put_u16(&mut payload, if judgment_enabled { 1 } else { 2 }); // default/none sound
+        put_u16(&mut payload, if judgment_enabled { 1 } else { 2 }); // default/none score
         put_u64(&mut payload, 0);
         put_u32(&mut payload, NULL_INDEX);
         put_u32(&mut payload, 0);
@@ -571,25 +783,33 @@ fn expression_node(
     put_u32(nodes, immediate);
 }
 
-fn distance_section(analytic_line_id: u64, evaluable_line_id: u64) -> Vec<u8> {
+fn distance_section_for_lines(lines: &[LineFixture]) -> Vec<u8> {
     let mut section = Vec::new();
-    put_u32(&mut section, 2);
-    section.extend_from_slice(&distance_record(
-        evaluable_line_id,
-        EVALUABLE_SPEED_DESCRIPTOR_INDEX,
-        20.0,
-        2,
-        2.328_306_436_538_696_3e-10,
-        &[0.0, 2.0],
-    ));
-    section.extend_from_slice(&distance_record(
-        analytic_line_id,
-        ANALYTIC_SPEED_DESCRIPTOR_INDEX,
-        10.0,
-        1,
-        0.0,
-        &[0.0],
-    ));
+    put_u32(&mut section, lines.len() as u32);
+    for (index, line) in lines.iter().enumerate() {
+        // Match historical nonempty fixture classifications for the first two slots
+        // when possible; additional Lines reuse portable-analytic constant speed.
+        let (classification, max_error, boundaries, speed) = if index == 0 && lines.len() >= 2 {
+            (
+                2u8,
+                2.328_306_436_538_696_3e-10,
+                &[0.0, 2.0][..],
+                EVALUABLE_SPEED_DESCRIPTOR_INDEX,
+            )
+        } else if index == 1 && lines.len() >= 2 {
+            (1u8, 0.0, &[0.0][..], ANALYTIC_SPEED_DESCRIPTOR_INDEX)
+        } else {
+            (1u8, 0.0, &[0.0][..], ANALYTIC_SPEED_DESCRIPTOR_INDEX)
+        };
+        section.extend_from_slice(&distance_record(
+            line.id,
+            speed,
+            line.initial_floor,
+            classification,
+            max_error,
+            boundaries,
+        ));
+    }
     section
 }
 

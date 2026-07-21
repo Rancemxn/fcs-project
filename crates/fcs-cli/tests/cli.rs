@@ -70,3 +70,40 @@ fn format_rejects_invalid_source() {
     let output = bin().arg("format").arg(&path).output().unwrap();
     assert_eq!(output.status.code(), Some(3));
 }
+
+#[test]
+fn compile_emits_loadable_fcbc_from_minimal_chart() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source = root.join("docs/conformance/fcs5/source/valid/minimal-chart.fcs");
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out.fcbc");
+    let output = bin()
+        .arg("compile")
+        .arg(&source)
+        .arg("--output")
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(out.is_file());
+    let bytes = fs::read(&out).unwrap();
+    assert!(bytes.starts_with(b"FCSB"));
+    assert!(bytes.len() > 128);
+    let inspect = bin()
+        .arg("inspect")
+        .arg(&out)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        inspect.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&inspect.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&inspect.stdout);
+    assert!(stdout.contains("\"coreLoaded\":true") || stdout.contains("lineCount"));
+}

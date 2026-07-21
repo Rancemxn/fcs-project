@@ -24,7 +24,10 @@ mod rpe;
 mod rpe_canonical;
 
 pub use exact::{DecimalLimits, ExactDecimal, ExactNumberError, ExactRational};
-pub use export::{ExportError, export_pgr_v3, format_fcs_source, roundtrip_pgr_v3_public_bytes};
+pub use export::{
+    CapabilitySet, ExportError, NegotiationAction, export_pec_line, export_pgr_v3, export_rpe_json,
+    format_fcs_source, negotiate_export, roundtrip_pgr_v3_public_bytes,
+};
 pub use fixture_lane::{
     COPYRIGHT_FIXTURE_ROOT_ENV, CopyrightLaneStatus, FixtureClass, FixtureEntry,
     FixtureExpectation, FixtureFormat, FixtureImportProducts, FixtureLaneError, FixtureManifest,

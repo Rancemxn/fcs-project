@@ -230,6 +230,249 @@ fn chart_time_to_pgr_t(chart_time_seconds: f64, bpm: f64) -> f64 {
     chart_time_seconds * 32.0 * bpm / 60.0
 }
 
+/// Declared target capability surface used before export (I8.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilitySet {
+    pub format: &'static str,
+    pub version: &'static str,
+    pub time: bool,
+    pub notes: bool,
+    pub tracks: bool,
+    pub expressions: bool,
+    pub resources: bool,
+}
+
+impl CapabilitySet {
+    pub const fn pgr_v3() -> Self {
+        Self {
+            format: "pgr",
+            version: "3",
+            time: true,
+            notes: true,
+            tracks: true,
+            expressions: false,
+            resources: false,
+        }
+    }
+
+    pub const fn rpe_json() -> Self {
+        Self {
+            format: "rpe",
+            version: "json",
+            time: true,
+            notes: true,
+            tracks: true,
+            expressions: false,
+            resources: false,
+        }
+    }
+
+    pub const fn pec_line() -> Self {
+        Self {
+            format: "pec",
+            version: "line-command",
+            time: true,
+            notes: true,
+            tracks: false,
+            expressions: false,
+            resources: false,
+        }
+    }
+}
+
+/// Negotiation outcome before writing a target format (I8.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NegotiationAction {
+    Direct,
+    Equivalent,
+    Bake,
+    Preserve,
+    Drop,
+    Unsupported,
+}
+
+impl NegotiationAction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::Equivalent => "equivalent",
+            Self::Bake => "bake",
+            Self::Preserve => "preserve",
+            Self::Drop => "drop",
+            Self::Unsupported => "unsupported",
+        }
+    }
+}
+
+/// Negotiate chart features against a target capability set.
+pub fn negotiate_export(
+    chart: &CanonicalChart,
+    target: &CapabilitySet,
+) -> Result<NegotiationAction, ExportError> {
+    if !target.time || !target.notes {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!(
+                "target {}@{} lacks required time/note capability",
+                target.format, target.version
+            ),
+        ));
+    }
+    let has_tracks = !chart.tracks().tracks().is_empty();
+    if has_tracks && !target.tracks {
+        return Ok(NegotiationAction::Bake);
+    }
+    if chart.notes().notes().is_empty() && chart.lines().lines().count() <= 1 {
+        return Ok(NegotiationAction::Direct);
+    }
+    Ok(NegotiationAction::Equivalent)
+}
+
+/// Export a modern RPE JSON chart from CanonicalChart (I8.6 product surface).
+pub fn export_rpe_json(chart: &CanonicalChart) -> Result<Vec<u8>, ExportError> {
+    let _ = negotiate_export(chart, &CapabilitySet::rpe_json())?;
+    let offset_ms = chart
+        .metadata()
+        .sync()
+        .map(|sync| (sync.audio_offset().seconds() * 1000.0).round() as i64)
+        .unwrap_or(0);
+    let bpm = chart
+        .time_map()
+        .segments()
+        .next()
+        .map(|(_, _, bpm)| bpm)
+        .unwrap_or(120.0);
+    let mut judge_lines = Vec::new();
+    for line in chart.lines().lines() {
+        let line_id = line.id().value();
+        let mut notes = Vec::new();
+        for note in chart.notes().notes() {
+            if note.gameplay().line().value() != line_id {
+                continue;
+            }
+            let start = seconds_to_rpe_beat(note.gameplay().time().chart_time_seconds(), bpm);
+            let end = note
+                .gameplay()
+                .end_time()
+                .map(|time| seconds_to_rpe_beat(time.chart_time_seconds(), bpm))
+                .unwrap_or(start);
+            let note_type = match note.kind() {
+                CanonicalNoteKind::Tap => 1,
+                CanonicalNoteKind::Hold => 2,
+                CanonicalNoteKind::Flick => 3,
+                CanonicalNoteKind::Drag => 4,
+            };
+            let above = match note.gameplay().side() {
+                CanonicalNoteSide::Above => 1,
+                CanonicalNoteSide::Below => 0,
+            };
+            notes.push(json!({
+                "type": note_type,
+                "startTime": start,
+                "endTime": end,
+                "positionX": note.presentation().position_x(),
+                "speed": 4.5,
+                "above": above,
+                "isFake": if note.gameplay().judgment_enabled() { 0 } else { 1 }
+            }));
+        }
+        judge_lines.push(json!({
+            "bpmfactor": 1,
+            "eventLayers": [{"speedEvents": [{
+                "startTime": [0, 0, 1],
+                "endTime": [4, 0, 1],
+                "start": 1,
+                "end": 1
+            }]}],
+            "notes": notes,
+            "father": -1
+        }));
+    }
+    if judge_lines.is_empty() {
+        judge_lines.push(json!({
+            "bpmfactor": 1,
+            "eventLayers": [{"speedEvents": [{
+                "startTime": [0, 0, 1],
+                "endTime": [4, 0, 1],
+                "start": 1,
+                "end": 1
+            }]}],
+            "notes": [],
+            "father": -1
+        }));
+    }
+    let root = json!({
+        "META": { "RPEVersion": 150, "offset": offset_ms, "name": "fcs-export" },
+        "BPMList": [{ "startTime": [0, 0, 1], "bpm": bpm }],
+        "judgeLineList": judge_lines
+    });
+    serde_json::to_vec_pretty(&root)
+        .map_err(|error| ExportError::new("conversion.internal", error.to_string()))
+}
+
+/// Export a Phira line-command PEC chart from CanonicalChart (I8.7 product surface).
+pub fn export_pec_line(chart: &CanonicalChart) -> Result<Vec<u8>, ExportError> {
+    let _ = negotiate_export(chart, &CapabilitySet::pec_line())?;
+    let offset = chart
+        .metadata()
+        .sync()
+        .map(|sync| sync.audio_offset().seconds())
+        .unwrap_or(0.0);
+    // Phira PEC offset uses 150ms bias: raw = seconds*1000 - 150.
+    let raw_offset = (offset * 1000.0 - 150.0).round() as i64;
+    let bpm = chart
+        .time_map()
+        .segments()
+        .next()
+        .map(|(_, _, bpm)| bpm)
+        .unwrap_or(120.0);
+    let mut lines = String::new();
+    lines.push_str(&format!("{raw_offset}\n"));
+    lines.push_str(&format!("bp 0.00 {bpm}\n"));
+    for note in chart.notes().notes() {
+        let beat = note.gameplay().time().chart_time_seconds() * bpm / 60.0;
+        let x = ((note.presentation().position_x() / 2048.0) + 0.5) * 2048.0;
+        let side = match note.gameplay().side() {
+            CanonicalNoteSide::Above => 1,
+            CanonicalNoteSide::Below => 2,
+        };
+        let fake = if note.gameplay().judgment_enabled() {
+            0
+        } else {
+            1
+        };
+        match note.kind() {
+            CanonicalNoteKind::Hold => {
+                let end = note
+                    .gameplay()
+                    .end_time()
+                    .map(|time| time.chart_time_seconds() * bpm / 60.0)
+                    .unwrap_or(beat + 1.0);
+                lines.push_str(&format!("n2 0 {beat:.2} {end:.2} {x:.0} {side} {fake}\n"));
+            }
+            CanonicalNoteKind::Tap => {
+                lines.push_str(&format!("n1 0 {beat:.2} {x:.0} {side} {fake}\n"));
+            }
+            CanonicalNoteKind::Flick => {
+                lines.push_str(&format!("n3 0 {beat:.2} {x:.0} {side} {fake}\n"));
+            }
+            CanonicalNoteKind::Drag => {
+                lines.push_str(&format!("n4 0 {beat:.2} {x:.0} {side} {fake}\n"));
+            }
+        }
+        lines.push_str("# 1.000\n& 1.000\n");
+    }
+    Ok(lines.into_bytes())
+}
+
+fn seconds_to_rpe_beat(seconds: f64, bpm: f64) -> [i64; 3] {
+    let beats = seconds * bpm / 60.0;
+    let whole = beats.floor() as i64;
+    let frac = beats - whole as f64;
+    let numerator = (frac * 1000.0).round() as i64;
+    [whole, numerator, 1000]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,5 +507,28 @@ mod tests {
         assert_eq!(notes_a, notes_b);
         assert!(lines_a >= 1);
         assert!(notes_a >= 1);
+    }
+
+    #[test]
+    fn capability_negotiation_and_rpe_pec_export_emit_bytes() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let bytes = fs::read(
+            root.join("docs/conformance/conversion/public-fixtures/sources/pgr-minimal.pgr.json"),
+        )
+        .unwrap();
+        let artifact = SourceArtifact::new("chart.json", ArtifactRole::Chart, bytes).unwrap();
+        let parsed = parse_json_document(SourceFormat::Pgr, &artifact).unwrap();
+        let source = parse_pgr_document(&parsed, PgrLimits::default()).unwrap();
+        let floor = ExactDecimal::parse("120", DecimalLimits::default()).unwrap();
+        let binding = PgrProfileBinding::new(PgrProfile::PhiraV1, floor).unwrap();
+        let semantic = interpret_pgr(&source, &binding).unwrap();
+        let import = lower_pgr_to_canonical(&semantic, &artifact).unwrap();
+        let chart = import.compilation().chart();
+        assert_eq!(
+            negotiate_export(chart, &CapabilitySet::pgr_v3()).unwrap(),
+            NegotiationAction::Equivalent
+        );
+        assert!(!export_rpe_json(chart).unwrap().is_empty());
+        assert!(!export_pec_line(chart).unwrap().is_empty());
     }
 }

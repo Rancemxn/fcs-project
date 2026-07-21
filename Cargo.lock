@@ -320,6 +320,8 @@ dependencies = [
  "fcs-conversion",
  "fcs-fcbc",
  "fcs-model",
+ "fcs-render",
+ "fcs-runtime",
  "fcs-source",
  "serde_json",
  "tempfile",
@@ -345,8 +347,11 @@ name = "fcs-fcbc"
 version = "0.2.0"
 dependencies = [
  "crc",
+ "fcs-model",
+ "fcs-source",
  "serde",
  "sha2",
+ "tempfile",
  "toml",
 ]
 

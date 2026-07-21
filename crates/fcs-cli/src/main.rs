@@ -14,7 +14,11 @@ use fcs_conversion::{
     lower_rpe_to_canonical, parse_json_document, parse_pec_document, parse_pgr_document,
     parse_rpe_document,
 };
-use fcs_fcbc::{load_chart, load_container};
+use fcs_fcbc::{load_chart, load_container, write_from_compilation};
+use fcs_render::{DecodedRenderChart, evaluate_semantic_draw_list, load_render};
+use fcs_runtime::evaluate_easing;
+use fcs_source::ResourceLimits;
+use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
 
 /// Stable process exit categories for the product CLI.
@@ -78,6 +82,9 @@ enum Commands {
         /// Emit JSON.
         #[arg(long)]
         json: bool,
+        /// When the package carries Render, evaluate a semantic draw-list summary.
+        #[arg(long)]
+        render: bool,
     },
     /// Convert an external chart into the product canonical import path.
     Convert {
@@ -120,7 +127,7 @@ fn main() -> ExitCode {
         Commands::Check { path, json } => cmd_check(&path, json),
         Commands::Format { path, output } => cmd_format(&path, output.as_deref()),
         Commands::Compile { path, output } => cmd_compile(&path, output.as_deref()),
-        Commands::Inspect { path, json } => cmd_inspect(&path, json),
+        Commands::Inspect { path, json, render } => cmd_inspect(&path, json, render),
         Commands::Convert {
             format,
             profile,
@@ -234,37 +241,67 @@ fn cmd_compile(path: &Path, output: Option<&Path>) -> ExitCode {
             return ExitCategory::InputInvalid.code();
         }
     };
-    if let Err(diagnostics) = parse_document(text).into_result() {
-        let message = diagnostics
-            .first()
-            .map(|diagnostic| format!("{}: {}", diagnostic.code(), diagnostic.message()))
-            .unwrap_or_else(|| "source invalid".into());
-        eprintln!("error: {message}");
-        return ExitCategory::InputInvalid.code();
-    }
-    // Full source→CanonicalCompilation→FCBC product compiler remains a later
-    // assembly unit. This command still exercises the product parser boundary
-    // and emits a deterministic compile summary for CLI conformance wiring.
-    let summary = serde_json::json!({
-        "status": "parsed",
-        "path": path.display().to_string(),
-        "sourceVersion": "5.0.0",
-        "note": "product frontend parse succeeded; general FCBC emit from arbitrary source remains a later stage"
-    });
-    let rendered = summary.to_string();
-    match output {
-        Some(path) => {
-            if let Err(error) = fs::write(path, rendered.as_bytes()) {
-                eprintln!("error: failed to write {}: {error}", path.display());
-                return ExitCategory::Internal.code();
-            }
+    let document = match parse_document(text).into_result() {
+        Ok(document) => document,
+        Err(diagnostics) => {
+            let message = diagnostics
+                .first()
+                .map(|diagnostic| format!("{}: {}", diagnostic.code(), diagnostic.message()))
+                .unwrap_or_else(|| "source invalid".into());
+            eprintln!("error: {message}");
+            return ExitCategory::InputInvalid.code();
         }
-        None => println!("{rendered}"),
+    };
+    let workspace = path.parent().unwrap_or_else(|| Path::new("."));
+    let compilation = match document.canonical_compilation(
+        CompileTimeLimits::default(),
+        workspace,
+        ResourceLimits::default(),
+    ) {
+        Ok(compilation) => compilation,
+        Err(diagnostics) => {
+            let message = diagnostics
+                .first()
+                .map(|diagnostic| format!("{}: {}", diagnostic.code(), diagnostic.message()))
+                .unwrap_or_else(|| "canonical compilation failed".into());
+            eprintln!("error: {message}");
+            return ExitCategory::InputInvalid.code();
+        }
+    };
+    let fcbc = match write_from_compilation(&compilation) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprintln!("error: {}: {}", error.category(), error.message());
+            return ExitCategory::Internal.code();
+        }
+    };
+    // Product load proves the emitted bytes are a real FCBC package.
+    let loaded = match load_chart(&fcbc) {
+        Ok(chart) => chart,
+        Err(category) => {
+            eprintln!("error: compiled FCBC failed product load: {category}");
+            return ExitCategory::Internal.code();
+        }
+    };
+    let out_path = output
+        .map(PathBuf::from)
+        .unwrap_or_else(|| path.with_extension("fcbc"));
+    if let Err(error) = fs::write(&out_path, &fcbc) {
+        eprintln!("error: failed to write {}: {error}", out_path.display());
+        return ExitCategory::Internal.code();
     }
+    println!(
+        "compiled {} -> {} bytes={} lines={} notes={}",
+        path.display(),
+        out_path.display(),
+        fcbc.len(),
+        loaded.lines.len(),
+        loaded.notes.len()
+    );
     ExitCategory::Success.code()
 }
 
-fn cmd_inspect(path: &Path, json: bool) -> ExitCode {
+fn cmd_inspect(path: &Path, json: bool, render: bool) -> ExitCode {
     let bytes = match read_fcbc_bytes(path) {
         Ok(bytes) => bytes,
         Err(category) => return category.code(),
@@ -277,6 +314,19 @@ fn cmd_inspect(path: &Path, json: bool) -> ExitCode {
         }
     };
     let core = load_chart(&bytes).ok();
+    let render_summary = if render {
+        match load_render(&bytes) {
+            Ok(decoded) => Some(render_summary(&decoded)),
+            Err(category) => {
+                eprintln!("error: render load failed: {category}");
+                return ExitCategory::InputInvalid.code();
+            }
+        }
+    } else {
+        None
+    };
+    // Prove runtime domain assembly is live for CLI (easing identity at t=0).
+    let _ = evaluate_easing(fcs_runtime::EasingId::Linear as u16, 0.0);
     if json {
         let body = serde_json::json!({
             "byteLength": container.byte_length,
@@ -287,6 +337,7 @@ fn cmd_inspect(path: &Path, json: bool) -> ExitCode {
             "coreLoaded": core.is_some(),
             "lineCount": core.as_ref().map(|chart| chart.lines.len()),
             "noteCount": core.as_ref().map(|chart| chart.notes.len()),
+            "render": render_summary,
         });
         println!("{body}");
     } else {
@@ -307,8 +358,24 @@ fn cmd_inspect(path: &Path, json: bool) -> ExitCode {
         } else {
             println!("core: framing-only (full Core load not applicable for this file)");
         }
+        if let Some(summary) = render_summary {
+            println!(
+                "render layers={} nodes={} drawOps={}",
+                summary["layerCount"], summary["nodeCount"], summary["drawOps"]
+            );
+        }
     }
     ExitCategory::Success.code()
+}
+
+fn render_summary(decoded: &DecodedRenderChart) -> serde_json::Value {
+    let draw = evaluate_semantic_draw_list(decoded);
+    serde_json::json!({
+        "layerCount": decoded.layers.len(),
+        "nodeCount": decoded.nodes.len(),
+        "drawOps": draw.len(),
+        "viewport": [decoded.viewport_width, decoded.viewport_height],
+    })
 }
 
 fn cmd_convert(
