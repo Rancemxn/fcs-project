@@ -26,6 +26,9 @@
 | `crc` | 3.4.0 | `2c8fd9615d620b5a5f8c9556b79a4ca173d6d401` | conformance 与 I7 CRC-32/ISO-HDLC |
 | `image` | 0.25.10 | `76e57184f22772dad1138e96954e57945406b15e` | fixture decode 与 I9 受限 PNG/lossless WebP decode；不定义 sampling/raster |
 | `nalgebra` | 0.35.0 | `5f927f6c821d0ced07a0e086e5f37251cab2a8c3` | I4 production 私有 fixed-size matrix storage；运算顺序和 public type 仍归项目 |
+| `num-bigint` | 0.4.8 | `65330056d6c00def4c6cda78c87453f4c2a76913` | I6.2a bounded exact decimal/rational source semantics；不作为 canonical numeric policy |
+| `num-rational` | 0.4.2 | `4d55ad22ac86ebbc4cb45d79a956e4a1f7af57d1` | I6.2a exact T/32、chart time、coordinate、distance 和 profile mapping arithmetic |
+| `num-traits` | 0.2.19 | `7ec3d41d39b28190ec1d42db38021107b3951f3a` | I6.2a numeric zero/sign/conversion traits；不定义 FCS rounding or finite policy |
 | `num_enum` | 0.7.6 | `f11d81c6cb644489f8a0fc24f9eea9a53d66f92e` | I7/I9 closed wire enum checked conversion；不生成 catch-all 语义 |
 | `proptest` | 1.11.0 | `7f1367f9a4dc8440c47b93166a38ed064f63ea8c` | parser/runtime/codec property 与 shrinking |
 | `ryu` | 1.0.23 | `f0b52bb194befe6fd242154f2182fafd43a819b8` | I8 finite f64 shortest-roundtrip decimal 候选；FCS canonical policy 再归一化 |
@@ -48,6 +51,9 @@ toolchain 和 full gate 为实际兼容性证据。
 |---|---|---|---:|---|
 | `astro-float` 0.9.5 | `default-features = false`, `std` | MIT | README: 1.62.1 | `astro-float-num` 0.3.6、`astro-float-macro` 0.4.5 及其纯 Rust arithmetic/proc-macro 依赖；不得激活 `random`、`serde`、Rug、GMP 或 MPFR |
 | `bitflags` 2.13.1 | defaults only；owning stage 激活前不得增加 `serde`/`bytemuck` | MIT OR Apache-2.0 | 1.56.0 | 无必需运行时依赖 |
+| `num-bigint` 0.4.8 | `default-features = false`, `std` | MIT OR Apache-2.0 | 1.60 | `num-integer` 0.1.46、`num-traits` 0.2.19；不启用 `rand`/`serde`/`arbitrary` |
+| `num-rational` 0.4.2 | `default-features = false`, `num-bigint`, `std` | MIT OR Apache-2.0 | 1.60 | `num-bigint` 0.4.8、`num-integer` 0.1.46、`num-traits` 0.2.19；不启用 `serde` |
+| `num-traits` 0.2.19 | `default-features = false`, `std` | MIT OR Apache-2.0 | 1.60 | 无必需运行时依赖；不启用 `libm` |
 | `num_enum` 0.7.6 | `default-features = false` | BSD-3-Clause OR MIT OR Apache-2.0 | 1.70.0 | `num_enum_derive` 0.7.6 及其 proc-macro 闭包；不激活 `std` 或 `complex-expressions` |
 | `ryu` 1.0.23 | defaults only | Apache-2.0 OR BSL-1.0 | 1.71 | 无运行时传递依赖 |
 | `serde` 1.0.228 | default `std` + workspace `derive` | MIT OR Apache-2.0 | 1.56 | `serde_core` 1.0.228 与 `serde_derive` 1.0.228 proc-macro closure；derive 不定义项目 schema 或 diagnostic |
@@ -59,14 +65,21 @@ toolchain 和 full gate 为实际兼容性证据。
 `astro-float` 在 I4.8、`proptest` 在 I4.9 进入 `fcs-runtime` dev graph；两者都不进入 production
 dependency tree。I5.3 复用 `fcs-model` 已激活的 `sha2` 0.11.0 计算 exact resource bytes digest，并将
 `tempfile` 3.27.0 仅加入 `fcs-source` dev graph，以隔离 workspace/symlink/非普通文件测试；resolver
-production graph 不依赖 `tempfile`。其余五项先作为精确版本的 workspace catalog，分别到 owning
-stage 才写入 crate manifest 和 lockfile；catalog entry 本身不能被描述为已实现能力。
+production graph 不依赖 `tempfile`。`bitflags`、`clap`、`num_enum`、`ryu`、`thiserror`、`ttf-parser` 和
+`zip` 仍是精确版本的 workspace catalog，分别到 owning stage 才写入 crate manifest 和 lockfile；catalog
+entry 本身不能被描述为已实现能力。
 
 I6.1 将 `serde` 1.0.228、`serde_json` 1.0.150、既有 `sha2` 0.11.0 与 `fcs-model` 激活到
 `fcs-conversion` 产品 graph。`serde_json` 只增加 `raw_value` feature，用于让上游 parser 验证 JSON
 grammar，同时由项目 IR 保留 member/array order、duplicate keys、raw string spelling 和 number
 lexeme；不激活 `preserve_order` 或 `arbitrary_precision`。cataloged `zip` 仍未激活，直到 I6 明确交付
 package input surface。
+
+I6.2a 将 `num-bigint` 0.4.8、`num-rational` 0.4.2 和 `num-traits` 0.2.19 以精确版本激活到
+`fcs-conversion` 产品 graph。三个 crate 只承载 bounded exact rational mechanism；PGR profile 的
+舍入、坐标边界、时间公式、speed/floor cache precedence 和 finite Float64 边界仍由项目实现与
+Conversion Specification 固定。`refer/dependencies/` 已 detached checkout 到本表发布 SHA，Cargo 不从
+`refer/` 解析 path dependency；没有 Rug/GMP/MPFR。
 
 ## 已完成代码的迁移边界
 
@@ -75,6 +88,8 @@ package input surface。
 - I4 及以前的新增依赖限于 I4.8 dev-only `astro-float` 与 I4.9 dev-only `proptest`。现有 `EasingId::try_from`、
   canonical opcode、feature list 和 handwritten finite checks较短且携带领域错误，不改为
   `num_enum`、`bitflags` 或通用 numeric wrapper。
+- I6.2a 使用 `num-bigint`/`num-rational`/`num-traits` 只替代未受规范约束的任意精度算术；不回迁或机械改写
+  I4 以前已经闭合的 binary64/runtime 代码，也不把通用 rational wrapper 暴露为 canonical model API。
 - `thiserror` 只在一个 error enum 正被功能性修改时用于保持等价的 `Display`、`source` 与 public
   shape；不单独发起全仓机械迁移。
 - `tempfile` 已随 I5.3 resource resolver 的 dev-only integration tests 激活；I10 可继续用于同目录

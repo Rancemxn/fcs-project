@@ -26,6 +26,33 @@
 - I6.1 不创建 `ProfileBinding`、`SourceSemanticDocument`、Repair、canonical lowering、package/ZIP 或
   exporter surface。通过 parse 只证明 source shape 合法，不证明来源语义或转换等价。
 
+## I6.2a PGR typed source 与 semantic IR
+
+I6.2a 是 I6.2 的第一个可独立验收单元；它固定 PGR v1/v3 的 profile-bound source semantic 输入，暂不
+装配 canonical model。
+
+- `ExactDecimal` 保留原始 JSON number lexeme，并在 bounded `num-bigint`/`num-rational` 表示中保持 exact
+  value；digit/exponent、entity count 和最终 finite Float64 参数边界均显式失败。
+- `parse_pgr_document` 要求明确的 v1/v3 root 和 typed Line/event/speed/Note shape，拒绝 duplicate known
+  fields，保留 root/Line/event/Note unknown members 的 source order；v3 要求 split `start2`/`end2`，v1
+  packed extensions 仍作为 unknown data。
+- `PgrProfileBinding` 只接受四个显式 profile：`pgr.phira.v1`、`pgr.phira.v3`、
+  `pgr.phichain-import.v1`、`pgr.phichain-import.v3`，并要求 finite-positive `floorScalePx`；不存在
+  automatic profile/default。
+- `interpret_pgr` 生成 exact source Line Beat、chart time、offset、move/rotation/alpha、speed distance
+  和 Note/Side/Hold semantic IR。它固定 per-Line BPM 与 first-Line BPM、v1 trunc/520 与 round/530、v3
+  normalized XY、Note X 108 与 320/3、clockwise rotation、Phira/Phichain Hold speed 差异，以及从 0
+  连续 speed integration 对 raw `floorPosition` 的 exact cache 检查。
+- 不隐式排序、裁剪、填充、交换、clamp、重建 cache 或执行 Repair；反向/重叠 interval、非法 alpha、负/越界
+  packed coordinate、invalid Hold、缺失/gap/overlap/negative speed coverage 和 cache mismatch 直接产生
+  typed `PgrError`。
+
+验收证据：`crates/fcs-conversion/src/{exact.rs,pgr.rs}` 的 focused unit tests 执行 checked-in
+`mapping-vectors.toml` 的 12 个 PGR source-semantic vectors，并覆盖四 profile divergence、v3 shape、
+unknown order、limits 和 invalid paths。Rust compile/Clippy/nextest、locked dependency、bounded fuzz、diff
+与 clean-worktree 仍只由 exact-head GitHub full gate 提供；I6.2a 不包含 CanonicalChart、ConversionReport、
+profile registry/selection、Repair、package/ZIP、RPE/PEC 或 round-trip fixture。
+
 ## 验收证据
 
 - `crates/fcs-conversion/src/lib.rs` 单元测试覆盖 duplicate/order、raw key/value string、number lexeme、
@@ -37,7 +64,8 @@
 
 ## 后续单元
 
-- I6.2：PGR v1/v3 dialect validation、typed source semantic IR 与 canonical lowering。
+- I6.2b：将 I6.2a 的 profile-bound PGR semantic IR 装配为 canonical model/provenance/report；不得重新解释
+  PGR source 或引入隐式 profile。
 - I6.3：RPE dialect validation、typed source semantic IR 与 canonical lowering。
 - I6.4：PEC command parser、source order 和版本化 offset/cv profile。
 - I6.5：content-hash-bound profile registry、detection evidence 与无猜测 selection。

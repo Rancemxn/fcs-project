@@ -559,7 +559,8 @@ resource u64 ID 与 assembly 仍归 I7；I5.7 新增 deterministic `ConversionRe
   未经 FCS 猜测的 lossless parsed source；parser dialect、profile selection、Repair 分层后才得到
   source semantic IR，lowering 才产生 CanonicalChart/provenance/report。只有明确纳入 package input
   surface 后才为 owning converter crate 激活 defaults-disabled `zip`。
-- **I6.2 PGR v1/v3**：line BPM/time、event、coordinate、speed/floor validation、Note/fake/side/Hold。
+- **I6.2 PGR v1/v3**：line BPM/time、event、coordinate、speed/floor validation、Note/fake/side/Hold；拆为
+  I6.2a typed source/profile-bound semantic IR 与 I6.2b canonical assembly，前者不得提前声称 I6.2 完成。
 - **I6.3 RPE**：BPMList/exact Beat、bpmfactor、multi-layer blend、father/rotateWithFather、Bezier、
   controls、visibleTime、resource/metadata。
 - **I6.4 PEC**：direct decimal Beat/bp、150/175ms offset profile、Note/Line X、line point/easing、
@@ -573,12 +574,14 @@ resource u64 ID 与 assembly 仍归 I7；I5.7 新增 deterministic `ConversionRe
 - **I6.7 Fixtures**：公开最小/feature/extreme fixture + opt-in copyright lane；每个有 canonical
   snapshot 和 expected report。
 
-当前交付状态：I6.1 新增 owning `fcs-conversion` crate、bounded `SourceArtifactSet`、exact bytes/SHA-256
-identity、lossless JSON IR 和 PGR/RPE `ParsedSourceDocument` entry point。object member/array order、
-duplicate keys、raw string spelling 与 number lexeme 均保留；parser 不解释任何来源字段。固定
-`serde` 1.0.228 与 `serde_json` 1.0.150 已进入产品 graph，后者只额外启用 `raw_value`。profile、Repair、
-PGR/RPE semantic mapping、PEC、canonical lowering、ZIP/package input 和真实 fixture 仍归 I6.2–I6.7；
-详细边界见 `docs/plans/i6-importers.md`。
+当前交付状态：I6.1 已建立 owning `fcs-conversion` crate、bounded `SourceArtifactSet`、exact bytes/SHA-256
+identity、lossless JSON IR 和 PGR/RPE `ParsedSourceDocument` entry point。当前 I6.2a work-unit 增加
+bounded exact decimal/rational、typed PGR v1/v3 source 和四个显式 profile-bound semantic IR；它保留
+object member/array order、duplicate keys、raw string spelling 与 number lexeme，执行 checked-in PGR mapping
+vectors 和 invalid boundary tests，但不装配 CanonicalChart/provenance/report。固定 `serde` 1.0.228、
+`serde_json` 1.0.150 与 `num-bigint` 0.4.8/`num-rational` 0.4.2/`num-traits` 0.2.19 已进入对应
+`fcs-conversion` graph；profile registry、Repair、I6.2b canonical assembly、RPE/PEC、ZIP/package input、
+真实 round-trip fixture 和 exporter 仍归后续 I6 单元。详细边界见 `docs/plans/i6-importers.md`。
 
 ### I7：FCBC writer、loader 与 ABI
 
