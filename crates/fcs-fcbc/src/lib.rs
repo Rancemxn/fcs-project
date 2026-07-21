@@ -1,13 +1,15 @@
-//! Product FCBC 2.0 container framing and codec primitives (I7.1–I7.2).
+//! Product FCBC 2.0 container framing, Core section load, and execution queries.
 //!
-//! This crate owns little-endian encode/decode helpers, CRC-32/ISO-HDLC section
-//! checksums, the 128-byte header, and 40-byte section table validation. Full
-//! section record decode, descriptor ABI evaluation, and canonical assembly
-//! remain later I7 units.
+//! I7.1–I7.2 own little-endian encode/decode helpers, CRC-32/ISO-HDLC section
+//! checksums, the 128-byte header, and 40-byte section table validation.
+//! I7.3 owns product Core section decode via [`load_chart`]. Descriptor
+//! evaluation queries for Execution ABI closure are also product surfaces.
 
 mod codec;
 mod container;
 mod error;
+mod evaluator;
+mod loader;
 
 pub use codec::{
     decode_f64_le, decode_i64_le, decode_u8, decode_u16_le, decode_u32_le, decode_u64_le,
@@ -20,3 +22,13 @@ pub use container::{
     load_container_with_identity,
 };
 pub use error::{FcbcError, FcbcResult};
+pub use evaluator::{
+    DescriptorEvaluation, DistanceEvaluation, EvaluationEnvironment, query_descriptor,
+    query_distance, query_scroll_coordinate,
+};
+pub use loader::{
+    DecodedChart, DescriptorKind, DistanceClassification, DistanceDescriptor, Domain,
+    ExpressionNode, LineRecord, NULL_INDEX, NoteRecord, PropertyDescriptor, RuntimeValue,
+    SectionInfo, Segment, TempoPoint, ValueType, load, load_chart,
+    validate_descriptor_env_p_context, validate_descriptor_environment_for_target,
+};

@@ -734,4 +734,35 @@ mod tests {
             "fcbc.invalid-header"
         );
     }
+
+    #[test]
+    fn product_core_load_decodes_nonempty_execution_golden() {
+        let (manifest, bytes) = load_golden("nonempty-execution.toml");
+        let chart = crate::load_chart(&bytes).expect("product Core load must accept golden");
+        assert_eq!(chart.container_profile, 3);
+        assert_eq!(chart.lines.len(), 2);
+        assert_eq!(chart.notes.len(), 2);
+        assert_eq!(chart.descriptors.len(), 14);
+        assert_eq!(chart.constants.len(), 14);
+        assert_eq!(chart.expressions.len(), 40);
+        assert_eq!(chart.distances.len(), 2);
+        assert_eq!(chart.sections.len(), manifest.section.len());
+    }
+
+    #[test]
+    fn product_framing_accepts_runtime_profile_goldens() {
+        for name in ["minimal-runtime.toml", "embedded-resource.toml"] {
+            let (manifest, bytes) = load_golden(name);
+            let container = load_container(&bytes).expect("framing");
+            assert_eq!(container.byte_length as u64, manifest.decoded_length);
+            assert_eq!(
+                container.header.profile.as_str(),
+                manifest.container_profile
+            );
+            // Empty TempoMap goldens are framing fixtures; full Core load requires a
+            // non-empty tempo map and is covered by nonempty-execution.
+            assert_eq!(container.header.profile, ContainerProfile::Runtime);
+            assert_eq!(container.sections.len(), manifest.section.len());
+        }
+    }
 }
