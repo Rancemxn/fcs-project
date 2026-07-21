@@ -529,7 +529,7 @@ sampled/BakedCurve 路径都不进入标准 runtime。
 - **I5.4 Sync**：唯一 offset 公式、preview audio domain 和 player/converter shared test vector。
 - **I5.5 Typed custom**：ordered object、duplicate key、depth/count/string/byte limits和 FCBC-compatible
   value restrictions。
-- **I5.6 Provenance**：originState、sourcePath/value/order、mapping rule 和 stale dependency graph。
+- **I5.6 Provenance**：originState、logical sourcePath/value/order、mapping rule 和 stale dependency graph；`CanonicalCompilation`/`DistributionMetadata` 聚合，不把 source AST 放进 CanonicalChart。
 - **I5.7 Report/repair model**：stable category/rule ID、status aggregation、deterministic entries 和
   old/new typed values。
 
@@ -547,9 +547,11 @@ tests；生产 hash 使用既有 `sha2` 0.11.0。I5.4 固定唯一
 `audioTime = chartTime + audioOffset` 双向公式、audio-domain half-open preview 与 player/converter
 shared vectors，并在 canonical metadata boundary 拒绝 preview-without-audio 与非法 preview domain。
 I5.5 新增 public `CustomValueLimits`，在 canonical custom lowering 上强制 depth/field/string/total-byte
-budget 与既有 ordered/homogeneous/finite custom 限制。详细边界与证据见
+budget 与既有 ordered/homogeneous/finite custom 限制。I5.6 新增 source-free `OriginState`/
+`RestrictedProvenanceFact`/`ProvenanceGraph`/`DistributionMetadata` 与 `CanonicalCompilation`
+聚合，以及 native 空 distribution 的 `Document::canonical_compilation`。详细边界与证据见
 `docs/plans/i5-canonical-compilation.md`。Render payload/scene/reference/codec closure 仍归 I9，FCBC
-resource u64 ID 与 assembly 仍归 I7；I5.6–I5.7 和整个 I5 stage 尚未完成。
+resource u64 ID 与 assembly 仍归 I7；I5.7 报告/repair 与整个 I5 stage 在 I5.7 完成前仍开放。
 
 ### I6：PGR/RPE/PEC importer
 

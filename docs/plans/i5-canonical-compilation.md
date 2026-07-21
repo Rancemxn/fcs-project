@@ -1,8 +1,10 @@
 # I5 CanonicalCompilation, metadata, resources, sync, and fidelity
 
-Status: I5.1-I5.5 implementation establishes the canonical profile-requirement,
-contributor/credit, opaque workspace-resource, sync formula/preview, and typed-custom limit boundaries. I5.6-I5.7 remain open and this plan does not claim a complete
-`CanonicalCompilation`, Render scene, converter, FCBC product, or FCS 5 release.
+Status: I5.1-I5.6 implementation establishes the canonical profile-requirement,
+contributor/credit, opaque workspace-resource, sync formula/preview, typed-custom
+limits, source-free provenance/stale-dependency, and `CanonicalCompilation`
+aggregate boundaries. I5.7 remains open and this plan does not claim a complete
+Render scene, converter, FCBC product, or FCS 5 release.
 
 ## Normative dependency closure
 
@@ -200,9 +202,32 @@ contributor/credit, opaque workspace-resource, sync formula/preview, and typed-c
 - Acceptance requires the exact PR head to pass `.github/workflows/full-gate.yml`
   and a passing Primary Self-Audit with no unresolved Critical/Important finding.
 
+## I5.6 owned surface
+
+- `OriginState` is the closed Conversion §5.2 set and is never inferred from
+  value-vs-default comparison.
+- `RestrictedProvenanceFact` retains logical source locator/value/order,
+  mapping-rule refs, optional semantic status, and dependency edges without
+  source AST, absolute paths, or raw snapshots.
+- `ProvenanceGraph` validates dependency closure/cycles and propagates
+  user-modified edits as stale dependents.
+- `DistributionMetadata` holds provenance facts, input content hashes, and
+  ordered custom objects. Empty distribution is the native FCS compile default.
+- `CanonicalCompilation` aggregates chart, resource bundle, and distribution;
+  stripping distribution leaves execution products intact.
+- `Document::canonical_compilation` assembles the three products with empty
+  native distribution metadata and does not retain workspace absolute paths in
+  distribution facts.
+
+## I5.6 acceptance evidence
+
+- `fcs_model::provenance` unit tests cover closed origin spellings, absolute/URI
+  locator rejection, transitive stale propagation, cycle/missing dependency
+  rejection, and chart/bundle/distribution separation.
+- Acceptance requires the exact PR head to pass `.github/workflows/full-gate.yml`
+  and a passing Primary Self-Audit with no unresolved Critical/Important finding.
+
 ## Remaining I5 work
 
-- I5.6 adds provenance and stale-dependency tracking without source AST leakage
-  into `CanonicalChart`.
-- I5.7 adds the deterministic report/repair model. None of these residuals is
-  implemented or claimed by I5.1-I5.5.
+- I5.7 adds the deterministic report/repair model. That residual is not
+  implemented or claimed by I5.1-I5.6.

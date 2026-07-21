@@ -15,6 +15,7 @@ mod expression;
 mod line;
 mod metadata;
 mod note;
+mod provenance;
 mod scroll;
 mod time;
 mod track;
@@ -51,6 +52,11 @@ pub use note::{
     CanonicalJudgeShape, CanonicalNote, CanonicalNoteError, CanonicalNoteGameplay,
     CanonicalNoteKind, CanonicalNotePresentation, CanonicalNoteScorePolicy, CanonicalNoteSet,
     CanonicalNoteSide, CanonicalNoteSoundPolicy,
+};
+pub use provenance::{
+    CanonicalCompilation, DistributionMetadata, InputContentHash, LogicalSourceLocator,
+    MappingRuleRef, OriginState, ProvenanceError, ProvenanceGraph, RestrictedProvenanceFact,
+    SemanticStatus,
 };
 pub use scroll::{
     CanonicalScrollCoordinate, CanonicalScrollLine, CanonicalScrollSet,

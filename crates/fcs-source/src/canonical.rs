@@ -5,10 +5,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fcs_model::{
     AudioOffset, Beat as CanonicalBeat, CanonicalArtwork, CanonicalChart, CanonicalChartError,
-    CanonicalColor, CanonicalContributor, CanonicalCredit, CanonicalCreditRole, CanonicalLineGraph,
-    CanonicalMetadata, CanonicalObject, CanonicalObjectEntry, CanonicalPreview, CanonicalProfile,
-    CanonicalProfileFeature, CanonicalRequiredExtension, CanonicalResource, CanonicalResourceKind,
-    CanonicalSourceVersion, CanonicalSync, CanonicalValue, CanonicalValueType, DeclaredSha256,
+    CanonicalColor, CanonicalCompilation, CanonicalContributor, CanonicalCredit,
+    CanonicalCreditRole, CanonicalLineGraph, CanonicalMetadata, CanonicalObject,
+    CanonicalObjectEntry, CanonicalPreview, CanonicalProfile, CanonicalProfileFeature,
+    CanonicalRequiredExtension, CanonicalResource, CanonicalResourceKind, CanonicalSourceVersion,
+    CanonicalSync, CanonicalValue, CanonicalValueType, DeclaredSha256, DistributionMetadata,
 };
 
 use crate::ast::{
@@ -132,6 +133,27 @@ impl Document {
             tracks,
             scroll,
             required_extensions,
+        ))
+    }
+
+    /// Assembles the FCS §17 CanonicalCompilation product.
+    ///
+    /// Native FCS compile paths produce empty DistributionMetadata. Conversion
+    /// importers may later supply restricted provenance without source AST.
+    /// This boundary never retains workspace absolute paths in distribution
+    /// metadata; resource bytes remain in the separate opaque bundle.
+    pub fn canonical_compilation(
+        &self,
+        limits: CompileTimeLimits,
+        workspace_root: impl AsRef<std::path::Path>,
+        resource_limits: crate::resource::ResourceLimits,
+    ) -> Result<CanonicalCompilation, Vec<Diagnostic>> {
+        let chart = self.canonical_chart(limits)?;
+        let resources = self.canonical_resource_bundle(workspace_root, resource_limits)?;
+        Ok(CanonicalCompilation::new(
+            chart,
+            resources,
+            DistributionMetadata::empty(),
         ))
     }
 
