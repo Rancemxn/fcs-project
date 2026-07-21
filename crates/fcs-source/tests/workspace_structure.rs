@@ -12,7 +12,6 @@ fn workspace_has_one_unversioned_source_implementation() {
 
     for removed in [
         "crates/fcs-core",
-        "crates/fcs-cli",
         "crates/fcs-converter",
         "crates/fcs-source/src/v4",
         "crates/fcs-source/src/v5",
@@ -22,6 +21,11 @@ fn workspace_has_one_unversioned_source_implementation() {
             "legacy path remains active: {removed}"
         );
     }
+    // I10 product CLI is an intentional unversioned binary crate.
+    assert!(
+        repository.join("crates/fcs-cli").exists(),
+        "product CLI crate must exist for I10"
+    );
 }
 
 #[test]

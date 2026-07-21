@@ -1,0 +1,22 @@
+[package]
+name = "fcs-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FCS product CLI for check, format, compile, inspect, convert, and report"
+default-run = "fcs"
+
+[[bin]]
+name = "fcs"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+fcs-conversion = { path = "../fcs-conversion" }
+fcs-fcbc = { path = "../fcs-fcbc" }
+fcs-model = { path = "../fcs-model" }
+fcs-source = { path = "../fcs-source" }
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
