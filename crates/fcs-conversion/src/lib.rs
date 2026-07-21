@@ -15,6 +15,7 @@ mod exact;
 mod pgr;
 mod pgr_canonical;
 mod rpe;
+mod rpe_canonical;
 
 pub use exact::{DecimalLimits, ExactDecimal, ExactNumberError, ExactRational};
 pub use pgr::*;
@@ -31,6 +32,7 @@ pub use rpe::{
     note_judgment_enabled, note_side_from_above, parse_rpe_document, phira_linear_alpha,
     phira_offset_y_logical_px, phira_visible_from, resolve_beat, scale_speed_4_5,
 };
+pub use rpe_canonical::{RpeCanonicalImport, lower_rpe_to_canonical};
 
 /// Source format family. The parser dialect and semantic profile are separate
 /// later-stage values.

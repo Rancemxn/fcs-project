@@ -112,9 +112,14 @@ I6.3b 在 I6.3a timing 之上增加 `interpret_rpe_semantics`：layer additive/f
 报告、speed-era 分类、father/parent cycle 拒绝、Note type/side/fake/Hold 与 Phira presentation 轴
 （visibleTime/alpha/size/yOffset）以及 `rpe.speed.scale4_5`。不装配 CanonicalCompilation。
 
+## I6.3c RPE canonical assembly
+
+I6.3c 增加 `lower_rpe_to_canonical`：在匹配 chart artifact identity 后复用 `fcs-model`
+`CanonicalCompilation`/provenance/`ConversionReport` 装配 Line parent/inherit、Note 四 kind、
+BPMList tempo map 与 empty resource bundle；Phichain first-only layer loss 进入 preserved-only report。
+
 ## 后续单元
 
-- I6.3c：RPE canonical/provenance/report assembly 与 metadata/resource-reference handoff。
 - I6.4：PEC command parser、source order 和版本化 offset/cv profile。
 - I6.5：content-hash-bound profile registry、detection evidence 与无猜测 selection。
 - I6.6：strict-invalid 和显式 Repair execution/report。
