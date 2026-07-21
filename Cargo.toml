@@ -7,6 +7,7 @@ members = [
     "crates/fcs-conversion",
     "crates/fcs-fcbc",
     "crates/fcs-cli",
+    "crates/fcs-render",
 ]
 
 [workspace.package]

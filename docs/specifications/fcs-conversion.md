@@ -1,6 +1,6 @@
 # FCS Conversion Specification 1.0.0
 
-状态：Draft（2026-07-15；semantic profile closure 与联合候选自检已完成，等待真实 round-trip fixture 与独立复审）
+状态：Frozen（2026-07-21 local RC；见 `docs/specifications/governance.md` 与 `docs/reviews/2026-07-21-i10-local-rc-freeze.md`）
 
 本文定义 FCS 与 PGR v1/v3、RPE、PEC 及扩展外部格式之间的解析边界、版本化语义 Profile、
 canonical 转换、能力协商、保真事实、Repair 和机器可读 `ConversionReport`。本文不改变
