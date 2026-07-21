@@ -5,8 +5,8 @@ use num_rational::BigRational;
 use num_traits::{One, Zero};
 
 use crate::{
-    DecimalLimits, ExactDecimal, ExactNumberError, ExactRational, LosslessJsonMember,
-    LosslessJsonValue, ParsedSourceDocument, SourceFormat,
+    DecimalLimits, ExactDecimal, ExactNumberError, ExactRational, LogicalSourceLocator,
+    LosslessJsonMember, LosslessJsonValue, ParsedSourceDocument, SourceFormat,
 };
 
 pub const SOURCE_INVALID: &str = "conversion.source-invalid";
@@ -51,6 +51,8 @@ impl PgrFormatVersion {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PgrSourceDocument {
+    artifact_id: LogicalSourceLocator,
+    artifact_content_sha256: [u8; 32],
     format_version: PgrFormatVersion,
     offset: ExactDecimal,
     lines: Vec<PgrSourceLine>,
@@ -58,6 +60,14 @@ pub struct PgrSourceDocument {
 }
 
 impl PgrSourceDocument {
+    pub fn artifact_id(&self) -> &LogicalSourceLocator {
+        &self.artifact_id
+    }
+
+    pub(crate) const fn artifact_content_sha256(&self) -> [u8; 32] {
+        self.artifact_content_sha256
+    }
+
     pub const fn format_version(&self) -> PgrFormatVersion {
         self.format_version
     }
@@ -312,7 +322,7 @@ impl PgrProfile {
         matches!(self, Self::PhiraV1 | Self::PhiraV3)
     }
 
-    const fn is_phira(self) -> bool {
+    pub(crate) const fn is_phira(self) -> bool {
         matches!(self, Self::PhiraV1 | Self::PhiraV3)
     }
 }
@@ -570,6 +580,8 @@ impl PgrSemanticLine {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PgrSemanticDocument {
+    artifact_id: LogicalSourceLocator,
+    artifact_content_sha256: [u8; 32],
     profile: PgrProfile,
     format_version: PgrFormatVersion,
     audio_offset_seconds: ExactRational,
@@ -578,6 +590,14 @@ pub struct PgrSemanticDocument {
 }
 
 impl PgrSemanticDocument {
+    pub fn artifact_id(&self) -> &LogicalSourceLocator {
+        &self.artifact_id
+    }
+
+    pub(crate) const fn artifact_content_sha256(&self) -> [u8; 32] {
+        self.artifact_content_sha256
+    }
+
     pub const fn profile(&self) -> PgrProfile {
         self.profile
     }
@@ -640,6 +660,8 @@ pub fn parse_pgr_document(
         lines.push(parse_line(value, index, format_version, limits)?);
     }
     Ok(PgrSourceDocument {
+        artifact_id: document.artifact_id().clone(),
+        artifact_content_sha256: document.artifact_content_sha256(),
         format_version,
         offset,
         lines,
@@ -698,6 +720,8 @@ pub fn interpret_pgr(
     }
 
     Ok(PgrSemanticDocument {
+        artifact_id: source.artifact_id.clone(),
+        artifact_content_sha256: source.artifact_content_sha256(),
         profile,
         format_version: source.format_version,
         audio_offset_seconds: source.offset.exact().clone(),
@@ -1674,7 +1698,11 @@ pub struct PgrError {
 }
 
 impl PgrError {
-    fn new(category: &'static str, path: impl Into<String>, message: impl Into<String>) -> Self {
+    pub(crate) fn new(
+        category: &'static str,
+        path: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             category,
             path: path.into(),

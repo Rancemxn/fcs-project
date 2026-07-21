@@ -748,6 +748,22 @@ chartTime、Line motion 或 scroll；Importer 必须显式构造每 Line scroll 
   或最后项覆盖均是 Repair/compatibility decision；
 - PGR 核心没有 parent，Importer 不根据线号/几何猜 parent。
 
+Canonical lowering 对已通过 profile validation 的普通 Line event 保留每个 source interval 的
+linear endpoint。当前四个 PGR profile 都没有定义首 event 非零或相邻 event gap 的执行语义，因此这
+两种输入必须以 `conversion.profile-not-applicable` 失败，不能补 linear/constant segment 或回默认值。
+空 event list 使用 canonical Line base；从 0 开始且连续的 event chain 在末 event 后保持最后 endpoint。
+`startTime == endTime` 只在两个 endpoint 相同且 canonical Float64 不折叠合法区间时 lowering 为
+canonical point；不同 endpoint 必须以 `conversion.capability-mismatch` 失败，不能静默选择一端。
+
+PGR 没有显式 Line/Note identity。Canonical lowering 使用 FCS §17 的 generated textual ID 编码：Line
+使用 `collection/pgrLines/item/<line-index>/order/<line-index>`，Note 按 source traversal（Line 顺序，
+每条 Line 先 `notesAbove` 再 `notesBelow`）使用 `collection/pgrNotes/item/<global-note-index>/order/
+<global-note-index>`。这些 generated IDs 是 canonical identity；source array locator 和 order 仍写入
+restricted provenance，不能使用 workspace path 或 source JSON hash 替代 identity。
+Lowering 同时校验 semantic IR 继承的 source artifact logical ID 与 content SHA-256；任一不匹配必须以
+`conversion.source-invalid` 失败，不能把其他 artifact 的 hash 写入 provenance、report operation identity
+或 distribution input hash。
+
 ### 10.4 Speed、floorPosition 与 Hold
 
 Speed event 按 selected time rule 构造 exact piecewise velocity/distance。Raw `floorPosition` 是缓存

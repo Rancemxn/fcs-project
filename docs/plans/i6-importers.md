@@ -53,6 +53,29 @@ unknown order、limits 和 invalid paths。Rust compile/Clippy/nextest、locked 
 与 clean-worktree 仍只由 exact-head GitHub full gate 提供；I6.2a 不包含 CanonicalChart、ConversionReport、
 profile registry/selection、Repair、package/ZIP、RPE/PEC 或 round-trip fixture。
 
+## I6.2b PGR canonical assembly
+
+I6.2b 只消费 I6.2a 已绑定 profile 的 `PgrSemanticDocument`，不重新解析 source 或选择 profile。
+
+- `lower_pgr_to_canonical` 要求匹配 logical ID 与 content SHA-256 的 chart `SourceArtifact` identity，复用既有 `fcs-model` 构造器输出
+  `CanonicalCompilation` 和 `ConversionReport`；chart-only PGR 使用空 resource bundle 与 `chart` profile。
+- 一个 canonical chart clock 承载 offset、Line、Track、scroll 和 Note/Hold 时间。Line 使用 60 BPM
+  scroll coordinate 保留 speed×seconds 距离，PGR speed 进入 Line `scrollSpeed` Track。
+- Line/Note array order 通过 FCS generated textual ID 固定；Note 按 Line、`notesAbove`、`notesBelow`
+  source traversal 获得 identity，再由 canonical Note set 执行规范排序。
+- restricted provenance 记录 artifact/hash、logical locator、source order、profile、mapping rule、origin 和
+  dependency closure；不保留 raw JSON、parser tree 或 workspace path。
+- Phira exact lowering 报告 `equivalent`；不同 per-Line BPM 时记录 generated 60 BPM canonical anchor。
+  Phichain compatibility profile 报告 `preserved-only`。该边界不执行 Repair、approximation 或 source mutation。
+
+验收证据：`crates/fcs-conversion/src/pgr_canonical.rs` 的 fixture-driven tests 执行
+`docs/conformance/conversion/pgr-canonical-vectors.toml`，覆盖 minimal chart、motion/scroll、Hold、offset、
+side/source order、profile divergence、multi-Line BPM anchor、重复装配和 artifact identity failure。另有
+focused failure tests 覆盖未定义 ordinary-event gap、unsupported zero-duration semantic 与 exact interval
+Float64 collapse。I6.2 至此完成 PGR source-to-canonical 产品边界；profile selection、RPE/PEC、package、
+真实 round-trip 与 exporter
+仍由后续单元交付。
+
 ## 验收证据
 
 - `crates/fcs-conversion/src/lib.rs` 单元测试覆盖 duplicate/order、raw key/value string、number lexeme、
@@ -64,8 +87,6 @@ profile registry/selection、Repair、package/ZIP、RPE/PEC 或 round-trip fixtu
 
 ## 后续单元
 
-- I6.2b：将 I6.2a 的 profile-bound PGR semantic IR 装配为 canonical model/provenance/report；不得重新解释
-  PGR source 或引入隐式 profile。
 - I6.3：RPE dialect validation、typed source semantic IR 与 canonical lowering。
 - I6.4：PEC command parser、source order 和版本化 offset/cv profile。
 - I6.5：content-hash-bound profile registry、detection evidence 与无猜测 selection。

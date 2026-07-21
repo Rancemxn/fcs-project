@@ -13,9 +13,11 @@ use sha2::{Digest, Sha256};
 
 mod exact;
 mod pgr;
+mod pgr_canonical;
 
 pub use exact::{DecimalLimits, ExactDecimal, ExactNumberError, ExactRational};
 pub use pgr::*;
+pub use pgr_canonical::*;
 
 /// Source format family. The parser dialect and semantic profile are separate
 /// later-stage values.
@@ -274,6 +276,7 @@ impl LosslessJsonMember {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedSourceDocument {
     artifact_id: LogicalSourceLocator,
+    artifact_content_sha256: [u8; 32],
     format: SourceFormat,
     body: LosslessJsonValue,
 }
@@ -281,6 +284,10 @@ pub struct ParsedSourceDocument {
 impl ParsedSourceDocument {
     pub fn artifact_id(&self) -> &LogicalSourceLocator {
         &self.artifact_id
+    }
+
+    pub(crate) const fn artifact_content_sha256(&self) -> [u8; 32] {
+        self.artifact_content_sha256
     }
 
     pub const fn format(&self) -> SourceFormat {
@@ -306,6 +313,7 @@ pub fn parse_json_document(
     let body = parse_raw_json(raw.get())?;
     Ok(ParsedSourceDocument {
         artifact_id: artifact.logical_id().clone(),
+        artifact_content_sha256: artifact.content_sha256(),
         format,
         body,
     })

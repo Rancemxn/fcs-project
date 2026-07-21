@@ -1,0 +1,25 @@
+schema_version = 1
+
+[[vector]]
+id = "minimal-phira-v1"
+profile = "pgr.phira.v1"
+expected_status = "equivalent"
+expected_lines = 1
+expected_notes = 2
+generated_tempo = false
+
+[[vector]]
+id = "minimal-phichain-v1"
+profile = "pgr.phichain-import.v1"
+expected_status = "preserved-only"
+expected_lines = 1
+expected_notes = 2
+generated_tempo = false
+
+[[vector]]
+id = "per-line-bpm-anchor"
+profile = "pgr.phira.v1"
+expected_status = "equivalent"
+expected_lines = 2
+expected_notes = 2
+generated_tempo = true
