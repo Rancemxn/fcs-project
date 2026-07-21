@@ -183,8 +183,7 @@ pub fn lower_rpe_to_canonical(
                 })
             })
             .transpose()?;
-        let inherit =
-            CanonicalLineInherit::new(true, line.rotate_with_father(), true, true, true);
+        let inherit = CanonicalLineInherit::new(true, line.rotate_with_father(), true, true, true);
         let base = CanonicalLineBase::new(
             CanonicalVec2::new(0.0, 0.0)
                 .map_err(|error| canonical_error("line.position", error))?,
@@ -443,12 +442,17 @@ fn build_time_map(
         let bpm = exact_f64(point.bpm(), &format!("BPMList[{index}].bpm"))?;
         tempo_points.push(TempoPoint { beat, bpm });
     }
-    fcs_model::ChartTimeMap::new(tempo_points).map_err(|error| canonical_error("chart.timeMap", error))
+    fcs_model::ChartTimeMap::new(tempo_points)
+        .map_err(|error| canonical_error("chart.timeMap", error))
 }
 
 fn beat_from_exact(value: &ExactRational, path: &str) -> Result<Beat, RpeError> {
     let numerator = value.numerator().parse::<i64>().map_err(|_| {
-        RpeError::new(SOURCE_INVALID, path, "Beat numerator is not a bounded integer")
+        RpeError::new(
+            SOURCE_INVALID,
+            path,
+            "Beat numerator is not a bounded integer",
+        )
     })?;
     let denominator = value.denominator().parse::<i64>().map_err(|_| {
         RpeError::new(
@@ -610,8 +614,12 @@ mod tests {
     }"#;
 
     fn artifact(bytes: &str) -> SourceArtifact {
-        SourceArtifact::new("charts/main.rpe.json", ArtifactRole::Chart, bytes.as_bytes())
-            .unwrap()
+        SourceArtifact::new(
+            "charts/main.rpe.json",
+            ArtifactRole::Chart,
+            bytes.as_bytes(),
+        )
+        .unwrap()
     }
 
     fn semantic(bytes: &str) -> (RpeSemanticInterpretation, SourceArtifact) {
@@ -664,7 +672,10 @@ mod tests {
         let first = lower_rpe_to_canonical(&semantic_doc, &art).unwrap();
         let second = lower_rpe_to_canonical(&semantic_doc, &art).unwrap();
         assert_eq!(first.compilation(), second.compilation());
-        assert_eq!(first.report().operation_id(), second.report().operation_id());
+        assert_eq!(
+            first.report().operation_id(),
+            second.report().operation_id()
+        );
     }
 
     #[test]
