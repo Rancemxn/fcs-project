@@ -12,8 +12,8 @@ direct/template、exact Expression DAG、Note policy、disabled sound policy、w
 resource hash mismatch。Root/FCS manifest schema 升为 2：root 使用 `candidate_baseline`，resource
 fixture 可以声明 `workspace_root`，resolver 只能在该目录内读取 opaque member bytes。原 32 项
 grammar baseline 继续作为 Reviewed 范围的历史证据；后续 I3–I5 stage-scoped fixture 持续追加，当前
-manifest 共 50 项。I5.3 新增 `source.invalid.resource-missing-member`，并把 existing valid resource、
-path escape 与 hash mismatch 向量接到显式 workspace bundle resolver。当前 50 项
+manifest 共 52 项。I5.3 新增 `source.invalid.resource-missing-member`，并把 existing valid resource、
+path escape 与 hash mismatch 向量接到显式 workspace bundle resolver；I5.4 新增 sync preview invalid fixtures 与 shared formula vectors，并执行 existing offset equation。当前 52 项
 candidate 仍随五个 Draft/联合重审版本域审查，不是 Frozen baseline。当前状态和后续 re-freeze gate
 以 `docs/specifications/governance.md`、路线图与
 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md` 为准；后者是联合候选自检，不是独立

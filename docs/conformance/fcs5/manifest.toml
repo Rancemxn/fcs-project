@@ -385,6 +385,22 @@ diagnostic = "resource.unknown-reference"
 clauses = ["1.4", "7.3", "17", "Appendix C"]
 
 [[fixture]]
+id = "source.invalid.sync-preview-without-audio"
+path = "source/invalid/sync-preview-without-audio.fcs"
+stage = "canonical"
+expect = "error"
+diagnostic = "resource.unknown-reference"
+clauses = ["7.4", "17", "Appendix C"]
+
+[[fixture]]
+id = "source.invalid.sync-preview-domain"
+path = "source/invalid/sync-preview-domain.fcs"
+stage = "canonical"
+expect = "error"
+diagnostic = "type.invalid-operation"
+clauses = ["7.4", "17", "Appendix C"]
+
+[[fixture]]
 id = "source.invalid.generator-budget"
 path = "source/valid/compile-time-generator.fcs"
 stage = "elaborate"

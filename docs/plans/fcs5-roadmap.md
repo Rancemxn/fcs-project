@@ -543,9 +543,11 @@ ID/name/aliases/ordered identifiers，并将十二个标准 credit role 与 byte
 resource limits 的 bundle boundary，解析 canonicalized member/symlink 后拒绝 root escape、目录、缺失和
 非普通文件，bounded 读取 opaque bytes，计算并校验 SHA-256，保留 equal-content distinct ID 与未引用
 声明，并物化 image/texture/font Core metadata exact order。`tempfile` 3.27.0 只用于 dev filesystem
-tests；生产 hash 使用既有 `sha2` 0.11.0。详细边界与证据见
-`docs/plans/i5-canonical-compilation.md`。Render payload/scene/reference/codec closure 仍归 I9，FCBC
-resource u64 ID 与 assembly 仍归 I7；I5.4–I5.7 和整个 I5 stage 尚未完成。
+tests；生产 hash 使用既有 `sha2` 0.11.0。I5.4 固定唯一
+`audioTime = chartTime + audioOffset` 双向公式、audio-domain half-open preview 与 player/converter
+shared vectors，并在 canonical metadata boundary 拒绝 preview-without-audio 与非法 preview domain。
+详细边界与证据见 `docs/plans/i5-canonical-compilation.md`。Render payload/scene/reference/codec
+closure 仍归 I9，FCBC resource u64 ID 与 assembly 仍归 I7；I5.5–I5.7 和整个 I5 stage 尚未完成。
 
 ### I6：PGR/RPE/PEC importer
 

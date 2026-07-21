@@ -1158,14 +1158,17 @@ fn lower_sync(
             )),
         }
     }
-    if preview.is_some() && primary_audio.is_none() {
-        diagnostics.push(canonical_diagnostic(
-            DiagnosticCode::RESOURCE_UNKNOWN_REFERENCE,
-            "sync preview requires primaryAudio",
-            block.span,
-        ));
+    match CanonicalSync::new(primary_audio, audio_offset, preview) {
+        Ok(sync) => Some(sync),
+        Err(fcs_model::CanonicalSyncError::PreviewRequiresPrimaryAudio) => {
+            diagnostics.push(canonical_diagnostic(
+                DiagnosticCode::RESOURCE_UNKNOWN_REFERENCE,
+                "sync preview requires primaryAudio",
+                block.span,
+            ));
+            None
+        }
     }
-    Some(CanonicalSync::new(primary_audio, audio_offset, preview))
 }
 
 fn lower_fields(
