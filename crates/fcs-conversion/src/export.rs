@@ -522,7 +522,7 @@ mod tests {
         let parsed = parse_json_document(SourceFormat::Pgr, &artifact).unwrap();
         let source = parse_pgr_document(&parsed, PgrLimits::default()).unwrap();
         let floor = ExactDecimal::parse("120", DecimalLimits::default()).unwrap();
-        let binding = PgrProfileBinding::new(PgrProfile::PhiraV1, floor).unwrap();
+        let binding = PgrProfileBinding::new(PgrProfile::PhiraV1, floor.clone()).unwrap();
         let semantic = interpret_pgr(&source, &binding).unwrap();
         let import = lower_pgr_to_canonical(&semantic, &artifact).unwrap();
         let chart = import.compilation().chart();
@@ -556,7 +556,7 @@ mod tests {
         let pec_artifact =
             SourceArtifact::new("export.pec", ArtifactRole::Chart, pec_bytes).unwrap();
         let pec_source = parse_pec_document(&pec_artifact, PecLimits::default()).unwrap();
-        let pec_binding = PecProfileBinding::new(PecProfile::Phira, floor.clone()).unwrap();
+        let pec_binding = PecProfileBinding::new(PecProfile::Phira, floor).unwrap();
         let pec_semantic = interpret_pec(&pec_source, &pec_binding).unwrap();
         let pec_import = lower_pec_to_canonical(&pec_semantic, &pec_artifact).unwrap();
         assert_eq!(
