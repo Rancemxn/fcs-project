@@ -1,0 +1,12 @@
+[package]
+name = "fcs-conversion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FCS external-format import and conversion boundaries"
+
+[dependencies]
+fcs-model = { path = "../fcs-model" }
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+sha2.workspace = true

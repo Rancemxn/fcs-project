@@ -50,6 +50,8 @@ toolchain 和 full gate 为实际兼容性证据。
 | `bitflags` 2.13.1 | defaults only；owning stage 激活前不得增加 `serde`/`bytemuck` | MIT OR Apache-2.0 | 1.56.0 | 无必需运行时依赖 |
 | `num_enum` 0.7.6 | `default-features = false` | BSD-3-Clause OR MIT OR Apache-2.0 | 1.70.0 | `num_enum_derive` 0.7.6 及其 proc-macro 闭包；不激活 `std` 或 `complex-expressions` |
 | `ryu` 1.0.23 | defaults only | Apache-2.0 OR BSL-1.0 | 1.71 | 无运行时传递依赖 |
+| `serde` 1.0.228 | default `std` + workspace `derive` | MIT OR Apache-2.0 | 1.56 | `serde_core` 1.0.228 与 `serde_derive` 1.0.228 proc-macro closure；derive 不定义项目 schema 或 diagnostic |
+| `serde_json` 1.0.150 | default `std` + I6.1 `raw_value` | MIT OR Apache-2.0 | 1.71 | `itoa`、`memchr`、`serde`、`serde_core`、`zmij`；不启用 `arbitrary_precision`、`float_roundtrip`、`preserve_order` 或 `unbounded_depth` |
 | `tempfile` 3.27.0 | default `getrandom`；只在 I5/I10 激活 | MIT OR Apache-2.0 | 1.63 | 仅平台 temporary-file、randomness 和 syscall 闭包；不得把系统临时目录替代 I10 同目录原子 rename policy |
 | `ttf-parser` 0.25.1 | `default-features = false` | MIT OR Apache-2.0 | 1.63.0 | 无必需运行时依赖；不得隐式激活 OpenType/Apple layout、variable-font、glyph-name 或 std profile |
 | `thiserror` 2.0.19 | default `std` | MIT OR Apache-2.0 | 1.71 | `thiserror-impl` 2.0.19 及其 proc-macro 闭包；derive output 不能改变稳定 diagnostic surface |
@@ -59,6 +61,12 @@ dependency tree。I5.3 复用 `fcs-model` 已激活的 `sha2` 0.11.0 计算 exac
 `tempfile` 3.27.0 仅加入 `fcs-source` dev graph，以隔离 workspace/symlink/非普通文件测试；resolver
 production graph 不依赖 `tempfile`。其余五项先作为精确版本的 workspace catalog，分别到 owning
 stage 才写入 crate manifest 和 lockfile；catalog entry 本身不能被描述为已实现能力。
+
+I6.1 将 `serde` 1.0.228、`serde_json` 1.0.150、既有 `sha2` 0.11.0 与 `fcs-model` 激活到
+`fcs-conversion` 产品 graph。`serde_json` 只增加 `raw_value` feature，用于让上游 parser 验证 JSON
+grammar，同时由项目 IR 保留 member/array order、duplicate keys、raw string spelling 和 number
+lexeme；不激活 `preserve_order` 或 `arbitrary_precision`。cataloged `zip` 仍未激活，直到 I6 明确交付
+package input surface。
 
 ## 已完成代码的迁移边界
 
