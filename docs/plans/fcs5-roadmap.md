@@ -546,8 +546,10 @@ resource limits 的 bundle boundary，解析 canonicalized member/symlink 后拒
 tests；生产 hash 使用既有 `sha2` 0.11.0。I5.4 固定唯一
 `audioTime = chartTime + audioOffset` 双向公式、audio-domain half-open preview 与 player/converter
 shared vectors，并在 canonical metadata boundary 拒绝 preview-without-audio 与非法 preview domain。
-详细边界与证据见 `docs/plans/i5-canonical-compilation.md`。Render payload/scene/reference/codec
-closure 仍归 I9，FCBC resource u64 ID 与 assembly 仍归 I7；I5.5–I5.7 和整个 I5 stage 尚未完成。
+I5.5 新增 public `CustomValueLimits`，在 canonical custom lowering 上强制 depth/field/string/total-byte
+budget 与既有 ordered/homogeneous/finite custom 限制。详细边界与证据见
+`docs/plans/i5-canonical-compilation.md`。Render payload/scene/reference/codec closure 仍归 I9，FCBC
+resource u64 ID 与 assembly 仍归 I7；I5.6–I5.7 和整个 I5 stage 尚未完成。
 
 ### I6：PGR/RPE/PEC importer
 

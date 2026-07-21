@@ -1273,6 +1273,30 @@ fn i5_sync_fixtures_execute_at_the_canonical_boundary() {
 }
 
 #[test]
+fn i5_custom_fixtures_execute_at_the_canonical_boundary() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+    let invalid = fixture(&fcs, "source.invalid.custom-duplicate-key");
+    let source = fs::read_to_string(fcs_base.join(&invalid.path))
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", invalid.path));
+    let diagnostics = parse_document(&source)
+        .into_result()
+        .unwrap_or_else(|errors| panic!("custom fixture must parse: {errors:?}"))
+        .canonical_metadata()
+        .expect_err("duplicate custom keys must fail metadata lowering");
+    let expected = invalid
+        .diagnostic
+        .as_deref()
+        .expect("custom fixture binds a diagnostic");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code().as_str() == expected),
+        "expected {expected}, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn i3_track_fixtures_execute_at_the_canonical_boundary() {
     let (_, fcs) = load_manifests();
     let fcs_base = repository_root().join("docs/conformance/fcs5");
