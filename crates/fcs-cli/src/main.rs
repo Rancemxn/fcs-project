@@ -325,8 +325,12 @@ fn cmd_convert(
             return ExitCategory::Usage.code();
         }
     };
-    let artifact = match SourceArtifact::new(path.display().to_string(), ArtifactRole::Chart, bytes)
-    {
+    // Logical IDs must be relative (Conversion/locator rules reject absolute paths and URIs).
+    let logical_id = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("chart");
+    let artifact = match SourceArtifact::new(logical_id, ArtifactRole::Chart, bytes) {
         Ok(artifact) => artifact,
         Err(error) => {
             eprintln!("error: {error}");
