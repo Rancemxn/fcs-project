@@ -417,24 +417,23 @@ pub fn select_profile(
         ));
     }
 
-    if request.profile_selection_mode == ProfileSelectionMode::Compatible {
-        if let Some(default) = request
+    if request.profile_selection_mode == ProfileSelectionMode::Compatible
+        && let Some(default) = request
             .configured_default
             .clone()
             .or_else(|| extract_prefixed(&request.evidence, "configured-default:"))
-        {
-            let chosen = find_candidate(&request.candidates, &default).ok_or_else(|| {
-                SelectionError::new(
-                    PROFILE_PARAMETER_INVALID,
-                    "configured_default",
-                    format!(
-                        "configured default {} is not among candidates",
-                        default.display()
-                    ),
-                )
-            })?;
-            return Ok(success(SelectionReason::ConfiguredDefault, chosen, request));
-        }
+    {
+        let chosen = find_candidate(&request.candidates, &default).ok_or_else(|| {
+            SelectionError::new(
+                PROFILE_PARAMETER_INVALID,
+                "configured_default",
+                format!(
+                    "configured default {} is not among candidates",
+                    default.display()
+                ),
+            )
+        })?;
+        return Ok(success(SelectionReason::ConfiguredDefault, chosen, request));
     }
 
     // Repair never resolves ambiguity among legal candidates.
