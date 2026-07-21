@@ -85,9 +85,31 @@ Float64 collapse。I6.2 至此完成 PGR source-to-canonical 产品边界；prof
 - Primary Self-Audit 必须固定 Issue/PR、head SHA、scope、commands、full-gate evidence 和 acceptance
   gate；无未解决 Critical/Important finding 后才能 Ready/merge。
 
+## I6.3a RPE typed source 与 exact timing
+
+I6.3a 是 I6.3 的第一个可独立验收单元：现代 RPE JSON 的 typed source 与 profile-bound 精确 timing，
+暂不装配 canonical model，也不求值 event curve / speed distance。
+
+- `parse_rpe_document` 在既有 lossless JSON 边界上要求 `META`/`BPMList`/`judgeLineList`，保留
+  `META.RPEVersion` 的 number/string 原文、Beat triple 分量、missing/null/sparse `eventLayers`、
+  known optional 字段、resource 路径字符串、ordered unknown members 以及 artifact identity。
+- 五个显式 profile binding：`rpe.community.divide-bpmfactor`、`rpe.docs-example.multiply-bpmfactor`、
+  `rpe.phichain-import`、`rpe.phira.legacy-speed`、`rpe.phira.rpe170-speed`。community/docs 必须绑定
+  `speedMode`；RPE170 在缺失 `RPEVersion` 时必须绑定 `rpeVersionEra`。
+- Beat 使用 `rpe.beat.abc-strict`；仅 Phichain-import 接受 `[a,0,0]` 为整数。BPMList 保持 source
+  order、要求 finite-positive BPM 与非递减 startTime；same-Beat 点不排序去重，最后一点生效。
+- `interpret_rpe_timing` 把每条 Line 的 Beat-timed event/Note 边界映射到唯一 `chartTime`，按
+  divide/multiply/ignore 应用 `bpmfactor`（缺失默认 1），并把 missing `rotateWithFather` 解析为
+  profile default 同时保留“字段是否出现”的事实。
+- 高级 easing/Bezier/speed-era/parent/presentation 字段保持 typed 输入，留给 I6.3b/I6.3c。
+
+验收证据：`crates/fcs-conversion/src/rpe.rs` 的 focused tests 执行 checked-in Beat/bpmfactor vectors，
+并覆盖五 profile、version 原文、layer 形状、same-Beat BPM order、limits 与 invalid paths。
+
 ## 后续单元
 
-- I6.3：RPE dialect validation、typed source semantic IR 与 canonical lowering。
+- I6.3b：RPE event-layer、easing/Bezier、speed-era、parent 与 Note semantic interpretation。
+- I6.3c：RPE canonical/provenance/report assembly 与 metadata/resource-reference handoff。
 - I6.4：PEC command parser、source order 和版本化 offset/cv profile。
 - I6.5：content-hash-bound profile registry、detection evidence 与无猜测 selection。
 - I6.6：strict-invalid 和显式 Repair execution/report。

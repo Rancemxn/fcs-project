@@ -575,13 +575,13 @@ resource u64 ID 与 assembly 仍归 I7；I5.7 新增 deterministic `ConversionRe
   snapshot 和 expected report。
 
 当前交付状态：I6.1 已建立 owning `fcs-conversion` crate、bounded `SourceArtifactSet`、exact bytes/SHA-256
-identity、lossless JSON IR 和 PGR/RPE `ParsedSourceDocument` entry point。I6.2a 增加 bounded exact
-decimal/rational、typed PGR v1/v3 source 和四个显式 profile-bound semantic IR；当前 I6.2b work-unit 复用
-既有 `fcs-model` 类型装配 chart-only `CanonicalCompilation`、restricted provenance 和 deterministic
-`ConversionReport`，执行 checked-in canonical vectors，并固定 PGR array 到 generated canonical ID 的规则。
-固定 `serde` 1.0.228、
+identity、lossless JSON IR 和 PGR/RPE `ParsedSourceDocument` entry point。I6.2a/I6.2b 完成 PGR
+source-to-canonical 产品边界。I6.3a 增加 `parse_rpe_document`、五个显式 RPE profile binding 与
+`interpret_rpe_timing`（exact Beat/BPMList/bpmfactor → 唯一 chartTime），执行 checked-in Beat/bpmfactor
+vectors，并保留 eventLayers/Note/version 原文供后续 I6.3b/I6.3c；不宣称 RPE event curve、speed
+distance、canonical assembly 或整体 I6 完成。固定 `serde` 1.0.228、
 `serde_json` 1.0.150 与 `num-bigint` 0.4.8/`num-rational` 0.4.2/`num-traits` 0.2.19 已进入对应
-`fcs-conversion` graph；profile registry、Repair、RPE/PEC、ZIP/package input、
+`fcs-conversion` graph；profile registry、Repair、PEC、ZIP/package input、
 真实 round-trip fixture 和 exporter 仍归后续 I6 单元。详细边界见 `docs/plans/i6-importers.md`。
 
 ### I7：FCBC writer、loader 与 ABI
