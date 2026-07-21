@@ -974,7 +974,7 @@ pub fn resolve_beat(
             "RPE Beat denominator must be greater than zero for this profile",
         ));
     }
-    if denominator.is_negative() {
+    if denominator.value().is_negative() {
         return Err(RpeError::new(
             SOURCE_INVALID,
             path,
