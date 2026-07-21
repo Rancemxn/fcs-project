@@ -161,7 +161,12 @@ pub fn write_nonempty_execution() -> Vec<u8> {
 ///
 /// Encodes chart Lines/Notes/tempo into Core sections and attaches the shared
 /// exact descriptor/expression scaffold required by Execution ABI loaders.
-/// Resource payloads from the compilation bundle are embedded when present.
+///
+/// Product acceptance for native compile currently requires framing validation
+/// via [`crate::load_container`]. Full Core [`crate::load_chart`] after this
+/// writer remains best-effort: the package reuses the fixed Execution ABI
+/// scaffold rather than lowering every canonical Track/descriptor graph, and
+/// resource-bundle payloads are not embedded yet (ResourceData stays empty).
 pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<Vec<u8>> {
     let chart = compilation.chart();
     let mut lines: Vec<LineFixture> = chart
@@ -322,7 +327,9 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
         assert_eq!(container.byte_length, bytes.len());
         assert!(container.sections.len() >= 14);
         assert_eq!(&bytes[..4], b"FCSB");
-        // Core load is best-effort for generalized native packages; framing is required.
+        // Product residual (#288): native compile only product-asserts framing.
+        // Core load_chart may still fail while the fixed Execution ABI scaffold
+        // is used; do not claim load_chart round-trip until that residual closes.
         let _ = crate::load_chart(&bytes);
     }
 }
