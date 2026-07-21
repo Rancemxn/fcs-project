@@ -59,6 +59,8 @@ struct LineFixture {
     distance_index: u32,
     alpha_descriptor: u32,
     speed_descriptor: u32,
+    floor_scale: f64,
+    integration_origin: f64,
     initial_floor: f64,
 }
 
@@ -98,6 +100,8 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             distance_index: ANALYTIC_DISTANCE_INDEX,
             alpha_descriptor: CHOOSE_ALPHA_DESCRIPTOR_INDEX,
             speed_descriptor: ANALYTIC_SPEED_DESCRIPTOR_INDEX,
+            floor_scale: 1.0,
+            integration_origin: 0.0,
             initial_floor: 10.0,
         },
         LineFixture {
@@ -105,6 +109,8 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             distance_index: EVALUABLE_DISTANCE_INDEX,
             alpha_descriptor: SECONDS_ALPHA_DESCRIPTOR_INDEX,
             speed_descriptor: EVALUABLE_SPEED_DESCRIPTOR_INDEX,
+            floor_scale: 1.0,
+            integration_origin: 0.0,
             initial_floor: 20.0,
         },
     ];
@@ -171,12 +177,12 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
             } else {
                 SECONDS_ALPHA_DESCRIPTOR_INDEX
             },
-            speed_descriptor: if index % 2 == 0 {
-                ANALYTIC_SPEED_DESCRIPTOR_INDEX
-            } else {
-                EVALUABLE_SPEED_DESCRIPTOR_INDEX
-            },
-            initial_floor: line.base().floor_scale(),
+            // Prefer analytic constant-speed path for native compile packages so
+            // distance boundary validation stays constant-descriptor compatible.
+            speed_descriptor: ANALYTIC_SPEED_DESCRIPTOR_INDEX,
+            floor_scale: line.base().floor_scale(),
+            integration_origin: line.base().integration_origin(),
+            initial_floor: line.base().initial_floor_position(),
         })
         .collect();
     if lines.is_empty() {
@@ -185,9 +191,11 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
         lines.push(LineFixture {
             id: stable_id(b"fcs.line", b"generated/default"),
             distance_index: 0,
-            alpha_descriptor: SECONDS_ALPHA_DESCRIPTOR_INDEX,
-            speed_descriptor: EVALUABLE_SPEED_DESCRIPTOR_INDEX,
-            initial_floor: 1.0,
+            alpha_descriptor: CHOOSE_ALPHA_DESCRIPTOR_INDEX,
+            speed_descriptor: ANALYTIC_SPEED_DESCRIPTOR_INDEX,
+            floor_scale: 1.0,
+            integration_origin: 0.0,
+            initial_floor: 0.0,
         });
     }
     lines.sort_by_key(|line| line.id);
@@ -556,8 +564,8 @@ fn lines_section(lines: &[LineFixture], constants: &ConstantIndices) -> Vec<u8> 
         put_u32(&mut payload, SCROLL_TEMPO_DESCRIPTOR_INDEX);
         put_u32(&mut payload, line.speed_descriptor);
         put_u32(&mut payload, line.distance_index);
-        put_f64(&mut payload, 1.0);
-        put_f64(&mut payload, 0.0);
+        put_f64(&mut payload, line.floor_scale);
+        put_f64(&mut payload, line.integration_origin);
         put_f64(&mut payload, line.initial_floor);
         payload.extend_from_slice(&empty_object());
         section.extend_from_slice(&record(payload));
