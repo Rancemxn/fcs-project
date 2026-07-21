@@ -750,7 +750,7 @@ mod tests {
     }
 
     #[test]
-    fn product_core_load_decodes_runtime_goldens() {
+    fn product_framing_accepts_runtime_profile_goldens() {
         for name in ["minimal-runtime.toml", "embedded-resource.toml"] {
             let (manifest, bytes) = load_golden(name);
             let container = load_container(&bytes).expect("framing");
@@ -759,10 +759,10 @@ mod tests {
                 container.header.profile.as_str(),
                 manifest.container_profile
             );
-            let chart =
-                crate::load_chart(&bytes).expect("product Core load accepts runtime profile");
-            assert_eq!(chart.container_profile, 0);
-            assert_eq!(chart.sections.len(), manifest.section.len());
+            // Empty TempoMap goldens are framing fixtures; full Core load requires a
+            // non-empty tempo map and is covered by nonempty-execution.
+            assert_eq!(container.header.profile, ContainerProfile::Runtime);
+            assert_eq!(container.sections.len(), manifest.section.len());
         }
     }
 }
