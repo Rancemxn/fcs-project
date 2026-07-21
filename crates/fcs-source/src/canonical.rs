@@ -1224,6 +1224,7 @@ fn lower_sync(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_fields(
     fields: &[SchemaField],
     expected: &BTreeMap<&str, Expected>,
@@ -1525,6 +1526,7 @@ fn finite_raw(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_raw(
     raw: RawValue,
     expected: &Expected,
