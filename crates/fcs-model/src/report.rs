@@ -329,6 +329,10 @@ impl ConversionEntry {
         self.source_locator.as_ref()
     }
 
+    pub fn target_locator(&self) -> Option<&LogicalSourceLocator> {
+        self.target_locator.as_ref()
+    }
+
     pub fn entity_id(&self) -> Option<&str> {
         self.entity_id.as_deref()
     }
@@ -345,12 +349,24 @@ impl ConversionEntry {
         self.source_value.as_ref()
     }
 
+    pub fn interpreted_value(&self) -> Option<&CanonicalValue> {
+        self.interpreted_value.as_ref()
+    }
+
     pub fn canonical_value(&self) -> Option<&CanonicalValue> {
         self.canonical_value.as_ref()
     }
 
+    pub fn target_value(&self) -> Option<&CanonicalValue> {
+        self.target_value.as_ref()
+    }
+
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    pub fn dependencies(&self) -> &[String] {
+        &self.dependencies
     }
 
     fn sort_key(&self) -> (u8, &str, &str, &str, &str) {
@@ -372,8 +388,8 @@ pub struct RepairRecord {
     diagnostic_category: String,
     action: String,
     rule: MappingRuleRef,
-    old_value: Option<CanonicalValue>,
-    new_value: Option<CanonicalValue>,
+    old_value: CanonicalValue,
+    new_value: CanonicalValue,
     semantic_impact: String,
 }
 
@@ -385,8 +401,8 @@ impl RepairRecord {
         diagnostic_category: impl Into<String>,
         action: impl Into<String>,
         rule: MappingRuleRef,
-        old_value: Option<CanonicalValue>,
-        new_value: Option<CanonicalValue>,
+        old_value: CanonicalValue,
+        new_value: CanonicalValue,
         semantic_impact: impl Into<String>,
     ) -> Result<Self, ReportError> {
         let id = id.into();
@@ -447,12 +463,12 @@ impl RepairRecord {
         &self.rule
     }
 
-    pub fn old_value(&self) -> Option<&CanonicalValue> {
-        self.old_value.as_ref()
+    pub const fn old_value(&self) -> &CanonicalValue {
+        &self.old_value
     }
 
-    pub fn new_value(&self) -> Option<&CanonicalValue> {
-        self.new_value.as_ref()
+    pub const fn new_value(&self) -> &CanonicalValue {
+        &self.new_value
     }
 
     pub fn semantic_impact(&self) -> &str {
@@ -786,8 +802,8 @@ mod tests {
             "conversion.source-invalid",
             "clamp",
             rule("repair.clamp-alpha"),
-            Some(CanonicalValue::Float(1.5)),
-            Some(CanonicalValue::Float(1.0)),
+            CanonicalValue::Float(1.5),
+            CanonicalValue::Float(1.0),
             "alpha clamped to unit interval",
         )
         .unwrap()
@@ -816,8 +832,8 @@ mod tests {
             "conversion.source-invalid",
             "drop-field",
             rule("repair.forbidden"),
-            None,
-            None,
+            CanonicalValue::Null,
+            CanonicalValue::Null,
             "would drop illegal field",
         )
         .unwrap();
@@ -838,8 +854,8 @@ mod tests {
                         "conversion.source-invalid",
                         "drop-field",
                         rule("repair.forbidden"),
-                        None,
-                        None,
+                        CanonicalValue::Null,
+                        CanonicalValue::Null,
                         "would drop illegal field",
                     )
                     .unwrap()
@@ -905,8 +921,8 @@ mod tests {
             "conversion.source-invalid",
             "clamp",
             rule("repair.clamp-alpha"),
-            Some(CanonicalValue::Float(2.0)),
-            Some(CanonicalValue::Float(1.0)),
+            CanonicalValue::Float(2.0),
+            CanonicalValue::Float(1.0),
             "alpha clamped",
         )
         .unwrap();
