@@ -14,10 +14,20 @@ use sha2::{Digest, Sha256};
 mod exact;
 mod pgr;
 mod pgr_canonical;
+mod rpe;
 
 pub use exact::{DecimalLimits, ExactDecimal, ExactNumberError, ExactRational};
 pub use pgr::*;
 pub use pgr_canonical::*;
+pub use rpe::{
+    RpeBeat, RpeError, RpeEventLayerSlot, RpeEventLayersField, RpeFactorMode, RpeLimits,
+    RpeOptionalEventList, RpeOptionalSpeedList, RpeProfile, RpeProfileBinding, RpeSemanticBpmPoint,
+    RpeSemanticCommonEvent, RpeSemanticDocument, RpeSemanticEventLayer, RpeSemanticLine,
+    RpeSemanticNote, RpeSemanticSpeedEvent, RpeSemanticTime, RpeSourceBpmPoint,
+    RpeSourceCommonEvent, RpeSourceDocument, RpeSourceEventLayer, RpeSourceLine, RpeSourceMeta,
+    RpeSourceNote, RpeSourceSpeedEvent, RpeSpeedMode, RpeVersionEra, RpeVersionEvidence,
+    chart_time_delta_seconds, interpret_rpe_timing, parse_rpe_document, resolve_beat,
+};
 
 /// Source format family. The parser dialect and semantic profile are separate
 /// later-stage values.
