@@ -9,7 +9,7 @@ description = "FCS Render Profile product codec and reference raster surface"
 fcs-fcbc = { path = "../fcs-fcbc" }
 image = { workspace = true, features = ["png", "webp"] }
 sha2.workspace = true
-ttf-parser.workspace = true
+ttf-parser = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 serde = { workspace = true, features = ["derive"] }
