@@ -391,7 +391,7 @@ fn parse_section_table(bytes: &[u8], header: &ContainerHeader) -> FcbcResult<Vec
             ));
         }
         let alignment = 1u64 << alignment_log2;
-        if offset % alignment != 0 {
+        if !offset.is_multiple_of(alignment) {
             return Err(FcbcError::new(
                 "fcbc.section-alignment",
                 format!("section type {section_type} offset is not aligned"),
@@ -644,7 +644,7 @@ mod tests {
             .chars()
             .filter(|ch| !ch.is_ascii_whitespace())
             .collect();
-        assert!(filtered.len() % 2 == 0, "odd hex length");
+        assert!(filtered.len().is_multiple_of(2), "odd hex length");
         (0..filtered.len())
             .step_by(2)
             .map(|index| u8::from_str_radix(&filtered[index..index + 2], 16).unwrap())
