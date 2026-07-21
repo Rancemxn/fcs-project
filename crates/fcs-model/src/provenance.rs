@@ -442,7 +442,7 @@ impl ProvenanceGraph {
     }
 
     fn first_cycle(&self) -> Option<Vec<String>> {
-        let mut state = BTreeMap::<&str, u8>::new();
+        let mut state = BTreeMap::<String, u8>::new();
         let mut stack = Vec::new();
         for id in self.facts.keys() {
             if let Some(cycle) = self.dfs_cycle(id, &mut state, &mut stack) {
@@ -455,7 +455,7 @@ impl ProvenanceGraph {
     fn dfs_cycle(
         &self,
         id: &str,
-        state: &mut BTreeMap<&str, u8>,
+        state: &mut BTreeMap<String, u8>,
         stack: &mut Vec<String>,
     ) -> Option<Vec<String>> {
         match state.get(id).copied() {
@@ -468,7 +468,7 @@ impl ProvenanceGraph {
             Some(2) => return None,
             _ => {}
         }
-        state.insert(id, 1);
+        state.insert(id.to_owned(), 1);
         stack.push(id.to_owned());
         if let Some(fact) = self.facts.get(id) {
             for dependency in fact.dependencies() {
@@ -478,7 +478,7 @@ impl ProvenanceGraph {
             }
         }
         stack.pop();
-        state.insert(id, 2);
+        state.insert(id.to_owned(), 2);
         None
     }
 }
