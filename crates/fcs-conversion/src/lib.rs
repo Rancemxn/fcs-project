@@ -13,9 +13,11 @@ use sha2::{Digest, Sha256};
 
 mod exact;
 mod pgr;
+mod pgr_canonical;
 
 pub use exact::{DecimalLimits, ExactDecimal, ExactNumberError, ExactRational};
 pub use pgr::*;
+pub use pgr_canonical::*;
 
 /// Source format family. The parser dialect and semantic profile are separate
 /// later-stage values.

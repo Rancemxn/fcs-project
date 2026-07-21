@@ -575,12 +575,13 @@ resource u64 ID 与 assembly 仍归 I7；I5.7 新增 deterministic `ConversionRe
   snapshot 和 expected report。
 
 当前交付状态：I6.1 已建立 owning `fcs-conversion` crate、bounded `SourceArtifactSet`、exact bytes/SHA-256
-identity、lossless JSON IR 和 PGR/RPE `ParsedSourceDocument` entry point。当前 I6.2a work-unit 增加
-bounded exact decimal/rational、typed PGR v1/v3 source 和四个显式 profile-bound semantic IR；它保留
-object member/array order、duplicate keys、raw string spelling 与 number lexeme，执行 checked-in PGR mapping
-vectors 和 invalid boundary tests，但不装配 CanonicalChart/provenance/report。固定 `serde` 1.0.228、
+identity、lossless JSON IR 和 PGR/RPE `ParsedSourceDocument` entry point。I6.2a 增加 bounded exact
+decimal/rational、typed PGR v1/v3 source 和四个显式 profile-bound semantic IR；当前 I6.2b work-unit 复用
+既有 `fcs-model` 类型装配 chart-only `CanonicalCompilation`、restricted provenance 和 deterministic
+`ConversionReport`，执行 checked-in canonical vectors，并固定 PGR array 到 generated canonical ID 的规则。
+固定 `serde` 1.0.228、
 `serde_json` 1.0.150 与 `num-bigint` 0.4.8/`num-rational` 0.4.2/`num-traits` 0.2.19 已进入对应
-`fcs-conversion` graph；profile registry、Repair、I6.2b canonical assembly、RPE/PEC、ZIP/package input、
+`fcs-conversion` graph；profile registry、Repair、RPE/PEC、ZIP/package input、
 真实 round-trip fixture 和 exporter 仍归后续 I6 单元。详细边界见 `docs/plans/i6-importers.md`。
 
 ### I7：FCBC writer、loader 与 ABI
