@@ -16,6 +16,7 @@ mod pec;
 mod pec_canonical;
 mod pgr;
 mod pgr_canonical;
+mod profile_selection;
 mod rpe;
 mod rpe_canonical;
 
@@ -29,6 +30,12 @@ pub use pec::{
 pub use pec_canonical::{PecCanonicalImport, lower_pec_to_canonical};
 pub use pgr::*;
 pub use pgr_canonical::*;
+pub use profile_selection::{
+    AMBIGUOUS_SOURCE, PROFILE_PARAMETER_INVALID as SELECTION_PROFILE_PARAMETER_INVALID,
+    ProfileBindingCandidate, ProfileRef, ProfileRegistry, ProfileSelectionMode, REGISTRY_INTEGRITY,
+    RegisteredProfile, SelectionDecision, SelectionDirection, SelectionError, SelectionReason,
+    SelectionRequest, TARGET_PROFILE_REQUIRED, load_profile_registry, select_profile,
+};
 pub use rpe::{
     RpeBeat, RpeError, RpeEventLayerSlot, RpeEventLayersField, RpeFactorMode, RpeInterpretedLine,
     RpeInterpretedNote, RpeLayerPolicy, RpeLimits, RpeNoteKind, RpeNoteSide, RpeOptionalEventList,
