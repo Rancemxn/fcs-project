@@ -792,7 +792,7 @@ fn expression_node(
 fn distance_section_for_lines(lines: &[LineFixture]) -> Vec<u8> {
     let mut section = Vec::new();
     put_u32(&mut section, lines.len() as u32);
-    for (index, line) in lines.iter().enumerate() {
+    for line in lines {
         // Classification/boundary pairing must match the Line's scroll speed
         // descriptor and keep integration_origin (0.0) present in boundaries.
         let (classification, max_error, boundaries) =
