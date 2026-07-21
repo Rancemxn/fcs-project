@@ -538,7 +538,7 @@ impl ConversionReport {
         conversion_policy: ConversionPolicy,
         repair_mode: RepairMode,
         mut entries: Vec<ConversionEntry>,
-        mut repairs: Vec<RepairRecord>,
+        repairs: Vec<RepairRecord>,
         status_signals: impl IntoIterator<Item = ConversionStatus>,
         output_hash: Option<String>,
     ) -> Result<Self, ReportError> {
