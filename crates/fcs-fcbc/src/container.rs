@@ -119,7 +119,7 @@ impl SectionEntry {
     pub const REQUIRED: u16 = 1;
     pub const PRESERVE: u16 = 2;
 
-    pub const fn is_required(self) -> bool {
+    pub const fn is_required(&self) -> bool {
         self.flags & Self::REQUIRED != 0
     }
 }
@@ -358,7 +358,6 @@ fn parse_section_table(bytes: &[u8], header: &ContainerHeader) -> FcbcResult<Vec
         let (flags, rest) = decode_u16_le(cursor)?;
         cursor = rest;
         let (alignment_log2, rest) = decode_u8(cursor)?;
-        cursor = rest;
         if rest.len() < 3 || rest[..3].iter().any(|byte| *byte != 0) {
             return Err(FcbcError::new(
                 "fcbc.invalid-header",
@@ -371,7 +370,6 @@ fn parse_section_table(bytes: &[u8], header: &ContainerHeader) -> FcbcResult<Vec
         let (length, rest) = decode_u64_le(cursor)?;
         cursor = rest;
         let (checksum, rest) = decode_u32_le(cursor)?;
-        cursor = rest;
         if rest.len() < 4 || rest[..4].iter().any(|byte| *byte != 0) {
             return Err(FcbcError::new(
                 "fcbc.invalid-header",
