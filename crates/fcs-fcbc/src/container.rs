@@ -753,16 +753,16 @@ mod tests {
     fn product_core_load_decodes_runtime_goldens() {
         for name in ["minimal-runtime.toml", "embedded-resource.toml"] {
             let (manifest, bytes) = load_golden(name);
-            // Runtime profile goldens validate framing identity; full Core load accepts profile 0.
             let container = load_container(&bytes).expect("framing");
             assert_eq!(container.byte_length as u64, manifest.decoded_length);
-            // Profile 0 is accepted by framing; full Core decode path currently requires
-            // strict-runtime (profile 3) only for nonempty ABI vectors. Framing is the
-            // product gate for runtime-profile empty/resource goldens in this unit.
             assert_eq!(
                 container.header.profile.as_str(),
                 manifest.container_profile
             );
+            let chart =
+                crate::load_chart(&bytes).expect("product Core load accepts runtime profile");
+            assert_eq!(chart.container_profile, 0);
+            assert_eq!(chart.sections.len(), manifest.section.len());
         }
     }
 }
