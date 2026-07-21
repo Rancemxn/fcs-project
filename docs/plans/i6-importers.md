@@ -57,7 +57,7 @@ profile registry/selection、Repair、package/ZIP、RPE/PEC 或 round-trip fixtu
 
 I6.2b 只消费 I6.2a 已绑定 profile 的 `PgrSemanticDocument`，不重新解析 source 或选择 profile。
 
-- `lower_pgr_to_canonical` 要求匹配的 chart `SourceArtifact` identity，复用既有 `fcs-model` 构造器输出
+- `lower_pgr_to_canonical` 要求匹配 logical ID 与 content SHA-256 的 chart `SourceArtifact` identity，复用既有 `fcs-model` 构造器输出
   `CanonicalCompilation` 和 `ConversionReport`；chart-only PGR 使用空 resource bundle 与 `chart` profile。
 - 一个 canonical chart clock 承载 offset、Line、Track、scroll 和 Note/Hold 时间。Line 使用 60 BPM
   scroll coordinate 保留 speed×seconds 距离，PGR speed 进入 Line `scrollSpeed` Track。

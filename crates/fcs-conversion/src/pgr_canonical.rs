@@ -76,6 +76,13 @@ pub fn lower_pgr_to_canonical(
             "source artifact identity does not match the semantic document",
         ));
     }
+    if artifact.content_sha256() != semantic.artifact_content_sha256() {
+        return Err(PgrError::new(
+            CANONICAL_INVALID,
+            "sourceArtifact.contentSha256",
+            "source artifact content does not match the semantic document",
+        ));
+    }
 
     let profile_ref = format!(
         "{}@{}",
@@ -1018,6 +1025,12 @@ mod tests {
         let error = lower_pgr_to_canonical(&semantic, &other).unwrap_err();
         assert_eq!(error.category(), CANONICAL_INVALID);
         assert_eq!(error.path(), "sourceArtifact.logicalId");
+
+        let other =
+            SourceArtifact::new("chart.json", ArtifactRole::Chart, chart(Some(60))).unwrap();
+        let error = lower_pgr_to_canonical(&semantic, &other).unwrap_err();
+        assert_eq!(error.category(), CANONICAL_INVALID);
+        assert_eq!(error.path(), "sourceArtifact.contentSha256");
     }
 
     #[test]

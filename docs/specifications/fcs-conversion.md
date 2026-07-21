@@ -760,6 +760,9 @@ PGR 没有显式 Line/Note identity。Canonical lowering 使用 FCS §17 的 gen
 每条 Line 先 `notesAbove` 再 `notesBelow`）使用 `collection/pgrNotes/item/<global-note-index>/order/
 <global-note-index>`。这些 generated IDs 是 canonical identity；source array locator 和 order 仍写入
 restricted provenance，不能使用 workspace path 或 source JSON hash 替代 identity。
+Lowering 同时校验 semantic IR 继承的 source artifact logical ID 与 content SHA-256；任一不匹配必须以
+`conversion.source-invalid` 失败，不能把其他 artifact 的 hash 写入 provenance、report operation identity
+或 distribution input hash。
 
 ### 10.4 Speed、floorPosition 与 Hold
 
