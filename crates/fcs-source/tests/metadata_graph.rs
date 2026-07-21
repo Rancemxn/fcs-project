@@ -132,23 +132,17 @@ meta { custom: { "person": @alice, "sound": @song }; }
         metadata.sync().unwrap().preview().unwrap().end_seconds(),
         45.0
     );
-    assert_eq!(
-        metadata
-            .sync()
-            .unwrap()
-            .preview_contains_chart_time(30.1)
-            .unwrap(),
-        true
-    );
+    assert!(metadata
+        .sync()
+        .unwrap()
+        .preview_contains_chart_time(30.1)
+        .unwrap());
     // audioOffset -0.1 => chartTime 45.1 maps to audioTime 45.0, exclusive.
-    assert_eq!(
-        metadata
-            .sync()
-            .unwrap()
-            .preview_contains_chart_time(45.1)
-            .unwrap(),
-        false
-    );
+    assert!(!metadata
+        .sync()
+        .unwrap()
+        .preview_contains_chart_time(45.1)
+        .unwrap());
     let CanonicalValue::ContributorReference(person) = metadata
         .meta()
         .unwrap()

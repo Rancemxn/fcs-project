@@ -960,14 +960,14 @@ mod tests {
         assert_eq!(sync.audio_time(1.0).unwrap(), 1.1);
         assert_eq!(sync.chart_time(1.1).unwrap(), 1.0);
         // chartTime 29.9 + 0.1 = audioTime 30.0, which is preview-inclusive.
-        assert_eq!(sync.preview_contains_chart_time(29.9).unwrap(), true);
+        assert!(sync.preview_contains_chart_time(29.9).unwrap());
         // chartTime 44.9 + 0.1 = audioTime 45.0, which is preview-exclusive.
-        assert_eq!(sync.preview_contains_chart_time(44.9).unwrap(), false);
+        assert!(!sync.preview_contains_chart_time(44.9).unwrap());
         assert_eq!(
             CanonicalSync::new(None, offset, preview),
             Err(CanonicalSyncError::PreviewRequiresPrimaryAudio)
         );
         let no_preview = CanonicalSync::new(None, offset, None).unwrap();
-        assert_eq!(no_preview.preview_contains_chart_time(0.0).unwrap(), false);
+        assert!(!no_preview.preview_contains_chart_time(0.0).unwrap());
     }
 }
