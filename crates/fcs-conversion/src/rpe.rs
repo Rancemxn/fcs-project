@@ -2025,6 +2025,527 @@ impl fmt::Display for RpeError {
 
 impl std::error::Error for RpeError {}
 
+// --- I6.3b: profile-bound advanced semantic IR (no canonical assembly) ---
+
+pub const LAYER_LOSS: &str = "conversion.layer-loss";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RpeLayerPolicy {
+    Additive,
+    FirstOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RpeNoteKind {
+    Tap,
+    Hold,
+    Flick,
+    Drag,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RpeNoteSide {
+    Above,
+    Below,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RpeSpeedEra {
+    LegacyLinear,
+    LegacyDerivative,
+    ModernEased,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RpeInterpretedNote {
+    kind: RpeNoteKind,
+    side: RpeNoteSide,
+    judgment_enabled: bool,
+    start_time: RpeSemanticTime,
+    end_time: RpeSemanticTime,
+    position_x: ExactRational,
+    speed: ExactRational,
+    canonical_speed: ExactRational,
+    visible_from_seconds: Option<ExactRational>,
+    linear_alpha: Option<ExactRational>,
+    scale: Option<(ExactRational, ExactRational)>,
+    offset_y_logical_px: Option<ExactRational>,
+    hitsound: Option<String>,
+}
+
+impl RpeInterpretedNote {
+    pub const fn kind(&self) -> RpeNoteKind {
+        self.kind
+    }
+
+    pub const fn side(&self) -> RpeNoteSide {
+        self.side
+    }
+
+    pub const fn judgment_enabled(&self) -> bool {
+        self.judgment_enabled
+    }
+
+    pub fn start_time(&self) -> &RpeSemanticTime {
+        &self.start_time
+    }
+
+    pub fn end_time(&self) -> &RpeSemanticTime {
+        &self.end_time
+    }
+
+    pub fn position_x(&self) -> &ExactRational {
+        &self.position_x
+    }
+
+    pub fn speed(&self) -> &ExactRational {
+        &self.speed
+    }
+
+    pub fn canonical_speed(&self) -> &ExactRational {
+        &self.canonical_speed
+    }
+
+    pub fn visible_from_seconds(&self) -> Option<&ExactRational> {
+        self.visible_from_seconds.as_ref()
+    }
+
+    pub fn linear_alpha(&self) -> Option<&ExactRational> {
+        self.linear_alpha.as_ref()
+    }
+
+    pub fn scale(&self) -> Option<&(ExactRational, ExactRational)> {
+        self.scale.as_ref()
+    }
+
+    pub fn offset_y_logical_px(&self) -> Option<&ExactRational> {
+        self.offset_y_logical_px.as_ref()
+    }
+
+    pub fn hitsound(&self) -> Option<&str> {
+        self.hitsound.as_deref()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RpeInterpretedLine {
+    source_index: usize,
+    bpmfactor: ExactRational,
+    father: Option<usize>,
+    rotate_with_father: bool,
+    rotate_with_father_was_present: bool,
+    layer_policy: RpeLayerPolicy,
+    retained_layer_count: usize,
+    dropped_layer_count: usize,
+    speed_era: RpeSpeedEra,
+    notes: Vec<RpeInterpretedNote>,
+}
+
+impl RpeInterpretedLine {
+    pub const fn source_index(&self) -> usize {
+        self.source_index
+    }
+
+    pub fn bpmfactor(&self) -> &ExactRational {
+        &self.bpmfactor
+    }
+
+    pub const fn father(&self) -> Option<usize> {
+        self.father
+    }
+
+    pub const fn rotate_with_father(&self) -> bool {
+        self.rotate_with_father
+    }
+
+    pub const fn rotate_with_father_was_present(&self) -> bool {
+        self.rotate_with_father_was_present
+    }
+
+    pub const fn layer_policy(&self) -> RpeLayerPolicy {
+        self.layer_policy
+    }
+
+    pub const fn retained_layer_count(&self) -> usize {
+        self.retained_layer_count
+    }
+
+    pub const fn dropped_layer_count(&self) -> usize {
+        self.dropped_layer_count
+    }
+
+    pub const fn speed_era(&self) -> RpeSpeedEra {
+        self.speed_era
+    }
+
+    pub fn notes(&self) -> &[RpeInterpretedNote] {
+        &self.notes
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RpeSemanticInterpretation {
+    timing: RpeSemanticDocument,
+    layer_policy: RpeLayerPolicy,
+    layer_loss_reported: bool,
+    lines: Vec<RpeInterpretedLine>,
+}
+
+impl RpeSemanticInterpretation {
+    pub fn timing(&self) -> &RpeSemanticDocument {
+        &self.timing
+    }
+
+    pub const fn layer_policy(&self) -> RpeLayerPolicy {
+        self.layer_policy
+    }
+
+    pub const fn layer_loss_reported(&self) -> bool {
+        self.layer_loss_reported
+    }
+
+    pub fn lines(&self) -> &[RpeInterpretedLine] {
+        &self.lines
+    }
+}
+
+/// I6.3b semantic interpretation over typed source + I6.3a timing.
+pub fn interpret_rpe_semantics(
+    source: &RpeSourceDocument,
+    binding: &RpeProfileBinding,
+) -> Result<RpeSemanticInterpretation, RpeError> {
+    let timing = interpret_rpe_timing(source, binding)?;
+    let profile = binding.profile();
+    let layer_policy = if profile == RpeProfile::PhichainImport {
+        RpeLayerPolicy::FirstOnly
+    } else {
+        RpeLayerPolicy::Additive
+    };
+    let speed_era = resolve_speed_era(binding, &timing)?;
+
+    let mut lines = Vec::with_capacity(source.lines.len());
+    let mut layer_loss_reported = false;
+    for (index, (source_line, timing_line)) in
+        source.lines.iter().zip(timing.lines().iter()).enumerate()
+    {
+        let path = format!("$.judgeLineList[{index}]");
+        let father = resolve_father(source_line.father(), source.lines.len(), &path)?;
+        let (retained, dropped) = layer_counts(source_line.event_layers(), layer_policy);
+        if dropped > 0 {
+            layer_loss_reported = true;
+        }
+        let notes = source_line
+            .notes()
+            .iter()
+            .zip(timing_line.notes().iter())
+            .enumerate()
+            .map(|(note_index, (source_note, timed_note))| {
+                interpret_note(
+                    source_note,
+                    timed_note,
+                    profile,
+                    &format!("{path}.notes[{note_index}]"),
+                )
+            })
+            .collect::<Result<Vec<_>, RpeError>>()?;
+        lines.push(RpeInterpretedLine {
+            source_index: index,
+            bpmfactor: timing_line.bpmfactor().clone(),
+            father,
+            rotate_with_father: timing_line.rotate_with_father(),
+            rotate_with_father_was_present: timing_line.rotate_with_father_was_present(),
+            layer_policy,
+            retained_layer_count: retained,
+            dropped_layer_count: dropped,
+            speed_era,
+            notes,
+        });
+    }
+    detect_parent_cycles(&lines)?;
+
+    Ok(RpeSemanticInterpretation {
+        timing,
+        layer_policy,
+        layer_loss_reported,
+        lines,
+    })
+}
+
+pub fn scale_speed_4_5(source_speed: &ExactRational) -> Result<ExactRational, RpeError> {
+    if source_speed.to_f64().is_err() {
+        return Err(RpeError::new(
+            SOURCE_INVALID,
+            "speed",
+            "speed must be finite",
+        ));
+    }
+    Ok(ExactRational(
+        source_speed.value() / (integer(9) / integer(2)),
+    ))
+}
+
+pub fn note_judgment_enabled(is_fake: Option<&ExactRational>) -> bool {
+    match is_fake {
+        None => true,
+        Some(value) => value.is_zero(),
+    }
+}
+
+pub fn note_side_from_above(above: Option<&ExactRational>) -> RpeNoteSide {
+    match above.and_then(ExactRational::to_i64) {
+        Some(1) => RpeNoteSide::Above,
+        _ => RpeNoteSide::Below,
+    }
+}
+
+pub fn phira_visible_from(
+    note_chart_time_seconds: &ExactRational,
+    visible_time_seconds: &ExactRational,
+) -> ExactRational {
+    // If visibleTime >= note chartTime, Phira has no lower visibility bound (use 0).
+    if visible_time_seconds.value() >= note_chart_time_seconds.value() {
+        ExactRational::from_integer(BigInt::zero())
+    } else {
+        ExactRational(note_chart_time_seconds.value() - visible_time_seconds.value())
+    }
+}
+
+pub fn phira_linear_alpha(source_alpha: i64) -> ExactRational {
+    let saturated = source_alpha.clamp(0, 255);
+    ExactRational(BigRational::new(BigInt::from(saturated), BigInt::from(255)))
+}
+
+pub fn phira_offset_y_logical_px(
+    y_offset: &ExactRational,
+    note_speed: &ExactRational,
+) -> ExactRational {
+    // offsetY * (1080/900) * note_speed = y_offset * 6/5 * speed
+    ExactRational(y_offset.value() * (integer(6) / integer(5)) * note_speed.value())
+}
+
+fn resolve_speed_era(
+    binding: &RpeProfileBinding,
+    timing: &RpeSemanticDocument,
+) -> Result<RpeSpeedEra, RpeError> {
+    match binding.profile() {
+        RpeProfile::PhiraLegacySpeed => Ok(RpeSpeedEra::LegacyLinear),
+        RpeProfile::PhiraRpe170Speed => match timing.rpe_version_era() {
+            Some(RpeVersionEra::AtLeast170) => Ok(RpeSpeedEra::ModernEased),
+            Some(RpeVersionEra::Pre170) | None => Ok(RpeSpeedEra::LegacyDerivative),
+        },
+        RpeProfile::CommunityDivideBpmfactor | RpeProfile::DocsExampleMultiplyBpmfactor => {
+            match binding.speed_mode() {
+                Some(RpeSpeedMode::LegacyLinear) => Ok(RpeSpeedEra::LegacyLinear),
+                Some(RpeSpeedMode::LegacyDerivative) => Ok(RpeSpeedEra::LegacyDerivative),
+                Some(RpeSpeedMode::ModernEased) => Ok(RpeSpeedEra::ModernEased),
+                None => Err(RpeError::new(
+                    PROFILE_PARAMETER_INVALID,
+                    "profile.speedMode",
+                    "speedMode is required for this profile",
+                )),
+            }
+        }
+        RpeProfile::PhichainImport => Ok(RpeSpeedEra::LegacyLinear),
+    }
+}
+
+fn layer_counts(layers: &RpeEventLayersField, policy: RpeLayerPolicy) -> (usize, usize) {
+    let present = match layers {
+        RpeEventLayersField::Missing | RpeEventLayersField::Null => 0,
+        RpeEventLayersField::Present(slots) => slots
+            .iter()
+            .filter(|slot| matches!(slot, RpeEventLayerSlot::Layer(_)))
+            .count(),
+    };
+    match policy {
+        RpeLayerPolicy::Additive => (present, 0),
+        RpeLayerPolicy::FirstOnly => {
+            if present == 0 {
+                (0, 0)
+            } else {
+                (1, present.saturating_sub(1))
+            }
+        }
+    }
+}
+
+fn resolve_father(
+    raw: Option<&ExactDecimal>,
+    line_count: usize,
+    path: &str,
+) -> Result<Option<usize>, RpeError> {
+    let Some(value) = raw else {
+        return Ok(None);
+    };
+    let exact = value.exact();
+    let Some(index) = exact.to_i64() else {
+        return Err(RpeError::new(
+            SOURCE_INVALID,
+            format!("{path}.father"),
+            "father must be an exact integer",
+        ));
+    };
+    if index == -1 {
+        return Ok(None);
+    }
+    if index < 0 {
+        return Err(RpeError::new(
+            SOURCE_INVALID,
+            format!("{path}.father"),
+            "father index is out of range",
+        ));
+    }
+    let index = usize::try_from(index).map_err(|_| {
+        RpeError::new(
+            SOURCE_INVALID,
+            format!("{path}.father"),
+            "father index is out of range",
+        )
+    })?;
+    if index >= line_count {
+        return Err(RpeError::new(
+            SOURCE_INVALID,
+            format!("{path}.father"),
+            "father index is out of range",
+        ));
+    }
+    Ok(Some(index))
+}
+
+fn detect_parent_cycles(lines: &[RpeInterpretedLine]) -> Result<(), RpeError> {
+    for line in lines {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut current = Some(line.source_index);
+        while let Some(index) = current {
+            if !seen.insert(index) {
+                return Err(RpeError::new(
+                    SOURCE_INVALID,
+                    format!("$.judgeLineList[{index}].father"),
+                    "Line parent graph contains a cycle",
+                ));
+            }
+            current = lines.get(index).and_then(RpeInterpretedLine::father);
+        }
+    }
+    Ok(())
+}
+
+fn interpret_note(
+    source: &RpeSourceNote,
+    timed: &RpeSemanticNote,
+    profile: RpeProfile,
+    path: &str,
+) -> Result<RpeInterpretedNote, RpeError> {
+    let kind = match source.kind().exact().to_i64() {
+        Some(1) => RpeNoteKind::Tap,
+        Some(2) => RpeNoteKind::Hold,
+        Some(3) => RpeNoteKind::Flick,
+        Some(4) => RpeNoteKind::Drag,
+        _ => {
+            return Err(RpeError::new(
+                SOURCE_INVALID,
+                format!("{path}.type"),
+                "RPE Note type must be 1=Tap, 2=Hold, 3=Flick, or 4=Drag",
+            ));
+        }
+    };
+    if kind == RpeNoteKind::Hold
+        && timed.end_time().chart_time_seconds().value()
+            <= timed.start_time().chart_time_seconds().value()
+    {
+        return Err(RpeError::new(
+            SOURCE_INVALID,
+            format!("{path}.endTime"),
+            "Hold endTime must be strictly later than startTime",
+        ));
+    }
+    if kind != RpeNoteKind::Hold
+        && timed.end_time().chart_time_seconds() != timed.start_time().chart_time_seconds()
+    {
+        // Non-Hold notes usually share endpoints; keep timed bounds but do not Repair.
+    }
+
+    let is_fake = source.is_fake().map(ExactDecimal::exact);
+    let judgment_enabled = note_judgment_enabled(is_fake);
+    let side = note_side_from_above(source.above().map(ExactDecimal::exact));
+    let canonical_speed = scale_speed_4_5(source.speed().exact())?;
+
+    let supports_phira_presentation = matches!(
+        profile,
+        RpeProfile::PhiraLegacySpeed | RpeProfile::PhiraRpe170Speed
+    );
+    let has_presentation = source.alpha().is_some()
+        || source.size().is_some()
+        || source.visible_time().is_some()
+        || source.y_offset().is_some()
+        || source.hitsound().is_some();
+    if has_presentation && !supports_phira_presentation && profile != RpeProfile::PhichainImport {
+        // Community/docs profiles: non-default presentation requires a bound axis.
+        if source.alpha().is_some()
+            || source.size().is_some()
+            || source.visible_time().is_some()
+            || source.y_offset().is_some()
+        {
+            return Err(RpeError::new(
+                PROFILE_NOT_APPLICABLE,
+                path,
+                "profile does not bind Phira Note presentation axes for non-default fields",
+            ));
+        }
+    }
+
+    let (visible_from_seconds, linear_alpha, scale, offset_y_logical_px) =
+        if supports_phira_presentation {
+            let visible_from_seconds = source.visible_time().map(|value| {
+                phira_visible_from(timed.start_time().chart_time_seconds(), value.exact())
+            });
+            let linear_alpha = source
+                .alpha()
+                .map(|value| {
+                    let alpha = value.exact().to_i64().ok_or_else(|| {
+                        RpeError::new(
+                            SOURCE_INVALID,
+                            format!("{path}.alpha"),
+                            "Note alpha must be an exact integer",
+                        )
+                    })?;
+                    Ok(phira_linear_alpha(alpha))
+                })
+                .transpose()?;
+            let scale = source.size().map(|value| {
+                let size = value.exact().clone();
+                (size.clone(), size)
+            });
+            let offset_y_logical_px = source
+                .y_offset()
+                .map(|value| phira_offset_y_logical_px(value.exact(), source.speed().exact()));
+            (
+                visible_from_seconds,
+                linear_alpha,
+                scale,
+                offset_y_logical_px,
+            )
+        } else {
+            (None, None, None, None)
+        };
+
+    Ok(RpeInterpretedNote {
+        kind,
+        side,
+        judgment_enabled,
+        start_time: timed.start_time().clone(),
+        end_time: timed.end_time().clone(),
+        position_x: source.position_x().exact().clone(),
+        speed: source.speed().exact().clone(),
+        canonical_speed,
+        visible_from_seconds,
+        linear_alpha,
+        scale,
+        offset_y_logical_px,
+        hitsound: source.hitsound().map(str::to_owned),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -2533,5 +3054,131 @@ mod tests {
             invalid_executed += 1;
         }
         assert_eq!(invalid_executed, 2);
+    }
+
+    #[test]
+    fn i63b_semantics_cover_layers_parent_notes_and_vectors() {
+        let source = parse_minimal();
+        let phira =
+            interpret_rpe_semantics(&source, &RpeProfileBinding::phira_legacy_speed()).unwrap();
+        assert_eq!(phira.layer_policy(), RpeLayerPolicy::Additive);
+        assert!(!phira.layer_loss_reported());
+        assert_eq!(phira.lines()[0].speed_era(), RpeSpeedEra::LegacyLinear);
+        assert_eq!(phira.lines()[0].notes()[0].kind(), RpeNoteKind::Tap);
+        assert_eq!(phira.lines()[0].notes()[0].side(), RpeNoteSide::Above);
+        assert!(phira.lines()[0].notes()[0].judgment_enabled());
+
+        let phichain =
+            interpret_rpe_semantics(&source, &RpeProfileBinding::phichain_import()).unwrap();
+        assert_eq!(phichain.layer_policy(), RpeLayerPolicy::FirstOnly);
+        assert_eq!(phichain.lines()[0].retained_layer_count(), 1);
+        assert_eq!(phichain.lines()[0].dropped_layer_count(), 0);
+
+        let multi_layer = r#"{
+            "META": {"offset": 0, "RPEVersion": 150},
+            "BPMList": [{"startTime": [0,0,1], "bpm": 120}],
+            "judgeLineList": [{
+                "eventLayers": [
+                    {"moveXEvents": []},
+                    {"moveXEvents": []}
+                ],
+                "notes": []
+            }]
+        }"#;
+        let parsed = parse_json_document(SourceFormat::Rpe, &artifact(multi_layer)).unwrap();
+        let multi = parse_rpe_document(&parsed, RpeLimits::default()).unwrap();
+        let multi_phichain =
+            interpret_rpe_semantics(&multi, &RpeProfileBinding::phichain_import()).unwrap();
+        assert!(multi_phichain.layer_loss_reported());
+        assert_eq!(multi_phichain.lines()[0].retained_layer_count(), 1);
+        assert_eq!(multi_phichain.lines()[0].dropped_layer_count(), 1);
+
+        assert_eq!(scale_speed_4_5(&exact("9/2")).unwrap(), exact("1"));
+        assert!(!note_judgment_enabled(Some(&exact("2"))));
+        assert!(note_judgment_enabled(Some(&exact("0"))));
+        assert_eq!(note_side_from_above(Some(&exact("1"))), RpeNoteSide::Above);
+        assert_eq!(note_side_from_above(Some(&exact("0"))), RpeNoteSide::Below);
+        assert_eq!(phira_visible_from(&exact("5"), &exact("2")), exact("3"));
+        assert_eq!(phira_linear_alpha(256), exact("1"));
+        assert_eq!(
+            phira_offset_y_logical_px(&exact("10"), &exact("2")),
+            exact("24")
+        );
+
+        // Parent cycle is rejected without Repair.
+        let cyclic = r#"{
+            "META": {"offset": 0},
+            "BPMList": [{"startTime": [0,0,1], "bpm": 120}],
+            "judgeLineList": [
+                {"father": 1, "notes": []},
+                {"father": 0, "notes": []}
+            ]
+        }"#;
+        let parsed = parse_json_document(SourceFormat::Rpe, &artifact(cyclic)).unwrap();
+        let source = parse_rpe_document(&parsed, RpeLimits::default()).unwrap();
+        assert_eq!(
+            interpret_rpe_semantics(&source, &RpeProfileBinding::phira_legacy_speed())
+                .unwrap_err()
+                .category(),
+            SOURCE_INVALID
+        );
+    }
+
+    #[test]
+    fn checked_in_rpe_note_and_speed_vectors_execute_exactly() {
+        let corpus: MappingCorpus = toml::from_str(include_str!(
+            "../../../docs/conformance/conversion/mapping-vectors.toml"
+        ))
+        .unwrap();
+        let mut executed = 0;
+        for vector in &corpus.vector {
+            match vector.rule_id.as_str() {
+                "rpe.speed.scale4_5" => {
+                    let actual =
+                        scale_speed_4_5(&exact(vector.source["speed"].as_str().unwrap())).unwrap();
+                    assert_eq!(actual, exact(&vector.expected), "{}", vector.id);
+                    executed += 1;
+                }
+                "rpe.note-fake.nonzero" => {
+                    let is_fake =
+                        exact(&vector.source["is_fake"].as_integer().unwrap().to_string());
+                    assert!(!note_judgment_enabled(Some(&is_fake)), "{}", vector.id);
+                    executed += 1;
+                }
+                "rpe.note-visible-time.phira" => {
+                    let actual = phira_visible_from(
+                        &exact(vector.source["note_chart_time_seconds"].as_str().unwrap()),
+                        &exact(vector.source["visible_time_seconds"].as_str().unwrap()),
+                    );
+                    assert_eq!(actual, exact(&vector.expected), "{}", vector.id);
+                    executed += 1;
+                }
+                "rpe.note-alpha.phira-u16" => {
+                    let actual = phira_linear_alpha(vector.source["alpha"].as_integer().unwrap());
+                    assert_eq!(actual, exact(&vector.expected), "{}", vector.id);
+                    executed += 1;
+                }
+                "rpe.note-size.phira-uniform" => {
+                    let size = exact(vector.source["size"].as_str().unwrap());
+                    assert_eq!(
+                        (size.clone(), size),
+                        (exact("3/2"), exact("3/2")),
+                        "{}",
+                        vector.id
+                    );
+                    executed += 1;
+                }
+                "rpe.note-y-offset.phira-speed" => {
+                    let actual = phira_offset_y_logical_px(
+                        &exact(vector.source["y_offset"].as_str().unwrap()),
+                        &exact(vector.source["note_speed"].as_str().unwrap()),
+                    );
+                    assert_eq!(actual, exact(&vector.expected), "{}", vector.id);
+                    executed += 1;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(executed, 6);
     }
 }

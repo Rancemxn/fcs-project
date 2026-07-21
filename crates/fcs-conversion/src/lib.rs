@@ -20,13 +20,16 @@ pub use exact::{DecimalLimits, ExactDecimal, ExactNumberError, ExactRational};
 pub use pgr::*;
 pub use pgr_canonical::*;
 pub use rpe::{
-    RpeBeat, RpeError, RpeEventLayerSlot, RpeEventLayersField, RpeFactorMode, RpeLimits,
-    RpeOptionalEventList, RpeOptionalSpeedList, RpeProfile, RpeProfileBinding, RpeSemanticBpmPoint,
-    RpeSemanticCommonEvent, RpeSemanticDocument, RpeSemanticEventLayer, RpeSemanticLine,
-    RpeSemanticNote, RpeSemanticSpeedEvent, RpeSemanticTime, RpeSourceBpmPoint,
+    RpeBeat, RpeError, RpeEventLayerSlot, RpeEventLayersField, RpeFactorMode, RpeInterpretedLine,
+    RpeInterpretedNote, RpeLayerPolicy, RpeLimits, RpeNoteKind, RpeNoteSide, RpeOptionalEventList,
+    RpeOptionalSpeedList, RpeProfile, RpeProfileBinding, RpeSemanticBpmPoint,
+    RpeSemanticCommonEvent, RpeSemanticDocument, RpeSemanticEventLayer, RpeSemanticInterpretation,
+    RpeSemanticLine, RpeSemanticNote, RpeSemanticSpeedEvent, RpeSemanticTime, RpeSourceBpmPoint,
     RpeSourceCommonEvent, RpeSourceDocument, RpeSourceEventLayer, RpeSourceLine, RpeSourceMeta,
-    RpeSourceNote, RpeSourceSpeedEvent, RpeSpeedMode, RpeVersionEra, RpeVersionEvidence,
-    chart_time_delta_seconds, interpret_rpe_timing, parse_rpe_document, resolve_beat,
+    RpeSourceNote, RpeSourceSpeedEvent, RpeSpeedEra, RpeSpeedMode, RpeVersionEra,
+    RpeVersionEvidence, chart_time_delta_seconds, interpret_rpe_semantics, interpret_rpe_timing,
+    note_judgment_enabled, note_side_from_above, parse_rpe_document, phira_linear_alpha,
+    phira_offset_y_logical_px, phira_visible_from, resolve_beat, scale_speed_4_5,
 };
 
 /// Source format family. The parser dialect and semantic profile are separate
