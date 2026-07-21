@@ -180,10 +180,15 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
         })
         .collect();
     if lines.is_empty() {
-        return Err(FcbcError::new(
-            "fcbc.invalid-record",
-            "CanonicalCompilation must contain at least one Line for FCBC write",
-        ));
+        // Native charts without Lines still need a self-contained Line so Core
+        // section loaders can attach tempo/note graph ownership.
+        lines.push(LineFixture {
+            id: stable_id(b"fcs.line", b"generated/default"),
+            distance_index: 0,
+            alpha_descriptor: SECONDS_ALPHA_DESCRIPTOR_INDEX,
+            speed_descriptor: EVALUABLE_SPEED_DESCRIPTOR_INDEX,
+            initial_floor: 1.0,
+        });
     }
     lines.sort_by_key(|line| line.id);
     for (index, line) in lines.iter_mut().enumerate() {
