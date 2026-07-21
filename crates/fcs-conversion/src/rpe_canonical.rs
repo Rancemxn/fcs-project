@@ -88,7 +88,7 @@ pub fn lower_rpe_to_canonical(
 
     let profile = timing.profile();
     let profile_ref = format!("{}@{}", profile.id(), profile.version());
-    let artifact_hash = lower_hex(&artifact.content_sha256());
+    let artifact_hash = lower_hex(artifact.content_sha256());
     let operation_id = operation_id(timing.artifact_content_sha256(), &profile_ref);
     let source_locator = artifact.logical_id().clone();
 
@@ -515,7 +515,7 @@ fn operation_id(content_sha256: [u8; 32], profile_ref: &str) -> String {
     hasher.update(content_sha256);
     hasher.update([0]);
     hasher.update(profile_ref.as_bytes());
-    format!("rpe-import-{}", lower_hex(&hasher.finalize()))
+    format!("rpe-import-{}", lower_hex(hasher.finalize()))
 }
 
 #[allow(clippy::too_many_arguments)]
