@@ -16,6 +16,7 @@ mod line;
 mod metadata;
 mod note;
 mod provenance;
+mod report;
 mod scroll;
 mod time;
 mod track;
@@ -57,6 +58,11 @@ pub use provenance::{
     CanonicalCompilation, DistributionMetadata, InputContentHash, LogicalSourceLocator,
     MappingRuleRef, OriginState, ProvenanceError, ProvenanceGraph, RestrictedProvenanceFact,
     SemanticStatus,
+};
+pub use report::{
+    ConversionDomain, ConversionEntry, ConversionPhase, ConversionPolicy, ConversionReport,
+    ConversionReportSummary, ConversionSeverity, ConversionStatus, RepairMode, RepairRecord,
+    ReportError,
 };
 pub use scroll::{
     CanonicalScrollCoordinate, CanonicalScrollLine, CanonicalScrollSet,

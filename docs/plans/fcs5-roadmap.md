@@ -531,7 +531,7 @@ sampled/BakedCurve 路径都不进入标准 runtime。
   value restrictions。
 - **I5.6 Provenance**：originState、logical sourcePath/value/order、mapping rule 和 stale dependency graph；`CanonicalCompilation`/`DistributionMetadata` 聚合，不把 source AST 放进 CanonicalChart。
 - **I5.7 Report/repair model**：stable category/rule ID、status aggregation、deterministic entries 和
-  old/new typed values。
+  old/new typed values；`RepairMode`/`RepairRecord`/`ConversionReport` 与 DistributionMetadata repairRecords。
 
 当前交付状态：I5.1 的实现单元新增 canonical-stage
 `Document::validate_profile_requirements`，覆盖五种 primary profile、正交 playable/renderable
@@ -551,7 +551,7 @@ budget 与既有 ordered/homogeneous/finite custom 限制。I5.6 新增 source-f
 `RestrictedProvenanceFact`/`ProvenanceGraph`/`DistributionMetadata` 与 `CanonicalCompilation`
 聚合，以及 native 空 distribution 的 `Document::canonical_compilation`。详细边界与证据见
 `docs/plans/i5-canonical-compilation.md`。Render payload/scene/reference/codec closure 仍归 I9，FCBC
-resource u64 ID 与 assembly 仍归 I7；I5.7 报告/repair 与整个 I5 stage 在 I5.7 完成前仍开放。
+resource u64 ID 与 assembly 仍归 I7；I5.7 新增 deterministic `ConversionReport`/`RepairRecord`/`RepairMode` 与 DistributionMetadata repairRecords；I5 stage 产品边界在此闭合，FCBC/Conversion/Render/CLI 仍归后续阶段。
 
 ### I6：PGR/RPE/PEC importer
 
