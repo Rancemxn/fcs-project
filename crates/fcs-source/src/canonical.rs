@@ -16,6 +16,7 @@ use crate::ast::{
     ProfileFeature, ResourceKind, SchemaField, SchemaValue, SourceExpression, SourceLiteral,
     SourceSpan, SyncBlock, TopLevelBlockKind, TypedValue,
 };
+use crate::custom::CustomValueLimits;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLabel, DiagnosticStage};
 use crate::elaborator::{CompileTimeLimits, elaborate};
 use crate::schema::phase2_schema;
@@ -141,7 +142,15 @@ impl Document {
     /// input file. Use `canonical_resource_bundle` for that explicit-root I5
     /// boundary.
     pub fn canonical_metadata(&self) -> Result<CanonicalMetadata, Vec<Diagnostic>> {
-        lower_document(self)
+        self.canonical_metadata_with_limits(CustomValueLimits::default())
+    }
+
+    /// Lowers metadata with an explicit typed-custom limit profile.
+    pub fn canonical_metadata_with_limits(
+        &self,
+        limits: CustomValueLimits,
+    ) -> Result<CanonicalMetadata, Vec<Diagnostic>> {
+        lower_document(self, limits)
     }
 
     /// Validates the canonical requirements added by the declared profile and
@@ -364,12 +373,22 @@ fn chart_diagnostic(error: CanonicalChartError, span: SourceSpan) -> Diagnostic 
     )
 }
 
-fn lower_document(document: &Document) -> Result<CanonicalMetadata, Vec<Diagnostic>> {
-    lower_document_with_sources(document).map(|lowered| lowered.metadata)
+fn lower_document(
+    document: &Document,
+    limits: CustomValueLimits,
+) -> Result<CanonicalMetadata, Vec<Diagnostic>> {
+    lower_document_with_sources_and_limits(document, limits).map(|lowered| lowered.metadata)
 }
 
 pub(crate) fn lower_document_with_sources(
     document: &Document,
+) -> Result<LoweredDocument, Vec<Diagnostic>> {
+    lower_document_with_sources_and_limits(document, CustomValueLimits::default())
+}
+
+fn lower_document_with_sources_and_limits(
+    document: &Document,
+    limits: CustomValueLimits,
 ) -> Result<LoweredDocument, Vec<Diagnostic>> {
     let contributor_names = contributor_names(document.contributors.as_ref());
     let resource_kinds = resource_kinds(document.resources.as_ref());
@@ -378,11 +397,13 @@ pub(crate) fn lower_document_with_sources(
     let contributors = lower_contributors(
         document.contributors.as_ref(),
         document.definitions.as_ref(),
+        limits,
         &mut diagnostics,
     );
     let resources = lower_resources(
         document.resources.as_ref(),
         document.definitions.as_ref(),
+        limits,
         &mut diagnostics,
     );
     let meta = lower_meta(
@@ -390,6 +411,7 @@ pub(crate) fn lower_document_with_sources(
         document.definitions.as_ref(),
         &contributor_names,
         &resource_kinds,
+        limits,
         &mut diagnostics,
     );
     let credits = lower_credits(
@@ -397,18 +419,21 @@ pub(crate) fn lower_document_with_sources(
         document.definitions.as_ref(),
         &contributor_names,
         &resource_kinds,
+        limits,
         &mut diagnostics,
     );
     let artwork = lower_artwork(
         document.artwork.as_ref(),
         document.definitions.as_ref(),
         &resource_kinds,
+        limits,
         &mut diagnostics,
     );
     let sync = lower_sync(
         document.sync.as_ref(),
         document.definitions.as_ref(),
         &resource_kinds,
+        limits,
         &mut diagnostics,
     );
 
@@ -460,6 +485,7 @@ fn lower_meta(
     definitions: Option<&crate::ast::DefinitionsBlock>,
     contributors: &BTreeSet<String>,
     resources: &BTreeMap<String, ResourceKind>,
+    limits: CustomValueLimits,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<BTreeMap<String, CanonicalValue>> {
     let block = block?;
@@ -490,6 +516,7 @@ fn lower_meta(
         definitions,
         contributors,
         resources,
+        limits,
         diagnostics,
         "meta",
     );
@@ -511,6 +538,7 @@ fn lower_meta(
 fn lower_contributors(
     block: Option<&crate::ast::ContributorsBlock>,
     definitions: Option<&crate::ast::DefinitionsBlock>,
+    limits: CustomValueLimits,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> BTreeMap<String, CanonicalContributor> {
     let mut output = BTreeMap::new();
@@ -544,6 +572,7 @@ fn lower_contributors(
             definitions,
             &empty_contributors,
             &empty_resources,
+            limits,
             diagnostics,
             "contributor",
         );
@@ -592,6 +621,7 @@ fn lower_credits(
     definitions: Option<&crate::ast::DefinitionsBlock>,
     contributors: &BTreeSet<String>,
     resources: &BTreeMap<String, ResourceKind>,
+    limits: CustomValueLimits,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Vec<CanonicalCredit> {
     let mut output = Vec::new();
@@ -610,6 +640,7 @@ fn lower_credits(
             definitions,
             contributors,
             resources,
+            limits,
             diagnostics,
             "credit",
         );
@@ -654,6 +685,7 @@ fn lower_credits(
 fn lower_resources(
     block: Option<&crate::ast::ResourcesBlock>,
     definitions: Option<&crate::ast::DefinitionsBlock>,
+    limits: CustomValueLimits,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> LoweredResources {
     let mut output = BTreeMap::new();
@@ -702,6 +734,7 @@ fn lower_resources(
             definitions,
             &empty_contributors,
             &empty_resources,
+            limits,
             diagnostics,
             "resource",
         );
@@ -993,6 +1026,7 @@ fn lower_artwork(
     block: Option<&crate::ast::ArtworkBlock>,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     resources: &BTreeMap<String, ResourceKind>,
+    limits: CustomValueLimits,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<CanonicalArtwork> {
     let block = block?;
@@ -1004,6 +1038,7 @@ fn lower_artwork(
         definitions,
         &BTreeSet::new(),
         resources,
+        limits,
         diagnostics,
         "artwork",
     );
@@ -1031,6 +1066,7 @@ fn lower_sync(
     block: Option<&SyncBlock>,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     resources: &BTreeMap<String, ResourceKind>,
+    limits: CustomValueLimits,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<CanonicalSync> {
     let block = block?;
@@ -1039,6 +1075,7 @@ fn lower_sync(
     let mut audio_offset = AudioOffset::new(0.0).expect("zero audio offset is finite");
     let mut preview = None;
     for field in &block.fields {
+        let mut total_bytes = 0usize;
         let Some(name) = single_field_name(&field.path, field.span, diagnostics, "sync") else {
             continue;
         };
@@ -1063,7 +1100,11 @@ fn lower_sync(
                     &Expected::Reference(ReferenceKind::Resource),
                     &BTreeSet::new(),
                     resources,
+                    limits,
                     diagnostics,
+                    1,
+                    &mut total_bytes,
+                    field.span,
                 ) else {
                     continue;
                 };
@@ -1088,7 +1129,11 @@ fn lower_sync(
                     &Expected::Time,
                     &BTreeSet::new(),
                     resources,
+                    limits,
                     diagnostics,
+                    1,
+                    &mut total_bytes,
+                    field.span,
                 ) else {
                     continue;
                 };
@@ -1120,7 +1165,11 @@ fn lower_sync(
                         &Expected::Time,
                         &BTreeSet::new(),
                         resources,
+                        limits,
                         diagnostics,
+                        1,
+                        &mut total_bytes,
+                        field.span,
                     ) else {
                         continue;
                     };
@@ -1129,7 +1178,11 @@ fn lower_sync(
                         &Expected::Time,
                         &BTreeSet::new(),
                         resources,
+                        limits,
                         diagnostics,
+                        1,
+                        &mut total_bytes,
+                        field.span,
                     ) else {
                         continue;
                     };
@@ -1171,17 +1224,20 @@ fn lower_sync(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_fields(
     fields: &[SchemaField],
     expected: &BTreeMap<&str, Expected>,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     contributors: &BTreeSet<String>,
     resources: &BTreeMap<String, ResourceKind>,
+    limits: CustomValueLimits,
     diagnostics: &mut Vec<Diagnostic>,
     owner: &str,
 ) -> BTreeMap<String, CanonicalValue> {
     let mut output = BTreeMap::new();
     let mut previous = BTreeMap::<String, SourceSpan>::new();
+    let mut total_bytes = 0usize;
     for field in fields {
         let Some(name) = single_field_name(&field.path, field.span, diagnostics, owner) else {
             continue;
@@ -1208,7 +1264,17 @@ fn lower_fields(
         let Some(raw) = lower_schema_value(&field.value, definitions, diagnostics) else {
             continue;
         };
-        if let Some(value) = resolve_raw(raw, expected_type, contributors, resources, diagnostics) {
+        if let Some(value) = resolve_raw(
+            raw,
+            expected_type,
+            contributors,
+            resources,
+            limits,
+            diagnostics,
+            1,
+            &mut total_bytes,
+            field.span,
+        ) {
             output.insert(name, value);
         }
     }
@@ -1460,30 +1526,51 @@ fn finite_raw(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_raw(
     raw: RawValue,
     expected: &Expected,
     contributors: &BTreeSet<String>,
     resources: &BTreeMap<String, ResourceKind>,
+    limits: CustomValueLimits,
     diagnostics: &mut Vec<Diagnostic>,
+    depth: usize,
+    total_bytes: &mut usize,
+    span: SourceSpan,
 ) -> Option<CanonicalValue> {
+    if depth > limits.max_depth() {
+        diagnostics.push(custom_limit_diagnostic(
+            "custom-depth",
+            limits.max_depth(),
+            depth,
+            span,
+        ));
+        return None;
+    }
     match raw {
         RawValue::Reference { name, span } => {
+            charge_bytes(total_bytes, limits, name.len(), span, diagnostics)?;
             resolve_reference(name, span, expected, contributors, resources, diagnostics)
         }
         RawValue::Array(values) => {
+            charge_bytes(total_bytes, limits, 8, span, diagnostics)?;
             let expected_element = match expected {
                 Expected::Array(element) => Some(element.as_ref()),
                 _ => None,
             };
             let mut output = Vec::new();
             for value in values {
+                let child_span = span;
                 let Some(value) = resolve_raw(
                     value,
                     expected_element.unwrap_or(&Expected::Any),
                     contributors,
                     resources,
+                    limits,
                     diagnostics,
+                    depth + 1,
+                    total_bytes,
+                    child_span,
                 ) else {
                     continue;
                 };
@@ -1498,7 +1585,7 @@ fn resolve_raw(
                 diagnostics.push(canonical_diagnostic(
                     DiagnosticCode::TYPE_INVALID_OPERATION,
                     "empty custom arrays require an explicit element type",
-                    SourceSpan::new(0, 0),
+                    span,
                 ));
                 return None;
             };
@@ -1509,7 +1596,7 @@ fn resolve_raw(
                 diagnostics.push(canonical_diagnostic(
                     DiagnosticCode::TYPE_MISMATCH,
                     "array elements must have one homogeneous type",
-                    SourceSpan::new(0, 0),
+                    span,
                 ));
                 return None;
             }
@@ -1519,16 +1606,33 @@ fn resolve_raw(
             }
         }
         RawValue::Object(entries) => {
+            charge_bytes(total_bytes, limits, 8, span, diagnostics)?;
             if !matches!(
                 expected,
                 Expected::Any | Expected::Object | Expected::StringObject
             ) {
-                diagnostics.push(type_mismatch(expected, "object", SourceSpan::new(0, 0)));
+                diagnostics.push(type_mismatch(expected, "object", span));
+                return None;
+            }
+            if entries.len() > limits.max_fields() {
+                diagnostics.push(custom_limit_diagnostic(
+                    "custom-fields",
+                    limits.max_fields(),
+                    entries.len(),
+                    span,
+                ));
                 return None;
             }
             let mut keys = BTreeSet::new();
             let mut output = Vec::new();
             for entry in entries {
+                charge_bytes(
+                    total_bytes,
+                    limits,
+                    entry.key.len(),
+                    entry.key_span,
+                    diagnostics,
+                )?;
                 if !keys.insert(entry.key.clone()) {
                     diagnostics.push(canonical_diagnostic(
                         DiagnosticCode::SCHEMA_DUPLICATE_FIELD,
@@ -1542,7 +1646,11 @@ fn resolve_raw(
                     &Expected::Any,
                     contributors,
                     resources,
+                    limits,
                     diagnostics,
+                    depth + 1,
+                    total_bytes,
+                    entry.key_span,
                 ) else {
                     continue;
                 };
@@ -1563,6 +1671,34 @@ fn resolve_raw(
         }
         value => {
             let value = raw_to_canonical(value);
+            match &value {
+                CanonicalValue::String(s) => {
+                    if s.len() > limits.max_string_bytes() {
+                        diagnostics.push(custom_limit_diagnostic(
+                            "custom-string-bytes",
+                            limits.max_string_bytes(),
+                            s.len(),
+                            span,
+                        ));
+                        return None;
+                    }
+                    charge_bytes(total_bytes, limits, s.len(), span, diagnostics)?;
+                }
+                CanonicalValue::Null
+                | CanonicalValue::Bool(_)
+                | CanonicalValue::Int(_)
+                | CanonicalValue::Float(_)
+                | CanonicalValue::Time(_)
+                | CanonicalValue::Beat(_)
+                | CanonicalValue::Color(_)
+                | CanonicalValue::ResourceReference(_)
+                | CanonicalValue::ContributorReference(_) => {
+                    charge_bytes(total_bytes, limits, 8, span, diagnostics)?;
+                }
+                CanonicalValue::Array { .. } | CanonicalValue::Object(_) => {
+                    charge_bytes(total_bytes, limits, 8, span, diagnostics)?;
+                }
+            }
             if matches!(expected, Expected::Number) && matches!(value, CanonicalValue::Int(_)) {
                 return value_matches_expected(
                     match value {
@@ -1576,6 +1712,41 @@ fn resolve_raw(
             value_matches_expected(value, expected, diagnostics)
         }
     }
+}
+
+fn charge_bytes(
+    total_bytes: &mut usize,
+    limits: CustomValueLimits,
+    amount: usize,
+    span: SourceSpan,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<()> {
+    let next = total_bytes.saturating_add(amount);
+    if next > limits.max_total_bytes() {
+        diagnostics.push(custom_limit_diagnostic(
+            "custom-total-bytes",
+            limits.max_total_bytes(),
+            next,
+            span,
+        ));
+        return None;
+    }
+    *total_bytes = next;
+    Some(())
+}
+
+fn custom_limit_diagnostic(
+    kind: &'static str,
+    limit: usize,
+    observed: usize,
+    span: SourceSpan,
+) -> Diagnostic {
+    canonical_diagnostic(
+        DiagnosticCode::RESOURCE_LIMIT_EXCEEDED,
+        format!("resource limit {kind} exceeded: limit {limit}, observed {observed}"),
+        span,
+    )
+    .with_budget(kind, limit, observed)
 }
 
 fn resolve_reference(

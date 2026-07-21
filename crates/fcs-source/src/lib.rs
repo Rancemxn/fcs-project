@@ -1,5 +1,6 @@
 pub mod ast;
 mod canonical;
+mod custom;
 pub mod diagnostic;
 pub mod elaborator;
 mod expression;
@@ -12,6 +13,7 @@ mod scroll;
 mod track;
 pub mod version;
 
+pub use custom::CustomValueLimits;
 pub use diagnostic::Diagnostic;
 pub use expression::lower_runtime_expression;
 pub use resource::ResourceLimits;

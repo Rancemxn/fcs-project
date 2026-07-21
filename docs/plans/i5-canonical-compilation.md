@@ -1,7 +1,7 @@
 # I5 CanonicalCompilation, metadata, resources, sync, and fidelity
 
-Status: I5.1-I5.4 implementation establishes the canonical profile-requirement,
-contributor/credit, opaque workspace-resource, and sync formula/preview boundaries. I5.5-I5.7 remain open and this plan does not claim a complete
+Status: I5.1-I5.5 implementation establishes the canonical profile-requirement,
+contributor/credit, opaque workspace-resource, sync formula/preview, and typed-custom limit boundaries. I5.6-I5.7 remain open and this plan does not claim a complete
 `CanonicalCompilation`, Render scene, converter, FCBC product, or FCS 5 release.
 
 ## Normative dependency closure
@@ -178,10 +178,31 @@ contributor/credit, opaque workspace-resource, and sync formula/preview boundari
 - Acceptance requires the exact PR head to pass `.github/workflows/full-gate.yml`
   and a passing Primary Self-Audit with no unresolved Critical/Important finding.
 
+## I5.5 owned surface
+
+- `CustomValueLimits` is the public compiler-profile limit object for typed
+  custom trees: depth, total object fields, per-string UTF-8 bytes, and total
+  estimated custom-tree bytes.
+- `Document::canonical_metadata` uses Core defaults; tests and later host
+  profiles can pass tighter limits through `canonical_metadata_with_limits`.
+- Limit failures use `resource.limit-exceeded` with budget kind/limit/observed
+  and source span. Duplicate object keys remain `schema.duplicate-field`.
+- Homogeneous arrays, ordered objects, finite scalars/colors, and explicit empty
+  array element typing remain FCBC-compatible restrictions on the shared value
+  surface.
+
+## I5.5 acceptance evidence
+
+- `custom_value_limits` covers default acceptance and independent depth, field,
+  string, and total-byte budgets plus the existing duplicate-key fixture.
+- `conformance_manifest::i5_custom_fixtures_execute_at_the_canonical_boundary`
+  executes `source.invalid.custom-duplicate-key`.
+- Acceptance requires the exact PR head to pass `.github/workflows/full-gate.yml`
+  and a passing Primary Self-Audit with no unresolved Critical/Important finding.
+
 ## Remaining I5 work
 
-- I5.5 binds typed custom value limits and FCBC-compatible restrictions.
 - I5.6 adds provenance and stale-dependency tracking without source AST leakage
   into `CanonicalChart`.
 - I5.7 adds the deterministic report/repair model. None of these residuals is
-  implemented or claimed by I5.1-I5.4.
+  implemented or claimed by I5.1-I5.5.
