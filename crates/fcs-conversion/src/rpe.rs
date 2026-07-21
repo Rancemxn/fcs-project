@@ -886,14 +886,14 @@ pub fn interpret_rpe_timing(
         let path = format!("$.BPMList[{index}]");
         let start_beat = resolve_beat(&point.start_time, profile, &format!("{path}.startTime"))?;
         validate_positive_finite(point.bpm.exact(), &format!("{path}.bpm"), "BPM")?;
-        if let Some(previous) = &previous_beat {
-            if start_beat.value() < previous.value() {
-                return Err(RpeError::new(
-                    SOURCE_INVALID,
-                    format!("{path}.startTime"),
-                    "BPMList startTime must be non-decreasing in source order",
-                ));
-            }
+        if let Some(previous) = &previous_beat
+            && start_beat.value() < previous.value()
+        {
+            return Err(RpeError::new(
+                SOURCE_INVALID,
+                format!("{path}.startTime"),
+                "BPMList startTime must be non-decreasing in source order",
+            ));
         }
         previous_beat = Some(start_beat.clone());
         bpm_points.push(RpeSemanticBpmPoint {
@@ -1223,11 +1223,11 @@ fn chart_time_at(
     // Collapse same-beat points so the final source-order BPM at that beat is active.
     let mut segments: Vec<(ExactRational, ExactRational)> = Vec::new();
     for point in bpm_points {
-        if let Some((beat, bpm)) = segments.last_mut() {
-            if beat == &point.start_beat {
-                *bpm = point.bpm.clone();
-                continue;
-            }
+        if let Some((beat, bpm)) = segments.last_mut()
+            && beat == &point.start_beat
+        {
+            *bpm = point.bpm.clone();
+            continue;
         }
         segments.push((point.start_beat.clone(), point.bpm.clone()));
     }
