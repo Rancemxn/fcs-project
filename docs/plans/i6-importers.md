@@ -106,9 +106,14 @@ I6.3a 是 I6.3 的第一个可独立验收单元：现代 RPE JSON 的 typed sou
 验收证据：`crates/fcs-conversion/src/rpe.rs` 的 focused tests 执行 checked-in Beat/bpmfactor vectors，
 并覆盖五 profile、version 原文、layer 形状、same-Beat BPM order、limits 与 invalid paths。
 
+## I6.3b RPE advanced semantic IR
+
+I6.3b 在 I6.3a timing 之上增加 `interpret_rpe_semantics`：layer additive/first-only 策略与 layer-loss
+报告、speed-era 分类、father/parent cycle 拒绝、Note type/side/fake/Hold 与 Phira presentation 轴
+（visibleTime/alpha/size/yOffset）以及 `rpe.speed.scale4_5`。不装配 CanonicalCompilation。
+
 ## 后续单元
 
-- I6.3b：RPE event-layer、easing/Bezier、speed-era、parent 与 Note semantic interpretation。
 - I6.3c：RPE canonical/provenance/report assembly 与 metadata/resource-reference handoff。
 - I6.4：PEC command parser、source order 和版本化 offset/cv profile。
 - I6.5：content-hash-bound profile registry、detection evidence 与无猜测 selection。
