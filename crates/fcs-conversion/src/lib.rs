@@ -17,6 +17,7 @@ mod pec_canonical;
 mod pgr;
 mod pgr_canonical;
 mod profile_selection;
+mod repair;
 mod rpe;
 mod rpe_canonical;
 
@@ -35,6 +36,10 @@ pub use profile_selection::{
     ProfileBindingCandidate, ProfileRef, ProfileRegistry, ProfileSelectionMode, REGISTRY_INTEGRITY,
     RegisteredProfile, SelectionDecision, SelectionDirection, SelectionError, SelectionReason,
     SelectionRequest, TARGET_PROFILE_REQUIRED, load_profile_registry, select_profile,
+};
+pub use repair::{
+    REPAIR_AMBIGUITY_FORBIDDEN, REPAIR_NOT_AUTHORIZED, RepairError, RepairProposal,
+    apply_authorized_repair, repair_cannot_resolve_profile_ambiguity,
 };
 pub use rpe::{
     RpeBeat, RpeError, RpeEventLayerSlot, RpeEventLayersField, RpeFactorMode, RpeInterpretedLine,
