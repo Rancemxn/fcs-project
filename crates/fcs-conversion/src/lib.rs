@@ -12,6 +12,7 @@ use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 
 mod exact;
+mod fixture_lane;
 mod pec;
 mod pec_canonical;
 mod pgr;
@@ -22,6 +23,13 @@ mod rpe;
 mod rpe_canonical;
 
 pub use exact::{DecimalLimits, ExactDecimal, ExactNumberError, ExactRational};
+pub use fixture_lane::{
+    COPYRIGHT_FIXTURE_ROOT_ENV, CopyrightLaneStatus, FixtureClass, FixtureEntry, FixtureExpectation,
+    FixtureFormat, FixtureImportProducts, FixtureLaneError, FixtureManifest, FixtureObservation,
+    PUBLIC_FIXTURE_RELATIVE, assert_expectation, copyright_lane_status, load_fixture_expectation,
+    load_fixture_manifest, observe_products, public_fixture_root, run_fixture_corpus,
+    run_import_fixture,
+};
 pub use pec::{
     PecCvScale, PecError, PecLimits, PecNoteKind, PecNoteSide, PecProfile, PecProfileBinding,
     PecSemanticBpm, PecSemanticDocument, PecSemanticNote, PecSemanticTime, PecSourceCommand,

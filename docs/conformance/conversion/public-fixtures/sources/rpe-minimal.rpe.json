@@ -1,0 +1,44 @@
+{
+  "META": { "RPEVersion": 150, "offset": 0, "name": "public-rpe-minimal" },
+  "BPMList": [
+    { "startTime": [0, 0, 1], "bpm": 120 },
+    { "startTime": [4, 0, 1], "bpm": 180 }
+  ],
+  "judgeLineList": [
+    {
+      "bpmfactor": 1,
+      "eventLayers": [
+        {
+          "speedEvents": [
+            { "startTime": [0, 0, 1], "endTime": [4, 0, 1], "start": 1, "end": 1 }
+          ]
+        }
+      ],
+      "notes": [
+        {
+          "type": 1,
+          "startTime": [1, 0, 1],
+          "endTime": [1, 0, 1],
+          "positionX": 0,
+          "speed": 4.5,
+          "above": 1,
+          "isFake": 0
+        },
+        {
+          "type": 2,
+          "startTime": [2, 0, 1],
+          "endTime": [3, 0, 1],
+          "positionX": 100,
+          "speed": 4.5,
+          "above": 0
+        }
+      ],
+      "father": -1
+    },
+    {
+      "father": 0,
+      "rotateWithFather": true,
+      "notes": []
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "formatVersion": 1,
+  "offset": 0.125,
+  "judgeLineList": [
+    {
+      "bpm": 120,
+      "judgeLineMoveEvents": [
+        { "startTime": 0, "endTime": 32, "start": 440260, "end": 440500 }
+      ],
+      "judgeLineRotateEvents": [
+        { "startTime": 0, "endTime": 32, "start": 0, "end": 90 }
+      ],
+      "judgeLineDisappearEvents": [
+        { "startTime": 0, "endTime": 32, "start": 0, "end": 1 }
+      ],
+      "speedEvents": [
+        { "startTime": 0, "endTime": 64, "value": 2, "floorPosition": 0 }
+      ],
+      "notesAbove": [
+        { "type": 3, "time": 32, "holdTime": 32, "positionX": 1, "speed": 4, "floorPosition": 1 }
+      ],
+      "notesBelow": [
+        { "type": 1, "time": 0, "holdTime": 0, "positionX": -1, "speed": 2, "floorPosition": 0 }
+      ]
+    }
+  ]
+}

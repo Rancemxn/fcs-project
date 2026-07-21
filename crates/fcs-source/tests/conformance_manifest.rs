@@ -229,6 +229,7 @@ struct ConversionManifest {
     diagnostic_registry: String,
     mapping_vectors: String,
     selection_vectors: String,
+    public_fixtures: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -2333,6 +2334,7 @@ fn manifests_preserve_integrity_invariants() {
         ),
         ("mapping vectors", conversion.mapping_vectors.as_str()),
         ("selection vectors", conversion.selection_vectors.as_str()),
+        ("public fixtures", conversion.public_fixtures.as_str()),
     ] {
         assert_regular_file_below(
             &conversion_base,

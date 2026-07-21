@@ -1,0 +1,7 @@
+id = "pec-minimal"
+expected_status = "equivalent"
+expected_lines = 1
+expected_notes = 2
+required_categories = []
+required_provenance_keys = ["pec/artifact", "pec/profile", "pec/line/0"]
+empty_resources = true
