@@ -2113,11 +2113,12 @@ mod tests {
         parse_rpe_document(&parsed, RpeLimits::default()).unwrap()
     }
 
-    fn exact(value: &str) -> ExactRational {
-        ExactDecimal::parse(value, DecimalLimits::default())
-            .unwrap()
-            .exact()
-            .clone()
+    fn exact(expected: &str) -> ExactRational {
+        let (numerator, denominator) = expected.split_once('/').unwrap_or((expected, "1"));
+        ExactRational(BigRational::new(
+            BigInt::parse_bytes(numerator.as_bytes(), 10).unwrap(),
+            BigInt::parse_bytes(denominator.as_bytes(), 10).unwrap(),
+        ))
     }
 
     fn beat(a: i64, b: i64, c: i64) -> RpeBeat {
