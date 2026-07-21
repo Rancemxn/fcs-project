@@ -10,11 +10,9 @@ use fcs_model::{CanonicalChart, CanonicalNoteKind, CanonicalNoteSide};
 use serde_json::{Value, json};
 
 use crate::{
-    ArtifactRole, DecimalLimits, ExactDecimal, PecLimits, PecProfile, PecProfileBinding, PgrLimits,
-    PgrProfile, PgrProfileBinding, RpeLimits, RpeProfileBinding, SourceArtifact, SourceFormat,
-    interpret_pec, interpret_pgr, interpret_rpe_semantics, lower_pec_to_canonical,
-    lower_pgr_to_canonical, lower_rpe_to_canonical, parse_json_document, parse_pec_document,
-    parse_pgr_document, parse_rpe_document,
+    ArtifactRole, DecimalLimits, ExactDecimal, PgrLimits, PgrProfile, PgrProfileBinding,
+    SourceArtifact, SourceFormat, interpret_pgr, lower_pgr_to_canonical, parse_json_document,
+    parse_pgr_document,
 };
 
 /// Stable formatter / exporter diagnostic category.
@@ -478,6 +476,11 @@ fn seconds_to_rpe_beat(seconds: f64, bpm: f64) -> [i64; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        PecLimits, PecProfile, PecProfileBinding, RpeLimits, RpeProfileBinding, interpret_pec,
+        interpret_rpe_semantics, lower_pec_to_canonical, lower_rpe_to_canonical,
+        parse_pec_document, parse_rpe_document,
+    };
     use std::fs;
     use std::path::PathBuf;
 
