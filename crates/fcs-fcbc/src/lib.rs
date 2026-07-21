@@ -10,6 +10,7 @@ mod container;
 mod error;
 mod evaluator;
 mod loader;
+mod mutations;
 mod writer;
 
 pub use codec::{
