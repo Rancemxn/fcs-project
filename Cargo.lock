@@ -231,6 +231,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fcs-fcbc"
+version = "0.2.0"
+dependencies = [
+ "crc",
+ "serde",
+ "sha2",
+ "toml",
+]
+
+[[package]]
 name = "fcs-model"
 version = "0.2.0"
 dependencies = [
