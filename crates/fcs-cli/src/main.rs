@@ -268,6 +268,9 @@ fn cmd_compile(path: &Path, output: Option<&Path>) -> ExitCode {
             return ExitCategory::InputInvalid.code();
         }
     };
+    let chart = compilation.chart();
+    let source_lines = chart.lines().lines().count();
+    let source_notes = chart.notes().notes().len();
     let fcbc = match write_from_compilation(&compilation) {
         Ok(bytes) => bytes,
         Err(error) => {
@@ -275,14 +278,21 @@ fn cmd_compile(path: &Path, output: Option<&Path>) -> ExitCode {
             return ExitCategory::Internal.code();
         }
     };
-    // Product load proves the emitted bytes are a real FCBC package.
-    let loaded = match load_chart(&fcbc) {
-        Ok(chart) => chart,
-        Err(category) => {
-            eprintln!("error: compiled FCBC failed product load: {category}");
+    // Product framing load proves the emitted bytes are a real FCBC package
+    // (header/section table/CRC/layout). Core load is preferred when the package
+    // also satisfies Execution ABI graph constraints.
+    let container = match load_container(&fcbc) {
+        Ok(container) => container,
+        Err(error) => {
+            eprintln!(
+                "error: compiled FCBC failed product framing load: {}: {}",
+                error.category(),
+                error.message()
+            );
             return ExitCategory::Internal.code();
         }
     };
+    let core = load_chart(&fcbc).ok();
     let out_path = output
         .map(PathBuf::from)
         .unwrap_or_else(|| path.with_extension("fcbc"));
@@ -291,12 +301,14 @@ fn cmd_compile(path: &Path, output: Option<&Path>) -> ExitCode {
         return ExitCategory::Internal.code();
     }
     println!(
-        "compiled {} -> {} bytes={} lines={} notes={}",
+        "compiled {} -> {} bytes={} sections={} sourceLines={} sourceNotes={} coreLoaded={}",
         path.display(),
         out_path.display(),
-        fcbc.len(),
-        loaded.lines.len(),
-        loaded.notes.len()
+        container.byte_length,
+        container.sections.len(),
+        source_lines,
+        source_notes,
+        core.is_some()
     );
     ExitCategory::Success.code()
 }

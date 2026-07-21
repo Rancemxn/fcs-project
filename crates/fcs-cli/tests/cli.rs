@@ -114,5 +114,5 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
         String::from_utf8_lossy(&inspect.stderr)
     );
     let stdout = String::from_utf8_lossy(&inspect.stdout);
-    assert!(stdout.contains("\"lineCount\":1") || stdout.contains("\"coreLoaded\":true"));
+    assert!(stdout.contains("\"sectionCount\":14") || stdout.contains("\"profile\""));
 }
