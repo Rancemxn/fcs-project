@@ -45,3 +45,10 @@ Per user-authorized RC acceleration and product evidence above, the five version
 domains listed in `docs/specifications/governance.md` §2 are marked **Frozen**
 for the local conformance RC only. Any later normative change must reopen the
 affected domain under governance versioning rules.
+
+## Known residuals (honest after #288/#289)
+
+- Native `write_from_compilation` product-asserts `load_container` framing; full Core `load_chart` after native compile remains best-effort (descriptor scaffold).
+- FCBC matrix status is `partial` for that residual while goldens still Core-load.
+- CapabilitySet is a bounded negotiation surface, not full Conversion §6.2 descriptor.
+- No public tag/Release/crate publish.
