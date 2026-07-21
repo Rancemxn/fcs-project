@@ -91,7 +91,15 @@ pub fn lower_pgr_to_canonical(
         .lines()
         .iter()
         .enumerate()
-        .map(|(index, _)| generated_id(&mut registry, EntityKind::Line, "pgrLines", index, index))
+        .map(|(index, _)| {
+            generated_id(
+                &mut registry,
+                EntityKind::Line,
+                "pgrLines",
+                index,
+                index as u64,
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     let global_bpm = canonical_global_bpm(semantic)?;
