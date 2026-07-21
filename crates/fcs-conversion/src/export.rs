@@ -10,9 +10,11 @@ use fcs_model::{CanonicalChart, CanonicalNoteKind, CanonicalNoteSide};
 use serde_json::{Value, json};
 
 use crate::{
-    ArtifactRole, DecimalLimits, ExactDecimal, PgrLimits, PgrProfile, PgrProfileBinding,
-    SourceArtifact, SourceFormat, interpret_pgr, lower_pgr_to_canonical, parse_json_document,
-    parse_pgr_document,
+    ArtifactRole, DecimalLimits, ExactDecimal, PecLimits, PecProfile, PecProfileBinding, PgrLimits,
+    PgrProfile, PgrProfileBinding, RpeLimits, RpeProfileBinding, SourceArtifact, SourceFormat,
+    interpret_pec, interpret_pgr, interpret_rpe_semantics, lower_pec_to_canonical,
+    lower_pgr_to_canonical, lower_rpe_to_canonical, parse_json_document, parse_pec_document,
+    parse_pgr_document, parse_rpe_document,
 };
 
 /// Stable formatter / exporter diagnostic category.
@@ -510,7 +512,7 @@ mod tests {
     }
 
     #[test]
-    fn capability_negotiation_and_rpe_pec_export_emit_bytes() {
+    fn capability_negotiation_and_rpe_pec_export_reparse() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let bytes = fs::read(
             root.join("docs/conformance/conversion/public-fixtures/sources/pgr-minimal.pgr.json"),
@@ -524,11 +526,46 @@ mod tests {
         let semantic = interpret_pgr(&source, &binding).unwrap();
         let import = lower_pgr_to_canonical(&semantic, &artifact).unwrap();
         let chart = import.compilation().chart();
+        let lines_in = chart.lines().lines().count();
+        let notes_in = chart.notes().notes().len();
         assert_eq!(
             negotiate_export(chart, &CapabilitySet::pgr_v3()).unwrap(),
             NegotiationAction::Equivalent
         );
-        assert!(!export_rpe_json(chart).unwrap().is_empty());
-        assert!(!export_pec_line(chart).unwrap().is_empty());
+
+        // RPE export → reparse → lower; compare topology counts.
+        let rpe_bytes = export_rpe_json(chart).unwrap();
+        let rpe_artifact =
+            SourceArtifact::new("export.rpe.json", ArtifactRole::Chart, rpe_bytes).unwrap();
+        let rpe_parsed = parse_json_document(SourceFormat::Rpe, &rpe_artifact).unwrap();
+        let rpe_source = parse_rpe_document(&rpe_parsed, RpeLimits::default()).unwrap();
+        let rpe_binding = RpeProfileBinding::phira_legacy_speed();
+        let rpe_semantic = interpret_rpe_semantics(&rpe_source, &rpe_binding).unwrap();
+        let rpe_import = lower_rpe_to_canonical(&rpe_semantic, &rpe_artifact).unwrap();
+        assert_eq!(
+            rpe_import.compilation().chart().lines().lines().count(),
+            lines_in
+        );
+        assert_eq!(
+            rpe_import.compilation().chart().notes().notes().len(),
+            notes_in
+        );
+
+        // PEC export → reparse → lower; compare topology counts.
+        let pec_bytes = export_pec_line(chart).unwrap();
+        let pec_artifact =
+            SourceArtifact::new("export.pec", ArtifactRole::Chart, pec_bytes).unwrap();
+        let pec_source = parse_pec_document(&pec_artifact, PecLimits::default()).unwrap();
+        let pec_binding = PecProfileBinding::new(PecProfile::Phira, floor.clone()).unwrap();
+        let pec_semantic = interpret_pec(&pec_source, &pec_binding).unwrap();
+        let pec_import = lower_pec_to_canonical(&pec_semantic, &pec_artifact).unwrap();
+        assert_eq!(
+            pec_import.compilation().chart().lines().lines().count(),
+            lines_in
+        );
+        assert_eq!(
+            pec_import.compilation().chart().notes().notes().len(),
+            notes_in
+        );
     }
 }
