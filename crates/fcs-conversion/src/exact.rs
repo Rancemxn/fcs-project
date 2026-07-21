@@ -101,10 +101,6 @@ impl ExactRational {
         Self(BigRational::from_integer(value))
     }
 
-    pub(crate) fn from_ratio(numerator: BigInt, denominator: BigInt) -> Self {
-        Self(BigRational::new(numerator, denominator))
-    }
-
     pub(crate) fn value(&self) -> &BigRational {
         &self.0
     }
@@ -185,7 +181,7 @@ impl fmt::Display for ExactNumberError {
 impl std::error::Error for ExactNumberError {}
 
 fn split_exponent(raw: &str, max_abs_exponent: usize) -> Result<(&str, i64), ExactNumberError> {
-    let Some(index) = raw.find(|character| character == 'e' || character == 'E') else {
+    let Some(index) = raw.find(['e', 'E']) else {
         return Ok((raw, 0));
     };
     let mantissa = &raw[..index];

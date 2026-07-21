@@ -1498,7 +1498,7 @@ fn parse_note(
         _ => {
             return Err(PgrError::new(
                 SOURCE_INVALID,
-                &format!("{path}.type"),
+                format!("{path}.type"),
                 "PGR Note type must be exact integer 1, 2, 3, or 4",
             ));
         }
@@ -1588,14 +1588,14 @@ fn required<'a>(
     let value = matches.next().ok_or_else(|| {
         PgrError::new(
             SOURCE_INVALID,
-            &format!("{parent}.{key}"),
+            format!("{parent}.{key}"),
             "required PGR field is missing",
         )
     })?;
     if matches.next().is_some() {
         return Err(PgrError::new(
             SOURCE_INVALID,
-            &format!("{parent}.{key}"),
+            format!("{parent}.{key}"),
             "known PGR field is duplicated",
         ));
     }
@@ -1612,7 +1612,7 @@ fn optional<'a>(
     if matches.next().is_some() {
         return Err(PgrError::new(
             SOURCE_INVALID,
-            &format!("{parent}.{key}"),
+            format!("{parent}.{key}"),
             "known PGR field is duplicated",
         ));
     }
@@ -1798,10 +1798,10 @@ mod tests {
 
     fn exact(expected: &str) -> ExactRational {
         let (numerator, denominator) = expected.split_once('/').unwrap_or((expected, "1"));
-        ExactRational::from_ratio(
+        ExactRational(BigRational::new(
             BigInt::parse_bytes(numerator.as_bytes(), 10).unwrap(),
             BigInt::parse_bytes(denominator.as_bytes(), 10).unwrap(),
-        )
+        ))
     }
 
     #[test]
