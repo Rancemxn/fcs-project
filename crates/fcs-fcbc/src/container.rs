@@ -750,6 +750,22 @@ mod tests {
     }
 
     #[test]
+    fn product_writer_round_trips_through_product_loader() {
+        let bytes = crate::write_nonempty_execution();
+        let chart = crate::load_chart(&bytes).expect("product writer bytes must load");
+        assert_eq!(chart.container_profile, 3);
+        assert_eq!(chart.lines.len(), 2);
+        assert_eq!(chart.notes.len(), 2);
+        assert_eq!(chart.descriptors.len(), 14);
+        assert_eq!(chart.constants.len(), 14);
+        assert_eq!(chart.expressions.len(), 40);
+        assert_eq!(chart.distances.len(), 2);
+        // Deterministic re-write identity for the fixed fixture model.
+        let again = crate::write_nonempty_execution();
+        assert_eq!(bytes, again);
+    }
+
+    #[test]
     fn product_framing_accepts_runtime_profile_goldens() {
         for name in ["minimal-runtime.toml", "embedded-resource.toml"] {
             let (manifest, bytes) = load_golden(name);
