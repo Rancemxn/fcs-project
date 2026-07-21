@@ -10,6 +10,7 @@ mod container;
 mod error;
 mod evaluator;
 mod loader;
+mod writer;
 
 pub use codec::{
     decode_f64_le, decode_i64_le, decode_u8, decode_u16_le, decode_u32_le, decode_u64_le,
@@ -32,3 +33,4 @@ pub use loader::{
     SectionInfo, Segment, TempoPoint, ValueType, load, load_chart,
     validate_descriptor_env_p_context, validate_descriptor_environment_for_target,
 };
+pub use writer::write_nonempty_execution;
