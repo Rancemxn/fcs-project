@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use fcs_model::{AudioOffset, CanonicalPreview, CanonicalSync};
-use fcs_source::parse_document;
+use fcs_source::parser::parse_document;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
