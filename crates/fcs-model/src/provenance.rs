@@ -12,6 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use crate::report::RepairRecord;
 use crate::{CanonicalChart, CanonicalObject, CanonicalResourceBundle};
 
 /// Closed origin-state set from Conversion Specification §5.2.
@@ -492,6 +493,7 @@ impl ProvenanceGraph {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DistributionMetadata {
     provenance: ProvenanceGraph,
+    repair_records: Vec<RepairRecord>,
     input_hashes: Vec<InputContentHash>,
     custom: CanonicalObject,
 }
@@ -499,12 +501,14 @@ pub struct DistributionMetadata {
 impl DistributionMetadata {
     pub fn new(
         provenance: ProvenanceGraph,
+        repair_records: Vec<RepairRecord>,
         input_hashes: Vec<InputContentHash>,
         custom: CanonicalObject,
     ) -> Result<Self, ProvenanceError> {
         provenance.validate_dependency_closure()?;
         Ok(Self {
             provenance,
+            repair_records,
             input_hashes,
             custom,
         })
@@ -514,6 +518,7 @@ impl DistributionMetadata {
     pub fn empty() -> Self {
         Self {
             provenance: ProvenanceGraph::empty(),
+            repair_records: Vec::new(),
             input_hashes: Vec::new(),
             custom: CanonicalObject::new(Vec::new()).expect("empty object is valid"),
         }
@@ -521,6 +526,10 @@ impl DistributionMetadata {
 
     pub fn provenance(&self) -> &ProvenanceGraph {
         &self.provenance
+    }
+
+    pub fn repair_records(&self) -> &[RepairRecord] {
+        &self.repair_records
     }
 
     pub fn input_hashes(&self) -> &[InputContentHash] {
@@ -533,6 +542,7 @@ impl DistributionMetadata {
 
     pub fn is_empty(&self) -> bool {
         self.provenance.is_empty()
+            && self.repair_records.is_empty()
             && self.input_hashes.is_empty()
             && self.custom.entries().is_empty()
     }
@@ -783,6 +793,7 @@ mod tests {
         let resources = CanonicalResourceBundle::new(Vec::new()).unwrap();
         let distribution = DistributionMetadata::new(
             ProvenanceGraph::new([fact("title", OriginState::ExplicitValue, [])]).unwrap(),
+            Vec::new(),
             vec![InputContentHash::sha256_lower_hex("a".repeat(64), None).unwrap()],
             CanonicalObject::new(Vec::new()).unwrap(),
         )

@@ -1,10 +1,12 @@
 # I5 CanonicalCompilation, metadata, resources, sync, and fidelity
 
-Status: I5.1-I5.6 implementation establishes the canonical profile-requirement,
-contributor/credit, opaque workspace-resource, sync formula/preview, typed-custom
-limits, source-free provenance/stale-dependency, and `CanonicalCompilation`
-aggregate boundaries. I5.7 remains open and this plan does not claim a complete
-Render scene, converter, FCBC product, or FCS 5 release.
+Status: I5.1-I5.7 implementation establishes the full I5 canonical-compilation
+stage boundary: profile requirements, contributor/credit, opaque resources,
+sync formula/preview, typed-custom limits, source-free provenance/stale tracking,
+CanonicalCompilation aggregation, and deterministic ConversionReport/RepairRecord
+model. This plan still does not claim Render scene, converter execution, FCBC
+product, or FCS 5 release completion.
+
 
 ## Normative dependency closure
 
@@ -227,7 +229,27 @@ Render scene, converter, FCBC product, or FCS 5 release.
 - Acceptance requires the exact PR head to pass `.github/workflows/full-gate.yml`
   and a passing Primary Self-Audit with no unresolved Critical/Important finding.
 
-## Remaining I5 work
+## I5.7 owned surface
 
-- I5.7 adds the deterministic report/repair model. That residual is not
-  implemented or claimed by I5.1-I5.6.
+- `RepairMode` carries explicit enablement and ordered authorized rule refs.
+- `RepairRecord` records source locator, diagnostic category, action, rule,
+  old/new typed values, and semantic impact; unauthorized rules fail.
+- `ConversionReport` owns deterministic entries, repairs, summary counts, and
+  Conversion §7.1 status aggregation precedence.
+- Entries order by phase, entity id, field key, rule id, then entry id.
+- `DistributionMetadata` now retains ordered `repair_records` after provenance
+  while native FCS compile distribution remains empty.
+
+## I5.7 acceptance evidence
+
+- `fcs_model::report` unit tests cover status aggregation precedence,
+  unauthorized repair rejection, repaired-vs-lossless forcing, failed outranking
+  repaired, and deterministic entry ordering.
+- Acceptance requires the exact PR head to pass `.github/workflows/full-gate.yml`
+  and a passing Primary Self-Audit with no unresolved Critical/Important finding.
+
+## Remaining after I5
+
+- I5 stage residual is closed at the I5 product boundary. FCBC encoding,
+  conversion importer execution, Render, CLI, and later stages remain open and
+  are not claimed by I5.1-I5.7.
