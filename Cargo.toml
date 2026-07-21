@@ -5,6 +5,7 @@ members = [
     "crates/fcs-runtime",
     "crates/fcs-source",
     "crates/fcs-conversion",
+    "crates/fcs-fcbc",
 ]
 
 [workspace.package]
