@@ -118,9 +118,15 @@ I6.3c 增加 `lower_rpe_to_canonical`：在匹配 chart artifact identity 后复
 `CanonicalCompilation`/provenance/`ConversionReport` 装配 Line parent/inherit、Note 四 kind、
 BPMList tempo map 与 empty resource bundle；Phichain first-only layer loss 进入 preserved-only report。
 
+## I6.4 PEC import product boundary
+
+I6.4 增加 `parse_pec_document`（Phira line-command dialect）、三 profile binding
+（`pec.phira` / `pec.extends` / `pec.phispler` 的 bias 与 cv scale）、`interpret_pec` 与
+`lower_pec_to_canonical`。保留 command source order、Note `#`/`&` 邻接、direct Beat 与 checked-in
+mapping vectors；不执行 Repair、token-stream 全量 dialect 或 package ZIP。
+
 ## 后续单元
 
-- I6.4：PEC command parser、source order 和版本化 offset/cv profile。
 - I6.5：content-hash-bound profile registry、detection evidence 与无猜测 selection。
 - I6.6：strict-invalid 和显式 Repair execution/report。
 - I6.7：公开 fixture、canonical snapshot、expected report 与 opt-in copyright lane。

@@ -12,12 +12,21 @@ use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 
 mod exact;
+mod pec;
+mod pec_canonical;
 mod pgr;
 mod pgr_canonical;
 mod rpe;
 mod rpe_canonical;
 
 pub use exact::{DecimalLimits, ExactDecimal, ExactNumberError, ExactRational};
+pub use pec::{
+    PecCvScale, PecError, PecLimits, PecNoteKind, PecNoteSide, PecProfile, PecProfileBinding,
+    PecSemanticBpm, PecSemanticDocument, PecSemanticNote, PecSemanticTime, PecSourceCommand,
+    PecSourceDocument, PecSourceNote, cv_scale, interpret_pec, line_x_canvas_2048,
+    line_y_canvas_1400, note_x_relative_2048, offset_with_bias, parse_pec_document,
+};
+pub use pec_canonical::{PecCanonicalImport, lower_pec_to_canonical};
 pub use pgr::*;
 pub use pgr_canonical::*;
 pub use rpe::{
