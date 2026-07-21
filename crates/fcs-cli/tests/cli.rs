@@ -70,3 +70,49 @@ fn format_rejects_invalid_source() {
     let output = bin().arg("format").arg(&path).output().unwrap();
     assert_eq!(output.status.code(), Some(3));
 }
+
+#[test]
+fn compile_emits_loadable_fcbc_from_chart_with_line_and_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("chart.fcs");
+    fs::write(
+        &source,
+        r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
+"#,
+    )
+    .unwrap();
+    let out = dir.path().join("out.fcbc");
+    let output = bin()
+        .arg("compile")
+        .arg(&source)
+        .arg("--output")
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(out.is_file());
+    let bytes = fs::read(&out).unwrap();
+    assert!(bytes.starts_with(b"FCSB"));
+    assert!(bytes.len() > 128);
+    let inspect = bin()
+        .arg("inspect")
+        .arg(&out)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        inspect.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&inspect.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&inspect.stdout);
+    assert!(stdout.contains("\"sectionCount\":14") || stdout.contains("\"profile\""));
+}
