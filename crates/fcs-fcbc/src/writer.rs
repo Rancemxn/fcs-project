@@ -793,21 +793,17 @@ fn distance_section_for_lines(lines: &[LineFixture]) -> Vec<u8> {
     let mut section = Vec::new();
     put_u32(&mut section, lines.len() as u32);
     for (index, line) in lines.iter().enumerate() {
-        // Match historical nonempty fixture classifications for the first Line when
-        // two+ Lines exist; remaining Lines use portable-analytic constant speed.
-        let (classification, max_error, boundaries, speed) = if index == 0 && lines.len() >= 2 {
-            (
-                2u8,
-                2.328_306_436_538_696_3e-10,
-                &[0.0, 2.0][..],
-                EVALUABLE_SPEED_DESCRIPTOR_INDEX,
-            )
-        } else {
-            (1u8, 0.0, &[0.0][..], ANALYTIC_SPEED_DESCRIPTOR_INDEX)
-        };
+        // Classification/boundary pairing must match the Line's scroll speed
+        // descriptor and keep integration_origin (0.0) present in boundaries.
+        let (classification, max_error, boundaries) =
+            if line.speed_descriptor == EVALUABLE_SPEED_DESCRIPTOR_INDEX {
+                (2u8, 2.328_306_436_538_696_3e-10, &[0.0, 2.0][..])
+            } else {
+                (1u8, 0.0, &[0.0][..])
+            };
         section.extend_from_slice(&distance_record(
             line.id,
-            speed,
+            line.speed_descriptor,
             line.initial_floor,
             classification,
             max_error,
