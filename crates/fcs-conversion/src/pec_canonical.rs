@@ -18,9 +18,7 @@ use fcs_model::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::pec::{
-    PecError, PecNoteKind, PecNoteSide, PecProfile, PecSemanticDocument, SOURCE_INVALID,
-};
+use crate::pec::{PecError, PecNoteKind, PecNoteSide, PecSemanticDocument, SOURCE_INVALID};
 use crate::{ArtifactRole, ExactRational, SourceArtifact};
 
 const CANONICAL_SOURCE_VERSION: &str = "5.0.0";

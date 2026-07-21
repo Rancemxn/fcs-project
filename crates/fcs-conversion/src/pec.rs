@@ -17,6 +17,7 @@ use crate::{
 
 pub const SOURCE_INVALID: &str = "conversion.source-invalid";
 pub const PROFILE_PARAMETER_INVALID: &str = "conversion.profile-parameter-invalid";
+#[allow(dead_code)]
 pub const PROFILE_NOT_APPLICABLE: &str = "conversion.profile-not-applicable";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -664,14 +665,14 @@ pub fn interpret_pec(
                 }
                 let beat = point.beat.exact().clone();
                 validate_positive_finite(point.bpm.exact(), format!("line:{}", point.line), "BPM")?;
-                if let Some(previous) = &previous_beat {
-                    if beat.value() < previous.value() {
-                        return Err(PecError::new(
-                            SOURCE_INVALID,
-                            format!("line:{}", point.line),
-                            "bp startBeat must be non-decreasing in source order",
-                        ));
-                    }
+                if let Some(previous) = &previous_beat
+                    && beat.value() < previous.value()
+                {
+                    return Err(PecError::new(
+                        SOURCE_INVALID,
+                        format!("line:{}", point.line),
+                        "bp startBeat must be non-decreasing in source order",
+                    ));
                 }
                 previous_beat = Some(beat.clone());
                 bpm_points.push(PecSemanticBpm {
@@ -1223,22 +1224,12 @@ mod tests {
                     line_y_canvas_1400(&exact(vector.source["y"].as_str().unwrap())).unwrap()
                 }
                 "pec.offset.bias150ms" => offset_with_bias(
-                    &exact(
-                        &vector.source["raw_offset_milliseconds"]
-                            .as_str()
-                            .unwrap()
-                            .to_owned(),
-                    ),
+                    &exact(vector.source["raw_offset_milliseconds"].as_str().unwrap()),
                     150,
                 )
                 .unwrap(),
                 "pec.offset.bias175ms" => offset_with_bias(
-                    &exact(
-                        &vector.source["raw_offset_milliseconds"]
-                            .as_str()
-                            .unwrap()
-                            .to_owned(),
-                    ),
+                    &exact(vector.source["raw_offset_milliseconds"].as_str().unwrap()),
                     175,
                 )
                 .unwrap(),
