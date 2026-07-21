@@ -125,9 +125,14 @@ I6.4 增加 `parse_pec_document`（Phira line-command dialect）、三 profile b
 `lower_pec_to_canonical`。保留 command source order、Note `#`/`&` 邻接、direct Beat 与 checked-in
 mapping vectors；不执行 Repair、token-stream 全量 dialect 或 package ZIP。
 
+## I6.5 Profile registry and selection
+
+I6.5 增加 content-hash-bound `load_profile_registry` 与 `select_profile`：支持 explicit、declared、
+unique-evidence、canonical-equivalent、configured-default 与 unresolved 诊断；Repair 不得在合法
+歧义 candidate 间选择。全部 checked-in selection vectors 由产品 API 执行。
+
 ## 后续单元
 
-- I6.5：content-hash-bound profile registry、detection evidence 与无猜测 selection。
 - I6.6：strict-invalid 和显式 Repair execution/report。
 - I6.7：公开 fixture、canonical snapshot、expected report 与 opt-in copyright lane。
 
