@@ -10,6 +10,8 @@ mod container;
 mod error;
 mod evaluator;
 mod loader;
+#[cfg(test)]
+mod mutations;
 mod writer;
 
 pub use codec::{
