@@ -19,9 +19,11 @@ pub struct RepairMode {
 
 impl RepairMode {
     pub fn new(enabled: bool, authorized_rules: impl IntoIterator<Item = MappingRuleRef>) -> Self {
-        let mut authorized_rules = authorized_rules.into_iter().collect::<Vec<_>>();
-        authorized_rules.sort_by(|left, right| left.as_str().cmp(right.as_str()));
-        authorized_rules.dedup();
+        let mut seen = BTreeSet::new();
+        let authorized_rules = authorized_rules
+            .into_iter()
+            .filter(|rule| seen.insert(rule.clone()))
+            .collect();
         Self {
             enabled,
             authorized_rules,
@@ -567,17 +569,24 @@ impl ConversionReport {
         }
 
         entries.sort_by(|left, right| left.sort_key().cmp(&right.sort_key()));
-        repairs.sort_by(|left, right| {
-            left.source_locator()
-                .as_str()
-                .cmp(right.source_locator().as_str())
-                .then_with(|| left.rule().as_str().cmp(right.rule().as_str()))
-                .then_with(|| left.id().cmp(right.id()))
-        });
-
         let mut status = ConversionStatus::Lossless;
         for signal in status_signals {
             if signal.aggregation_rank() < status.aggregation_rank() {
+                status = signal;
+            }
+        }
+        for entry in &entries {
+            let signal = match entry.semantic_status() {
+                SemanticStatus::Unsupported => Some(ConversionStatus::Unsupported),
+                SemanticStatus::Repaired => Some(ConversionStatus::Repaired),
+                SemanticStatus::Approximated | SemanticStatus::Dropped => {
+                    Some(ConversionStatus::Approximate)
+                }
+                _ => None,
+            };
+            if let Some(signal) = signal
+                && signal.aggregation_rank() < status.aggregation_rank()
+            {
                 status = signal;
             }
         }
@@ -910,6 +919,76 @@ mod tests {
             .map(ConversionEntry::id)
             .collect::<Vec<_>>();
         assert_eq!(ids, vec!["a", "c", "b"]);
+    }
+
+    #[test]
+    fn ordered_rule_and_repair_arrays_preserve_caller_order() {
+        let mode = RepairMode::new(true, [rule("repair.z"), rule("repair.a"), rule("repair.z")]);
+        assert_eq!(
+            mode.authorized_rules()
+                .iter()
+                .map(MappingRuleRef::as_str)
+                .collect::<Vec<_>>(),
+            vec!["repair.z", "repair.a"]
+        );
+
+        let repair = |id, locator, rule_id| {
+            RepairRecord::new(
+                id,
+                LogicalSourceLocator::new(locator).unwrap(),
+                "conversion.source-invalid",
+                "replace",
+                rule(rule_id),
+                CanonicalValue::Null,
+                CanonicalValue::String("fixed".into()),
+                "invalid value replaced",
+            )
+            .unwrap()
+        };
+        let report = ConversionReport::new(
+            "op-repair-order",
+            ConversionPolicy::Semantic,
+            mode,
+            Vec::new(),
+            vec![
+                repair("r2", "z/value", "repair.z"),
+                repair("r1", "a/value", "repair.a"),
+            ],
+            [],
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            report
+                .repairs()
+                .iter()
+                .map(RepairRecord::id)
+                .collect::<Vec<_>>(),
+            vec!["r2", "r1"]
+        );
+    }
+
+    #[test]
+    fn entry_semantic_status_limits_top_level_status() {
+        let report = ConversionReport::new(
+            "op-drop",
+            ConversionPolicy::Semantic,
+            RepairMode::disabled(),
+            vec![entry(
+                "drop",
+                ConversionPhase::Export,
+                Some("note:1"),
+                Some("presentation"),
+                None,
+                SemanticStatus::Dropped,
+            )],
+            Vec::new(),
+            [ConversionStatus::Lossless],
+            None,
+        )
+        .unwrap();
+        assert_eq!(report.status(), ConversionStatus::Approximate);
+        assert_eq!(report.summary().drop_count(), 1);
     }
 
     #[test]
