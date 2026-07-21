@@ -221,9 +221,13 @@ name = "fcs-conversion"
 version = "0.2.0"
 dependencies = [
  "fcs-model",
+ "num-bigint",
+ "num-rational",
+ "num-traits",
  "serde",
  "serde_json",
  "sha2",
+ "toml",
 ]
 
 [[package]]

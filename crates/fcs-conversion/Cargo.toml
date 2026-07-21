@@ -7,6 +7,12 @@ description = "FCS external-format import and conversion boundaries"
 
 [dependencies]
 fcs-model = { path = "../fcs-model" }
+num-bigint.workspace = true
+num-rational.workspace = true
+num-traits.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true
+
+[dev-dependencies]
+toml.workspace = true

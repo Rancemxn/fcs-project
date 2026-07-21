@@ -1,8 +1,7 @@
-//! Lossless external-source parsing boundaries for I6.
+//! Lossless external-source parsing and profile-bound semantic boundaries for I6.
 //!
-//! This crate deliberately stops at parsed source shape. Profile selection,
-//! repair, source semantic interpretation, and canonical lowering are later
-//! explicit stages and do not occur in these APIs.
+//! Profile selection, repair, and canonical lowering remain separate later
+//! stages and do not occur implicitly in these APIs.
 
 use std::fmt;
 
@@ -11,6 +10,12 @@ use serde::Deserializer;
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
+
+mod exact;
+mod pgr;
+
+pub use exact::{DecimalLimits, ExactDecimal, ExactNumberError, ExactRational};
+pub use pgr::*;
 
 /// Source format family. The parser dialect and semantic profile are separate
 /// later-stage values.
