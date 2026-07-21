@@ -21,8 +21,9 @@ use fcs_model::{
 };
 use sha2::{Digest, Sha256};
 
+use crate::rpe::LAYER_LOSS;
 use crate::{
-    ArtifactRole, ExactRational, LAYER_LOSS, RpeError, RpeNoteKind, RpeNoteSide, RpeProfile,
+    ArtifactRole, ExactRational, RpeError, RpeNoteKind, RpeNoteSide, RpeProfile,
     RpeSemanticInterpretation, SOURCE_INVALID, SourceArtifact,
 };
 
@@ -320,10 +321,10 @@ pub fn lower_rpe_to_canonical(
                 ConversionEntry::new(
                     format!("rpe/layer-loss/{line_index}"),
                     LAYER_LOSS,
-                    ConversionDomain::Chart,
+                    ConversionDomain::Presentation,
                     ConversionSeverity::Warning,
                     SemanticStatus::Preserved,
-                    ConversionPhase::Semantic,
+                    ConversionPhase::Lowering,
                     Some(locator(format!("judgeLineList/{line_index}/eventLayers"))?),
                     None,
                     None,
