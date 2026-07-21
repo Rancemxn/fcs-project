@@ -109,11 +109,12 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         },
     ];
     lines.sort_by_key(|line| line.id);
+    let line_count = lines.len();
     for (index, line) in lines.iter_mut().enumerate() {
         line.distance_index = index as u32;
         // Preserve the historical speed/alpha pairing used by the nonempty golden:
         // lower Line ID uses evaluable path; higher uses analytic path when two Lines exist.
-        if lines.len() >= 2 {
+        if line_count >= 2 {
             if index == 0 {
                 line.alpha_descriptor = SECONDS_ALPHA_DESCRIPTOR_INDEX;
                 line.speed_descriptor = EVALUABLE_SPEED_DESCRIPTOR_INDEX;
