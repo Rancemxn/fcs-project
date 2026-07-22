@@ -1550,6 +1550,7 @@ struct ResourceFixture<'a> {
     bytes: &'a [u8],
 }
 
+#[allow(clippy::too_many_arguments)]
 fn assemble_package(
     lines: &[LineFixture],
     notes: &[NoteFixture],
