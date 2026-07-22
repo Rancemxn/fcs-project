@@ -732,6 +732,65 @@ lines {
     }
 
     #[test]
+    fn write_from_compilation_couples_scroll_speed_track_and_distance() {
+        let workspace = tempdir().unwrap();
+        let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        scrollTempoMap { 0s -> 60bpm; }
+        tracks {
+            track speed -> scrollSpeed: float {
+                fill: "error";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "holdAfter";
+                segments { [0s, 2s): 1.0 -> 3.0 using "linear"; }
+            }
+        }
+    }
+}
+"#;
+        let document = parse_document(source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .unwrap();
+
+        let bytes = write_from_compilation(&compilation).unwrap();
+        let decoded = crate::load_chart(&bytes).expect("compiled scroll Track must load");
+        let line = decoded.lines.first().expect("main Line");
+        assert_eq!(
+            crate::query_descriptor(
+                &decoded,
+                line.scroll_speed_descriptor,
+                1.0,
+                crate::EvaluationEnvironment::at_time(1.0),
+            )
+            .expect("scroll speed evaluation")
+            .value,
+            crate::RuntimeValue::Scalar {
+                ty: crate::ValueType::Float,
+                value: 2.0,
+            }
+        );
+        let distance = crate::query_distance(&decoded, line.distance_descriptor, 1.0)
+            .expect("scroll distance evaluation");
+        assert_eq!(
+            distance.classification,
+            crate::DistanceClassification::PortableEvaluable
+        );
+        assert_eq!(distance.floor_position, 1.5);
+        assert_eq!(
+            decoded.distances[line.distance_descriptor as usize].boundaries,
+            [0.0, 2.0]
+        );
+    }
+
+    #[test]
     fn write_from_compilation_evaluates_native_linear_alpha_track() {
         let workspace = tempdir().unwrap();
         let source = r#"#fcs 5.0.0
@@ -1010,7 +1069,7 @@ fn assemble_package(
             count_zero_section(),
         ),
     };
-    let distances = distance_section_for_lines(&lines);
+    let distances = distance_section_for_lines(&lines, tracks);
     let feature_flags = if lines.iter().any(|line| line.line_flags & 1 != 0) {
         1 << 8
     } else {
@@ -1194,16 +1253,6 @@ fn native_tracks(
             ));
         }
         let target = track.target();
-        if target == CanonicalTrackTarget::ScrollSpeed {
-            return Err(FcbcError::new(
-                "fcbc.unsupported-track",
-                format!(
-                    "native FCBC lowering does not yet support Track {} target {:?}",
-                    track.name(),
-                    target
-                ),
-            ));
-        }
         if track.blend() != CanonicalTrackBlend::Replace
             || track.extrapolate_before() != CanonicalTrackFill::HoldBefore
             || track.extrapolate_after() != CanonicalTrackFill::HoldAfter
@@ -1652,8 +1701,18 @@ fn native_tracks_section(
         );
     }
     for line in lines.iter_mut() {
-        line.speed_descriptor =
-            intern_constant_descriptor(&mut descriptors, TY_FLOAT, indices.float_one);
+        line.speed_descriptor = native_line_descriptor(
+            &mut descriptors,
+            constants,
+            tracks,
+            line.id,
+            CanonicalTrackTarget::ScrollSpeed,
+            TY_FLOAT,
+            &float_constant(1.0),
+        );
+        line.evaluable_speed = tracks.iter().any(|track| {
+            track.line_id == line.id && track.target == CanonicalTrackTarget::ScrollSpeed
+        });
     }
     for line in lines.iter_mut() {
         line.scroll_tempo_descriptor =
@@ -1954,17 +2013,25 @@ fn expression_node(
     put_u32(nodes, immediate);
 }
 
-fn distance_section_for_lines(lines: &[LineFixture]) -> Vec<u8> {
+fn distance_section_for_lines(lines: &[LineFixture], tracks: &[NativeTrackFixture]) -> Vec<u8> {
     let mut section = Vec::new();
     put_u32(&mut section, lines.len() as u32);
     for line in lines {
         // Classification/boundary pairing must match the Line's scroll speed descriptor.
         let (classification, max_error, mut boundaries) = if line.evaluable_speed {
-            (
-                2u8,
-                2.328_306_436_538_696_3e-10,
-                vec![line.integration_origin, 2.0],
-            )
+            let mut boundaries = vec![line.integration_origin];
+            if let Some(track) = tracks.iter().find(|track| {
+                track.line_id == line.id && track.target == CanonicalTrackTarget::ScrollSpeed
+            }) {
+                for segment in &track.segments {
+                    boundaries.push(segment.start);
+                    boundaries.push(segment.end);
+                }
+            } else {
+                // The declarative non-empty fixture has no native Track graph.
+                boundaries.push(2.0);
+            }
+            (2u8, 2.328_306_436_538_696_3e-10, boundaries)
         } else {
             (1u8, 0.0, vec![line.integration_origin])
         };
