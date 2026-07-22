@@ -592,7 +592,7 @@ collections {
             presentation.visibleFrom: 1beat;
             presentation.visibleUntil: 3beat;
             render.enabled: false;
-        }
+        };
     }
 }
 "#;
