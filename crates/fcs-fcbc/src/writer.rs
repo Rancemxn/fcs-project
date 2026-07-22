@@ -1192,12 +1192,26 @@ fn native_alpha_segment(
     let (interpolation, easing, bezier) = match segment.interpolation() {
         CanonicalTrackInterpolation::Step => (1, 0, [0.0; 4]),
         CanonicalTrackInterpolation::Linear => (2, 0, [0.0; 4]),
-        _ => {
-            return Err(FcbcError::new(
-                "fcbc.unsupported-track",
-                format!("native alpha Track {track_name} interpolation is not yet supported"),
-            ));
+        CanonicalTrackInterpolation::Easing(name) => {
+            let easing = match name.as_str() {
+                "easeInSine" => 1,
+                "easeOutSine" => 2,
+                "easeInOutSine" => 3,
+                "easeInQuad" => 4,
+                "easeOutQuad" => 5,
+                "easeInOutQuad" => 6,
+                _ => {
+                    return Err(FcbcError::new(
+                        "fcbc.unsupported-track",
+                        format!(
+                            "native alpha Track {track_name} easing {name} is not yet supported"
+                        ),
+                    ));
+                }
+            };
+            (3, easing, [0.0; 4])
         }
+        CanonicalTrackInterpolation::CubicBezier(bezier) => (4, 0, *bezier),
     };
     Ok(TrackSegmentFixture {
         start: segment.start().chart_time_seconds(),
