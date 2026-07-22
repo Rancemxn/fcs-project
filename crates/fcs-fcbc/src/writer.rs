@@ -21,6 +21,15 @@ pub const PIECEWISE_ONE_DESCRIPTOR_INDEX: u32 = 11;
 pub const VISIBILITY_DESCRIPTOR_INDEX: u32 = 12;
 pub const LENGTH_ZERO_DESCRIPTOR_INDEX: u32 = 13;
 
+const NATIVE_FLOAT_ONE_DESCRIPTOR: u32 = 0;
+const NATIVE_POSITION_DESCRIPTOR: u32 = 1;
+const NATIVE_ROTATION_DESCRIPTOR: u32 = 2;
+const NATIVE_SCALE_DESCRIPTOR: u32 = 3;
+const NATIVE_SCROLL_TEMPO_DESCRIPTOR: u32 = 4;
+const NATIVE_COLOR_DESCRIPTOR: u32 = 5;
+const NATIVE_LENGTH_ZERO_DESCRIPTOR: u32 = 6;
+const NATIVE_VISIBILITY_DESCRIPTOR: u32 = 7;
+
 const REQUIRED: u16 = 1;
 const NULL_INDEX: u32 = u32::MAX;
 
@@ -57,7 +66,11 @@ impl Constant {
 struct LineFixture {
     id: u64,
     distance_index: u32,
+    position_descriptor: u32,
+    rotation_descriptor: u32,
+    scale_descriptor: u32,
     alpha_descriptor: u32,
+    scroll_tempo_descriptor: u32,
     speed_descriptor: u32,
     floor_scale: f64,
     integration_origin: f64,
@@ -87,6 +100,12 @@ struct Section {
     offset: u64,
 }
 
+#[derive(Clone, Copy)]
+enum ExecutionGraph {
+    Fixture,
+    Native { has_notes: bool },
+}
+
 /// Builds the deterministic, non-empty FCBC 2 / Execution ABI 1 reference fixture.
 ///
 /// This function intentionally derives the bytes from a fixed declarative chart model. It does
@@ -98,7 +117,11 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         LineFixture {
             id: analytic_line_id,
             distance_index: ANALYTIC_DISTANCE_INDEX,
+            position_descriptor: POSITION_DESCRIPTOR_INDEX,
+            rotation_descriptor: ROTATION_DESCRIPTOR_INDEX,
+            scale_descriptor: SCALE_DESCRIPTOR_INDEX,
             alpha_descriptor: CHOOSE_ALPHA_DESCRIPTOR_INDEX,
+            scroll_tempo_descriptor: SCROLL_TEMPO_DESCRIPTOR_INDEX,
             speed_descriptor: ANALYTIC_SPEED_DESCRIPTOR_INDEX,
             floor_scale: 1.0,
             integration_origin: 0.0,
@@ -107,7 +130,11 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         LineFixture {
             id: evaluable_line_id,
             distance_index: EVALUABLE_DISTANCE_INDEX,
+            position_descriptor: POSITION_DESCRIPTOR_INDEX,
+            rotation_descriptor: ROTATION_DESCRIPTOR_INDEX,
+            scale_descriptor: SCALE_DESCRIPTOR_INDEX,
             alpha_descriptor: SECONDS_ALPHA_DESCRIPTOR_INDEX,
+            scroll_tempo_descriptor: SCROLL_TEMPO_DESCRIPTOR_INDEX,
             speed_descriptor: EVALUABLE_SPEED_DESCRIPTOR_INDEX,
             floor_scale: 1.0,
             integration_origin: 0.0,
@@ -142,6 +169,7 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             flags: 0b11,
             time: 0.5,
             end_time: 0.0,
+            property_descriptors: fixture_note_descriptors(),
         },
         NoteFixture {
             id: stable_id(b"fcs.note", b"fixture.evaluable.note"),
@@ -152,21 +180,23 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             flags: 0b11,
             time: 1.5,
             end_time: 0.0,
+            property_descriptors: fixture_note_descriptors(),
         },
     ];
-    assemble_package(&lines, &notes, &[(0, 1, 0.0, 60.0, 0)], 0.0)
+    assemble_package(
+        &lines,
+        &notes,
+        &[(0, 1, 0.0, 60.0, 0)],
+        0.0,
+        ExecutionGraph::Fixture,
+    )
 }
 
 /// Product CanonicalCompilation → FCBC runtime package writer.
 ///
-/// Encodes chart Lines/Notes/tempo into Core sections and attaches the shared
-/// exact descriptor/expression scaffold required by Execution ABI loaders.
-///
-/// Product acceptance for native compile currently requires framing validation
-/// via [`crate::load_container`]. Full Core [`crate::load_chart`] after this
-/// writer remains best-effort: the package reuses the fixed Execution ABI
-/// scaffold rather than lowering every canonical Track/descriptor graph, and
-/// resource-bundle payloads are not embedded yet (ResourceData stays empty).
+/// Encodes chart Lines/Notes/tempo into Core sections and attaches only
+/// descriptors owned by those records. Track/expression lowering and resource
+/// payload embedding are added by the following native handoff slices.
 pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<Vec<u8>> {
     let chart = compilation.chart();
     let mut lines: Vec<LineFixture> = chart
@@ -177,14 +207,12 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
             id: line.id().value(),
             // distance_index is filled after sort so section order matches Line ID order.
             distance_index: index as u32,
-            alpha_descriptor: if index % 2 == 0 {
-                CHOOSE_ALPHA_DESCRIPTOR_INDEX
-            } else {
-                SECONDS_ALPHA_DESCRIPTOR_INDEX
-            },
-            // Prefer analytic constant-speed path for native compile packages so
-            // distance boundary validation stays constant-descriptor compatible.
-            speed_descriptor: ANALYTIC_SPEED_DESCRIPTOR_INDEX,
+            position_descriptor: NATIVE_POSITION_DESCRIPTOR,
+            rotation_descriptor: NATIVE_ROTATION_DESCRIPTOR,
+            scale_descriptor: NATIVE_SCALE_DESCRIPTOR,
+            alpha_descriptor: NATIVE_FLOAT_ONE_DESCRIPTOR,
+            scroll_tempo_descriptor: NATIVE_SCROLL_TEMPO_DESCRIPTOR,
+            speed_descriptor: NATIVE_FLOAT_ONE_DESCRIPTOR,
             floor_scale: line.base().floor_scale(),
             integration_origin: line.base().integration_origin(),
             initial_floor: line.base().initial_floor_position(),
@@ -196,8 +224,12 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
         lines.push(LineFixture {
             id: stable_id(b"fcs.line", b"generated/default"),
             distance_index: 0,
-            alpha_descriptor: CHOOSE_ALPHA_DESCRIPTOR_INDEX,
-            speed_descriptor: ANALYTIC_SPEED_DESCRIPTOR_INDEX,
+            position_descriptor: NATIVE_POSITION_DESCRIPTOR,
+            rotation_descriptor: NATIVE_ROTATION_DESCRIPTOR,
+            scale_descriptor: NATIVE_SCALE_DESCRIPTOR,
+            alpha_descriptor: NATIVE_FLOAT_ONE_DESCRIPTOR,
+            scroll_tempo_descriptor: NATIVE_SCROLL_TEMPO_DESCRIPTOR,
+            speed_descriptor: NATIVE_FLOAT_ONE_DESCRIPTOR,
             floor_scale: 1.0,
             integration_origin: 0.0,
             initial_floor: 0.0,
@@ -255,6 +287,7 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
                 flags: (flags & !0b11) | judgment,
                 time: note.gameplay().time().chart_time_seconds(),
                 end_time,
+                property_descriptors: native_note_descriptors(),
             })
         })
         .collect::<FcbcResult<Vec<_>>>()?;
@@ -294,7 +327,15 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
         .map(|sync| sync.audio_offset().seconds())
         .unwrap_or(0.0);
 
-    Ok(assemble_package(&lines, &notes, &tempo, audio_offset))
+    Ok(assemble_package(
+        &lines,
+        &notes,
+        &tempo,
+        audio_offset,
+        ExecutionGraph::Native {
+            has_notes: !notes.is_empty(),
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -349,6 +390,7 @@ struct NoteFixture {
     flags: u16,
     time: f64,
     end_time: f64,
+    property_descriptors: [u32; 10],
 }
 
 fn assemble_package(
@@ -356,6 +398,7 @@ fn assemble_package(
     notes: &[NoteFixture],
     tempo: &[(i64, i64, f64, f64, u32)],
     audio_offset: f64,
+    execution_graph: ExecutionGraph,
 ) -> Vec<u8> {
     let mut constants = fixture_constants();
     constants.sort_by(|left, right| {
@@ -363,8 +406,13 @@ fn assemble_package(
     });
     constants.dedup();
     let indices = constant_indices(&constants);
-    let expressions = expression_section(&indices);
-    let tracks = tracks_section(&indices);
+    let (tracks, expressions) = match execution_graph {
+        ExecutionGraph::Fixture => (tracks_section(&indices), expression_section(&indices)),
+        ExecutionGraph::Native { has_notes } => (
+            native_tracks_section(&indices, has_notes),
+            count_zero_section(),
+        ),
+    };
     let distances = distance_section_for_lines(lines);
 
     let mut sections = vec![
@@ -569,13 +617,13 @@ fn lines_section(lines: &[LineFixture], constants: &ConstantIndices) -> Vec<u8> 
         put_i32(&mut payload, 0);
         put_u32(&mut payload, 0);
         put_u32(&mut payload, 0);
-        put_u32(&mut payload, POSITION_DESCRIPTOR_INDEX);
-        put_u32(&mut payload, ROTATION_DESCRIPTOR_INDEX);
-        put_u32(&mut payload, SCALE_DESCRIPTOR_INDEX);
+        put_u32(&mut payload, line.position_descriptor);
+        put_u32(&mut payload, line.rotation_descriptor);
+        put_u32(&mut payload, line.scale_descriptor);
         put_u32(&mut payload, line.alpha_descriptor);
         put_u32(&mut payload, constants.vec2_length_zero);
         put_u32(&mut payload, constants.vec2_float_zero);
-        put_u32(&mut payload, SCROLL_TEMPO_DESCRIPTOR_INDEX);
+        put_u32(&mut payload, line.scroll_tempo_descriptor);
         put_u32(&mut payload, line.speed_descriptor);
         put_u32(&mut payload, line.distance_index);
         put_f64(&mut payload, line.floor_scale);
@@ -608,16 +656,9 @@ fn notes_section_from(notes: &[NoteFixture]) -> Vec<u8> {
         put_u64(&mut payload, 0);
         put_u32(&mut payload, NULL_INDEX);
         put_u32(&mut payload, 0);
-        put_u32(&mut payload, NOTE_POSITION_X_DESCRIPTOR_INDEX);
-        put_u32(&mut payload, FLOAT_ONE_DESCRIPTOR_INDEX);
-        put_u32(&mut payload, LENGTH_ZERO_DESCRIPTOR_INDEX);
-        put_u32(&mut payload, LENGTH_ZERO_DESCRIPTOR_INDEX);
-        put_u32(&mut payload, FLOAT_ONE_DESCRIPTOR_INDEX);
-        put_u32(&mut payload, PIECEWISE_ONE_DESCRIPTOR_INDEX);
-        put_u32(&mut payload, FLOAT_ONE_DESCRIPTOR_INDEX);
-        put_u32(&mut payload, ROTATION_DESCRIPTOR_INDEX);
-        put_u32(&mut payload, COLOR_DESCRIPTOR_INDEX);
-        put_u32(&mut payload, VISIBILITY_DESCRIPTOR_INDEX);
+        for descriptor in note.property_descriptors {
+            put_u32(&mut payload, descriptor);
+        }
         put_u64(&mut payload, 0);
         payload.extend_from_slice(&empty_object());
         section.extend_from_slice(&record(payload));
@@ -649,6 +690,59 @@ fn tracks_section(constants: &ConstantIndices) -> Vec<u8> {
         section.extend_from_slice(&descriptor);
     }
     section
+}
+
+fn native_tracks_section(constants: &ConstantIndices, has_notes: bool) -> Vec<u8> {
+    let mut descriptors = vec![
+        constant_descriptor(TY_FLOAT, constants.float_one),
+        constant_descriptor(TY_VEC2_LENGTH, constants.vec2_length_zero),
+        constant_descriptor(TY_ANGLE, constants.angle_zero),
+        constant_descriptor(TY_VEC2_FLOAT, constants.vec2_float_one),
+        constant_descriptor(TY_FLOAT, constants.float_sixty),
+    ];
+    if has_notes {
+        descriptors.extend([
+            constant_descriptor(TY_COLOR, constants.color_white),
+            constant_descriptor(TY_LENGTH, constants.length_zero),
+            constant_descriptor(TY_BOOL, constants.bool_true),
+        ]);
+    }
+    let mut section = Vec::new();
+    put_u32(&mut section, descriptors.len() as u32);
+    for descriptor in descriptors {
+        section.extend_from_slice(&descriptor);
+    }
+    section
+}
+
+const fn fixture_note_descriptors() -> [u32; 10] {
+    [
+        NOTE_POSITION_X_DESCRIPTOR_INDEX,
+        FLOAT_ONE_DESCRIPTOR_INDEX,
+        LENGTH_ZERO_DESCRIPTOR_INDEX,
+        LENGTH_ZERO_DESCRIPTOR_INDEX,
+        FLOAT_ONE_DESCRIPTOR_INDEX,
+        PIECEWISE_ONE_DESCRIPTOR_INDEX,
+        FLOAT_ONE_DESCRIPTOR_INDEX,
+        ROTATION_DESCRIPTOR_INDEX,
+        COLOR_DESCRIPTOR_INDEX,
+        VISIBILITY_DESCRIPTOR_INDEX,
+    ]
+}
+
+const fn native_note_descriptors() -> [u32; 10] {
+    [
+        NATIVE_LENGTH_ZERO_DESCRIPTOR,
+        NATIVE_FLOAT_ONE_DESCRIPTOR,
+        NATIVE_LENGTH_ZERO_DESCRIPTOR,
+        NATIVE_LENGTH_ZERO_DESCRIPTOR,
+        NATIVE_FLOAT_ONE_DESCRIPTOR,
+        NATIVE_FLOAT_ONE_DESCRIPTOR,
+        NATIVE_FLOAT_ONE_DESCRIPTOR,
+        NATIVE_ROTATION_DESCRIPTOR,
+        NATIVE_COLOR_DESCRIPTOR,
+        NATIVE_VISIBILITY_DESCRIPTOR,
+    ]
 }
 
 fn constant_descriptor(property_type: u8, constant_index: u32) -> Vec<u8> {
