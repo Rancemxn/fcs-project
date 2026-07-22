@@ -588,7 +588,7 @@ collections {
             presentation.scaleY: 0.75;
             presentation.rotation: 90deg;
             presentation.color: #FF0000;
-            presentation.texture: @cover;
+            presentation.texture: "cover";
             presentation.visibleFrom: 1beat;
             presentation.visibleUntil: 3beat;
             render.enabled: false;
