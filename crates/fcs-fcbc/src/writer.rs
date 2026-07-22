@@ -690,6 +690,61 @@ lines {
         assert_eq!(evaluate(1.0), alpha(0.5));
         assert_eq!(evaluate(3.0), alpha(0.0));
     }
+
+    #[test]
+    fn write_from_compilation_evaluates_native_alpha_track_points() {
+        let workspace = tempdir().unwrap();
+        let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        tracks {
+            track fade -> alpha: float {
+                fill: "error";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "holdAfter";
+                segments {
+                    point 0s: 1.0;
+                    [1s, 3s): 0.8 -> 0.0 using "linear";
+                    point 3s: 0.0;
+                }
+            }
+        }
+    }
+}
+"#;
+        let document = parse_document(source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .unwrap();
+
+        let bytes = write_from_compilation(&compilation).unwrap();
+        let decoded = crate::load_chart(&bytes).expect("compiled alpha Track points must load");
+        let descriptor = decoded.lines.first().expect("main Line").alpha_descriptor;
+        let evaluate = |time| {
+            crate::query_descriptor(
+                &decoded,
+                descriptor,
+                time,
+                crate::EvaluationEnvironment::at_time(time),
+            )
+            .expect("alpha Track point evaluation")
+            .value
+        };
+        let alpha = |value| crate::RuntimeValue::Scalar {
+            ty: crate::ValueType::Float,
+            value,
+        };
+        assert_eq!(evaluate(-1.0), alpha(1.0));
+        assert_eq!(evaluate(0.5), alpha(1.0));
+        assert_eq!(evaluate(2.0), alpha(0.4));
+        assert_eq!(evaluate(4.0), alpha(0.0));
+    }
 }
 
 #[derive(Clone)]
