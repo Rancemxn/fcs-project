@@ -1,6 +1,7 @@
 use super::loader::{
     DecodedChart, DescriptorKind, DistanceClassification, RuntimeValue, Segment, ValueType,
 };
+use fcs_runtime::evaluate_easing;
 
 const EXECUTION_ERROR: &str = "fcbc.execution-error";
 
@@ -841,30 +842,7 @@ fn interpolate_value(
 }
 
 fn easing(id: u16, progress: f64) -> Result<f64, &'static str> {
-    if !(0.0..=1.0).contains(&progress) {
-        return Err(EXECUTION_ERROR);
-    }
-    let output = match id {
-        0 => progress,
-        1 => 1.0 - (progress * std::f64::consts::FRAC_PI_2).cos(),
-        2 => (progress * std::f64::consts::FRAC_PI_2).sin(),
-        3 => (1.0 - (std::f64::consts::PI * progress).cos()) / 2.0,
-        4 => progress * progress,
-        5 => 1.0 - (1.0 - progress) * (1.0 - progress),
-        6 => {
-            if progress < 0.5 {
-                2.0 * progress * progress
-            } else {
-                1.0 - (-2.0 * progress + 2.0).powi(2) / 2.0
-            }
-        }
-        _ => return Err(EXECUTION_ERROR),
-    };
-    if output.is_finite() {
-        Ok(output)
-    } else {
-        Err(EXECUTION_ERROR)
-    }
+    evaluate_easing(id, progress).map_err(|_| EXECUTION_ERROR)
 }
 
 fn cubic_bezier_progress(bezier: [f64; 4], progress: f64) -> Result<f64, &'static str> {

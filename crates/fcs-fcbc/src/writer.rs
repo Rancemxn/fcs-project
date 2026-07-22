@@ -3,6 +3,7 @@ use fcs_model::{
     CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation,
     CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget, CanonicalTrackValue,
 };
+use fcs_runtime::EasingId;
 use sha2::{Digest, Sha256};
 
 use crate::error::{FcbcError, FcbcResult};
@@ -797,6 +798,61 @@ lines {
         assert_eq!(evaluate(1.0), alpha(0.25));
         assert_eq!(evaluate(3.0), alpha(0.5));
     }
+
+    #[test]
+    fn write_from_compilation_evaluates_all_native_alpha_easings() {
+        for easing in EasingId::ALL {
+            let workspace = tempdir().unwrap();
+            let source = format!(
+                r#"#fcs 5.0.0
+format {{ profile: chart; }}
+tempoMap {{ 0beat -> 120bpm; }}
+lines {{
+    line main {{
+        tracks {{
+            track fade -> alpha: float {{
+                fill: "error";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "holdAfter";
+                segments {{ [0s, 2s): 0.0 -> 1.0 using "{}"; }}
+            }}
+        }}
+    }}
+}}
+"#,
+                easing.name()
+            );
+            let document = parse_document(&source).into_result().unwrap();
+            let compilation = document
+                .canonical_compilation(
+                    CompileTimeLimits::default(),
+                    workspace.path(),
+                    ResourceLimits::default(),
+                )
+                .unwrap();
+
+            let bytes = write_from_compilation(&compilation).unwrap();
+            let decoded = crate::load_chart(&bytes).expect("compiled alpha easing Track must load");
+            let descriptor = decoded.lines.first().expect("main Line").alpha_descriptor;
+            let actual = crate::query_descriptor(
+                &decoded,
+                descriptor,
+                1.0,
+                crate::EvaluationEnvironment::at_time(1.0),
+            )
+            .expect("alpha easing Track evaluation")
+            .value;
+            assert_eq!(
+                actual,
+                crate::RuntimeValue::Scalar {
+                    ty: crate::ValueType::Float,
+                    value: easing.evaluate(0.5).unwrap(),
+                },
+                "{}",
+                easing.name()
+            );
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1193,22 +1249,16 @@ fn native_alpha_segment(
         CanonicalTrackInterpolation::Step => (1, 0, [0.0; 4]),
         CanonicalTrackInterpolation::Linear => (2, 0, [0.0; 4]),
         CanonicalTrackInterpolation::Easing(name) => {
-            let easing = match name.as_str() {
-                "easeInSine" => 1,
-                "easeOutSine" => 2,
-                "easeInOutSine" => 3,
-                "easeInQuad" => 4,
-                "easeOutQuad" => 5,
-                "easeInOutQuad" => 6,
-                _ => {
-                    return Err(FcbcError::new(
-                        "fcbc.unsupported-track",
-                        format!(
-                            "native alpha Track {track_name} easing {name} is not yet supported"
-                        ),
-                    ));
-                }
-            };
+            let easing = EasingId::ALL
+                .into_iter()
+                .find(|easing| easing.name() == name.as_str())
+                .map(EasingId::abi_id)
+                .ok_or_else(|| {
+                    FcbcError::new(
+                        "fcbc.invalid-track",
+                        format!("native alpha Track {track_name} has unknown easing {name}"),
+                    )
+                })?;
             (3, easing, [0.0; 4])
         }
         CanonicalTrackInterpolation::CubicBezier(bezier) => (4, 0, *bezier),
