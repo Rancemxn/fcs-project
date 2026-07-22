@@ -23,15 +23,6 @@ pub const PIECEWISE_ONE_DESCRIPTOR_INDEX: u32 = 11;
 pub const VISIBILITY_DESCRIPTOR_INDEX: u32 = 12;
 pub const LENGTH_ZERO_DESCRIPTOR_INDEX: u32 = 13;
 
-const NATIVE_FLOAT_ONE_DESCRIPTOR: u32 = 0;
-const NATIVE_POSITION_DESCRIPTOR: u32 = 1;
-const NATIVE_ROTATION_DESCRIPTOR: u32 = 2;
-const NATIVE_SCALE_DESCRIPTOR: u32 = 3;
-const NATIVE_SCROLL_TEMPO_DESCRIPTOR: u32 = 4;
-const NATIVE_COLOR_DESCRIPTOR: u32 = 5;
-const NATIVE_LENGTH_ZERO_DESCRIPTOR: u32 = 6;
-const NATIVE_VISIBILITY_DESCRIPTOR: u32 = 7;
-
 const REQUIRED: u16 = 1;
 const NULL_INDEX: u32 = u32::MAX;
 
@@ -72,6 +63,12 @@ struct LineFixture {
     z_order: i32,
     inherit_flags: u32,
     line_flags: u32,
+    position: [f64; 2],
+    rotation: f64,
+    scale: [f64; 2],
+    alpha: f64,
+    transform_origin: [f64; 2],
+    texture_anchor: [f64; 2],
     distance_index: u32,
     position_descriptor: u32,
     rotation_descriptor: u32,
@@ -79,6 +76,7 @@ struct LineFixture {
     alpha_descriptor: u32,
     scroll_tempo_descriptor: u32,
     speed_descriptor: u32,
+    evaluable_speed: bool,
     floor_scale: f64,
     integration_origin: f64,
     initial_floor: f64,
@@ -128,6 +126,12 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             z_order: 0,
             inherit_flags: 0,
             line_flags: 0,
+            position: [0.0, 0.0],
+            rotation: 0.0,
+            scale: [1.0, 1.0],
+            alpha: 1.0,
+            transform_origin: [0.0, 0.0],
+            texture_anchor: [0.0, 0.0],
             distance_index: ANALYTIC_DISTANCE_INDEX,
             position_descriptor: POSITION_DESCRIPTOR_INDEX,
             rotation_descriptor: ROTATION_DESCRIPTOR_INDEX,
@@ -135,6 +139,7 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             alpha_descriptor: CHOOSE_ALPHA_DESCRIPTOR_INDEX,
             scroll_tempo_descriptor: SCROLL_TEMPO_DESCRIPTOR_INDEX,
             speed_descriptor: ANALYTIC_SPEED_DESCRIPTOR_INDEX,
+            evaluable_speed: false,
             floor_scale: 1.0,
             integration_origin: 0.0,
             initial_floor: 10.0,
@@ -146,6 +151,12 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             z_order: 0,
             inherit_flags: 0,
             line_flags: 0,
+            position: [0.0, 0.0],
+            rotation: 0.0,
+            scale: [1.0, 1.0],
+            alpha: 1.0,
+            transform_origin: [0.0, 0.0],
+            texture_anchor: [0.0, 0.0],
             distance_index: EVALUABLE_DISTANCE_INDEX,
             position_descriptor: POSITION_DESCRIPTOR_INDEX,
             rotation_descriptor: ROTATION_DESCRIPTOR_INDEX,
@@ -153,6 +164,7 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             alpha_descriptor: SECONDS_ALPHA_DESCRIPTOR_INDEX,
             scroll_tempo_descriptor: SCROLL_TEMPO_DESCRIPTOR_INDEX,
             speed_descriptor: EVALUABLE_SPEED_DESCRIPTOR_INDEX,
+            evaluable_speed: true,
             floor_scale: 1.0,
             integration_origin: 0.0,
             initial_floor: 20.0,
@@ -169,10 +181,12 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             if index == 0 {
                 line.alpha_descriptor = SECONDS_ALPHA_DESCRIPTOR_INDEX;
                 line.speed_descriptor = EVALUABLE_SPEED_DESCRIPTOR_INDEX;
+                line.evaluable_speed = true;
                 line.initial_floor = 20.0;
             } else if index == 1 {
                 line.alpha_descriptor = CHOOSE_ALPHA_DESCRIPTOR_INDEX;
                 line.speed_descriptor = ANALYTIC_SPEED_DESCRIPTOR_INDEX;
+                line.evaluable_speed = false;
                 line.initial_floor = 10.0;
             }
         }
@@ -236,14 +250,21 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
                     | u32::from(inherit.alpha()) << 3
                     | u32::from(inherit.scroll()) << 4,
                 line_flags: u32::from(base.allow_reverse_scroll()),
+                position: [base.position().x(), base.position().y()],
+                rotation: base.rotation(),
+                scale: [base.scale().x(), base.scale().y()],
+                alpha: base.alpha(),
+                transform_origin: [base.transform_origin().x(), base.transform_origin().y()],
+                texture_anchor: [base.texture_anchor().x(), base.texture_anchor().y()],
                 // distance_index is filled after sort so section order matches Line ID order.
                 distance_index: index as u32,
-                position_descriptor: NATIVE_POSITION_DESCRIPTOR,
-                rotation_descriptor: NATIVE_ROTATION_DESCRIPTOR,
-                scale_descriptor: NATIVE_SCALE_DESCRIPTOR,
-                alpha_descriptor: NATIVE_FLOAT_ONE_DESCRIPTOR,
-                scroll_tempo_descriptor: NATIVE_SCROLL_TEMPO_DESCRIPTOR,
-                speed_descriptor: NATIVE_FLOAT_ONE_DESCRIPTOR,
+                position_descriptor: 0,
+                rotation_descriptor: 0,
+                scale_descriptor: 0,
+                alpha_descriptor: 0,
+                scroll_tempo_descriptor: 0,
+                speed_descriptor: 0,
+                evaluable_speed: false,
                 floor_scale: base.floor_scale(),
                 integration_origin: base.integration_origin(),
                 initial_floor: base.initial_floor_position(),
@@ -260,13 +281,20 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
             z_order: 0,
             inherit_flags: 0,
             line_flags: 0,
+            position: [0.0, 0.0],
+            rotation: 0.0,
+            scale: [1.0, 1.0],
+            alpha: 1.0,
+            transform_origin: [0.0, 0.0],
+            texture_anchor: [0.5, 0.5],
             distance_index: 0,
-            position_descriptor: NATIVE_POSITION_DESCRIPTOR,
-            rotation_descriptor: NATIVE_ROTATION_DESCRIPTOR,
-            scale_descriptor: NATIVE_SCALE_DESCRIPTOR,
-            alpha_descriptor: NATIVE_FLOAT_ONE_DESCRIPTOR,
-            scroll_tempo_descriptor: NATIVE_SCROLL_TEMPO_DESCRIPTOR,
-            speed_descriptor: NATIVE_FLOAT_ONE_DESCRIPTOR,
+            position_descriptor: 0,
+            rotation_descriptor: 0,
+            scale_descriptor: 0,
+            alpha_descriptor: 0,
+            scroll_tempo_descriptor: 0,
+            speed_descriptor: 0,
+            evaluable_speed: false,
             floor_scale: 1.0,
             integration_origin: 0.0,
             initial_floor: 0.0,
@@ -324,7 +352,8 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
                 flags: (flags & !0b11) | judgment,
                 time: note.gameplay().time().chart_time_seconds(),
                 end_time,
-                property_descriptors: native_note_descriptors(),
+                // Native descriptor indices are assigned after global interning.
+                property_descriptors: [0; 10],
             })
         })
         .collect::<FcbcResult<Vec<_>>>()?;
@@ -621,7 +650,21 @@ fn assemble_package(
     resources: &[ResourceFixture<'_>],
     execution_graph: ExecutionGraph,
 ) -> Vec<u8> {
+    let mut lines = lines.to_vec();
+    let mut notes = notes.to_vec();
     let mut constants = fixture_constants();
+    if matches!(execution_graph, ExecutionGraph::Native { .. }) {
+        for line in &lines {
+            constants.extend([
+                vec2_constant(7, line.position),
+                scalar_constant(8, line.rotation),
+                vec2_constant(3, line.scale),
+                float_constant(line.alpha),
+                vec2_constant(7, line.transform_origin),
+                vec2_constant(3, line.texture_anchor),
+            ]);
+        }
+    }
     constants.sort_by(|left, right| {
         (left.tag, left.payload.as_slice()).cmp(&(right.tag, right.payload.as_slice()))
     });
@@ -630,7 +673,7 @@ fn assemble_package(
     let (tracks, expressions) = match execution_graph {
         ExecutionGraph::Fixture => (tracks_section(&indices), expression_section(&indices)),
         ExecutionGraph::Native { has_notes } => (
-            native_tracks_section(&indices, has_notes),
+            native_tracks_section(&constants, &indices, &mut lines, &mut notes, has_notes),
             count_zero_section(),
         ),
     };
@@ -652,8 +695,8 @@ fn assemble_package(
         Section::new(6, resource_records),
         Section::new(7, sync_section_with_offset(audio_offset)),
         Section::new(8, tempo_section_from(tempo)),
-        Section::new(9, lines_section(lines, &indices)),
-        Section::new(10, notes_section_from(notes, &strings)),
+        Section::new(9, lines_section(&lines, &constants)),
+        Section::new(10, notes_section_from(&notes, &strings)),
         Section::new(11, tracks),
         Section::new(12, expressions),
         Section::new(13, distances),
@@ -907,7 +950,7 @@ fn tempo_section_from(points: &[(i64, i64, f64, f64, u32)]) -> Vec<u8> {
     payload
 }
 
-fn lines_section(lines: &[LineFixture], constants: &ConstantIndices) -> Vec<u8> {
+fn lines_section(lines: &[LineFixture], constants: &[Constant]) -> Vec<u8> {
     let mut section = Vec::new();
     put_u32(&mut section, lines.len() as u32);
     for line in lines {
@@ -922,8 +965,14 @@ fn lines_section(lines: &[LineFixture], constants: &ConstantIndices) -> Vec<u8> 
         put_u32(&mut payload, line.rotation_descriptor);
         put_u32(&mut payload, line.scale_descriptor);
         put_u32(&mut payload, line.alpha_descriptor);
-        put_u32(&mut payload, constants.vec2_length_zero);
-        put_u32(&mut payload, constants.vec2_float_zero);
+        put_u32(
+            &mut payload,
+            find_constant(constants, &vec2_constant(7, line.transform_origin)),
+        );
+        put_u32(
+            &mut payload,
+            find_constant(constants, &vec2_constant(3, line.texture_anchor)),
+        );
         put_u32(&mut payload, line.scroll_tempo_descriptor);
         put_u32(&mut payload, line.speed_descriptor);
         put_u32(&mut payload, line.distance_index);
@@ -993,27 +1042,109 @@ fn tracks_section(constants: &ConstantIndices) -> Vec<u8> {
     section
 }
 
-fn native_tracks_section(constants: &ConstantIndices, has_notes: bool) -> Vec<u8> {
-    let mut descriptors = vec![
-        constant_descriptor(TY_FLOAT, constants.float_one),
-        constant_descriptor(TY_VEC2_LENGTH, constants.vec2_length_zero),
-        constant_descriptor(TY_ANGLE, constants.angle_zero),
-        constant_descriptor(TY_VEC2_FLOAT, constants.vec2_float_one),
-        constant_descriptor(TY_FLOAT, constants.float_sixty),
-    ];
-    if has_notes {
-        descriptors.extend([
-            constant_descriptor(TY_COLOR, constants.color_white),
-            constant_descriptor(TY_LENGTH, constants.length_zero),
-            constant_descriptor(TY_BOOL, constants.bool_true),
-        ]);
+fn native_tracks_section(
+    constants: &[Constant],
+    indices: &ConstantIndices,
+    lines: &mut [LineFixture],
+    notes: &mut [NoteFixture],
+    has_notes: bool,
+) -> Vec<u8> {
+    let mut descriptors = Vec::new();
+
+    // Descriptor order follows the canonical direct-root path order used by the loader:
+    // all Line roots are grouped by path, then by stable Line ID.
+    for line in lines.iter_mut() {
+        line.alpha_descriptor = intern_constant_descriptor(
+            &mut descriptors,
+            TY_FLOAT,
+            find_constant(constants, &float_constant(line.alpha)),
+        );
     }
+    for line in lines.iter_mut() {
+        line.position_descriptor = intern_constant_descriptor(
+            &mut descriptors,
+            TY_VEC2_LENGTH,
+            find_constant(constants, &vec2_constant(7, line.position)),
+        );
+    }
+    for line in lines.iter_mut() {
+        line.rotation_descriptor = intern_constant_descriptor(
+            &mut descriptors,
+            TY_ANGLE,
+            find_constant(constants, &scalar_constant(8, line.rotation)),
+        );
+    }
+    for line in lines.iter_mut() {
+        line.scale_descriptor = intern_constant_descriptor(
+            &mut descriptors,
+            TY_VEC2_FLOAT,
+            find_constant(constants, &vec2_constant(3, line.scale)),
+        );
+    }
+    for line in lines.iter_mut() {
+        line.speed_descriptor =
+            intern_constant_descriptor(&mut descriptors, TY_FLOAT, indices.float_one);
+    }
+    for line in lines.iter_mut() {
+        line.scroll_tempo_descriptor =
+            intern_constant_descriptor(&mut descriptors, TY_FLOAT, indices.float_sixty);
+    }
+
+    if has_notes {
+        // Intern Note roots in canonical target-path order, then map them back to
+        // the NoteRecord field order.
+        let alpha = intern_constant_descriptor(&mut descriptors, TY_FLOAT, indices.float_one);
+        let color = intern_constant_descriptor(&mut descriptors, TY_COLOR, indices.color_white);
+        let position_x =
+            intern_constant_descriptor(&mut descriptors, TY_LENGTH, indices.length_zero);
+        let rotation = intern_constant_descriptor(&mut descriptors, TY_ANGLE, indices.angle_zero);
+        let scale_x = intern_constant_descriptor(&mut descriptors, TY_FLOAT, indices.float_one);
+        let scale_y = intern_constant_descriptor(&mut descriptors, TY_FLOAT, indices.float_one);
+        let scroll_factor =
+            intern_constant_descriptor(&mut descriptors, TY_FLOAT, indices.float_one);
+        let visibility = intern_constant_descriptor(&mut descriptors, TY_BOOL, indices.bool_true);
+        let x_offset = intern_constant_descriptor(&mut descriptors, TY_LENGTH, indices.length_zero);
+        let y_offset = intern_constant_descriptor(&mut descriptors, TY_LENGTH, indices.length_zero);
+        let note_descriptors = [
+            position_x,
+            scroll_factor,
+            x_offset,
+            y_offset,
+            alpha,
+            scale_x,
+            scale_y,
+            rotation,
+            color,
+            visibility,
+        ];
+        for note in notes {
+            note.property_descriptors = note_descriptors;
+        }
+    }
+
     let mut section = Vec::new();
     put_u32(&mut section, descriptors.len() as u32);
     for descriptor in descriptors {
         section.extend_from_slice(&descriptor);
     }
     section
+}
+
+fn intern_constant_descriptor(
+    descriptors: &mut Vec<Vec<u8>>,
+    property_type: u8,
+    constant_index: u32,
+) -> u32 {
+    let descriptor = constant_descriptor(property_type, constant_index);
+    if let Some(index) = descriptors
+        .iter()
+        .position(|candidate| candidate == &descriptor)
+    {
+        return index as u32;
+    }
+    let index = descriptors.len() as u32;
+    descriptors.push(descriptor);
+    index
 }
 
 const fn fixture_note_descriptors() -> [u32; 10] {
@@ -1028,21 +1159,6 @@ const fn fixture_note_descriptors() -> [u32; 10] {
         ROTATION_DESCRIPTOR_INDEX,
         COLOR_DESCRIPTOR_INDEX,
         VISIBILITY_DESCRIPTOR_INDEX,
-    ]
-}
-
-const fn native_note_descriptors() -> [u32; 10] {
-    [
-        NATIVE_LENGTH_ZERO_DESCRIPTOR,
-        NATIVE_FLOAT_ONE_DESCRIPTOR,
-        NATIVE_LENGTH_ZERO_DESCRIPTOR,
-        NATIVE_LENGTH_ZERO_DESCRIPTOR,
-        NATIVE_FLOAT_ONE_DESCRIPTOR,
-        NATIVE_FLOAT_ONE_DESCRIPTOR,
-        NATIVE_FLOAT_ONE_DESCRIPTOR,
-        NATIVE_ROTATION_DESCRIPTOR,
-        NATIVE_COLOR_DESCRIPTOR,
-        NATIVE_VISIBILITY_DESCRIPTOR,
     ]
 }
 
@@ -1211,16 +1327,15 @@ fn distance_section_for_lines(lines: &[LineFixture]) -> Vec<u8> {
     put_u32(&mut section, lines.len() as u32);
     for line in lines {
         // Classification/boundary pairing must match the Line's scroll speed descriptor.
-        let (classification, max_error, mut boundaries) =
-            if line.speed_descriptor == EVALUABLE_SPEED_DESCRIPTOR_INDEX {
-                (
-                    2u8,
-                    2.328_306_436_538_696_3e-10,
-                    vec![line.integration_origin, 2.0],
-                )
-            } else {
-                (1u8, 0.0, vec![line.integration_origin])
-            };
+        let (classification, max_error, mut boundaries) = if line.evaluable_speed {
+            (
+                2u8,
+                2.328_306_436_538_696_3e-10,
+                vec![line.integration_origin, 2.0],
+            )
+        } else {
+            (1u8, 0.0, vec![line.integration_origin])
+        };
         boundaries.sort_by(f64::total_cmp);
         boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
         section.extend_from_slice(&distance_record(
