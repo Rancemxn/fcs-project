@@ -1060,7 +1060,7 @@ fn assemble_package(
     });
     constants.dedup();
     let indices = constant_indices(&constants);
-    let (tracks, expressions) = match execution_graph {
+    let (track_section, expressions) = match execution_graph {
         ExecutionGraph::Fixture => (tracks_section(&indices), expression_section(&indices)),
         ExecutionGraph::Native { has_notes } => (
             native_tracks_section(
@@ -1089,7 +1089,7 @@ fn assemble_package(
         Section::new(8, tempo_section_from(tempo)),
         Section::new(9, lines_section(&lines, &constants)),
         Section::new(10, notes_section_from(&notes, &strings)),
-        Section::new(11, tracks),
+        Section::new(11, track_section),
         Section::new(12, expressions),
         Section::new(13, distances),
         Section::new(20, resource_data),
