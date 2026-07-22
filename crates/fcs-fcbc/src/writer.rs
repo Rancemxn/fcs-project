@@ -94,9 +94,7 @@ struct ConstantIndices {
     length_zero: u32,
     angle_zero: u32,
     color_white: u32,
-    vec2_float_zero: u32,
     vec2_float_one: u32,
-    vec2_length_zero: u32,
 }
 
 struct Section {
@@ -760,9 +758,7 @@ fn constant_indices(constants: &[Constant]) -> ConstantIndices {
         length_zero: find_constant(constants, &scalar_constant(7, 0.0)),
         angle_zero: find_constant(constants, &scalar_constant(8, 0.0)),
         color_white: find_constant(constants, &color_constant([1.0, 1.0, 1.0, 1.0])),
-        vec2_float_zero: find_constant(constants, &vec2_constant(3, [0.0, 0.0])),
         vec2_float_one: find_constant(constants, &vec2_constant(3, [1.0, 1.0])),
-        vec2_length_zero: find_constant(constants, &vec2_constant(7, [0.0, 0.0])),
     }
 }
 
