@@ -506,6 +506,89 @@ lines {
         assert_eq!(child.initial_floor_position, 4.5);
         assert_eq!(decoded.feature_flags & (1 << 8), 1 << 8);
     }
+
+    #[test]
+    fn write_from_compilation_evaluates_exact_line_base_descriptors() {
+        let workspace = tempdir().unwrap();
+        let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        position: vec2(3px, -4px);
+        rotation: 90deg;
+        scale: vec2(0.5, 2.0);
+        alpha: 0.25;
+        transformOrigin: vec2(1px, 2px);
+        textureAnchor: vec2(0.25, 0.75);
+    }
+}
+"#;
+        let document = parse_document(source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .unwrap();
+
+        let bytes = write_from_compilation(&compilation).unwrap();
+        let decoded = crate::load_chart(&bytes).expect("compiled Line descriptors must load");
+        let line = decoded.lines.first().expect("main Line");
+        let evaluate = |descriptor| {
+            crate::query_descriptor(
+                &decoded,
+                descriptor,
+                7.0,
+                crate::EvaluationEnvironment::at_time(7.0),
+            )
+            .expect("Line descriptor evaluation")
+            .value
+        };
+        assert_eq!(
+            evaluate(line.position_descriptor),
+            crate::RuntimeValue::Vec2 {
+                ty: crate::ValueType::Vec2Length,
+                value: [3.0, -4.0],
+            }
+        );
+        assert_eq!(
+            evaluate(line.rotation_descriptor),
+            crate::RuntimeValue::Scalar {
+                ty: crate::ValueType::Angle,
+                value: std::f64::consts::FRAC_PI_2,
+            }
+        );
+        assert_eq!(
+            evaluate(line.scale_descriptor),
+            crate::RuntimeValue::Vec2 {
+                ty: crate::ValueType::Vec2Float,
+                value: [0.5, 2.0],
+            }
+        );
+        assert_eq!(
+            evaluate(line.alpha_descriptor),
+            crate::RuntimeValue::Scalar {
+                ty: crate::ValueType::Float,
+                value: 0.25,
+            }
+        );
+        assert_eq!(
+            decoded.constants[line.transform_origin_constant as usize],
+            crate::RuntimeValue::Vec2 {
+                ty: crate::ValueType::Vec2Length,
+                value: [1.0, 2.0],
+            }
+        );
+        assert_eq!(
+            decoded.constants[line.texture_anchor_constant as usize],
+            crate::RuntimeValue::Vec2 {
+                ty: crate::ValueType::Vec2Float,
+                value: [0.25, 0.75],
+            }
+        );
+    }
 }
 
 #[derive(Clone)]
