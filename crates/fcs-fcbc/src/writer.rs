@@ -2280,7 +2280,7 @@ fn value_scalar(tag: u8, scalar: f64) -> Vec<u8> {
 
 fn value_vec2_length(value_: [f64; 2]) -> Vec<u8> {
     let mut payload = Vec::new();
-    put_u8(&mut payload, TY_LENGTH);
+    put_u8(&mut payload, 7); // Value tag: length
     payload.resize(8, 0);
     put_f64(&mut payload, value_[0]);
     put_f64(&mut payload, value_[1]);
