@@ -421,6 +421,57 @@ lines { line main {} }
         assert_eq!(resource.content_sha256, expected_sha256);
         assert_eq!(resource.bytes.as_ref(), payload);
     }
+
+    #[test]
+    fn write_from_compilation_preserves_native_line_record_fields() {
+        let workspace = tempdir().unwrap();
+        let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line root {}
+    line child {
+        parent: @root;
+        floorScale: 96px;
+        integrationOrigin: -2s;
+        initialFloorPosition: 4.5;
+        allowReverseScroll: true;
+        zOrder: -3;
+        inherit.position: false;
+        inherit.rotation: true;
+        inherit.scale: false;
+        inherit.alpha: true;
+        inherit.scroll: true;
+    }
+}
+"#;
+        let document = parse_document(source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .unwrap();
+
+        let bytes = write_from_compilation(&compilation).unwrap();
+        let decoded = crate::load_chart(&bytes).expect("compiled Lines must load");
+        let child_id = stable_id(b"fcs.line", b"child");
+        let child = decoded
+            .lines
+            .iter()
+            .find(|line| line.id == child_id)
+            .expect("child Line");
+        assert_eq!(child.parent_id, stable_id(b"fcs.line", b"root"));
+        assert_eq!(child.document_order, 1);
+        assert_eq!(child.z_order, -3);
+        assert_eq!(child.inherit_flags, 0b1_1010);
+        assert_eq!(child.line_flags, 1);
+        assert_eq!(child.floor_scale, 96.0);
+        assert_eq!(child.integration_origin, -2.0);
+        assert_eq!(child.initial_floor_position, 4.5);
+        assert_eq!(decoded.feature_flags & (1 << 8), 1 << 8);
+    }
 }
 
 #[derive(Clone)]
