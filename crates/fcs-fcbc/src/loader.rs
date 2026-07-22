@@ -251,6 +251,7 @@ pub struct DecodedChart {
     pub feature_flags: u64,
     pub strings: Vec<String>,
     pub constants: Vec<RuntimeValue>,
+    pub resources: Vec<ResourceRecord>,
     pub tempo_points: Vec<TempoPoint>,
     pub lines: Vec<LineRecord>,
     pub notes: Vec<NoteRecord>,
@@ -275,13 +276,15 @@ struct ParsedValue {
     fields: Vec<(u32, ParsedValue)>,
 }
 
-#[derive(Clone)]
-struct ResourceRecord {
-    id: u64,
-    kind: u16,
-    data_offset: u64,
-    data_length: u64,
-    hash: Vec<u8>,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResourceRecord {
+    pub id: u64,
+    pub kind: u16,
+    pub media_type: String,
+    pub data_offset: u64,
+    pub data_length: u64,
+    pub content_sha256: [u8; 32],
+    pub bytes: Box<[u8]>,
 }
 
 type ParsedContainer = (u8, u64, [Option<u32>; 2], Vec<RawSection>);
@@ -403,8 +406,8 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
         &strings,
         &contributor_ids,
     )?;
-    let resources = parse_resources(section_payload(bytes, &section_map, 6)?, &strings)?;
-    validate_resource_data(section_payload(bytes, &section_map, 20)?, &resources)?;
+    let mut resources = parse_resources(section_payload(bytes, &section_map, 6)?, &strings)?;
+    validate_resource_data(section_payload(bytes, &section_map, 20)?, &mut resources)?;
     parse_sync(section_payload(bytes, &section_map, 7)?, &resources)?;
     let tempo_points = parse_tempo(section_payload(bytes, &section_map, 8)?)?;
     let lines = parse_lines(section_payload(bytes, &section_map, 9)?, &strings)?;
@@ -426,6 +429,7 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
         feature_flags,
         strings,
         constants,
+        resources,
         tempo_points,
         lines,
         notes,
@@ -892,36 +896,48 @@ fn parse_resources(bytes: &[u8], strings: &[String]) -> Result<Vec<ResourceRecor
         if !(1..=7).contains(&kind) || record.u16()? != 0 {
             return Err("fcbc.invalid-record");
         }
-        check_string_ref(record.u32()?, strings.len())?;
+        let media_type = strings
+            .get(record.u32()? as usize)
+            .ok_or("fcbc.dangling-reference")?
+            .clone();
         if record.u16()? != 1 || record.u16()? != 0 {
             return Err("fcbc.invalid-record");
         }
         let data_offset = record.u64()?;
         let data_length = record.u64()?;
         let hash = parse_bytes(&mut record)?;
-        if hash.len() != 32 || parse_value(&mut record, strings.len())?.tag != 14 {
+        let content_sha256 = hash.try_into().map_err(|_| "fcbc.invalid-record")?;
+        if parse_value(&mut record, strings.len())?.tag != 14 {
             return Err("fcbc.invalid-record");
         }
         resources.push(ResourceRecord {
             id,
             kind,
+            media_type,
             data_offset,
             data_length,
-            hash,
+            content_sha256,
+            bytes: Box::new([]),
         });
     }
     cursor.finish()?;
     Ok(resources)
 }
 
-fn validate_resource_data(bytes: &[u8], resources: &[ResourceRecord]) -> Result<(), &'static str> {
+fn validate_resource_data(
+    bytes: &[u8],
+    resources: &mut [ResourceRecord],
+) -> Result<(), &'static str> {
     let mut cursor = 0usize;
     for resource in resources {
         let expected = align_up_usize(cursor, 8).ok_or("fcbc.invalid-resource-data")?;
         if resource.data_offset != expected as u64 {
             return Err("fcbc.invalid-resource-data");
         }
-        if bytes[cursor..expected].iter().any(|byte| *byte != 0) {
+        let padding = bytes
+            .get(cursor..expected)
+            .ok_or("fcbc.invalid-resource-data")?;
+        if padding.iter().any(|byte| *byte != 0) {
             return Err("fcbc.invalid-resource-data");
         }
         let length =
@@ -933,9 +949,10 @@ fn validate_resource_data(bytes: &[u8], resources: &[ResourceRecord]) -> Result<
             .get(expected..end)
             .ok_or("fcbc.invalid-resource-data")?;
         let digest = Sha256::digest(payload);
-        if digest.as_slice() != resource.hash {
+        if digest.as_slice() != resource.content_sha256 {
             return Err("fcbc.resource-hash-mismatch");
         }
+        resource.bytes = payload.to_vec().into_boxed_slice();
         cursor = end;
     }
     if cursor != bytes.len() {

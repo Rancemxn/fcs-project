@@ -1,4 +1,6 @@
-use fcs_model::{CanonicalCompilation, CanonicalNoteKind, CanonicalNoteSide};
+use fcs_model::{
+    CanonicalCompilation, CanonicalNoteKind, CanonicalNoteSide, CanonicalResourceKind,
+};
 use sha2::{Digest, Sha256};
 
 use crate::error::{FcbcError, FcbcResult};
@@ -188,6 +190,7 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         &notes,
         &[(0, 1, 0.0, 60.0, 0)],
         0.0,
+        &[],
         ExecutionGraph::Fixture,
     )
 }
@@ -195,8 +198,8 @@ pub fn write_nonempty_execution() -> Vec<u8> {
 /// Product CanonicalCompilation → FCBC runtime package writer.
 ///
 /// Encodes chart Lines/Notes/tempo into Core sections and attaches only
-/// descriptors owned by those records. Track/expression lowering and resource
-/// payload embedding are added by the following native handoff slices.
+/// descriptors owned by those records. Track/expression lowering is added by
+/// the following native handoff slices.
 pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<Vec<u8>> {
     let chart = compilation.chart();
     let mut lines: Vec<LineFixture> = chart
@@ -327,11 +330,14 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
         .map(|sync| sync.audio_offset().seconds())
         .unwrap_or(0.0);
 
+    let resources = native_resources(compilation)?;
+
     Ok(assemble_package(
         &lines,
         &notes,
         &tempo,
         audio_offset,
+        &resources,
         ExecutionGraph::Native {
             has_notes: !notes.is_empty(),
         },
@@ -429,11 +435,21 @@ struct NoteFixture {
     property_descriptors: [u32; 10],
 }
 
+#[derive(Clone, Copy)]
+struct ResourceFixture<'a> {
+    id: u64,
+    kind: u16,
+    media_type: &'a str,
+    content_sha256: [u8; 32],
+    bytes: &'a [u8],
+}
+
 fn assemble_package(
     lines: &[LineFixture],
     notes: &[NoteFixture],
     tempo: &[(i64, i64, f64, f64, u32)],
     audio_offset: f64,
+    resources: &[ResourceFixture<'_>],
     execution_graph: ExecutionGraph,
 ) -> Vec<u8> {
     let mut constants = fixture_constants();
@@ -450,24 +466,25 @@ fn assemble_package(
         ),
     };
     let distances = distance_section_for_lines(lines);
+    let strings = string_table_values(resources);
+    let (resource_records, resource_data) = resource_sections(resources, &strings);
 
     let mut sections = vec![
-        Section::new(1, string_table_section()),
+        Section::new(1, string_table_section(&strings)),
         Section::new(2, constant_pool_section(&constants)),
         Section::new(3, meta_section()),
         Section::new(4, count_zero_section()),
         Section::new(5, count_zero_section()),
-        Section::new(6, count_zero_section()),
+        Section::new(6, resource_records),
         Section::new(7, sync_section_with_offset(audio_offset)),
         Section::new(8, tempo_section_from(tempo)),
         Section::new(9, lines_section(lines, &indices)),
-        Section::new(10, notes_section_from(notes)),
+        Section::new(10, notes_section_from(notes, &strings)),
         Section::new(11, tracks),
         Section::new(12, expressions),
         Section::new(13, distances),
-        Section::new(20, Vec::new()),
+        Section::new(20, resource_data),
     ];
-
     let table_length = sections.len() * 40;
     let mut bytes = vec![0; 128 + table_length];
     let mut body_cursor = bytes.len();
@@ -579,8 +596,57 @@ fn vec2_constant(element_tag: u8, value: [f64; 2]) -> Constant {
     Constant { tag: 10, payload }
 }
 
-fn string_table_section() -> Vec<u8> {
-    let strings = [b"kind".as_slice(), b"lineDefault".as_slice()];
+fn native_resources(compilation: &CanonicalCompilation) -> FcbcResult<Vec<ResourceFixture<'_>>> {
+    let mut resources: Vec<_> = compilation
+        .resources()
+        .resources()
+        .values()
+        .map(|bundled| {
+            let resource = bundled.resource();
+            ResourceFixture {
+                id: stable_id(b"fcs.resource", resource.id().as_bytes()),
+                kind: match resource.kind() {
+                    CanonicalResourceKind::Audio => 1,
+                    CanonicalResourceKind::Image => 2,
+                    CanonicalResourceKind::Font => 3,
+                    CanonicalResourceKind::Texture => 4,
+                    CanonicalResourceKind::Path => 5,
+                    CanonicalResourceKind::Shader => 6,
+                    CanonicalResourceKind::Binary => 7,
+                },
+                media_type: resource.media_type(),
+                content_sha256: bundled.content_sha256().as_bytes(),
+                bytes: bundled.bytes(),
+            }
+        })
+        .collect();
+    resources.sort_by_key(|resource| resource.id);
+    if resources.iter().any(|resource| resource.id == 0)
+        || resources.windows(2).any(|pair| pair[0].id == pair[1].id)
+    {
+        return Err(FcbcError::new(
+            "fcbc.duplicate-id",
+            "canonical resource IDs collide in FCBC stable-ID space",
+        ));
+    }
+    Ok(resources)
+}
+
+fn string_table_values<'a>(resources: &[ResourceFixture<'a>]) -> Vec<&'a str> {
+    let mut strings = vec!["kind", "lineDefault"];
+    strings.extend(resources.iter().map(|resource| resource.media_type));
+    strings.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    strings.dedup();
+    strings
+}
+
+fn string_index(strings: &[&str], value: &str) -> u32 {
+    strings
+        .binary_search_by(|candidate| candidate.as_bytes().cmp(value.as_bytes()))
+        .expect("package string must be present") as u32
+}
+
+fn string_table_section(strings: &[&str]) -> Vec<u8> {
     let mut payload = Vec::new();
     put_u32(&mut payload, strings.len() as u32);
     put_u32(&mut payload, 0);
@@ -590,10 +656,35 @@ fn string_table_section() -> Vec<u8> {
         put_u32(&mut payload, offset);
     }
     for string in strings {
-        payload.extend_from_slice(string);
+        payload.extend_from_slice(string.as_bytes());
     }
     pad_to(&mut payload, 8);
     payload
+}
+
+fn resource_sections(resources: &[ResourceFixture<'_>], strings: &[&str]) -> (Vec<u8>, Vec<u8>) {
+    let mut records = Vec::new();
+    let mut data = Vec::new();
+    put_u32(&mut records, resources.len() as u32);
+    for resource in resources {
+        pad_to(&mut data, 8);
+        let data_offset = data.len() as u64;
+        data.extend_from_slice(resource.bytes);
+
+        let mut payload = Vec::new();
+        put_u64(&mut payload, resource.id);
+        put_u16(&mut payload, resource.kind);
+        put_u16(&mut payload, 0);
+        put_u32(&mut payload, string_index(strings, resource.media_type));
+        put_u16(&mut payload, 1);
+        put_u16(&mut payload, 0);
+        put_u64(&mut payload, data_offset);
+        put_u64(&mut payload, resource.bytes.len() as u64);
+        payload.extend_from_slice(&counted_bytes(&resource.content_sha256));
+        payload.extend_from_slice(&empty_object());
+        records.extend_from_slice(&record(payload));
+    }
+    (records, data)
 }
 
 fn constant_pool_section(constants: &[Constant]) -> Vec<u8> {
@@ -671,7 +762,7 @@ fn lines_section(lines: &[LineFixture], constants: &ConstantIndices) -> Vec<u8> 
     section
 }
 
-fn notes_section_from(notes: &[NoteFixture]) -> Vec<u8> {
+fn notes_section_from(notes: &[NoteFixture], strings: &[&str]) -> Vec<u8> {
     let mut section = Vec::new();
     put_u32(&mut section, notes.len() as u32);
     for note in notes {
@@ -684,7 +775,7 @@ fn notes_section_from(notes: &[NoteFixture]) -> Vec<u8> {
         put_u16(&mut payload, note.flags);
         put_f64(&mut payload, note.time);
         put_f64(&mut payload, note.end_time);
-        payload.extend_from_slice(&line_default_judge_shape());
+        payload.extend_from_slice(&line_default_judge_shape(strings));
         // judgment-enabled uses default sound/score; disabled uses none policies.
         let judgment_enabled = note.flags & 0b1 != 0;
         put_u16(&mut payload, if judgment_enabled { 1 } else { 2 }); // default/none sound
@@ -995,15 +1086,15 @@ fn distance_record(
     result
 }
 
-fn line_default_judge_shape() -> Vec<u8> {
+fn line_default_judge_shape(strings: &[&str]) -> Vec<u8> {
     let mut payload = Vec::new();
     put_u32(&mut payload, 1);
-    put_u32(&mut payload, 0); // "kind"
+    put_u32(&mut payload, string_index(strings, "kind"));
     put_u8(&mut payload, 4); // string Value
     put_u8(&mut payload, 0);
     put_u16(&mut payload, 0);
     put_u32(&mut payload, 8);
-    put_u32(&mut payload, 1); // "lineDefault"
+    put_u32(&mut payload, string_index(strings, "lineDefault"));
     put_u32(&mut payload, 0);
     value(14, payload)
 }
@@ -1020,6 +1111,14 @@ fn value(tag: u8, payload: Vec<u8>) -> Vec<u8> {
     put_u32(&mut bytes, payload.len() as u32);
     bytes.extend_from_slice(&payload);
     pad_to(&mut bytes, 8);
+    bytes
+}
+
+fn counted_bytes(payload: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    put_u32(&mut bytes, payload.len() as u32);
+    bytes.extend_from_slice(payload);
+    pad_to(&mut bytes, 4);
     bytes
 }
 
