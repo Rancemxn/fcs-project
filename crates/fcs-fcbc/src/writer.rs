@@ -341,6 +341,8 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
 #[cfg(test)]
 mod compilation_tests {
     use super::*;
+    use std::fs;
+
     use fcs_source::ResourceLimits;
     use fcs_source::elaborator::CompileTimeLimits;
     use fcs_source::parser::parse_document;
@@ -377,6 +379,40 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
             decoded.notes.len(),
             compilation.chart().notes().notes().len()
         );
+    }
+
+    #[test]
+    fn write_from_compilation_embeds_exact_resource_data() {
+        let workspace = tempdir().unwrap();
+        let payload = b"opaque\0resource\xffbytes";
+        fs::write(workspace.path().join("payload.bin"), payload).unwrap();
+        let source = r#"#fcs 5.0.0
+format { profile: chart; }
+resources {
+    binary blob { source: "payload.bin"; mediaType: "application/octet-stream"; }
+}
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+"#;
+        let document = parse_document(source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .unwrap();
+
+        let bytes = write_from_compilation(&compilation).unwrap();
+        let decoded = crate::load_chart(&bytes).expect("compiled resources must load");
+        let resource = decoded.resources.first().expect("embedded resource");
+        assert_eq!(resource.id, stable_id(b"fcs.resource", b"blob"));
+        assert_eq!(resource.kind, 7);
+        assert_eq!(resource.media_type, "application/octet-stream");
+        assert_eq!(resource.data_offset, 0);
+        assert_eq!(resource.data_length, payload.len() as u64);
+        assert_eq!(resource.content_sha256.as_slice(), Sha256::digest(payload));
+        assert_eq!(resource.bytes.as_ref(), payload);
     }
 }
 
