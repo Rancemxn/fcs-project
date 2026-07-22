@@ -328,8 +328,14 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
         assert!(container.sections.len() >= 14);
         assert_eq!(&bytes[..4], b"FCSB");
         let decoded = crate::load_chart(&bytes).expect("compiled FCBC Core chart must load");
-        assert_eq!(decoded.lines.len(), compilation.chart().lines().lines().count());
-        assert_eq!(decoded.notes.len(), compilation.chart().notes().notes().len());
+        assert_eq!(
+            decoded.lines.len(),
+            compilation.chart().lines().lines().count()
+        );
+        assert_eq!(
+            decoded.notes.len(),
+            compilation.chart().notes().notes().len()
+        );
     }
 }
 
