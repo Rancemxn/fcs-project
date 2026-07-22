@@ -717,9 +717,11 @@ git diff --check
   `origin/main` 为 `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1`；主自审和适用 Rust gate 均通过。
   独立 merged-SHA Audit 已对 #92、#96、#98、#102 给出 `pass`，#97 需在 #99 修复后重审。因而 I2
   closure 的实现交付已修正但 stage claim 保持 provisional；五个规范域仍为 Draft。
-- I3.1–I3.7 已实现并合并；I3.7 scroll model 的计划与边界记录在
-  `docs/plans/i3-scroll-model.md`。I3.8 implementation branch 已聚合 immutable `CanonicalChart`，其
-  计划记录在 `docs/plans/i3-canonical-chart.md`，但仍等待交付门禁。后续 residual 为 I3.9 snapshot、
-  I4 runtime descriptor/evaluator 和 I5 resource bytes/hash resolution；I3.9–I10 尚未完成。I3 可以
-  建立自己的 canonical model/owning crate，但不得把阶段性 canonical seams 误报为完整
-  CanonicalCompilation/runtime/FCBC/Render/Conversion/CLI 完成或版本 Frozen。
+- I3.1–I6.7 的实现单元和后续 I7–I10 partial product units 已经合并，但 I10 RC 尚未完成。当前
+  residual frontier is tracked by root Issue #9 and children #292–#296: governance/Frozen-state
+  correction; native
+  `CanonicalCompilation -> FCBC -> load_chart` descriptor and ResourceData closure; typed Conversion
+  capability and canonical target reparse; canonical Render product/semantic/raster closure; and CLI
+  I10.2-I10.7 assembly plus final executable conformance. Existing product crates and successful Full
+  gates are implementation evidence only; they do not authorize Frozen or root completion while these
+  acceptance units remain open.

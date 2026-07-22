@@ -1,6 +1,6 @@
 # FCS Core Source Specification 5.0.0
 
-状态：Frozen（2026-07-21 local RC；见 `docs/specifications/governance.md` 与 `docs/reviews/2026-07-21-i10-local-rc-freeze.md`）
+状态：Draft（2026-07-22；I10 executable closure remains open；见 `docs/specifications/governance.md`）
 
 本文是 FCS（Functional Chart Specification）5.0.0 Core 的规范性定义。规范用语、
 版本治理和冻结条件见 `docs/specifications/governance.md`。FCBC、Render Profile 和格式转换

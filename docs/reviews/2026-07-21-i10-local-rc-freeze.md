@@ -1,5 +1,10 @@
 # I10 Local Conformance RC Freeze Evidence
 
+> **Superseded:** This primary-session freeze claim was withdrawn on 2026-07-22 after the
+> loop success signal and the independent PR #290 audit were reconciled with product evidence.
+> The historical evidence below is retained for audit; it is not current Frozen or I10 completion
+> authority. Current status is tracked by root Issue #9 and `docs/specifications/governance.md`.
+
 **Status:** Primary-session RC freeze evidence for the local (unpublished) FCS 5
 conformance release candidate.
 
@@ -52,3 +57,12 @@ affected domain under governance versioning rules.
 - FCBC matrix status is `partial` for that residual while goldens still Core-load.
 - CapabilitySet is a bounded negotiation surface, not full Conversion §6.2 descriptor.
 - No public tag/Release/crate publish.
+
+## Superseding withdrawal
+
+The five-domain Frozen decision above is withdrawn because the documented residuals affect the
+I10 success signal rather than a post-RC enhancement. Native `CanonicalCompilation` output does
+not yet guarantee Core `load_chart` or embed ResourceData, Conversion capability and semantic
+target-reparse evidence are incomplete, and the Render/CLI surfaces are not the full executable
+products required by the roadmap. No version domain may return to Frozen until the corrective
+Issues under root #9 close and a new exact-snapshot freeze review satisfies governance section 7.
