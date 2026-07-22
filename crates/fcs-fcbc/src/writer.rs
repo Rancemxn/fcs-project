@@ -237,6 +237,10 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             time: 0.5,
             end_time: 0.0,
             property_descriptors: fixture_note_descriptors(),
+            property_constants: default_note_property_constants(),
+            visible_from: None,
+            visible_until: None,
+            texture_resource_id: 0,
         },
         NoteFixture {
             id: stable_id(b"fcs.note", b"fixture.evaluable.note"),
@@ -248,6 +252,10 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             time: 1.5,
             end_time: 0.0,
             property_descriptors: fixture_note_descriptors(),
+            property_constants: default_note_property_constants(),
+            visible_from: None,
+            visible_until: None,
+            texture_resource_id: 0,
         },
     ];
     assemble_package(
@@ -378,39 +386,87 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
                     ),
                 ));
             }
-            let (kind, flags, end_time) = match note.kind() {
-                CanonicalNoteKind::Tap => (1u8, 0b11u16, 0.0),
+            let (kind, has_end, end_time) = match note.kind() {
+                CanonicalNoteKind::Tap => (1u8, 0u16, 0.0),
                 CanonicalNoteKind::Hold => {
                     let end = note
                         .gameplay()
                         .end_time()
                         .map(|time| time.chart_time_seconds())
                         .unwrap_or(note.gameplay().time().chart_time_seconds() + 0.5);
-                    (2u8, 0b111u16, end)
+                    (2u8, 0b100u16, end)
                 }
-                CanonicalNoteKind::Drag => (3u8, 0b11u16, 0.0),
-                CanonicalNoteKind::Flick => (4u8, 0b11u16, 0.0),
+                CanonicalNoteKind::Drag => (3u8, 0u16, 0.0),
+                CanonicalNoteKind::Flick => (4u8, 0u16, 0.0),
             };
             let side = match note.gameplay().side() {
                 CanonicalNoteSide::Above => 1u8,
                 CanonicalNoteSide::Below => 2u8,
             };
-            let judgment = if note.gameplay().judgment_enabled() {
-                0b11
-            } else {
-                0b10
-            };
+            let presentation = note.presentation();
+            let texture_resource_id = presentation
+                .texture()
+                .map(|resource_id| {
+                    let resource = compilation.resources().get(resource_id).ok_or_else(|| {
+                        FcbcError::new(
+                            "fcbc.dangling-reference",
+                            format!(
+                                "Note {} references missing texture {resource_id}",
+                                note.id().value()
+                            ),
+                        )
+                    })?;
+                    if !matches!(
+                        resource.resource().kind(),
+                        CanonicalResourceKind::Image | CanonicalResourceKind::Texture
+                    ) {
+                        return Err(FcbcError::new(
+                            "fcbc.invalid-note",
+                            format!(
+                                "Note {} texture is not an image resource",
+                                note.id().value()
+                            ),
+                        ));
+                    }
+                    Ok(stable_id(b"fcs.resource", resource_id.as_bytes()))
+                })
+                .transpose()?
+                .unwrap_or(0);
             Ok(NoteFixture {
                 id: note.id().value(),
                 line_id,
                 document_order: note.document_order() as u32,
                 kind,
                 side,
-                flags: (flags & !0b11) | judgment,
+                flags: u16::from(note.gameplay().judgment_enabled())
+                    | (u16::from(presentation.render_enabled()) << 1)
+                    | has_end,
                 time: note.gameplay().time().chart_time_seconds(),
                 end_time,
-                // Native descriptor indices are assigned after global interning.
                 property_descriptors: [0; 10],
+                property_constants: [
+                    scalar_constant(7, presentation.position_x()),
+                    float_constant(presentation.scroll_factor()),
+                    scalar_constant(7, presentation.x_offset()),
+                    scalar_constant(7, presentation.y_offset()),
+                    float_constant(presentation.alpha()),
+                    float_constant(presentation.scale_x()),
+                    float_constant(presentation.scale_y()),
+                    scalar_constant(8, presentation.rotation()),
+                    color_constant([
+                        presentation.color().red(),
+                        presentation.color().green(),
+                        presentation.color().blue(),
+                        presentation.color().alpha(),
+                    ]),
+                ],
+                visible_from: presentation
+                    .visible_from()
+                    .map(|time| time.chart_time_seconds()),
+                visible_until: presentation
+                    .visible_until()
+                    .map(|time| time.chart_time_seconds()),
+                texture_resource_id,
             })
         })
         .collect::<FcbcResult<Vec<_>>>()?;
@@ -505,6 +561,146 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
         assert_eq!(
             decoded.notes.len(),
             compilation.chart().notes().notes().len()
+        );
+    }
+
+    #[test]
+    fn write_from_compilation_preserves_note_presentation_and_texture() {
+        let workspace = tempdir().unwrap();
+        fs::write(workspace.path().join("cover.bin"), b"cover-bytes").unwrap();
+        let source = r#"#fcs 5.0.0
+format { profile: chart; }
+resources { image cover { source: "cover.bin"; mediaType: "image/png"; } }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+    notes {
+        tap {
+            id: "styled";
+            line: @main;
+            gameplay.time: 1s;
+            presentation.positionX: 12px;
+            presentation.scrollFactor: 0.5;
+            presentation.xOffset: -2px;
+            presentation.yOffset: 3px;
+            presentation.alpha: 0.25;
+            presentation.scaleX: 2.0;
+            presentation.scaleY: 0.75;
+            presentation.rotation: 90deg;
+            presentation.color: #FF0000;
+            presentation.texture: @cover;
+            presentation.visibleFrom: 1beat;
+            presentation.visibleUntil: 3beat;
+            render.enabled: false;
+        }
+    }
+}
+"#;
+        let document = parse_document(source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .unwrap();
+        let canonical_color = compilation.chart().notes().notes()[0]
+            .presentation()
+            .color();
+        let bytes = write_from_compilation(&compilation).unwrap();
+        let decoded = crate::load_chart(&bytes).expect("note presentation must load");
+        let note = decoded.notes.first().expect("styled Note");
+        let evaluate = |descriptor, time| {
+            crate::query_descriptor(
+                &decoded,
+                descriptor,
+                time,
+                crate::EvaluationEnvironment::at_time(time),
+            )
+            .expect("Note property evaluation")
+            .value
+        };
+        assert_eq!(note.flags, 0b1);
+        assert_eq!(
+            evaluate(note.property_descriptors[0], 1.0),
+            crate::RuntimeValue::Scalar {
+                ty: crate::ValueType::Length,
+                value: 12.0,
+            }
+        );
+        assert_eq!(
+            evaluate(note.property_descriptors[1], 1.0),
+            crate::RuntimeValue::Scalar {
+                ty: crate::ValueType::Float,
+                value: 0.5,
+            }
+        );
+        assert_eq!(
+            evaluate(note.property_descriptors[2], 1.0),
+            crate::RuntimeValue::Scalar {
+                ty: crate::ValueType::Length,
+                value: -2.0,
+            }
+        );
+        assert_eq!(
+            evaluate(note.property_descriptors[3], 1.0),
+            crate::RuntimeValue::Scalar {
+                ty: crate::ValueType::Length,
+                value: 3.0,
+            }
+        );
+        assert_eq!(
+            evaluate(note.property_descriptors[4], 1.0),
+            crate::RuntimeValue::Scalar {
+                ty: crate::ValueType::Float,
+                value: 0.25,
+            }
+        );
+        assert_eq!(
+            evaluate(note.property_descriptors[5], 1.0),
+            crate::RuntimeValue::Scalar {
+                ty: crate::ValueType::Float,
+                value: 2.0,
+            }
+        );
+        assert_eq!(
+            evaluate(note.property_descriptors[6], 1.0),
+            crate::RuntimeValue::Scalar {
+                ty: crate::ValueType::Float,
+                value: 0.75,
+            }
+        );
+        assert_eq!(
+            evaluate(note.property_descriptors[7], 1.0),
+            crate::RuntimeValue::Scalar {
+                ty: crate::ValueType::Angle,
+                value: std::f64::consts::FRAC_PI_2,
+            }
+        );
+        assert_eq!(
+            evaluate(note.property_descriptors[8], 1.0),
+            crate::RuntimeValue::Color([
+                canonical_color.red(),
+                canonical_color.green(),
+                canonical_color.blue(),
+                canonical_color.alpha(),
+            ])
+        );
+        assert_eq!(
+            evaluate(note.property_descriptors[9], 0.25),
+            crate::RuntimeValue::Bool(false)
+        );
+        assert_eq!(
+            evaluate(note.property_descriptors[9], 1.0),
+            crate::RuntimeValue::Bool(true)
+        );
+        assert_eq!(
+            evaluate(note.property_descriptors[9], 2.0),
+            crate::RuntimeValue::Bool(false)
+        );
+        assert_eq!(
+            note.texture_resource_id,
+            stable_id(b"fcs.resource", b"cover")
         );
     }
 
@@ -1138,6 +1334,10 @@ struct NoteFixture {
     time: f64,
     end_time: f64,
     property_descriptors: [u32; 10],
+    property_constants: [Constant; 9],
+    visible_from: Option<f64>,
+    visible_until: Option<f64>,
+    texture_resource_id: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -1176,6 +1376,9 @@ fn assemble_package(
                     .iter()
                     .map(|point| float_constant(point.bpm)),
             );
+        }
+        for note in &notes {
+            constants.extend(note.property_constants.iter().cloned());
         }
         for track in tracks {
             for segment in &track.segments {
@@ -1739,7 +1942,7 @@ fn notes_section_from(notes: &[NoteFixture], strings: &[&str]) -> Vec<u8> {
         for descriptor in note.property_descriptors {
             put_u32(&mut payload, descriptor);
         }
-        put_u64(&mut payload, 0);
+        put_u64(&mut payload, note.texture_resource_id);
         payload.extend_from_slice(&empty_object());
         section.extend_from_slice(&record(payload));
     }
@@ -1848,34 +2051,34 @@ fn native_tracks_section(
     }
 
     if has_notes {
-        // Intern Note roots in canonical target-path order, then map them back to
-        // the NoteRecord field order.
-        let alpha = intern_constant_descriptor(&mut descriptors, TY_FLOAT, indices.float_one);
-        let color = intern_constant_descriptor(&mut descriptors, TY_COLOR, indices.color_white);
-        let position_x =
-            intern_constant_descriptor(&mut descriptors, TY_LENGTH, indices.length_zero);
-        let rotation = intern_constant_descriptor(&mut descriptors, TY_ANGLE, indices.angle_zero);
-        let scale_x = intern_constant_descriptor(&mut descriptors, TY_FLOAT, indices.float_one);
-        let scale_y = intern_constant_descriptor(&mut descriptors, TY_FLOAT, indices.float_one);
-        let scroll_factor =
-            intern_constant_descriptor(&mut descriptors, TY_FLOAT, indices.float_one);
-        let visibility = intern_constant_descriptor(&mut descriptors, TY_BOOL, indices.bool_true);
-        let x_offset = intern_constant_descriptor(&mut descriptors, TY_LENGTH, indices.length_zero);
-        let y_offset = intern_constant_descriptor(&mut descriptors, TY_LENGTH, indices.length_zero);
-        let note_descriptors = [
-            position_x,
-            scroll_factor,
-            x_offset,
-            y_offset,
-            alpha,
-            scale_x,
-            scale_y,
-            rotation,
-            color,
-            visibility,
-        ];
-        for note in notes {
-            note.property_descriptors = note_descriptors;
+        let mut note_order: Vec<_> = (0..notes.len()).collect();
+        note_order.sort_by_key(|index| notes[*index].id);
+        // Direct roots are allocated by canonical target path, then stable Note ID.
+        for property in [4usize, 8, 0, 7, 5, 6, 1, 9, 2, 3] {
+            for &index in &note_order {
+                let descriptor = if property == 9 {
+                    native_note_visibility_descriptor(
+                        &mut descriptors,
+                        indices.bool_false,
+                        indices.bool_true,
+                        notes[index].visible_from,
+                        notes[index].visible_until,
+                    )
+                } else {
+                    let property_type = match property {
+                        0 | 2 | 3 => TY_LENGTH,
+                        7 => TY_ANGLE,
+                        8 => TY_COLOR,
+                        _ => TY_FLOAT,
+                    };
+                    intern_constant_descriptor(
+                        &mut descriptors,
+                        property_type,
+                        find_constant(constants, &notes[index].property_constants[property]),
+                    )
+                };
+                notes[index].property_descriptors[property] = descriptor;
+            }
         }
     }
 
@@ -1920,6 +2123,51 @@ fn native_scroll_tempo_descriptor(
         descriptors,
         segment_track_descriptor(TY_FLOAT, &segments, constants),
     )
+}
+
+fn native_note_visibility_descriptor(
+    descriptors: &mut Vec<Vec<u8>>,
+    false_constant: u32,
+    true_constant: u32,
+    visible_from: Option<f64>,
+    visible_until: Option<f64>,
+) -> u32 {
+    if visible_from.is_none() && visible_until.is_none() {
+        return intern_constant_descriptor(descriptors, TY_BOOL, true_constant);
+    }
+    let false_descriptor = intern_constant_descriptor(descriptors, TY_BOOL, false_constant);
+    let true_descriptor = intern_constant_descriptor(descriptors, TY_BOOL, true_constant);
+    let mut payload = descriptor_common(TY_BOOL, 3, 0b11, 0.0, 0.0);
+    let piece_count =
+        1 + usize::from(visible_from.is_some()) + usize::from(visible_until.is_some());
+    put_u32(&mut payload, piece_count as u32);
+    if let Some(end) = visible_from {
+        put_f64(&mut payload, 0.0);
+        put_f64(&mut payload, end);
+        put_u32(&mut payload, false_descriptor);
+        put_u32(&mut payload, 0b010);
+    }
+    if let Some(start) = visible_from {
+        put_f64(&mut payload, start);
+        put_f64(&mut payload, visible_until.unwrap_or(0.0));
+        put_u32(&mut payload, true_descriptor);
+        put_u32(
+            &mut payload,
+            if visible_until.is_some() { 0 } else { 0b100 },
+        );
+    } else if let Some(end) = visible_until {
+        put_f64(&mut payload, 0.0);
+        put_f64(&mut payload, end);
+        put_u32(&mut payload, true_descriptor);
+        put_u32(&mut payload, 0b010);
+    }
+    if let Some(start) = visible_until {
+        put_f64(&mut payload, start);
+        put_f64(&mut payload, 0.0);
+        put_u32(&mut payload, false_descriptor);
+        put_u32(&mut payload, 0b100);
+    }
+    intern_descriptor(descriptors, record(payload))
 }
 
 fn native_line_descriptor(
@@ -1983,6 +2231,20 @@ const fn fixture_note_descriptors() -> [u32; 10] {
         ROTATION_DESCRIPTOR_INDEX,
         COLOR_DESCRIPTOR_INDEX,
         VISIBILITY_DESCRIPTOR_INDEX,
+    ]
+}
+
+fn default_note_property_constants() -> [Constant; 9] {
+    [
+        scalar_constant(7, 0.0),
+        float_constant(1.0),
+        scalar_constant(7, 0.0),
+        scalar_constant(7, 0.0),
+        float_constant(1.0),
+        float_constant(1.0),
+        float_constant(1.0),
+        scalar_constant(8, 0.0),
+        color_constant([1.0, 1.0, 1.0, 1.0]),
     ]
 }
 
