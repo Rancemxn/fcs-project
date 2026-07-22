@@ -67,6 +67,11 @@ impl Constant {
 #[derive(Clone)]
 struct LineFixture {
     id: u64,
+    parent_id: u64,
+    document_order: u32,
+    z_order: i32,
+    inherit_flags: u32,
+    line_flags: u32,
     distance_index: u32,
     position_descriptor: u32,
     rotation_descriptor: u32,
@@ -118,6 +123,11 @@ pub fn write_nonempty_execution() -> Vec<u8> {
     let mut lines = vec![
         LineFixture {
             id: analytic_line_id,
+            parent_id: 0,
+            document_order: 0,
+            z_order: 0,
+            inherit_flags: 0,
+            line_flags: 0,
             distance_index: ANALYTIC_DISTANCE_INDEX,
             position_descriptor: POSITION_DESCRIPTOR_INDEX,
             rotation_descriptor: ROTATION_DESCRIPTOR_INDEX,
@@ -131,6 +141,11 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         },
         LineFixture {
             id: evaluable_line_id,
+            parent_id: 0,
+            document_order: 0,
+            z_order: 0,
+            inherit_flags: 0,
+            line_flags: 0,
             distance_index: EVALUABLE_DISTANCE_INDEX,
             position_descriptor: POSITION_DESCRIPTOR_INDEX,
             rotation_descriptor: ROTATION_DESCRIPTOR_INDEX,
@@ -146,6 +161,7 @@ pub fn write_nonempty_execution() -> Vec<u8> {
     lines.sort_by_key(|line| line.id);
     let line_count = lines.len();
     for (index, line) in lines.iter_mut().enumerate() {
+        line.document_order = index as u32;
         line.distance_index = index as u32;
         // Preserve the historical speed/alpha pairing used by the nonempty golden:
         // lower Line ID uses evaluable path; higher uses analytic path when two Lines exist.
@@ -206,19 +222,32 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
         .lines()
         .lines()
         .enumerate()
-        .map(|(index, line)| LineFixture {
-            id: line.id().value(),
-            // distance_index is filled after sort so section order matches Line ID order.
-            distance_index: index as u32,
-            position_descriptor: NATIVE_POSITION_DESCRIPTOR,
-            rotation_descriptor: NATIVE_ROTATION_DESCRIPTOR,
-            scale_descriptor: NATIVE_SCALE_DESCRIPTOR,
-            alpha_descriptor: NATIVE_FLOAT_ONE_DESCRIPTOR,
-            scroll_tempo_descriptor: NATIVE_SCROLL_TEMPO_DESCRIPTOR,
-            speed_descriptor: NATIVE_FLOAT_ONE_DESCRIPTOR,
-            floor_scale: line.base().floor_scale(),
-            integration_origin: line.base().integration_origin(),
-            initial_floor: line.base().initial_floor_position(),
+        .map(|(index, line)| {
+            let base = line.base();
+            let inherit = line.inherit();
+            LineFixture {
+                id: line.id().value(),
+                parent_id: line.parent().map_or(0, |parent| parent.value()),
+                document_order: line.document_order() as u32,
+                z_order: base.z_order(),
+                inherit_flags: u32::from(inherit.position())
+                    | u32::from(inherit.rotation()) << 1
+                    | u32::from(inherit.scale()) << 2
+                    | u32::from(inherit.alpha()) << 3
+                    | u32::from(inherit.scroll()) << 4,
+                line_flags: u32::from(base.allow_reverse_scroll()),
+                // distance_index is filled after sort so section order matches Line ID order.
+                distance_index: index as u32,
+                position_descriptor: NATIVE_POSITION_DESCRIPTOR,
+                rotation_descriptor: NATIVE_ROTATION_DESCRIPTOR,
+                scale_descriptor: NATIVE_SCALE_DESCRIPTOR,
+                alpha_descriptor: NATIVE_FLOAT_ONE_DESCRIPTOR,
+                scroll_tempo_descriptor: NATIVE_SCROLL_TEMPO_DESCRIPTOR,
+                speed_descriptor: NATIVE_FLOAT_ONE_DESCRIPTOR,
+                floor_scale: base.floor_scale(),
+                integration_origin: base.integration_origin(),
+                initial_floor: base.initial_floor_position(),
+            }
         })
         .collect();
     if lines.is_empty() {
@@ -226,6 +255,11 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
         // section loaders can attach tempo/note graph ownership.
         lines.push(LineFixture {
             id: stable_id(b"fcs.line", b"generated/default"),
+            parent_id: 0,
+            document_order: 0,
+            z_order: 0,
+            inherit_flags: 0,
+            line_flags: 0,
             distance_index: 0,
             position_descriptor: NATIVE_POSITION_DESCRIPTOR,
             rotation_descriptor: NATIVE_ROTATION_DESCRIPTOR,
@@ -518,6 +552,11 @@ fn assemble_package(
         ),
     };
     let distances = distance_section_for_lines(lines);
+    let feature_flags = if lines.iter().any(|line| line.line_flags & 1 != 0) {
+        1 << 8
+    } else {
+        0
+    };
     let strings = string_table_values(resources);
     let (resource_records, resource_data) = resource_sections(resources, &strings);
 
@@ -548,7 +587,7 @@ fn assemble_package(
         body_cursor = bytes.len();
     }
 
-    write_header(&mut bytes, sections.len() as u32);
+    write_header(&mut bytes, sections.len() as u32, feature_flags);
     write_section_table(&mut bytes, &sections);
     bytes
 }
@@ -788,14 +827,14 @@ fn tempo_section_from(points: &[(i64, i64, f64, f64, u32)]) -> Vec<u8> {
 fn lines_section(lines: &[LineFixture], constants: &ConstantIndices) -> Vec<u8> {
     let mut section = Vec::new();
     put_u32(&mut section, lines.len() as u32);
-    for (document_order, line) in lines.iter().enumerate() {
+    for line in lines {
         let mut payload = Vec::new();
         put_u64(&mut payload, line.id);
-        put_u64(&mut payload, 0);
-        put_u32(&mut payload, document_order as u32);
-        put_i32(&mut payload, 0);
-        put_u32(&mut payload, 0);
-        put_u32(&mut payload, 0);
+        put_u64(&mut payload, line.parent_id);
+        put_u32(&mut payload, line.document_order);
+        put_i32(&mut payload, line.z_order);
+        put_u32(&mut payload, line.inherit_flags);
+        put_u32(&mut payload, line.line_flags);
         put_u32(&mut payload, line.position_descriptor);
         put_u32(&mut payload, line.rotation_descriptor);
         put_u32(&mut payload, line.scale_descriptor);
@@ -1088,21 +1127,27 @@ fn distance_section_for_lines(lines: &[LineFixture]) -> Vec<u8> {
     let mut section = Vec::new();
     put_u32(&mut section, lines.len() as u32);
     for line in lines {
-        // Classification/boundary pairing must match the Line's scroll speed
-        // descriptor and keep integration_origin (0.0) present in boundaries.
-        let (classification, max_error, boundaries) =
+        // Classification/boundary pairing must match the Line's scroll speed descriptor.
+        let (classification, max_error, mut boundaries) =
             if line.speed_descriptor == EVALUABLE_SPEED_DESCRIPTOR_INDEX {
-                (2u8, 2.328_306_436_538_696_3e-10, &[0.0, 2.0][..])
+                (
+                    2u8,
+                    2.328_306_436_538_696_3e-10,
+                    vec![line.integration_origin, 2.0],
+                )
             } else {
-                (1u8, 0.0, &[0.0][..])
+                (1u8, 0.0, vec![line.integration_origin])
             };
+        boundaries.sort_by(f64::total_cmp);
+        boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
         section.extend_from_slice(&distance_record(
             line.id,
             line.speed_descriptor,
+            line.integration_origin,
             line.initial_floor,
             classification,
             max_error,
-            boundaries,
+            &boundaries,
         ));
     }
     section
@@ -1111,6 +1156,7 @@ fn distance_section_for_lines(lines: &[LineFixture]) -> Vec<u8> {
 fn distance_record(
     line_id: u64,
     scroll_speed_descriptor: u32,
+    integration_origin: f64,
     initial_floor: f64,
     classification: u8,
     max_distance_error: f64,
@@ -1122,7 +1168,7 @@ fn distance_record(
     put_u32(&mut payload, NULL_INDEX);
     put_f64(&mut payload, 0.0);
     put_f64(&mut payload, 0.0);
-    put_f64(&mut payload, 0.0);
+    put_f64(&mut payload, integration_origin);
     put_f64(&mut payload, initial_floor);
     put_f64(&mut payload, 0.0);
     put_f64(&mut payload, max_distance_error);
@@ -1186,7 +1232,7 @@ fn record(mut payload: Vec<u8>) -> Vec<u8> {
     bytes
 }
 
-fn write_header(bytes: &mut [u8], section_count: u32) {
+fn write_header(bytes: &mut [u8], section_count: u32, feature_flags: u64) {
     bytes[0..4].copy_from_slice(b"FCSB");
     write_u16_at(bytes, 4, 128);
     write_u16_at(bytes, 6, 0);
@@ -1201,7 +1247,7 @@ fn write_header(bytes: &mut [u8], section_count: u32) {
     write_u16_at(bytes, 24, 0);
     bytes[26] = 3; // strict-runtime
     bytes[27] = 1; // binary64
-    write_u64_at(bytes, 28, 0);
+    write_u64_at(bytes, 28, feature_flags);
     write_u32_at(bytes, 36, section_count);
     write_u64_at(bytes, 40, 128);
     write_u64_at(bytes, 48, bytes.len() as u64);
