@@ -1,7 +1,7 @@
 use fcs_model::{
     CanonicalCompilation, CanonicalNoteKind, CanonicalNoteSide, CanonicalResourceKind,
     CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation,
-    CanonicalTrackPiece, CanonicalTrackTarget, CanonicalTrackValue,
+    CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget, CanonicalTrackValue,
 };
 use sha2::{Digest, Sha256};
 
@@ -1031,73 +1031,93 @@ fn native_alpha_tracks(
                 format!("native alpha Track layering is not yet supported for Line {line_id}"),
             ));
         }
-        let [piece] = track.pieces() else {
-            return Err(FcbcError::new(
-                "fcbc.unsupported-track",
-                format!("native alpha Track {} requires one segment", track.name()),
-            ));
-        };
-        let CanonicalTrackPiece::Segment(segment) = piece else {
-            return Err(FcbcError::new(
-                "fcbc.unsupported-track",
-                format!(
-                    "native alpha Track {} does not yet support points",
-                    track.name()
-                ),
-            ));
-        };
-        let (interpolation, easing, bezier) = match segment.interpolation() {
-            CanonicalTrackInterpolation::Step => (1, 0, [0.0; 4]),
-            CanonicalTrackInterpolation::Linear => (2, 0, [0.0; 4]),
-            _ => {
+        let pieces = track.pieces();
+        let first_time = track_piece_time(&pieces[0]);
+        let mut segments = Vec::new();
+        for piece in pieces {
+            match piece {
+                CanonicalTrackPiece::Segment(segment) => {
+                    segments.push(native_alpha_segment(segment, track.name())?);
+                }
+                CanonicalTrackPiece::Point(point) => {
+                    let value = native_alpha_constant(point.value(), track.name())?;
+                    let time = point.time().chart_time_seconds();
+                    segments.push(TrackSegmentFixture {
+                        start: time,
+                        end: time,
+                        interpolation: 1,
+                        easing: 0,
+                        flags: 1,
+                        start_constant: value.clone(),
+                        end_constant: value,
+                        bezier: [0.0; 4],
+                    });
+                }
+            }
+        }
+        if !pieces.iter().any(|piece| {
+            matches!(
+                piece,
+                CanonicalTrackPiece::Point(point)
+                    if point.time().chart_time_seconds().to_bits() == first_time.to_bits()
+            )
+        }) {
+            let CanonicalTrackPiece::Segment(segment) = &pieces[0] else {
+                unreachable!("first point check covers non-segment Track pieces");
+            };
+            let value = native_alpha_constant(segment.start_value(), track.name())?;
+            segments.push(TrackSegmentFixture {
+                start: first_time,
+                end: first_time,
+                interpolation: 1,
+                easing: 0,
+                flags: 1,
+                start_constant: value.clone(),
+                end_constant: value,
+                bezier: [0.0; 4],
+            });
+        }
+        if let Some(CanonicalTrackPiece::Segment(segment)) = pieces.last()
+            && !pieces.iter().any(|piece| {
+                matches!(
+                    piece,
+                    CanonicalTrackPiece::Point(point)
+                        if point.time().chart_time_seconds().to_bits()
+                            == segment.end().chart_time_seconds().to_bits()
+                )
+            })
+        {
+            let value = native_alpha_constant(segment.end_value(), track.name())?;
+            segments.push(TrackSegmentFixture {
+                start: segment.end().chart_time_seconds(),
+                end: segment.end().chart_time_seconds(),
+                interpolation: 1,
+                easing: 0,
+                flags: 1,
+                start_constant: value.clone(),
+                end_constant: value,
+                bezier: [0.0; 4],
+            });
+        }
+        for pair in pieces.windows(2) {
+            if let CanonicalTrackPiece::Segment(segment) = &pair[0]
+                && segment.end().chart_time_seconds() < track_piece_time(&pair[1])
+            {
                 return Err(FcbcError::new(
                     "fcbc.unsupported-track",
                     format!(
-                        "native alpha Track {} interpolation is not yet supported",
+                        "native alpha Track {} has an uncovered segment gap",
                         track.name()
                     ),
                 ));
             }
-        };
-        let start_constant = native_alpha_constant(segment.start_value(), track.name())?;
-        let end_constant = native_alpha_constant(segment.end_value(), track.name())?;
-        let start = segment.start().chart_time_seconds();
-        let end = segment.end().chart_time_seconds();
-        lowered.push(AlphaTrackFixture {
-            line_id,
-            segments: vec![
-                TrackSegmentFixture {
-                    start,
-                    end: start,
-                    interpolation: 1,
-                    easing: 0,
-                    flags: 1,
-                    start_constant: start_constant.clone(),
-                    end_constant: start_constant.clone(),
-                    bezier: [0.0; 4],
-                },
-                TrackSegmentFixture {
-                    start,
-                    end,
-                    interpolation,
-                    easing,
-                    flags: 0,
-                    start_constant: start_constant.clone(),
-                    end_constant: end_constant.clone(),
-                    bezier,
-                },
-                TrackSegmentFixture {
-                    start: end,
-                    end,
-                    interpolation: 1,
-                    easing: 0,
-                    flags: 1,
-                    start_constant: end_constant.clone(),
-                    end_constant,
-                    bezier: [0.0; 4],
-                },
-            ],
+        }
+        segments.sort_by(|left, right| {
+            left.start
+                .total_cmp(&right.start)
+                .then_with(|| right.flags.cmp(&left.flags))
         });
+        lowered.push(AlphaTrackFixture { line_id, segments });
     }
     lowered.sort_by_key(|track| track.line_id);
     Ok(lowered)
@@ -1110,6 +1130,39 @@ fn native_alpha_constant(value: CanonicalTrackValue, track_name: &str) -> FcbcRe
             "fcbc.invalid-track",
             format!("native alpha Track {track_name} has a non-float value"),
         )),
+    }
+}
+
+fn native_alpha_segment(
+    segment: &CanonicalTrackSegment,
+    track_name: &str,
+) -> FcbcResult<TrackSegmentFixture> {
+    let (interpolation, easing, bezier) = match segment.interpolation() {
+        CanonicalTrackInterpolation::Step => (1, 0, [0.0; 4]),
+        CanonicalTrackInterpolation::Linear => (2, 0, [0.0; 4]),
+        _ => {
+            return Err(FcbcError::new(
+                "fcbc.unsupported-track",
+                format!("native alpha Track {track_name} interpolation is not yet supported"),
+            ));
+        }
+    };
+    Ok(TrackSegmentFixture {
+        start: segment.start().chart_time_seconds(),
+        end: segment.end().chart_time_seconds(),
+        interpolation,
+        easing,
+        flags: 0,
+        start_constant: native_alpha_constant(segment.start_value(), track_name)?,
+        end_constant: native_alpha_constant(segment.end_value(), track_name)?,
+        bezier,
+    })
+}
+
+fn track_piece_time(piece: &CanonicalTrackPiece) -> f64 {
+    match piece {
+        CanonicalTrackPiece::Segment(segment) => segment.start().chart_time_seconds(),
+        CanonicalTrackPiece::Point(point) => point.time().chart_time_seconds(),
     }
 }
 
