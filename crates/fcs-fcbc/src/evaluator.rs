@@ -1034,6 +1034,18 @@ fn integrate_scroll_product(
     start: f64,
     end: f64,
 ) -> Result<f64, &'static str> {
+    if start.to_bits() == end.to_bits() {
+        return Ok(0.0);
+    }
+    if end < start {
+        return Ok(-integrate_scroll_product(
+            chart,
+            speed_descriptor,
+            tempo_descriptor,
+            end,
+            start,
+        )?);
+    }
     if let Some(tempo) = constant_descriptor_scalar(chart, tempo_descriptor)? {
         let speed_integral = integrate_descriptor(chart, speed_descriptor, start, end, 0)?;
         let result = speed_integral * tempo / 60.0;
@@ -1044,7 +1056,53 @@ fn integrate_scroll_product(
         let result = tempo_integral * speed / 60.0;
         return result.is_finite().then_some(result).ok_or(EXECUTION_ERROR);
     }
-    Err(EXECUTION_ERROR)
+
+    let descriptor = chart
+        .descriptors
+        .get(tempo_descriptor as usize)
+        .ok_or(EXECUTION_ERROR)?;
+    let DescriptorKind::SegmentTrack(segments) = &descriptor.kind else {
+        return Err(EXECUTION_ERROR);
+    };
+    if segments
+        .iter()
+        .any(|segment| segment.flags & 1 == 0 && segment.interpolation != 1)
+    {
+        return Err(EXECUTION_ERROR);
+    }
+    let mut breakpoints = vec![start, end];
+    for segment in segments {
+        if start < segment.start && segment.start < end {
+            breakpoints.push(segment.start);
+        }
+        if segment.flags & 1 == 0 && start < segment.end && segment.end < end {
+            breakpoints.push(segment.end);
+        }
+    }
+    breakpoints.sort_by(f64::total_cmp);
+    breakpoints.dedup_by(|left, right| left.to_bits() == right.to_bits());
+    let mut total = 0.0;
+    for interval in breakpoints.windows(2) {
+        let interval_start = interval[0];
+        let interval_end = interval[1];
+        let midpoint = interval_start + (interval_end - interval_start) * 0.5;
+        let tempo = scalar_payload(
+            &query_descriptor(
+                chart,
+                tempo_descriptor,
+                midpoint,
+                EvaluationEnvironment::at_time(midpoint),
+            )?
+            .value,
+        )?;
+        if !tempo.is_finite() || tempo <= 0.0 {
+            return Err(EXECUTION_ERROR);
+        }
+        total += integrate_descriptor(chart, speed_descriptor, interval_start, interval_end, 0)?
+            * tempo
+            / 60.0;
+    }
+    total.is_finite().then_some(total).ok_or(EXECUTION_ERROR)
 }
 
 fn constant_descriptor_scalar(

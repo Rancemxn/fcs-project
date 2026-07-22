@@ -834,6 +834,14 @@ tempoMap { 0beat -> 120bpm; 4beat -> 240bpm; }
 lines {
     line explicit {
         scrollTempoMap { 0beat -> 60bpm; 4beat -> 90bpm; 4beat -> 120bpm; }
+        tracks {
+            track speed -> scrollSpeed: float {
+                fill: "error";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "holdAfter";
+                segments { [0s, 2s): 1.0 -> 3.0 using "linear"; }
+            }
+        }
     }
     line global {}
 }
@@ -890,7 +898,7 @@ lines {
             crate::query_scroll_coordinate(&decoded, global.scroll_tempo_descriptor, 3.0),
             Ok(8.0)
         );
-        for (line, expected_floor) in [(explicit, 4.0), (global, 8.0)] {
+        for (line, expected_floor) in [(explicit, 10.0), (global, 8.0)] {
             let distance = crate::query_distance(&decoded, line.distance_descriptor, 3.0)
                 .expect("scroll distance evaluation");
             assert_eq!(
