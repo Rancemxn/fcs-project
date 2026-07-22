@@ -1018,7 +1018,7 @@ fn native_alpha_tracks(
                     easing: 0,
                     flags: 1,
                     start_constant: start_constant.clone(),
-                    end_constant: start_constant,
+                    end_constant: start_constant.clone(),
                     bezier: [0.0; 4],
                 },
                 TrackSegmentFixture {
