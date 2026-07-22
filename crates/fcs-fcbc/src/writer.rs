@@ -116,6 +116,8 @@ struct ExtensionFixture {
 struct NativeTrackFixture {
     line_id: u64,
     target: CanonicalTrackTarget,
+    first_time: f64,
+    before_constant: Constant,
     segments: Vec<TrackSegmentFixture>,
 }
 
@@ -400,7 +402,7 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
         line.distance_index = index as u32;
     }
     let line_ids: std::collections::BTreeSet<u64> = lines.iter().map(|line| line.id).collect();
-    let tracks = native_tracks(chart.tracks().tracks(), &line_ids)?;
+    let tracks = native_tracks(chart.tracks().tracks(), &lines, &line_ids)?;
 
     let mut notes: Vec<NoteFixture> = chart
         .notes()
@@ -1357,6 +1359,131 @@ lines {
     }
 
     #[test]
+    fn write_from_compilation_materializes_track_fill_and_extrapolation() {
+        let workspace = tempdir().unwrap();
+        let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        alpha: 0.25;
+        tracks {
+            track fade -> alpha: float {
+                fill: "zero";
+                extrapolateBefore: "base";
+                extrapolateAfter: "one";
+                segments {
+                    [0s, 1s): 0.5 -> 0.75 using "linear";
+                    [2s, 3s): 0.25 -> 0.5 using "linear";
+                }
+            }
+        }
+    }
+}
+"#;
+        let document = parse_document(source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .unwrap();
+
+        let bytes = write_from_compilation(&compilation).unwrap();
+        let decoded = crate::load_chart(&bytes).expect("filled alpha Track must load");
+        let descriptor = decoded.lines.first().expect("main Line").alpha_descriptor;
+        let crate::DescriptorKind::Piecewise(pieces) =
+            &decoded.descriptors[descriptor as usize].kind
+        else {
+            panic!("filled Track root must preserve its Piecewise boundary");
+        };
+        assert_eq!(pieces.len(), 2);
+        assert!(matches!(
+            decoded.descriptors[pieces[0].descriptor_index as usize].kind,
+            crate::DescriptorKind::Constant(_)
+        ));
+        assert!(matches!(
+            decoded.descriptors[pieces[1].descriptor_index as usize].kind,
+            crate::DescriptorKind::SegmentTrack(_)
+        ));
+        let evaluate = |time| {
+            crate::query_descriptor(
+                &decoded,
+                descriptor,
+                time,
+                crate::EvaluationEnvironment::at_time(time),
+            )
+            .expect("filled alpha Track evaluation")
+            .value
+        };
+        let alpha = |value| crate::RuntimeValue::Scalar {
+            ty: crate::ValueType::Float,
+            value,
+        };
+        assert_eq!(evaluate(-1.0), alpha(0.25));
+        assert_eq!(evaluate(0.5), alpha(0.625));
+        assert_eq!(evaluate(1.5), alpha(0.0));
+        assert_eq!(evaluate(2.5), alpha(0.375));
+        assert_eq!(evaluate(4.0), alpha(1.0));
+    }
+
+    #[test]
+    fn write_from_compilation_materializes_track_hold_policies() {
+        let workspace = tempdir().unwrap();
+        let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        tracks {
+            track fade -> alpha: float {
+                fill: "holdBefore";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "holdAfter";
+                segments {
+                    [0s, 1s): 0.0 -> 1.0 using "linear";
+                    [2s, 3s): 0.25 -> 0.5 using "linear";
+                }
+            }
+        }
+    }
+}
+"#;
+        let document = parse_document(source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .unwrap();
+
+        let bytes = write_from_compilation(&compilation).unwrap();
+        let decoded = crate::load_chart(&bytes).expect("held alpha Track must load");
+        let descriptor = decoded.lines.first().expect("main Line").alpha_descriptor;
+        let evaluate = |time| {
+            crate::query_descriptor(
+                &decoded,
+                descriptor,
+                time,
+                crate::EvaluationEnvironment::at_time(time),
+            )
+            .expect("held alpha Track evaluation")
+            .value
+        };
+        let alpha = |value| crate::RuntimeValue::Scalar {
+            ty: crate::ValueType::Float,
+            value,
+        };
+        assert_eq!(evaluate(-1.0), alpha(0.0));
+        assert_eq!(evaluate(0.5), alpha(0.5));
+        assert_eq!(evaluate(1.5), alpha(0.25));
+        assert_eq!(evaluate(2.5), alpha(0.375));
+        assert_eq!(evaluate(4.0), alpha(0.5));
+    }
+
+    #[test]
     fn write_from_compilation_evaluates_native_alpha_track_points() {
         let workspace = tempdir().unwrap();
         let source = r#"#fcs 5.0.0
@@ -1405,7 +1532,7 @@ lines {
             ty: crate::ValueType::Float,
             value,
         };
-        assert_eq!(evaluate(-1.0), alpha(1.0));
+        assert_eq!(evaluate(-1.0), alpha(0.8));
         assert_eq!(evaluate(0.5), alpha(1.0));
         assert_eq!(evaluate(2.0), alpha(0.4));
         assert_eq!(evaluate(4.0), alpha(0.0));
@@ -1584,6 +1711,7 @@ fn assemble_package(
             constants.extend(note.property_constants.iter().cloned());
         }
         for track in tracks {
+            constants.push(track.before_constant.clone());
             for segment in &track.segments {
                 constants.extend([segment.start_constant.clone(), segment.end_constant.clone()]);
             }
@@ -1827,6 +1955,7 @@ fn native_extensions(
 
 fn native_tracks(
     tracks: &[CanonicalTrack],
+    lines: &[LineFixture],
     line_ids: &std::collections::BTreeSet<u64>,
 ) -> FcbcResult<Vec<NativeTrackFixture>> {
     let mut lowered = Vec::new();
@@ -1839,14 +1968,11 @@ fn native_tracks(
             ));
         }
         let target = track.target();
-        if track.blend() != CanonicalTrackBlend::Replace
-            || track.extrapolate_before() != CanonicalTrackFill::HoldBefore
-            || track.extrapolate_after() != CanonicalTrackFill::HoldAfter
-        {
+        if track.blend() != CanonicalTrackBlend::Replace {
             return Err(FcbcError::new(
                 "fcbc.unsupported-track",
                 format!(
-                    "native {:?} Track {} requires replace with holdBefore/holdAfter",
+                    "native {:?} Track {} requires replace blend",
                     target,
                     track.name()
                 ),
@@ -1864,7 +1990,18 @@ fn native_tracks(
             ));
         }
         let pieces = track.pieces();
-        let first_time = track_piece_time(&pieces[0]);
+        let effective = pieces
+            .iter()
+            .filter(|piece| !track_point_is_shadowed(piece, pieces))
+            .collect::<Vec<_>>();
+        let first_time = track_piece_time(effective[0]);
+        let base = native_line_base_constant(
+            lines
+                .iter()
+                .find(|line| line.id == line_id)
+                .expect("validated Line owner"),
+            target,
+        );
         let mut segments = Vec::new();
         for piece in pieces {
             match piece {
@@ -1909,7 +2046,27 @@ fn native_tracks(
                 bezier: [0.0; 4],
             });
         }
-        if let Some(CanonicalTrackPiece::Segment(segment)) = pieces.last()
+        for (index, pair) in effective.windows(2).enumerate() {
+            let CanonicalTrackPiece::Segment(segment) = pair[0] else {
+                continue;
+            };
+            let left_end = segment.end().chart_time_seconds();
+            let right_start = track_piece_time(pair[1]);
+            if left_end >= right_start {
+                continue;
+            }
+            let value = native_track_fill_constant(
+                track,
+                track.fill(),
+                &base,
+                &effective,
+                NativeFillInterval::Gap {
+                    right_index: index + 1,
+                },
+            )?;
+            segments.push(native_track_point(left_end, value));
+        }
+        if let Some(CanonicalTrackPiece::Segment(segment)) = effective.last()
             && !pieces.iter().any(|piece| {
                 matches!(
                     piece,
@@ -1919,31 +2076,17 @@ fn native_tracks(
                 )
             })
         {
-            let value = native_track_constant(segment.end_value(), target, track.name())?;
-            segments.push(TrackSegmentFixture {
-                start: segment.end().chart_time_seconds(),
-                end: segment.end().chart_time_seconds(),
-                interpolation: 1,
-                easing: 0,
-                flags: 1,
-                start_constant: value.clone(),
-                end_constant: value,
-                bezier: [0.0; 4],
-            });
-        }
-        for pair in pieces.windows(2) {
-            if let CanonicalTrackPiece::Segment(segment) = &pair[0]
-                && segment.end().chart_time_seconds() < track_piece_time(&pair[1])
-            {
-                return Err(FcbcError::new(
-                    "fcbc.unsupported-track",
-                    format!(
-                        "native {:?} Track {} has an uncovered segment gap",
-                        target,
-                        track.name()
-                    ),
-                ));
-            }
+            let value = native_track_fill_constant(
+                track,
+                track.extrapolate_after(),
+                &base,
+                &effective,
+                NativeFillInterval::After,
+            )?;
+            segments.push(native_track_point(
+                segment.end().chart_time_seconds(),
+                value,
+            ));
         }
         segments.sort_by(|left, right| {
             left.start
@@ -1953,11 +2096,127 @@ fn native_tracks(
         lowered.push(NativeTrackFixture {
             line_id,
             target,
+            first_time,
+            before_constant: native_track_fill_constant(
+                track,
+                track.extrapolate_before(),
+                &base,
+                &effective,
+                NativeFillInterval::Before,
+            )?,
             segments,
         });
     }
     lowered.sort_by_key(|track| (track.line_id, track.target));
     Ok(lowered)
+}
+
+#[derive(Clone, Copy)]
+enum NativeFillInterval {
+    Before,
+    Gap { right_index: usize },
+    After,
+}
+
+fn native_track_fill_constant(
+    track: &CanonicalTrack,
+    fill: CanonicalTrackFill,
+    base: &Constant,
+    pieces: &[&CanonicalTrackPiece],
+    interval: NativeFillInterval,
+) -> FcbcResult<Constant> {
+    match fill {
+        CanonicalTrackFill::Base => return Ok(base.clone()),
+        CanonicalTrackFill::Zero => return Ok(native_track_identity(track.target(), false)),
+        CanonicalTrackFill::One => return Ok(native_track_identity(track.target(), true)),
+        _ => {}
+    }
+    let value = match fill {
+        CanonicalTrackFill::HoldBefore => {
+            let start = match interval {
+                NativeFillInterval::Before => 0,
+                NativeFillInterval::Gap { right_index } => right_index,
+                NativeFillInterval::After => pieces.len(),
+            };
+            pieces[start..].iter().find_map(|piece| match piece {
+                CanonicalTrackPiece::Segment(segment) => Some(segment.start_value()),
+                CanonicalTrackPiece::Point(_) => None,
+            })
+        }
+        CanonicalTrackFill::HoldAfter => {
+            let end = match interval {
+                NativeFillInterval::Before => 0,
+                NativeFillInterval::Gap { right_index } => right_index,
+                NativeFillInterval::After => pieces.len(),
+            };
+            pieces[..end].iter().rev().find_map(|piece| match piece {
+                CanonicalTrackPiece::Segment(segment) => Some(segment.end_value()),
+                CanonicalTrackPiece::Point(_) => None,
+            })
+        }
+        CanonicalTrackFill::Error => None,
+        CanonicalTrackFill::Base | CanonicalTrackFill::Zero | CanonicalTrackFill::One => {
+            unreachable!("constant fill policies return above")
+        }
+    };
+    let value = value.ok_or_else(|| {
+        FcbcError::new(
+            "fcbc.unsupported-track",
+            format!(
+                "native {:?} Track {} has an unresolved {:?} fill interval",
+                track.target(),
+                track.name(),
+                fill
+            ),
+        )
+    })?;
+    native_track_constant(value, track.target(), track.name())
+}
+
+fn native_track_identity(target: CanonicalTrackTarget, one: bool) -> Constant {
+    let value = if one { 1.0 } else { 0.0 };
+    match target {
+        CanonicalTrackTarget::Position => vec2_constant(7, [value, value]),
+        CanonicalTrackTarget::Rotation => scalar_constant(8, value),
+        CanonicalTrackTarget::Scale => vec2_constant(3, [value, value]),
+        CanonicalTrackTarget::Alpha | CanonicalTrackTarget::ScrollSpeed => float_constant(value),
+    }
+}
+
+fn native_line_base_constant(line: &LineFixture, target: CanonicalTrackTarget) -> Constant {
+    match target {
+        CanonicalTrackTarget::Position => vec2_constant(7, line.position),
+        CanonicalTrackTarget::Rotation => scalar_constant(8, line.rotation),
+        CanonicalTrackTarget::Scale => vec2_constant(3, line.scale),
+        CanonicalTrackTarget::Alpha => float_constant(line.alpha),
+        CanonicalTrackTarget::ScrollSpeed => float_constant(1.0),
+    }
+}
+
+fn native_track_point(time: f64, value: Constant) -> TrackSegmentFixture {
+    TrackSegmentFixture {
+        start: time,
+        end: time,
+        interpolation: 1,
+        easing: 0,
+        flags: 1,
+        start_constant: value.clone(),
+        end_constant: value,
+        bezier: [0.0; 4],
+    }
+}
+
+fn track_point_is_shadowed(piece: &CanonicalTrackPiece, pieces: &[CanonicalTrackPiece]) -> bool {
+    let CanonicalTrackPiece::Point(point) = piece else {
+        return false;
+    };
+    pieces.iter().any(|other| {
+        matches!(
+            other,
+            CanonicalTrackPiece::Segment(segment)
+                if segment.start().chart_time_seconds() == point.time().chart_time_seconds()
+        )
+    })
 }
 
 fn native_track_constant(
@@ -2537,9 +2796,23 @@ fn native_line_descriptor(
         .iter()
         .find(|track| track.line_id == line_id && track.target == target)
     {
-        intern_descriptor(
+        let before_descriptor = intern_constant_descriptor(
+            descriptors,
+            property_type,
+            find_constant(constants, &track.before_constant),
+        );
+        let track_descriptor = intern_descriptor(
             descriptors,
             segment_track_descriptor(property_type, &track.segments, constants),
+        );
+        intern_descriptor(
+            descriptors,
+            piecewise_track_descriptor(
+                property_type,
+                track.first_time,
+                before_descriptor,
+                track_descriptor,
+            ),
         )
     } else {
         intern_constant_descriptor(
@@ -2571,6 +2844,27 @@ fn intern_descriptor(descriptors: &mut Vec<Vec<u8>>, descriptor: Vec<u8>) -> u32
     let index = descriptors.len() as u32;
     descriptors.push(descriptor);
     index
+}
+
+fn piecewise_track_descriptor(
+    property_type: u8,
+    first_time: f64,
+    before_descriptor: u32,
+    track_descriptor: u32,
+) -> Vec<u8> {
+    let mut payload = descriptor_common(property_type, 3, 0b11, 0.0, 0.0);
+    put_u32(&mut payload, 2);
+    put_f64(&mut payload, 0.0);
+    put_f64(&mut payload, first_time);
+    put_u32(&mut payload, before_descriptor);
+    put_u32(&mut payload, 0b010);
+    put_f64(&mut payload, first_time);
+    put_f64(&mut payload, 0.0);
+    put_u32(&mut payload, track_descriptor);
+    put_u32(&mut payload, 0b100);
+    let descriptor = record(payload);
+    debug_assert_eq!(descriptor.len(), 80);
+    descriptor
 }
 
 const fn fixture_note_descriptors() -> [u32; 10] {
