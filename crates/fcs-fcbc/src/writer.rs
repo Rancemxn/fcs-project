@@ -677,7 +677,7 @@ fn assemble_package(
             count_zero_section(),
         ),
     };
-    let distances = distance_section_for_lines(lines);
+    let distances = distance_section_for_lines(&lines);
     let feature_flags = if lines.iter().any(|line| line.line_flags & 1 != 0) {
         1 << 8
     } else {
