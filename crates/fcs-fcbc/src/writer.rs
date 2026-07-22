@@ -1484,6 +1484,59 @@ lines {
     }
 
     #[test]
+    fn write_from_compilation_merges_disjoint_replace_tracks() {
+        let workspace = tempdir().unwrap();
+        let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        alpha: 0.5;
+        tracks {
+            track early -> alpha: float {
+                segments { [0s, 1s): 0.25 -> 0.5 using "linear"; }
+            }
+            track late -> alpha: float {
+                segments { [2s, 3s): 0.5 -> 0.75 using "linear"; }
+            }
+        }
+    }
+}
+"#;
+        let document = parse_document(source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .unwrap();
+
+        let bytes = write_from_compilation(&compilation).unwrap();
+        let decoded = crate::load_chart(&bytes).expect("disjoint replace Tracks must load");
+        let descriptor = decoded.lines.first().expect("main Line").alpha_descriptor;
+        let evaluate = |time| {
+            crate::query_descriptor(
+                &decoded,
+                descriptor,
+                time,
+                crate::EvaluationEnvironment::at_time(time),
+            )
+            .expect("disjoint replace Track evaluation")
+            .value
+        };
+        let alpha = |value| crate::RuntimeValue::Scalar {
+            ty: crate::ValueType::Float,
+            value,
+        };
+        assert_eq!(evaluate(-1.0), alpha(0.5));
+        assert_eq!(evaluate(0.5), alpha(0.375));
+        assert_eq!(evaluate(1.5), alpha(0.5));
+        assert_eq!(evaluate(2.5), alpha(0.625));
+        assert_eq!(evaluate(4.0), alpha(0.5));
+    }
+
+    #[test]
     fn write_from_compilation_evaluates_native_alpha_track_points() {
         let workspace = tempdir().unwrap();
         let source = r#"#fcs 5.0.0
@@ -1958,7 +2011,8 @@ fn native_tracks(
     lines: &[LineFixture],
     line_ids: &std::collections::BTreeSet<u64>,
 ) -> FcbcResult<Vec<NativeTrackFixture>> {
-    let mut lowered = Vec::new();
+    let mut grouped: std::collections::BTreeMap<(u64, CanonicalTrackTarget), Vec<&CanonicalTrack>> =
+        std::collections::BTreeMap::new();
     for track in tracks {
         let line_id = track.owner().value();
         if !line_ids.contains(&line_id) {
@@ -1967,148 +2021,240 @@ fn native_tracks(
                 format!("Track {} references missing Line {line_id}", track.name()),
             ));
         }
-        let target = track.target();
         if track.blend() != CanonicalTrackBlend::Replace {
             return Err(FcbcError::new(
                 "fcbc.unsupported-track",
                 format!(
                     "native {:?} Track {} requires replace blend",
-                    target,
+                    track.target(),
                     track.name()
                 ),
             ));
         }
-        if lowered.iter().any(|candidate: &NativeTrackFixture| {
-            candidate.line_id == line_id && candidate.target == target
-        }) {
-            return Err(FcbcError::new(
-                "fcbc.unsupported-track",
-                format!(
-                    "native {:?} Track layering is not yet supported for Line {line_id}",
-                    target
-                ),
-            ));
+        grouped
+            .entry((line_id, track.target()))
+            .or_default()
+            .push(track);
+    }
+
+    let mut lowered = Vec::new();
+    for ((line_id, target), group) in grouped {
+        if group.len() == 1 {
+            lowered.push(native_single_track_fixture(group[0], lines)?);
+        } else {
+            lowered.push(native_disjoint_replace_fixture(
+                &group, lines, line_id, target,
+            )?);
         }
-        let pieces = track.pieces();
-        let effective = pieces
-            .iter()
-            .filter(|piece| !track_point_is_shadowed(piece, pieces))
-            .collect::<Vec<_>>();
-        let first_time = track_piece_time(effective[0]);
-        let base = native_line_base_constant(
-            lines
-                .iter()
-                .find(|line| line.id == line_id)
-                .expect("validated Line owner"),
-            target,
-        );
-        let mut segments = Vec::new();
-        for piece in pieces {
-            match piece {
-                CanonicalTrackPiece::Segment(segment) => {
-                    segments.push(native_track_segment(segment, target, track.name())?);
-                }
-                CanonicalTrackPiece::Point(point) => {
-                    let value = native_track_constant(point.value(), target, track.name())?;
-                    let time = point.time().chart_time_seconds();
-                    segments.push(TrackSegmentFixture {
-                        start: time,
-                        end: time,
-                        interpolation: 1,
-                        easing: 0,
-                        flags: 1,
-                        start_constant: value.clone(),
-                        end_constant: value,
-                        bezier: [0.0; 4],
-                    });
-                }
-            }
-        }
-        if !pieces.iter().any(|piece| {
-            matches!(
-                piece,
-                CanonicalTrackPiece::Point(point)
-                    if point.time().chart_time_seconds().to_bits() == first_time.to_bits()
-            )
-        }) {
-            let CanonicalTrackPiece::Segment(segment) = &pieces[0] else {
-                unreachable!("first point check covers non-segment Track pieces");
-            };
-            let value = native_track_constant(segment.start_value(), target, track.name())?;
-            segments.push(TrackSegmentFixture {
-                start: first_time,
-                end: first_time,
-                interpolation: 1,
-                easing: 0,
-                flags: 1,
-                start_constant: value.clone(),
-                end_constant: value,
-                bezier: [0.0; 4],
-            });
-        }
-        for (index, pair) in effective.windows(2).enumerate() {
-            let CanonicalTrackPiece::Segment(segment) = pair[0] else {
-                continue;
-            };
-            let left_end = segment.end().chart_time_seconds();
-            let right_start = track_piece_time(pair[1]);
-            if left_end >= right_start {
-                continue;
-            }
-            let value = native_track_fill_constant(
-                track,
-                track.fill(),
-                &base,
-                &effective,
-                NativeFillInterval::Gap {
-                    right_index: index + 1,
-                },
-            )?;
-            segments.push(native_track_point(left_end, value));
-        }
-        if let Some(CanonicalTrackPiece::Segment(segment)) = effective.last()
-            && !pieces.iter().any(|piece| {
-                matches!(
-                    piece,
-                    CanonicalTrackPiece::Point(point)
-                        if point.time().chart_time_seconds().to_bits()
-                            == segment.end().chart_time_seconds().to_bits()
-                )
-            })
-        {
-            let value = native_track_fill_constant(
-                track,
-                track.extrapolate_after(),
-                &base,
-                &effective,
-                NativeFillInterval::After,
-            )?;
-            segments.push(native_track_point(
-                segment.end().chart_time_seconds(),
-                value,
-            ));
-        }
-        segments.sort_by(|left, right| {
-            left.start
-                .total_cmp(&right.start)
-                .then_with(|| right.flags.cmp(&left.flags))
-        });
-        lowered.push(NativeTrackFixture {
-            line_id,
-            target,
-            first_time,
-            before_constant: native_track_fill_constant(
-                track,
-                track.extrapolate_before(),
-                &base,
-                &effective,
-                NativeFillInterval::Before,
-            )?,
-            segments,
-        });
     }
     lowered.sort_by_key(|track| (track.line_id, track.target));
     Ok(lowered)
+}
+
+fn native_single_track_fixture(
+    track: &CanonicalTrack,
+    lines: &[LineFixture],
+) -> FcbcResult<NativeTrackFixture> {
+    let line_id = track.owner().value();
+    let target = track.target();
+    let pieces = track.pieces();
+    let effective = pieces
+        .iter()
+        .filter(|piece| !track_point_is_shadowed(piece, pieces))
+        .collect::<Vec<_>>();
+    let first_time = track_piece_time(effective[0]);
+    let base = native_line_base_constant(
+        lines
+            .iter()
+            .find(|line| line.id == line_id)
+            .expect("validated Line owner"),
+        target,
+    );
+    let mut segments = Vec::new();
+    for piece in pieces {
+        match piece {
+            CanonicalTrackPiece::Segment(segment) => {
+                segments.push(native_track_segment(segment, target, track.name())?);
+            }
+            CanonicalTrackPiece::Point(point) => {
+                let value = native_track_constant(point.value(), target, track.name())?;
+                let time = point.time().chart_time_seconds();
+                segments.push(TrackSegmentFixture {
+                    start: time,
+                    end: time,
+                    interpolation: 1,
+                    easing: 0,
+                    flags: 1,
+                    start_constant: value.clone(),
+                    end_constant: value,
+                    bezier: [0.0; 4],
+                });
+            }
+        }
+    }
+    if !pieces.iter().any(|piece| {
+        matches!(
+            piece,
+            CanonicalTrackPiece::Point(point)
+                if point.time().chart_time_seconds().to_bits() == first_time.to_bits()
+        )
+    }) {
+        let CanonicalTrackPiece::Segment(segment) = &pieces[0] else {
+            unreachable!("first point check covers non-segment Track pieces");
+        };
+        let value = native_track_constant(segment.start_value(), target, track.name())?;
+        segments.push(TrackSegmentFixture {
+            start: first_time,
+            end: first_time,
+            interpolation: 1,
+            easing: 0,
+            flags: 1,
+            start_constant: value.clone(),
+            end_constant: value,
+            bezier: [0.0; 4],
+        });
+    }
+    for (index, pair) in effective.windows(2).enumerate() {
+        let CanonicalTrackPiece::Segment(segment) = pair[0] else {
+            continue;
+        };
+        let left_end = segment.end().chart_time_seconds();
+        let right_start = track_piece_time(pair[1]);
+        if left_end >= right_start {
+            continue;
+        }
+        let value = native_track_fill_constant(
+            track,
+            track.fill(),
+            &base,
+            &effective,
+            NativeFillInterval::Gap {
+                right_index: index + 1,
+            },
+        )?;
+        segments.push(native_track_point(left_end, value));
+    }
+    if let Some(CanonicalTrackPiece::Segment(segment)) = effective.last()
+        && !pieces.iter().any(|piece| {
+            matches!(
+                piece,
+                CanonicalTrackPiece::Point(point)
+                    if point.time().chart_time_seconds().to_bits()
+                        == segment.end().chart_time_seconds().to_bits()
+            )
+        })
+    {
+        let value = native_track_fill_constant(
+            track,
+            track.extrapolate_after(),
+            &base,
+            &effective,
+            NativeFillInterval::After,
+        )?;
+        segments.push(native_track_point(
+            segment.end().chart_time_seconds(),
+            value,
+        ));
+    }
+    segments.sort_by(|left, right| {
+        left.start
+            .total_cmp(&right.start)
+            .then_with(|| right.flags.cmp(&left.flags))
+    });
+    Ok(NativeTrackFixture {
+        line_id,
+        target,
+        first_time,
+        before_constant: native_track_fill_constant(
+            track,
+            track.extrapolate_before(),
+            &base,
+            &effective,
+            NativeFillInterval::Before,
+        )?,
+        segments,
+    })
+}
+
+fn native_disjoint_replace_fixture(
+    tracks: &[&CanonicalTrack],
+    lines: &[LineFixture],
+    line_id: u64,
+    target: CanonicalTrackTarget,
+) -> FcbcResult<NativeTrackFixture> {
+    let priority = tracks[0].priority();
+    if tracks.iter().any(|track| {
+        track.priority() != priority
+            || track.fill() != CanonicalTrackFill::Base
+            || track.extrapolate_before() != CanonicalTrackFill::Base
+            || track.extrapolate_after() != CanonicalTrackFill::Base
+    }) {
+        return Err(FcbcError::new(
+            "fcbc.unsupported-track",
+            format!(
+                "native {:?} Track layering for Line {line_id} requires equal-priority base-filled replace Tracks",
+                target
+            ),
+        ));
+    }
+    let fixtures = tracks
+        .iter()
+        .map(|track| native_single_track_fixture(track, lines))
+        .collect::<FcbcResult<Vec<_>>>()?;
+    let base = native_line_base_constant(
+        lines
+            .iter()
+            .find(|line| line.id == line_id)
+            .expect("validated Line owner"),
+        target,
+    );
+    let first_time = fixtures
+        .iter()
+        .map(|fixture| fixture.first_time)
+        .min_by(f64::total_cmp)
+        .expect("nonempty Track group");
+    let mut segments = fixtures
+        .into_iter()
+        .flat_map(|fixture| fixture.segments)
+        .collect::<Vec<_>>();
+    normalize_merged_track_segments(&mut segments, &base);
+    Ok(NativeTrackFixture {
+        line_id,
+        target,
+        first_time,
+        before_constant: base,
+        segments,
+    })
+}
+
+fn normalize_merged_track_segments(segments: &mut Vec<TrackSegmentFixture>, base: &Constant) {
+    segments.sort_by(|left, right| {
+        left.start
+            .total_cmp(&right.start)
+            .then_with(|| right.flags.cmp(&left.flags))
+    });
+    let mut normalized: Vec<TrackSegmentFixture> = Vec::with_capacity(segments.len());
+    for segment in segments.drain(..) {
+        if let Some(previous) = normalized.last_mut()
+            && previous.start.to_bits() == segment.start.to_bits()
+        {
+            if segment.flags == 0 || previous.start_constant == *base {
+                *previous = segment;
+            }
+            continue;
+        }
+        normalized.push(segment);
+    }
+    if !matches!(normalized.first(), Some(segment) if segment.flags != 0) {
+        let first = normalized
+            .first()
+            .expect("merged Track has at least one segment");
+        normalized.insert(
+            0,
+            native_track_point(first.start, first.start_constant.clone()),
+        );
+    }
+    *segments = normalized;
 }
 
 #[derive(Clone, Copy)]
