@@ -222,6 +222,40 @@ pub struct LineRecord {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum DecodedJudgeShape {
+    LineDefault,
+    Rectangle {
+        center: [f64; 2],
+        half_extents: [f64; 2],
+    },
+    Circle {
+        center: [f64; 2],
+        radius: f64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DecodedNoteSoundPolicy {
+    Default,
+    None,
+    Resource,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DecodedNoteScorePolicy {
+    Default,
+    None,
+    Custom(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExtensionRecord {
+    pub namespace: String,
+    pub version: (u16, u16, u16),
+    pub flags: u16,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct NoteRecord {
     pub id: u64,
     pub line_id: u64,
@@ -231,6 +265,9 @@ pub struct NoteRecord {
     pub flags: u16,
     pub time: f64,
     pub end_time: f64,
+    pub judge_shape: DecodedJudgeShape,
+    pub sound_policy: DecodedNoteSoundPolicy,
+    pub score_policy: DecodedNoteScorePolicy,
     pub property_descriptors: [u32; 10],
     pub sound_resource_id: u64,
     pub texture_resource_id: u64,
@@ -252,6 +289,7 @@ pub struct DecodedChart {
     pub strings: Vec<String>,
     pub constants: Vec<RuntimeValue>,
     pub resources: Vec<ResourceRecord>,
+    pub extensions: Vec<ExtensionRecord>,
     pub tempo_points: Vec<TempoPoint>,
     pub lines: Vec<LineRecord>,
     pub notes: Vec<NoteRecord>,
@@ -273,6 +311,8 @@ struct RawSection {
 struct ParsedValue {
     tag: u8,
     string_ref: Option<u32>,
+    scalar: Option<f64>,
+    vec2: Option<(u8, [f64; 2])>,
     fields: Vec<(u32, ParsedValue)>,
 }
 
@@ -406,12 +446,21 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
         &strings,
         &contributor_ids,
     )?;
+    let extensions = if feature_flags & (1 << 2) != 0 {
+        parse_extensions(section_payload(bytes, &section_map, 15)?, &strings)?
+    } else {
+        Vec::new()
+    };
     let mut resources = parse_resources(section_payload(bytes, &section_map, 6)?, &strings)?;
     validate_resource_data(section_payload(bytes, &section_map, 20)?, &mut resources)?;
     parse_sync(section_payload(bytes, &section_map, 7)?, &resources)?;
     let tempo_points = parse_tempo(section_payload(bytes, &section_map, 8)?)?;
     let lines = parse_lines(section_payload(bytes, &section_map, 9)?, &strings)?;
-    let notes = parse_notes(section_payload(bytes, &section_map, 10)?, &strings)?;
+    let notes = parse_notes(
+        section_payload(bytes, &section_map, 10)?,
+        &strings,
+        &extensions,
+    )?;
     let descriptors = parse_tracks(section_payload(bytes, &section_map, 11)?)?;
     let expressions = parse_expressions(section_payload(bytes, &section_map, 12)?)?;
     let distances = parse_distances(section_payload(bytes, &section_map, 13)?)?;
@@ -430,6 +479,7 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
         strings,
         constants,
         resources,
+        extensions,
         tempo_points,
         lines,
         notes,
@@ -880,6 +930,44 @@ fn parse_credits(
     cursor.finish()
 }
 
+fn parse_extensions(
+    bytes: &[u8],
+    strings: &[String],
+) -> Result<Vec<ExtensionRecord>, &'static str> {
+    let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
+    let count = limited_count(cursor.u32()?)?;
+    let mut extensions = Vec::with_capacity(count);
+    let mut prior_key: Option<(Vec<u8>, (u16, u16, u16))> = None;
+    for _ in 0..count {
+        let mut record = take_record(&mut cursor)?;
+        let namespace = strings
+            .get(record.u32()? as usize)
+            .ok_or("fcbc.dangling-reference")?
+            .clone();
+        let version = (record.u16()?, record.u16()?, record.u16()?);
+        let flags = record.u16()?;
+        if namespace.is_empty() || flags & !0b11 != 0 {
+            return Err("fcbc.invalid-extension");
+        }
+        let key = (namespace.as_bytes().to_vec(), version);
+        if prior_key.as_ref().is_some_and(|prior| prior >= &key) {
+            return Err("fcbc.invalid-extension");
+        }
+        prior_key = Some(key);
+        if parse_value(&mut record, strings.len())?.tag != 14 {
+            return Err("fcbc.invalid-extension");
+        }
+        record.finish()?;
+        extensions.push(ExtensionRecord {
+            namespace,
+            version,
+            flags,
+        });
+    }
+    cursor.finish()?;
+    Ok(extensions)
+}
+
 fn parse_resources(bytes: &[u8], strings: &[String]) -> Result<Vec<ResourceRecord>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
     let count = limited_count(cursor.u32()?)?;
@@ -1072,7 +1160,11 @@ fn parse_lines(bytes: &[u8], strings: &[String]) -> Result<Vec<LineRecord>, &'st
     Ok(lines)
 }
 
-fn parse_notes(bytes: &[u8], strings: &[String]) -> Result<Vec<NoteRecord>, &'static str> {
+fn parse_notes(
+    bytes: &[u8],
+    strings: &[String],
+    extensions: &[ExtensionRecord],
+) -> Result<Vec<NoteRecord>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
     let count = limited_count(cursor.u32()?)?;
     let mut notes = Vec::with_capacity(count);
@@ -1106,35 +1198,58 @@ fn parse_notes(bytes: &[u8], strings: &[String]) -> Result<Vec<NoteRecord>, &'st
         {
             return Err("fcbc.invalid-note");
         }
-        let judge_shape = parse_value(&mut record, strings.len())?;
-        validate_judge_shape(&judge_shape, strings)?;
-        let sound_policy = record.u16()?;
-        let score_policy = record.u16()?;
+        let judge_shape = decode_judge_shape(&parse_value(&mut record, strings.len())?, strings)?;
+        let sound_policy_id = record.u16()?;
+        let score_policy_id = record.u16()?;
         let sound_resource = record.u64()?;
-        let score_extension = optional_index(record.u32()?);
+        let score_extension_ref = optional_index(record.u32()?);
         if record.u32()? != 0
-            || !(1..=3).contains(&sound_policy)
-            || !(1..=3).contains(&score_policy)
+            || !(1..=3).contains(&sound_policy_id)
+            || !(1..=3).contains(&score_policy_id)
         {
             return Err("fcbc.invalid-note");
         }
-        if (sound_policy == 3) != (sound_resource != 0) {
+        if (sound_policy_id == 3) != (sound_resource != 0) {
             return Err("fcbc.invalid-note");
         }
-        if (score_policy == 3) != score_extension.is_some() {
+        if (score_policy_id == 3) != score_extension_ref.is_some() {
             return Err("fcbc.invalid-note");
         }
-        if let Some(reference) = score_extension {
+        let score_extension = if let Some(reference) = score_extension_ref {
             check_string_ref(reference, strings.len())?;
+            Some(strings[reference as usize].clone())
+        } else {
+            None
+        };
+        if let Some(namespace) = &score_extension
+            && !extensions
+                .iter()
+                .any(|extension| extension.flags & 1 != 0 && extension.namespace == *namespace)
+        {
+            return Err("fcbc.invalid-note");
         }
         if flags & 1 == 0
-            && (sound_policy != 2
-                || score_policy != 2
+            && (sound_policy_id != 2
+                || score_policy_id != 2
                 || sound_resource != 0
                 || score_extension.is_some())
         {
             return Err("fcbc.invalid-note");
         }
+        let sound_policy = match sound_policy_id {
+            1 => DecodedNoteSoundPolicy::Default,
+            2 => DecodedNoteSoundPolicy::None,
+            3 => DecodedNoteSoundPolicy::Resource,
+            _ => unreachable!("policy range checked above"),
+        };
+        let score_policy = match score_policy_id {
+            1 => DecodedNoteScorePolicy::Default,
+            2 => DecodedNoteScorePolicy::None,
+            3 => DecodedNoteScorePolicy::Custom(
+                score_extension.expect("custom score policy requires namespace"),
+            ),
+            _ => unreachable!("policy range checked above"),
+        };
         let mut property_descriptors = [0u32; 10];
         for descriptor in &mut property_descriptors {
             *descriptor = record.u32()?;
@@ -1152,6 +1267,9 @@ fn parse_notes(bytes: &[u8], strings: &[String]) -> Result<Vec<NoteRecord>, &'st
             flags,
             time,
             end_time,
+            judge_shape,
+            sound_policy,
+            score_policy,
             property_descriptors,
             sound_resource_id: sound_resource,
             texture_resource_id: texture_resource,
@@ -2554,6 +2672,8 @@ fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedVal
     let mut parsed = ParsedValue {
         tag,
         string_ref: None,
+        scalar: None,
+        vec2: None,
         fields: Vec::new(),
     };
     match tag {
@@ -2568,7 +2688,7 @@ fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedVal
             value.i64()?;
         }
         3 | 5 | 7 | 8 => {
-            value.f64()?;
+            parsed.scalar = Some(value.f64()?);
         }
         4 => {
             let reference = value.u32()?;
@@ -2590,8 +2710,12 @@ fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedVal
         10 => {
             let element_tag = value.u8()?;
             value.zeroes(7)?;
-            parse_scalar_payload(&mut value, element_tag)?;
-            parse_scalar_payload(&mut value, element_tag)?;
+            if element_tag == 7 {
+                parsed.vec2 = Some((element_tag, [value.f64()?, value.f64()?]));
+            } else {
+                parse_scalar_payload(&mut value, element_tag)?;
+                parse_scalar_payload(&mut value, element_tag)?;
+            }
         }
         11 | 12 => {
             value.u64()?;
@@ -2658,30 +2782,58 @@ fn parse_bytes(cursor: &mut Cursor<'_>) -> Result<Vec<u8>, &'static str> {
     Ok(bytes)
 }
 
-fn validate_judge_shape(judge_shape: &ParsedValue, strings: &[String]) -> Result<(), &'static str> {
+fn decode_judge_shape(
+    judge_shape: &ParsedValue,
+    strings: &[String],
+) -> Result<DecodedJudgeShape, &'static str> {
     if judge_shape.tag != 14 {
         return Err("fcbc.invalid-note");
     }
-    let kind_key = strings
-        .iter()
-        .position(|value| value == "kind")
-        .ok_or("fcbc.invalid-note")? as u32;
-    let kind_value = judge_shape
-        .fields
-        .iter()
-        .find(|(key, _)| *key == kind_key)
-        .map(|(_, value)| value)
-        .ok_or("fcbc.invalid-note")?;
+    let field = |name: &str| {
+        let key = strings.iter().position(|value| value == name)? as u32;
+        judge_shape
+            .fields
+            .iter()
+            .find(|(field_key, _)| *field_key == key)
+            .map(|(_, value)| value)
+    };
+    let kind_value = field("kind").ok_or("fcbc.invalid-note")?;
     if kind_value.tag != 4 {
         return Err("fcbc.invalid-note");
     }
     let kind_ref = kind_value.string_ref.ok_or("fcbc.invalid-note")?;
     match strings.get(kind_ref as usize).map(String::as_str) {
-        Some("lineDefault") if judge_shape.fields.len() == 1 => Ok(()),
-        // The non-empty reference fixture deliberately uses lineDefault. Other canonical shapes
-        // belong in their own vectors rather than being guessed by this fixture-specific oracle.
+        Some("lineDefault") if judge_shape.fields.len() == 1 => Ok(DecodedJudgeShape::LineDefault),
+        Some("rectangle") if judge_shape.fields.len() == 3 => {
+            let center = judge_shape_vec2(field("center"))?;
+            let half_extents = judge_shape_vec2(field("halfExtents"))?;
+            if half_extents[0] <= 0.0 || half_extents[1] <= 0.0 {
+                return Err("fcbc.invalid-note");
+            }
+            Ok(DecodedJudgeShape::Rectangle {
+                center,
+                half_extents,
+            })
+        }
+        Some("circle") if judge_shape.fields.len() == 3 => {
+            let center = judge_shape_vec2(field("center"))?;
+            let radius = field("radius")
+                .and_then(|value| (value.tag == 7).then_some(value.scalar).flatten())
+                .ok_or("fcbc.invalid-note")?;
+            if radius <= 0.0 {
+                return Err("fcbc.invalid-note");
+            }
+            Ok(DecodedJudgeShape::Circle { center, radius })
+        }
         _ => Err("fcbc.invalid-note"),
     }
+}
+
+fn judge_shape_vec2(value: Option<&ParsedValue>) -> Result<[f64; 2], &'static str> {
+    value
+        .and_then(|value| (value.tag == 10).then_some(value.vec2).flatten())
+        .and_then(|(element_tag, value)| (element_tag == 7).then_some(value))
+        .ok_or("fcbc.invalid-note")
 }
 
 fn parse_domain(

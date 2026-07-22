@@ -1,5 +1,6 @@
 use fcs_model::{
-    CanonicalCompilation, CanonicalNoteKind, CanonicalNoteSide, CanonicalResourceKind,
+    CanonicalCompilation, CanonicalJudgeShape, CanonicalNoteKind, CanonicalNoteScorePolicy,
+    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalRequiredExtension, CanonicalResourceKind,
     CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation,
     CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget, CanonicalTrackValue,
 };
@@ -90,6 +91,25 @@ struct LineFixture {
 struct ScrollTempoPointFixture {
     time: f64,
     bpm: f64,
+}
+
+#[derive(Clone)]
+enum JudgeShapeFixture {
+    LineDefault,
+    Rectangle {
+        center: [f64; 2],
+        half_extents: [f64; 2],
+    },
+    Circle {
+        center: [f64; 2],
+        radius: f64,
+    },
+}
+
+#[derive(Clone)]
+struct ExtensionFixture {
+    namespace: String,
+    version: (u16, u16, u16),
 }
 
 #[derive(Clone)]
@@ -240,6 +260,11 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             property_constants: default_note_property_constants(),
             visible_from: None,
             visible_until: None,
+            judge_shape: JudgeShapeFixture::LineDefault,
+            sound_policy: 1,
+            score_policy: 1,
+            sound_resource_id: 0,
+            score_extension: None,
             texture_resource_id: 0,
         },
         NoteFixture {
@@ -255,6 +280,11 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             property_constants: default_note_property_constants(),
             visible_from: None,
             visible_until: None,
+            judge_shape: JudgeShapeFixture::LineDefault,
+            sound_policy: 1,
+            score_policy: 1,
+            sound_resource_id: 0,
+            score_extension: None,
             texture_resource_id: 0,
         },
     ];
@@ -263,6 +293,7 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         &notes,
         &[(0, 1, 0.0, 60.0, 0)],
         0.0,
+        &[],
         &[],
         &[],
         ExecutionGraph::Fixture,
@@ -403,6 +434,62 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
                 CanonicalNoteSide::Above => 1u8,
                 CanonicalNoteSide::Below => 2u8,
             };
+            let judge_shape = match note.gameplay().judge_shape() {
+                CanonicalJudgeShape::LineDefault => JudgeShapeFixture::LineDefault,
+                CanonicalJudgeShape::Rectangle {
+                    center,
+                    half_extents,
+                } => JudgeShapeFixture::Rectangle {
+                    center: [center.x(), center.y()],
+                    half_extents: [half_extents.x(), half_extents.y()],
+                },
+                CanonicalJudgeShape::Circle { center, radius } => JudgeShapeFixture::Circle {
+                    center: [center.x(), center.y()],
+                    radius: *radius,
+                },
+            };
+            let (sound_policy, sound_resource_id) = match note.gameplay().sound_policy() {
+                CanonicalNoteSoundPolicy::Default => (1, 0),
+                CanonicalNoteSoundPolicy::None => (2, 0),
+                CanonicalNoteSoundPolicy::Resource(resource_id) => {
+                    let resource = compilation.resources().get(resource_id).ok_or_else(|| {
+                        FcbcError::new(
+                            "fcbc.dangling-reference",
+                            format!(
+                                "Note {} references missing sound resource {resource_id}",
+                                note.id().value()
+                            ),
+                        )
+                    })?;
+                    if resource.resource().kind() != CanonicalResourceKind::Audio {
+                        return Err(FcbcError::new(
+                            "fcbc.invalid-note",
+                            format!("Note {} sound resource is not audio", note.id().value()),
+                        ));
+                    }
+                    (3, stable_id(b"fcs.resource", resource_id.as_bytes()))
+                }
+            };
+            let (score_policy, score_extension) = match note.gameplay().score_policy() {
+                CanonicalNoteScorePolicy::Default => (1, None),
+                CanonicalNoteScorePolicy::None => (2, None),
+                CanonicalNoteScorePolicy::Custom(namespace) => {
+                    if !chart
+                        .required_extensions()
+                        .iter()
+                        .any(|extension| extension.namespace() == namespace)
+                    {
+                        return Err(FcbcError::new(
+                            "fcbc.invalid-note",
+                            format!(
+                                "Note {} custom score extension {namespace} is not required",
+                                note.id().value()
+                            ),
+                        ));
+                    }
+                    (3, Some(namespace.clone()))
+                }
+            };
             let presentation = note.presentation();
             let texture_resource_id = presentation
                 .texture()
@@ -466,6 +553,11 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
                 visible_until: presentation
                     .visible_until()
                     .map(|time| time.chart_time_seconds()),
+                judge_shape,
+                sound_policy,
+                score_policy,
+                sound_resource_id,
+                score_extension,
                 texture_resource_id,
             })
         })
@@ -507,6 +599,7 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
         .unwrap_or(0.0);
 
     let resources = native_resources(compilation)?;
+    let extensions = native_extensions(chart.required_extensions())?;
 
     Ok(assemble_package(
         &lines,
@@ -515,6 +608,7 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
         audio_offset,
         &resources,
         &tracks,
+        &extensions,
         ExecutionGraph::Native {
             has_notes: !notes.is_empty(),
         },
@@ -701,6 +795,108 @@ collections {
         assert_eq!(
             note.texture_resource_id,
             stable_id(b"fcs.resource", b"cover")
+        );
+    }
+
+    #[test]
+    fn write_from_compilation_preserves_note_gameplay_and_extensions() {
+        let workspace = tempdir().unwrap();
+        fs::write(workspace.path().join("hit.bin"), b"exact hit sound").unwrap();
+        let source = r#"#fcs 5.0.0
+format { profile: chart; }
+resources {
+    audio hit { source: "hit.bin"; mediaType: "audio/ogg"; }
+}
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+    notes {
+        tap {
+            id: "rectangle";
+            line: @main;
+            gameplay.time: 1beat;
+            gameplay.side: "below";
+            gameplay.judgeShape.kind: "rectangle";
+            gameplay.judgeShape.center: vec2(2px, 3px);
+            gameplay.judgeShape.halfExtents: vec2(4px, 5px);
+            gameplay.soundPolicy: "resource";
+            gameplay.soundResource: "hit";
+            gameplay.scorePolicy: "none";
+        };
+        hold {
+            id: "circle-hold";
+            line: @main;
+            gameplay.time: 2beat;
+            gameplay.endTime: 4beat;
+            gameplay.judgeShape.kind: "circle";
+            gameplay.judgeShape.radius: 6px;
+            gameplay.soundPolicy: "none";
+            gameplay.scorePolicy: "custom";
+            gameplay.scoreExtension: "score.ext";
+        };
+    }
+}
+extensions {
+    extension("score.ext", 1.2.3) required { "mode": "test", }
+}
+"#;
+        let document = parse_document(source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .unwrap();
+
+        let bytes = write_from_compilation(&compilation).unwrap();
+        let decoded = crate::load_chart(&bytes).expect("Note gameplay FCBC must load");
+        assert_eq!(decoded.feature_flags & (1 << 2), 1 << 2);
+        assert_eq!(
+            decoded.extensions,
+            vec![crate::ExtensionRecord {
+                namespace: "score.ext".into(),
+                version: (1, 2, 3),
+                flags: 1,
+            }]
+        );
+
+        let rectangle = &decoded.notes[0];
+        assert_eq!(rectangle.kind, 1);
+        assert_eq!(rectangle.side, 2);
+        assert_eq!(
+            rectangle.judge_shape,
+            crate::DecodedJudgeShape::Rectangle {
+                center: [2.0, 3.0],
+                half_extents: [4.0, 5.0],
+            }
+        );
+        assert_eq!(
+            rectangle.sound_policy,
+            crate::DecodedNoteSoundPolicy::Resource
+        );
+        assert_eq!(
+            rectangle.sound_resource_id,
+            stable_id(b"fcs.resource", b"hit")
+        );
+        assert_eq!(rectangle.score_policy, crate::DecodedNoteScorePolicy::None);
+
+        let hold = &decoded.notes[1];
+        assert_eq!(hold.kind, 2);
+        assert_eq!(hold.flags & 0b100, 0b100);
+        assert_eq!(hold.time, 1.0);
+        assert_eq!(hold.end_time, 2.0);
+        assert_eq!(
+            hold.judge_shape,
+            crate::DecodedJudgeShape::Circle {
+                center: [0.0, 0.0],
+                radius: 6.0,
+            }
+        );
+        assert_eq!(hold.sound_policy, crate::DecodedNoteSoundPolicy::None);
+        assert_eq!(
+            hold.score_policy,
+            crate::DecodedNoteScorePolicy::Custom("score.ext".into())
         );
     }
 
@@ -1337,6 +1533,11 @@ struct NoteFixture {
     property_constants: [Constant; 9],
     visible_from: Option<f64>,
     visible_until: Option<f64>,
+    judge_shape: JudgeShapeFixture,
+    sound_policy: u16,
+    score_policy: u16,
+    sound_resource_id: u64,
+    score_extension: Option<String>,
     texture_resource_id: u64,
 }
 
@@ -1356,6 +1557,7 @@ fn assemble_package(
     audio_offset: f64,
     resources: &[ResourceFixture<'_>],
     tracks: &[NativeTrackFixture],
+    extensions: &[ExtensionFixture],
     execution_graph: ExecutionGraph,
 ) -> Vec<u8> {
     let mut lines = lines.to_vec();
@@ -1401,12 +1603,15 @@ fn assemble_package(
         ),
     };
     let distances = distance_section_for_lines(&lines, tracks);
-    let feature_flags = if lines.iter().any(|line| line.line_flags & 1 != 0) {
+    let mut feature_flags = if lines.iter().any(|line| line.line_flags & 1 != 0) {
         1 << 8
     } else {
         0
     };
-    let strings = string_table_values(resources);
+    if !extensions.is_empty() {
+        feature_flags |= 1 << 2;
+    }
+    let strings = string_table_values(resources, &notes, extensions);
     let (resource_records, resource_data) = resource_sections(resources, &strings);
 
     let mut sections = vec![
@@ -1423,8 +1628,11 @@ fn assemble_package(
         Section::new(11, track_section),
         Section::new(12, expressions),
         Section::new(13, distances),
-        Section::new(20, resource_data),
     ];
+    if !extensions.is_empty() {
+        sections.push(Section::new(15, extensions_section(extensions, &strings)));
+    }
+    sections.push(Section::new(20, resource_data));
     let table_length = sections.len() * 40;
     let mut bytes = vec![0; 128 + table_length];
     let mut body_cursor = bytes.len();
@@ -1568,6 +1776,52 @@ fn native_resources(compilation: &CanonicalCompilation) -> FcbcResult<Vec<Resour
         ));
     }
     Ok(resources)
+}
+
+fn native_extensions(
+    extensions: &[CanonicalRequiredExtension],
+) -> FcbcResult<Vec<ExtensionFixture>> {
+    let mut lowered = Vec::with_capacity(extensions.len());
+    for extension in extensions {
+        let mut components = extension.version().split('.');
+        let version: (Option<u16>, Option<u16>, Option<u16>) = (
+            components.next().and_then(|value| value.parse().ok()),
+            components.next().and_then(|value| value.parse().ok()),
+            components.next().and_then(|value| value.parse().ok()),
+        );
+        if components.next().is_some()
+            || version.0.is_none()
+            || version.1.is_none()
+            || version.2.is_none()
+        {
+            return Err(FcbcError::new(
+                "fcbc.invalid-extension",
+                format!(
+                    "required extension {} has invalid version",
+                    extension.namespace()
+                ),
+            ));
+        }
+        lowered.push(ExtensionFixture {
+            namespace: extension.namespace().to_owned(),
+            version: (version.0.unwrap(), version.1.unwrap(), version.2.unwrap()),
+        });
+    }
+    lowered.sort_by(|left, right| {
+        left.namespace
+            .cmp(&right.namespace)
+            .then_with(|| left.version.cmp(&right.version))
+    });
+    if lowered
+        .windows(2)
+        .any(|pair| pair[0].namespace == pair[1].namespace && pair[0].version == pair[1].version)
+    {
+        return Err(FcbcError::new(
+            "fcbc.duplicate-extension",
+            "canonical required extensions contain a duplicate namespace/version",
+        ));
+    }
+    Ok(lowered)
 }
 
 fn native_tracks(
@@ -1782,9 +2036,34 @@ fn track_piece_time(piece: &CanonicalTrackPiece) -> f64 {
     }
 }
 
-fn string_table_values<'a>(resources: &[ResourceFixture<'a>]) -> Vec<&'a str> {
+fn string_table_values<'a>(
+    resources: &[ResourceFixture<'a>],
+    notes: &'a [NoteFixture],
+    extensions: &'a [ExtensionFixture],
+) -> Vec<&'a str> {
     let mut strings = vec!["kind", "lineDefault"];
+    for note in notes {
+        match &note.judge_shape {
+            JudgeShapeFixture::LineDefault => {}
+            JudgeShapeFixture::Rectangle { .. } => {
+                strings.extend(["rectangle", "center", "halfExtents"]);
+            }
+            JudgeShapeFixture::Circle { .. } => {
+                strings.extend(["circle", "center", "radius"]);
+            }
+        }
+    }
     strings.extend(resources.iter().map(|resource| resource.media_type));
+    strings.extend(
+        notes
+            .iter()
+            .filter_map(|note| note.score_extension.as_deref()),
+    );
+    strings.extend(
+        extensions
+            .iter()
+            .map(|extension| extension.namespace.as_str()),
+    );
     strings.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
     strings.dedup();
     strings
@@ -1931,18 +2210,92 @@ fn notes_section_from(notes: &[NoteFixture], strings: &[&str]) -> Vec<u8> {
         put_u16(&mut payload, note.flags);
         put_f64(&mut payload, note.time);
         put_f64(&mut payload, note.end_time);
-        payload.extend_from_slice(&line_default_judge_shape(strings));
-        // judgment-enabled uses default sound/score; disabled uses none policies.
-        let judgment_enabled = note.flags & 0b1 != 0;
-        put_u16(&mut payload, if judgment_enabled { 1 } else { 2 }); // default/none sound
-        put_u16(&mut payload, if judgment_enabled { 1 } else { 2 }); // default/none score
-        put_u64(&mut payload, 0);
-        put_u32(&mut payload, NULL_INDEX);
+        payload.extend_from_slice(&judge_shape_value(&note.judge_shape, strings));
+        put_u16(&mut payload, note.sound_policy);
+        put_u16(&mut payload, note.score_policy);
+        put_u64(&mut payload, note.sound_resource_id);
+        put_u32(
+            &mut payload,
+            note.score_extension
+                .as_deref()
+                .map_or(NULL_INDEX, |namespace| string_index(strings, namespace)),
+        );
         put_u32(&mut payload, 0);
         for descriptor in note.property_descriptors {
             put_u32(&mut payload, descriptor);
         }
         put_u64(&mut payload, note.texture_resource_id);
+        payload.extend_from_slice(&empty_object());
+        section.extend_from_slice(&record(payload));
+    }
+    section
+}
+
+fn judge_shape_value(shape: &JudgeShapeFixture, strings: &[&str]) -> Vec<u8> {
+    let mut fields = Vec::new();
+    match shape {
+        JudgeShapeFixture::LineDefault => {
+            fields.push(("kind", value_string(string_index(strings, "lineDefault"))));
+        }
+        JudgeShapeFixture::Rectangle {
+            center,
+            half_extents,
+        } => {
+            fields.push(("kind", value_string(string_index(strings, "rectangle"))));
+            fields.push(("center", value_vec2_length(*center)));
+            fields.push(("halfExtents", value_vec2_length(*half_extents)));
+        }
+        JudgeShapeFixture::Circle { center, radius } => {
+            fields.push(("kind", value_string(string_index(strings, "circle"))));
+            fields.push(("center", value_vec2_length(*center)));
+            fields.push(("radius", value_scalar(7, *radius)));
+        }
+    }
+    value_object(&fields, strings)
+}
+
+fn value_object(fields: &[(&str, Vec<u8>)], strings: &[&str]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    put_u32(&mut payload, fields.len() as u32);
+    for (key, encoded_value) in fields {
+        put_u32(&mut payload, string_index(strings, key));
+        payload.extend_from_slice(encoded_value);
+    }
+    value(14, payload)
+}
+
+fn value_string(string_ref: u32) -> Vec<u8> {
+    let mut payload = Vec::new();
+    put_u32(&mut payload, string_ref);
+    put_u32(&mut payload, 0);
+    value(4, payload)
+}
+
+fn value_scalar(tag: u8, scalar: f64) -> Vec<u8> {
+    let mut payload = Vec::new();
+    put_f64(&mut payload, scalar);
+    value(tag, payload)
+}
+
+fn value_vec2_length(value_: [f64; 2]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    put_u8(&mut payload, TY_LENGTH);
+    payload.resize(8, 0);
+    put_f64(&mut payload, value_[0]);
+    put_f64(&mut payload, value_[1]);
+    value(10, payload)
+}
+
+fn extensions_section(extensions: &[ExtensionFixture], strings: &[&str]) -> Vec<u8> {
+    let mut section = Vec::new();
+    put_u32(&mut section, extensions.len() as u32);
+    for extension in extensions {
+        let mut payload = Vec::new();
+        put_u32(&mut payload, string_index(strings, &extension.namespace));
+        put_u16(&mut payload, extension.version.0);
+        put_u16(&mut payload, extension.version.1);
+        put_u16(&mut payload, extension.version.2);
+        put_u16(&mut payload, 1); // required
         payload.extend_from_slice(&empty_object());
         section.extend_from_slice(&record(payload));
     }
@@ -2510,19 +2863,6 @@ fn distance_record(
     let result = record(payload);
     debug_assert_eq!(result.len(), 80 + boundaries.len() * 8);
     result
-}
-
-fn line_default_judge_shape(strings: &[&str]) -> Vec<u8> {
-    let mut payload = Vec::new();
-    put_u32(&mut payload, 1);
-    put_u32(&mut payload, string_index(strings, "kind"));
-    put_u8(&mut payload, 4); // string Value
-    put_u8(&mut payload, 0);
-    put_u16(&mut payload, 0);
-    put_u32(&mut payload, 8);
-    put_u32(&mut payload, string_index(strings, "lineDefault"));
-    put_u32(&mut payload, 0);
-    value(14, payload)
 }
 
 fn empty_object() -> Vec<u8> {
