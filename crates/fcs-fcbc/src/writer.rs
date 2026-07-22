@@ -86,8 +86,9 @@ struct LineFixture {
 }
 
 #[derive(Clone)]
-struct AlphaTrackFixture {
+struct NativeTrackFixture {
     line_id: u64,
+    target: CanonicalTrackTarget,
     segments: Vec<TrackSegmentFixture>,
 }
 
@@ -325,7 +326,7 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
         line.distance_index = index as u32;
     }
     let line_ids: std::collections::BTreeSet<u64> = lines.iter().map(|line| line.id).collect();
-    let alpha_tracks = native_alpha_tracks(chart.tracks().tracks(), &line_ids)?;
+    let tracks = native_tracks(chart.tracks().tracks(), &line_ids)?;
 
     let mut notes: Vec<NoteFixture> = chart
         .notes()
@@ -422,7 +423,7 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
         &tempo,
         audio_offset,
         &resources,
-        &alpha_tracks,
+        &tracks,
         ExecutionGraph::Native {
             has_notes: !notes.is_empty(),
         },
@@ -637,6 +638,95 @@ lines {
             crate::RuntimeValue::Vec2 {
                 ty: crate::ValueType::Vec2Float,
                 value: [0.25, 0.75],
+            }
+        );
+    }
+
+    #[test]
+    fn write_from_compilation_evaluates_native_line_tracks() {
+        let workspace = tempdir().unwrap();
+        let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        tracks {
+            track move -> position: vec2<length> {
+                fill: "error";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "holdAfter";
+                segments { [0s, 2s): vec2(0px, 0px) -> vec2(2px, 4px) using "linear"; }
+            }
+            track turn -> rotation: angle {
+                fill: "error";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "holdAfter";
+                segments { [0s, 2s): 0deg -> 180deg using "linear"; }
+            }
+            track zoom -> scale: vec2<float> {
+                fill: "error";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "holdAfter";
+                segments { [0s, 2s): vec2(1.0, 1.0) -> vec2(3.0, 5.0) using "linear"; }
+            }
+            track fade -> alpha: float {
+                fill: "error";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "holdAfter";
+                segments { [0s, 2s): 0.0 -> 1.0 using "linear"; }
+            }
+        }
+    }
+}
+"#;
+        let document = parse_document(source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .unwrap();
+
+        let bytes = write_from_compilation(&compilation).unwrap();
+        let decoded = crate::load_chart(&bytes).expect("compiled Line Tracks must load");
+        let line = decoded.lines.first().expect("main Line");
+        let evaluate = |descriptor| {
+            crate::query_descriptor(
+                &decoded,
+                descriptor,
+                1.0,
+                crate::EvaluationEnvironment::at_time(1.0),
+            )
+            .expect("Line Track evaluation")
+            .value
+        };
+        assert_eq!(
+            evaluate(line.position_descriptor),
+            crate::RuntimeValue::Vec2 {
+                ty: crate::ValueType::Vec2Length,
+                value: [1.0, 2.0],
+            }
+        );
+        assert_eq!(
+            evaluate(line.rotation_descriptor),
+            crate::RuntimeValue::Scalar {
+                ty: crate::ValueType::Angle,
+                value: std::f64::consts::FRAC_PI_2,
+            }
+        );
+        assert_eq!(
+            evaluate(line.scale_descriptor),
+            crate::RuntimeValue::Vec2 {
+                ty: crate::ValueType::Vec2Float,
+                value: [2.0, 3.0],
+            }
+        );
+        assert_eq!(
+            evaluate(line.alpha_descriptor),
+            crate::RuntimeValue::Scalar {
+                ty: crate::ValueType::Float,
+                value: 0.5,
             }
         );
     }
@@ -883,7 +973,7 @@ fn assemble_package(
     tempo: &[(i64, i64, f64, f64, u32)],
     audio_offset: f64,
     resources: &[ResourceFixture<'_>],
-    alpha_tracks: &[AlphaTrackFixture],
+    tracks: &[NativeTrackFixture],
     execution_graph: ExecutionGraph,
 ) -> Vec<u8> {
     let mut lines = lines.to_vec();
@@ -900,7 +990,7 @@ fn assemble_package(
                 vec2_constant(3, line.texture_anchor),
             ]);
         }
-        for track in alpha_tracks {
+        for track in tracks {
             for segment in &track.segments {
                 constants.extend([segment.start_constant.clone(), segment.end_constant.clone()]);
             }
@@ -915,12 +1005,7 @@ fn assemble_package(
         ExecutionGraph::Fixture => (tracks_section(&indices), expression_section(&indices)),
         ExecutionGraph::Native { has_notes } => (
             native_tracks_section(
-                &constants,
-                &indices,
-                &mut lines,
-                &mut notes,
-                alpha_tracks,
-                has_notes,
+                &constants, &indices, &mut lines, &mut notes, tracks, has_notes,
             ),
             count_zero_section(),
         ),
@@ -1095,10 +1180,10 @@ fn native_resources(compilation: &CanonicalCompilation) -> FcbcResult<Vec<Resour
     Ok(resources)
 }
 
-fn native_alpha_tracks(
+fn native_tracks(
     tracks: &[CanonicalTrack],
     line_ids: &std::collections::BTreeSet<u64>,
-) -> FcbcResult<Vec<AlphaTrackFixture>> {
+) -> FcbcResult<Vec<NativeTrackFixture>> {
     let mut lowered = Vec::new();
     for track in tracks {
         let line_id = track.owner().value();
@@ -1108,13 +1193,14 @@ fn native_alpha_tracks(
                 format!("Track {} references missing Line {line_id}", track.name()),
             ));
         }
-        if track.target() != CanonicalTrackTarget::Alpha {
+        let target = track.target();
+        if target == CanonicalTrackTarget::ScrollSpeed {
             return Err(FcbcError::new(
                 "fcbc.unsupported-track",
                 format!(
                     "native FCBC lowering does not yet support Track {} target {:?}",
                     track.name(),
-                    track.target()
+                    target
                 ),
             ));
         }
@@ -1125,18 +1211,21 @@ fn native_alpha_tracks(
             return Err(FcbcError::new(
                 "fcbc.unsupported-track",
                 format!(
-                    "native alpha Track {} requires replace with holdBefore/holdAfter",
+                    "native {:?} Track {} requires replace with holdBefore/holdAfter",
+                    target,
                     track.name()
                 ),
             ));
         }
-        if lowered
-            .iter()
-            .any(|candidate: &AlphaTrackFixture| candidate.line_id == line_id)
-        {
+        if lowered.iter().any(|candidate: &NativeTrackFixture| {
+            candidate.line_id == line_id && candidate.target == target
+        }) {
             return Err(FcbcError::new(
                 "fcbc.unsupported-track",
-                format!("native alpha Track layering is not yet supported for Line {line_id}"),
+                format!(
+                    "native {:?} Track layering is not yet supported for Line {line_id}",
+                    target
+                ),
             ));
         }
         let pieces = track.pieces();
@@ -1145,10 +1234,10 @@ fn native_alpha_tracks(
         for piece in pieces {
             match piece {
                 CanonicalTrackPiece::Segment(segment) => {
-                    segments.push(native_alpha_segment(segment, track.name())?);
+                    segments.push(native_track_segment(segment, target, track.name())?);
                 }
                 CanonicalTrackPiece::Point(point) => {
-                    let value = native_alpha_constant(point.value(), track.name())?;
+                    let value = native_track_constant(point.value(), target, track.name())?;
                     let time = point.time().chart_time_seconds();
                     segments.push(TrackSegmentFixture {
                         start: time,
@@ -1173,7 +1262,7 @@ fn native_alpha_tracks(
             let CanonicalTrackPiece::Segment(segment) = &pieces[0] else {
                 unreachable!("first point check covers non-segment Track pieces");
             };
-            let value = native_alpha_constant(segment.start_value(), track.name())?;
+            let value = native_track_constant(segment.start_value(), target, track.name())?;
             segments.push(TrackSegmentFixture {
                 start: first_time,
                 end: first_time,
@@ -1195,7 +1284,7 @@ fn native_alpha_tracks(
                 )
             })
         {
-            let value = native_alpha_constant(segment.end_value(), track.name())?;
+            let value = native_track_constant(segment.end_value(), target, track.name())?;
             segments.push(TrackSegmentFixture {
                 start: segment.end().chart_time_seconds(),
                 end: segment.end().chart_time_seconds(),
@@ -1214,7 +1303,8 @@ fn native_alpha_tracks(
                 return Err(FcbcError::new(
                     "fcbc.unsupported-track",
                     format!(
-                        "native alpha Track {} has an uncovered segment gap",
+                        "native {:?} Track {} has an uncovered segment gap",
+                        target,
                         track.name()
                     ),
                 ));
@@ -1225,24 +1315,51 @@ fn native_alpha_tracks(
                 .total_cmp(&right.start)
                 .then_with(|| right.flags.cmp(&left.flags))
         });
-        lowered.push(AlphaTrackFixture { line_id, segments });
+        lowered.push(NativeTrackFixture {
+            line_id,
+            target,
+            segments,
+        });
     }
-    lowered.sort_by_key(|track| track.line_id);
+    lowered.sort_by_key(|track| (track.line_id, track.target));
     Ok(lowered)
 }
 
-fn native_alpha_constant(value: CanonicalTrackValue, track_name: &str) -> FcbcResult<Constant> {
-    match value {
-        CanonicalTrackValue::Float(value) => Ok(float_constant(value)),
-        _ => Err(FcbcError::new(
-            "fcbc.invalid-track",
-            format!("native alpha Track {track_name} has a non-float value"),
-        )),
-    }
+fn native_track_constant(
+    value: CanonicalTrackValue,
+    target: CanonicalTrackTarget,
+    track_name: &str,
+) -> FcbcResult<Constant> {
+    let constant = match (target, value) {
+        (CanonicalTrackTarget::Position, CanonicalTrackValue::Vec2Length(value)) => {
+            vec2_constant(7, [value.x(), value.y()])
+        }
+        (CanonicalTrackTarget::Rotation, CanonicalTrackValue::Angle(value)) => {
+            scalar_constant(8, value)
+        }
+        (CanonicalTrackTarget::Scale, CanonicalTrackValue::Vec2Float(value)) => {
+            vec2_constant(3, [value.x(), value.y()])
+        }
+        (
+            CanonicalTrackTarget::Alpha | CanonicalTrackTarget::ScrollSpeed,
+            CanonicalTrackValue::Float(value),
+        ) => float_constant(value),
+        _ => {
+            return Err(FcbcError::new(
+                "fcbc.invalid-track",
+                format!(
+                    "native {:?} Track {track_name} has an incompatible value",
+                    target
+                ),
+            ));
+        }
+    };
+    Ok(constant)
 }
 
-fn native_alpha_segment(
+fn native_track_segment(
     segment: &CanonicalTrackSegment,
+    target: CanonicalTrackTarget,
     track_name: &str,
 ) -> FcbcResult<TrackSegmentFixture> {
     let (interpolation, easing, bezier) = match segment.interpolation() {
@@ -1256,7 +1373,10 @@ fn native_alpha_segment(
                 .ok_or_else(|| {
                     FcbcError::new(
                         "fcbc.invalid-track",
-                        format!("native alpha Track {track_name} has unknown easing {name}"),
+                        format!(
+                            "native {:?} Track {track_name} has unknown easing {name}",
+                            target
+                        ),
                     )
                 })?;
             (3, easing, [0.0; 4])
@@ -1269,8 +1389,8 @@ fn native_alpha_segment(
         interpolation,
         easing,
         flags: 0,
-        start_constant: native_alpha_constant(segment.start_value(), track_name)?,
-        end_constant: native_alpha_constant(segment.end_value(), track_name)?,
+        start_constant: native_track_constant(segment.start_value(), target, track_name)?,
+        end_constant: native_track_constant(segment.end_value(), target, track_name)?,
         bezier,
     })
 }
@@ -1480,7 +1600,7 @@ fn native_tracks_section(
     indices: &ConstantIndices,
     lines: &mut [LineFixture],
     notes: &mut [NoteFixture],
-    alpha_tracks: &[AlphaTrackFixture],
+    tracks: &[NativeTrackFixture],
     has_notes: bool,
 ) -> Vec<u8> {
     let mut descriptors = Vec::new();
@@ -1488,37 +1608,47 @@ fn native_tracks_section(
     // Descriptor order follows the canonical direct-root path order used by the loader:
     // all Line roots are grouped by path, then by stable Line ID.
     for line in lines.iter_mut() {
-        line.alpha_descriptor =
-            if let Some(track) = alpha_tracks.iter().find(|track| track.line_id == line.id) {
-                let descriptor = segment_track_descriptor(TY_FLOAT, &track.segments, constants);
-                intern_descriptor(&mut descriptors, descriptor)
-            } else {
-                intern_constant_descriptor(
-                    &mut descriptors,
-                    TY_FLOAT,
-                    find_constant(constants, &float_constant(line.alpha)),
-                )
-            };
+        line.alpha_descriptor = native_line_descriptor(
+            &mut descriptors,
+            constants,
+            tracks,
+            line.id,
+            CanonicalTrackTarget::Alpha,
+            TY_FLOAT,
+            &float_constant(line.alpha),
+        );
     }
     for line in lines.iter_mut() {
-        line.position_descriptor = intern_constant_descriptor(
+        line.position_descriptor = native_line_descriptor(
             &mut descriptors,
+            constants,
+            tracks,
+            line.id,
+            CanonicalTrackTarget::Position,
             TY_VEC2_LENGTH,
-            find_constant(constants, &vec2_constant(7, line.position)),
+            &vec2_constant(7, line.position),
         );
     }
     for line in lines.iter_mut() {
-        line.rotation_descriptor = intern_constant_descriptor(
+        line.rotation_descriptor = native_line_descriptor(
             &mut descriptors,
+            constants,
+            tracks,
+            line.id,
+            CanonicalTrackTarget::Rotation,
             TY_ANGLE,
-            find_constant(constants, &scalar_constant(8, line.rotation)),
+            &scalar_constant(8, line.rotation),
         );
     }
     for line in lines.iter_mut() {
-        line.scale_descriptor = intern_constant_descriptor(
+        line.scale_descriptor = native_line_descriptor(
             &mut descriptors,
+            constants,
+            tracks,
+            line.id,
+            CanonicalTrackTarget::Scale,
             TY_VEC2_FLOAT,
-            find_constant(constants, &vec2_constant(3, line.scale)),
+            &vec2_constant(3, line.scale),
         );
     }
     for line in lines.iter_mut() {
@@ -1568,6 +1698,32 @@ fn native_tracks_section(
         section.extend_from_slice(&descriptor);
     }
     section
+}
+
+fn native_line_descriptor(
+    descriptors: &mut Vec<Vec<u8>>,
+    constants: &[Constant],
+    tracks: &[NativeTrackFixture],
+    line_id: u64,
+    target: CanonicalTrackTarget,
+    property_type: u8,
+    base_constant: &Constant,
+) -> u32 {
+    if let Some(track) = tracks
+        .iter()
+        .find(|track| track.line_id == line_id && track.target == target)
+    {
+        intern_descriptor(
+            descriptors,
+            segment_track_descriptor(property_type, &track.segments, constants),
+        )
+    } else {
+        intern_constant_descriptor(
+            descriptors,
+            property_type,
+            find_constant(constants, base_constant),
+        )
+    }
 }
 
 fn intern_constant_descriptor(
