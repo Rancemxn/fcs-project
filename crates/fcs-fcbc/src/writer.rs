@@ -417,7 +417,8 @@ lines { line main {} }
         assert_eq!(resource.media_type, "application/octet-stream");
         assert_eq!(resource.data_offset, 0);
         assert_eq!(resource.data_length, payload.len() as u64);
-        assert_eq!(resource.content_sha256.as_slice(), Sha256::digest(payload));
+        let expected_sha256: [u8; 32] = Sha256::digest(payload).into();
+        assert_eq!(resource.content_sha256, expected_sha256);
         assert_eq!(resource.bytes.as_ref(), payload);
     }
 }
