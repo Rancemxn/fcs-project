@@ -1,6 +1,6 @@
 # FCBC Container Format 2.0.0 and Execution ABI 1.0.0
 
-状态：Frozen（2026-07-21 local RC；见 `docs/specifications/governance.md` 与 `docs/reviews/2026-07-21-i10-local-rc-freeze.md`）
+状态：Draft（2026-07-22；native FCBC/Execution ABI closure remains open；见 `docs/specifications/governance.md`）
 
 本文定义 FCBC 2.0.0 二进制容器和 FCS Execution ABI 1.0.0。规范治理见
 `docs/specifications/governance.md`，source/canonical 语义见 `fcs.md`。

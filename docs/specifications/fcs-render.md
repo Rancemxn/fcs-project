@@ -1,6 +1,6 @@
 # FCS Render Profile 1.0.0
 
-状态：Frozen（2026-07-21 local RC；见 `docs/specifications/governance.md` 与 `docs/reviews/2026-07-21-i10-local-rc-freeze.md`）
+状态：Draft（2026-07-22；canonical Render and executable semantic/raster closure remains open；见 `docs/specifications/governance.md`）
 
 本文定义 FCS Render Profile 1.0.0。它扩展 `fcs.md` 的可选顶级 `render` block，并定义
 `fcbc.md` Render section 1.0。Render 使用 FCS 唯一 `chartTime` 和 property descriptor，不能
