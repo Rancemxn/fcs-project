@@ -79,10 +79,17 @@ struct LineFixture {
     alpha_descriptor: u32,
     scroll_tempo_descriptor: u32,
     speed_descriptor: u32,
+    scroll_tempo: Vec<ScrollTempoPointFixture>,
     evaluable_speed: bool,
     floor_scale: f64,
     integration_origin: f64,
     initial_floor: f64,
+}
+
+#[derive(Clone, Copy)]
+struct ScrollTempoPointFixture {
+    time: f64,
+    bpm: f64,
 }
 
 #[derive(Clone)]
@@ -159,6 +166,10 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             alpha_descriptor: CHOOSE_ALPHA_DESCRIPTOR_INDEX,
             scroll_tempo_descriptor: SCROLL_TEMPO_DESCRIPTOR_INDEX,
             speed_descriptor: ANALYTIC_SPEED_DESCRIPTOR_INDEX,
+            scroll_tempo: vec![ScrollTempoPointFixture {
+                time: 0.0,
+                bpm: 60.0,
+            }],
             evaluable_speed: false,
             floor_scale: 1.0,
             integration_origin: 0.0,
@@ -184,6 +195,10 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             alpha_descriptor: SECONDS_ALPHA_DESCRIPTOR_INDEX,
             scroll_tempo_descriptor: SCROLL_TEMPO_DESCRIPTOR_INDEX,
             speed_descriptor: EVALUABLE_SPEED_DESCRIPTOR_INDEX,
+            scroll_tempo: vec![ScrollTempoPointFixture {
+                time: 0.0,
+                bpm: 60.0,
+            }],
             evaluable_speed: true,
             floor_scale: 1.0,
             integration_origin: 0.0,
@@ -260,7 +275,13 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
         .map(|(index, line)| {
             let base = line.base();
             let inherit = line.inherit();
-            LineFixture {
+            let scroll = chart.scroll().line(line.id().value()).ok_or_else(|| {
+                FcbcError::new(
+                    "fcbc.invalid-scroll",
+                    format!("Line {} has no canonical scroll tempo", line.id().value()),
+                )
+            })?;
+            Ok(LineFixture {
                 id: line.id().value(),
                 parent_id: line.parent().map_or(0, |parent| parent.value()),
                 document_order: line.document_order() as u32,
@@ -285,13 +306,22 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
                 alpha_descriptor: 0,
                 scroll_tempo_descriptor: 0,
                 speed_descriptor: 0,
+                scroll_tempo: scroll
+                    .coordinate()
+                    .points()
+                    .iter()
+                    .map(|point| ScrollTempoPointFixture {
+                        time: point.chart_time(),
+                        bpm: point.bpm(),
+                    })
+                    .collect(),
                 evaluable_speed: false,
                 floor_scale: base.floor_scale(),
                 integration_origin: base.integration_origin(),
                 initial_floor: base.initial_floor_position(),
-            }
+            })
         })
-        .collect();
+        .collect::<FcbcResult<Vec<_>>>()?;
     if lines.is_empty() {
         // Native charts without Lines still need a self-contained Line so Core
         // section loaders can attach tempo/note graph ownership.
@@ -315,6 +345,11 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
             alpha_descriptor: 0,
             scroll_tempo_descriptor: 0,
             speed_descriptor: 0,
+            scroll_tempo: chart
+                .time_map()
+                .segments()
+                .map(|(_, time, bpm)| ScrollTempoPointFixture { time, bpm })
+                .collect(),
             evaluable_speed: false,
             floor_scale: 1.0,
             integration_origin: 0.0,
@@ -791,6 +826,86 @@ lines {
     }
 
     #[test]
+    fn write_from_compilation_lowers_line_scroll_tempo_maps() {
+        let workspace = tempdir().unwrap();
+        let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; 4beat -> 240bpm; }
+lines {
+    line explicit {
+        scrollTempoMap { 0beat -> 60bpm; 4beat -> 90bpm; 4beat -> 120bpm; }
+    }
+    line global {}
+}
+"#;
+        let document = parse_document(source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .unwrap();
+
+        let bytes = write_from_compilation(&compilation).unwrap();
+        let decoded = crate::load_chart(&bytes).expect("compiled scroll tempo maps must load");
+        let explicit = decoded
+            .lines
+            .iter()
+            .find(|line| line.id == stable_id(b"fcs.line", b"explicit"))
+            .expect("explicit Line");
+        let global = decoded
+            .lines
+            .iter()
+            .find(|line| line.id == stable_id(b"fcs.line", b"global"))
+            .expect("global Line");
+        let bpm = |line: &crate::LineRecord, time| {
+            crate::query_descriptor(
+                &decoded,
+                line.scroll_tempo_descriptor,
+                time,
+                crate::EvaluationEnvironment::at_time(time),
+            )
+            .expect("scroll tempo evaluation")
+            .value
+        };
+        let scalar = |value| crate::RuntimeValue::Scalar {
+            ty: crate::ValueType::Float,
+            value,
+        };
+
+        assert_eq!(bpm(explicit, 1.0), scalar(60.0));
+        assert_eq!(bpm(explicit, 2.0), scalar(120.0));
+        assert_eq!(bpm(global, 1.0), scalar(120.0));
+        assert_eq!(bpm(global, 2.0), scalar(240.0));
+        assert_eq!(
+            crate::query_scroll_coordinate(&decoded, explicit.scroll_tempo_descriptor, -1.0),
+            Ok(-1.0)
+        );
+        assert_eq!(
+            crate::query_scroll_coordinate(&decoded, explicit.scroll_tempo_descriptor, 3.0),
+            Ok(4.0)
+        );
+        assert_eq!(
+            crate::query_scroll_coordinate(&decoded, global.scroll_tempo_descriptor, 3.0),
+            Ok(8.0)
+        );
+        for (line, expected_floor) in [(explicit, 4.0), (global, 8.0)] {
+            let distance = crate::query_distance(&decoded, line.distance_descriptor, 3.0)
+                .expect("scroll distance evaluation");
+            assert_eq!(
+                distance.classification,
+                crate::DistanceClassification::PortableEvaluable
+            );
+            assert_eq!(distance.floor_position, expected_floor);
+            assert_eq!(
+                decoded.distances[line.distance_descriptor as usize].boundaries,
+                [0.0, 2.0]
+            );
+        }
+    }
+
+    #[test]
     fn write_from_compilation_evaluates_native_linear_alpha_track() {
         let workspace = tempdir().unwrap();
         let source = r#"#fcs 5.0.0
@@ -1048,6 +1163,11 @@ fn assemble_package(
                 vec2_constant(7, line.transform_origin),
                 vec2_constant(3, line.texture_anchor),
             ]);
+            constants.extend(
+                line.scroll_tempo
+                    .iter()
+                    .map(|point| float_constant(point.bpm)),
+            );
         }
         for track in tracks {
             for segment in &track.segments {
@@ -1716,7 +1836,7 @@ fn native_tracks_section(
     }
     for line in lines.iter_mut() {
         line.scroll_tempo_descriptor =
-            intern_constant_descriptor(&mut descriptors, TY_FLOAT, indices.float_sixty);
+            native_scroll_tempo_descriptor(&mut descriptors, constants, &line.scroll_tempo);
     }
 
     if has_notes {
@@ -1757,6 +1877,41 @@ fn native_tracks_section(
         section.extend_from_slice(&descriptor);
     }
     section
+}
+
+fn native_scroll_tempo_descriptor(
+    descriptors: &mut Vec<Vec<u8>>,
+    constants: &[Constant],
+    points: &[ScrollTempoPointFixture],
+) -> u32 {
+    debug_assert!(!points.is_empty());
+    if points.len() == 1 {
+        return intern_constant_descriptor(
+            descriptors,
+            TY_FLOAT,
+            find_constant(constants, &float_constant(points[0].bpm)),
+        );
+    }
+    let segments: Vec<_> = points
+        .iter()
+        .map(|point| {
+            let value = float_constant(point.bpm);
+            TrackSegmentFixture {
+                start: point.time,
+                end: point.time,
+                interpolation: 1,
+                easing: 0,
+                flags: 1,
+                start_constant: value.clone(),
+                end_constant: value,
+                bezier: [0.0; 4],
+            }
+        })
+        .collect();
+    intern_descriptor(
+        descriptors,
+        segment_track_descriptor(TY_FLOAT, &segments, constants),
+    )
 }
 
 fn native_line_descriptor(
@@ -2017,19 +2172,25 @@ fn distance_section_for_lines(lines: &[LineFixture], tracks: &[NativeTrackFixtur
     let mut section = Vec::new();
     put_u32(&mut section, lines.len() as u32);
     for line in lines {
-        // Classification/boundary pairing must match the Line's scroll speed descriptor.
-        let (classification, max_error, mut boundaries) = if line.evaluable_speed {
+        // Classification/boundary pairing must match both Line scroll roots.
+        let evaluable_distance = line.evaluable_speed || line.scroll_tempo.len() > 1;
+        let (classification, max_error, mut boundaries) = if evaluable_distance {
             let mut boundaries = vec![line.integration_origin];
-            if let Some(track) = tracks.iter().find(|track| {
-                track.line_id == line.id && track.target == CanonicalTrackTarget::ScrollSpeed
-            }) {
-                for segment in &track.segments {
-                    boundaries.push(segment.start);
-                    boundaries.push(segment.end);
+            if line.evaluable_speed {
+                if let Some(track) = tracks.iter().find(|track| {
+                    track.line_id == line.id && track.target == CanonicalTrackTarget::ScrollSpeed
+                }) {
+                    for segment in &track.segments {
+                        boundaries.push(segment.start);
+                        boundaries.push(segment.end);
+                    }
+                } else {
+                    // The declarative non-empty fixture has no native Track graph.
+                    boundaries.push(2.0);
                 }
-            } else {
-                // The declarative non-empty fixture has no native Track graph.
-                boundaries.push(2.0);
+            }
+            if line.scroll_tempo.len() > 1 {
+                boundaries.extend(line.scroll_tempo.iter().map(|point| point.time));
             }
             (2u8, 2.328_306_436_538_696_3e-10, boundaries)
         } else {
