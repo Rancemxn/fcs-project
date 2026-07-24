@@ -758,9 +758,18 @@ impl<'a> StaticEntityValidator<'a> {
                         field: path.clone(),
                         span: field.path.span,
                     })?;
-            if contains_runtime_environment(&field.value, &|name| scope.lookup(name).is_some())
-                && !is_dynamic_field(&path)
-            {
+            let has_runtime_environment =
+                contains_runtime_environment(&field.value, &|name| scope.contains(name));
+            if has_runtime_environment && !is_dynamic_field(&path) {
+                if let SourceExpression::Name { name, span } = &field.value
+                    && is_runtime_environment_name(name)
+                    && !scope.contains(name)
+                {
+                    return Err(Diagnostic::UnknownName {
+                        name: name.clone(),
+                        span: *span,
+                    });
+                }
                 return Err(Diagnostic::DynamicFieldForbidden {
                     field: path,
                     span: field.value.span(),
@@ -769,10 +778,17 @@ impl<'a> StaticEntityValidator<'a> {
             let is_resource_reference = path == "gameplay.soundResource"
                 && matches!(field.value, SourceExpression::Reference { .. });
             let expected = field_schema.expected_type();
+            let runtime_scope;
+            let expression_scope = if has_runtime_environment {
+                runtime_scope = runtime_environment_scope(scope, field.value.span())?;
+                &runtime_scope
+            } else {
+                scope
+            };
             let actual = if is_resource_reference {
                 Type::String
             } else {
-                self.validate_expression_with_expected(&field.value, scope, expected)?
+                self.validate_expression_with_expected(&field.value, expression_scope, expected)?
             };
             validate_schema_type(field_schema, &actual, field.value.span())?;
             if !is_resource_reference
@@ -963,6 +979,33 @@ fn contains_runtime_environment(
         }
         SourceExpression::Literal { .. } | SourceExpression::Reference { .. } => false,
     }
+}
+
+fn runtime_environment_scope(scope: &Scope, span: SourceSpan) -> Result<Scope, Diagnostic> {
+    let mut scope = scope.clone();
+    for (name, ty) in [
+        ("s", Type::Time),
+        ("b", Type::Beat),
+        ("q", Type::Float),
+        ("d", Type::Length),
+        ("p", Type::Float),
+    ] {
+        if !scope.contains(name) {
+            scope.declare(
+                name.to_owned(),
+                Binding {
+                    ty,
+                    value: None,
+                    span,
+                },
+            )?;
+        }
+    }
+    Ok(scope)
+}
+
+fn is_runtime_environment_name(name: &str) -> bool {
+    matches!(name, "s" | "b" | "q" | "d" | "p")
 }
 
 fn document_defines(document: &Document, name: &str) -> bool {

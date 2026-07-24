@@ -511,14 +511,6 @@ pub(super) fn infer_expression_with_expected(
         SourceExpression::Name { name, span } => scope
             .lookup(name)
             .map(|binding| binding.ty.clone())
-            .or(match name.as_str() {
-                "s" => Some(Type::Time),
-                "b" => Some(Type::Beat),
-                "q" => Some(Type::Float),
-                "d" => Some(Type::Length),
-                "p" => Some(Type::Float),
-                _ => None,
-            })
             .ok_or_else(|| Diagnostic::UnknownName {
                 name: name.clone(),
                 span: *span,
