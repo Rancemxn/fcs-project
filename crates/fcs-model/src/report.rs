@@ -88,9 +88,14 @@ impl ApproximationAuthorization {
         let mut target_domains: Vec<_> = target_domains.into_iter().collect();
         target_domains.sort();
         target_domains.dedup();
+        if target_domains.iter().any(|domain| domain.trim().is_empty()) {
+            return Err(ReportError::InvalidAuthorization(
+                "approximation target domains must be non-empty".into(),
+            ));
+        }
         let mut error_budgets = BTreeMap::new();
         for (metric, budget) in budgets {
-            if metric.is_empty() || !budget.is_finite() || budget < 0.0 {
+            if metric.trim().is_empty() || !budget.is_finite() || budget < 0.0 {
                 return Err(ReportError::InvalidAuthorization(
                     "error budgets require non-empty metrics and finite non-negative values".into(),
                 ));
@@ -106,8 +111,8 @@ impl ApproximationAuthorization {
         if target_domains.is_empty()
             || error_budgets.is_empty()
             || maximum_segments == 0
-            || algorithm_id.is_empty()
-            || algorithm_version.is_empty()
+            || algorithm_id.trim().is_empty()
+            || algorithm_version.trim().is_empty()
         {
             return Err(ReportError::InvalidAuthorization(
                 "approximation authorization requires domains, budgets, segment limit, and algorithm identity"
@@ -204,7 +209,10 @@ impl DropAuthorization {
         target_domains.sort();
         target_domains.dedup();
         let reason = reason.into();
-        if target_domains.is_empty() || reason.trim().is_empty() {
+        if target_domains.is_empty()
+            || target_domains.iter().any(|domain| domain.trim().is_empty())
+            || reason.trim().is_empty()
+        {
             return Err(ReportError::InvalidAuthorization(
                 "drop authorization requires target domains and a reason".into(),
             ));
@@ -1269,6 +1277,50 @@ mod tests {
         ));
         assert!(matches!(
             DropAuthorization::new(["metadata".into()], "  "),
+            Err(ReportError::InvalidAuthorization(_))
+        ));
+        assert!(matches!(
+            ApproximationAuthorization::new(
+                ["  ".into()],
+                [(".value".into(), 0.1)],
+                1,
+                "adaptive",
+                "1.0.0",
+            ),
+            Err(ReportError::InvalidAuthorization(_))
+        ));
+        assert!(matches!(
+            ApproximationAuthorization::new(
+                ["motion".into()],
+                [("  ".into(), 0.1)],
+                1,
+                "adaptive",
+                "1.0.0",
+            ),
+            Err(ReportError::InvalidAuthorization(_))
+        ));
+        assert!(matches!(
+            ApproximationAuthorization::new(
+                ["motion".into()],
+                [("motion.value".into(), 0.1)],
+                1,
+                "  ",
+                "1.0.0",
+            ),
+            Err(ReportError::InvalidAuthorization(_))
+        ));
+        assert!(matches!(
+            ApproximationAuthorization::new(
+                ["motion".into()],
+                [("motion.value".into(), 0.1)],
+                1,
+                "adaptive",
+                "  ",
+            ),
+            Err(ReportError::InvalidAuthorization(_))
+        ));
+        assert!(matches!(
+            DropAuthorization::new(["  ".into()], "explicit loss"),
             Err(ReportError::InvalidAuthorization(_))
         ));
     }
