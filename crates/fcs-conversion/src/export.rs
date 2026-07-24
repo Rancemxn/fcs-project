@@ -829,10 +829,11 @@ pub fn export_pgr_with_options(
     )
 }
 
-/// Import → export → re-import a PGR chart and compare line/note counts.
+/// Import → export → same-profile re-import a PGR chart and return the full
+/// canonical semantic comparison rather than topology counts.
 pub fn roundtrip_pgr_v3_public_bytes(
     bytes: &[u8],
-) -> Result<(usize, usize, usize, usize), ExportError> {
+) -> Result<crate::CanonicalComparison, ExportError> {
     let artifact = SourceArtifact::new("chart.json", ArtifactRole::Chart, bytes.to_vec())
         .map_err(|error| ExportError::new("conversion.source-invalid", error.to_string()))?;
     let parsed = parse_json_document(SourceFormat::Pgr, &artifact)
@@ -848,25 +849,13 @@ pub fn roundtrip_pgr_v3_public_bytes(
         .map_err(|error| ExportError::new(error.category(), error.to_string()))?;
     let first = lower_pgr_to_canonical(&semantic, &artifact)
         .map_err(|error| ExportError::new(error.category(), error.to_string()))?;
-    let exported = export_pgr_v3(first.compilation().chart())?;
-    let artifact2 = SourceArtifact::new("chart-reexport.json", ArtifactRole::Chart, exported)
-        .map_err(|error| ExportError::new("conversion.source-invalid", error.to_string()))?;
-    let parsed2 = parse_json_document(SourceFormat::Pgr, &artifact2)
-        .map_err(|error| ExportError::new("conversion.source-invalid", error.to_string()))?;
-    let source2 = parse_pgr_document(&parsed2, PgrLimits::default())
-        .map_err(|error| ExportError::new(error.category(), error.to_string()))?;
-    let semantic2 = interpret_pgr(&source2, &binding)
-        .map_err(|error| ExportError::new(error.category(), error.to_string()))?;
-    let second = lower_pgr_to_canonical(&semantic2, &artifact2)
-        .map_err(|error| ExportError::new(error.category(), error.to_string()))?;
-    let first_chart = first.compilation().chart();
-    let second_chart = second.compilation().chart();
-    Ok((
-        first_chart.lines().lines().count(),
-        first_chart.notes().notes().len(),
-        second_chart.lines().lines().count(),
-        second_chart.notes().notes().len(),
-    ))
+    let profile = PgrProfile::PhiraV3;
+    let options = ExportOptions::semantic(
+        CapabilitySet::pgr_v3()
+            .descriptor(Some(profile_reference(profile.id(), profile.version()))),
+    );
+    let outcome = export_pgr_v3_with_options(first.compilation().chart(), &options)?;
+    Ok(outcome.comparison().clone())
 }
 
 fn chart_time_to_pgr_t(chart_time_seconds: f64, bpm: f64) -> f64 {
@@ -2726,6 +2715,17 @@ mod tests {
         assert!(outcome.comparison().is_equivalent());
         assert_eq!(outcome.report().status(), ConversionStatus::Equivalent);
         assert!(outcome.report().output_hash().is_some());
+    }
+
+    #[test]
+    fn public_pgr_roundtrip_helper_returns_full_canonical_comparison() {
+        let bytes = fs::read(
+            root().join("docs/conformance/conversion/public-fixtures/sources/pgr-feature.pgr.json"),
+        )
+        .unwrap();
+        let comparison = roundtrip_pgr_v3_public_bytes(&bytes).unwrap();
+        assert!(comparison.is_equivalent());
+        assert!(comparison.mismatches().is_empty());
     }
 
     #[test]
