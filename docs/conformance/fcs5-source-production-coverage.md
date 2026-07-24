@@ -43,8 +43,8 @@ remain wrapped in the smallest legal document/block fixture.
 |---|---|---|
 | `document`, `header`, `semver` | `C`, `G`, `D::parses_exact_fcs5_header` | `D::bound_parse_error_fixtures_keep_stable_categories_and_spans`, `D::missing_header_has_the_frozen_code_and_byte_span`, `R` |
 | `topLevelBlock` | `G`, `C` | `D::document_boundary_diagnostics_are_stable_and_spanned`, duplicate/unknown/misplaced cases in `C` |
-| `formatBlock`, `formatField` | `G`, `D::parses_fragment_profile` | `D::document_boundary_diagnostics_are_stable_and_spanned`, duplicate-field tests |
-| `profile`, `featureArray`, `profileFeature` | `G`, `D::format_features_are_retained_in_the_source_ast` | `D::rejects_unknown_profile`, malformed feature/terminator cases |
+| `formatBlock`, `formatField` | `G`, `A::parses_fragment_profile` | `D::document_boundary_diagnostics_are_stable_and_spanned`, duplicate-field tests |
+| `profile`, `featureArray`, `profileFeature` | `G`, `A::format_features_are_retained_in_the_source_ast` | `D::rejects_unknown_profile`, malformed feature/terminator cases |
 | `bom`, `asciiSpace`, `newline`, `identifier`, `keyword` | `D::header_immediately_follows_the_optional_bom`, lexer keyword tests | `D::additional_bom_and_non_ascii_identifier_spans_are_exact`, `D::nul_and_unicode_noncharacters_obey_the_lexical_boundary` |
 | `uintMagnitude`, `floatMagnitude`, `stringLiteral`, `colorLiteral` | `E::parses_scalar_and_unit_literals`, string/color lexer tests | `D::malformed_numeric_candidates_are_one_lexical_error`, `D::malformed_color_string_and_comment_spans_are_stable` |
 
@@ -56,7 +56,7 @@ remain wrapped in the smallest legal document/block fixture.
 | `contributorsBlock`, `contributorDecl` | `A`, `G` | `C` later-stage schema/resource-invalid inputs (`L`) |
 | `creditsBlock`, `creditDecl` | `A`, `G` | `C` later-stage schema-invalid inputs (`L`) |
 | `resourcesBlock`, `resourceDecl`, `resourceKind` | `A::every_core_resource_kind_has_a_typed_source_node`, `G`, `resource_bundle::builds_deterministic_opaque_bundle_without_path_or_content_deduplication`, `conformance_manifest::i5_resource_fixtures_execute_at_the_workspace_bundle_boundary` | `L::unknown-resource`, `L::resource-path-escape`, `L::resource-hash-mismatch`, `L::resource-missing-member`, `resource_bundle::{rejects_missing_directory_and_non_regular_workspace_members,accepts_in_root_symlink_and_rejects_symlink_escape,enforces_public_count_single_and_total_byte_budgets}`; filesystem/hash checks execute only at the explicit canonical bundle boundary, never in the parser |
-| `tempoMapBlock`, `tempoPoint`, `bpmLiteral` | `D::source_parser_retains_tempo_maps_for_later_validation`, `G` | `D::rejects_removed_mixed_beat_literal`, `L` for sign/order/profile validity |
+| `tempoMapBlock`, `tempoPoint`, `bpmLiteral` | `A::source_parser_retains_tempo_maps_for_later_validation`, `G` | `D::rejects_removed_mixed_beat_literal`, `L` for sign/order/profile validity |
 | `schemaBlock`, `schemaField`, `schemaValue` | `A::metadata_schema_ast_retains_ordered_declarations_and_spans`, `G` | `D::extension_payload_duplicate_keys_remain_ordered_and_unbalanced_envelopes_fail`, `L::custom-duplicate-key` |
 | `fieldPath`, `fieldName` | `A`, `E::parser_supports_references_index_postfix_and_keyword_field_names` | `D::additional_bom_and_non_ascii_identifier_spans_are_exact`, malformed field-path cases |
 
@@ -113,9 +113,9 @@ remain wrapped in the smallest legal document/block fixture.
 | `primary`, `literal`, `booleanLiteral`, `nullLiteral`, `numberLiteral` | `E::parses_scalar_and_unit_literals`, literal lexer tests | `D::malformed_numeric_candidates_are_one_lexical_error`, non-finite/raw-scalar cases |
 | `unitLiteral`, `unitSuffix` | `E::parses_scalar_and_unit_literals` | `D::invalid_unit_adjacency_is_one_lexical_error` |
 | `vec2Constructor`, `arguments`, `reference` | `E::parses_names_calls_fields_parentheses_and_vec2_construction`, reference/index tests | malformed call/reference/trailing cases in `E`/`D` |
-| `array`, `object` | `E::parser_accepts_empty_array_source_nodes`, `E::parser_preserves_ordered_object_entries_and_duplicate_keys` | `E::parser_rejects_object_keys_that_are_not_string_literals`, malformed delimiter tests |
+| `array`, `object` | `E::parser_accepts_empty_array_source_nodes`, `D::parser_preserves_ordered_object_entries_and_duplicate_keys` | `E::parser_rejects_object_keys_that_are_not_string_literals`, malformed delimiter tests |
 | `chooseExpression`, `chooseArm`, `elseArm` | `E::parser_preserves_choose_arm_order_and_else_value` | `E::parser_requires_choose_when_arms_and_else`, malformed expression tests |
-| `type`, `scalarType`, `entityType`, `constructibleType` | `E::parses_nested_type_syntax`, `E::parses_scalar_and_recursive_track_types` | `E::type_parser_exposes_the_same_bounded_diagnostic_boundary`, static type-invalid fixtures are `L` |
+| `type`, `scalarType`, `entityType`, `constructibleType` | `E::parses_nested_type_syntax`, `E::parses_scalar_and_recursive_track_types` | `D::type_parser_exposes_the_same_bounded_diagnostic_boundary`, static type-invalid fixtures are `L` |
 
 ## Limit decision
 
