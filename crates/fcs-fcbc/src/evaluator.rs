@@ -1,6 +1,7 @@
 use super::loader::{
     DecodedChart, DescriptorKind, DistanceClassification, RuntimeValue, Segment, ValueType,
 };
+use fcs_runtime::evaluate_easing;
 
 const EXECUTION_ERROR: &str = "fcbc.execution-error";
 
@@ -514,24 +515,38 @@ fn arithmetic(
             };
             vector(ty, [apply(left_x, right_x), apply(left_y, right_y)])
         }
-        (
-            RuntimeValue::Vec2 { ty, value },
-            RuntimeValue::Scalar {
-                ty: scalar_type,
-                value: scalar_value,
-            },
-        ) if matches!(operation, Arithmetic::Multiply | Arithmetic::Divide)
-            && matches!(scalar_type, ValueType::Float) =>
+        (RuntimeValue::Vec2 { ty, value }, scalar)
+            if matches!(operation, Arithmetic::Multiply | Arithmetic::Divide) =>
         {
-            let apply = |component: f64| match operation {
-                Arithmetic::Multiply => component * scalar_value,
-                Arithmetic::Divide => component / scalar_value,
-                _ => unreachable!(),
-            };
-            vector(ty, [apply(value[0]), apply(value[1])])
+            scale_vector(ty, value, scalar, operation)
+        }
+        (scalar, RuntimeValue::Vec2 { ty, value }) if matches!(operation, Arithmetic::Multiply) => {
+            scale_vector(ty, value, scalar, operation)
         }
         _ => Err(EXECUTION_ERROR),
     }
+}
+
+fn scale_vector(
+    ty: ValueType,
+    value: [f64; 2],
+    scalar: RuntimeValue,
+    operation: Arithmetic,
+) -> Result<RuntimeValue, &'static str> {
+    let scalar = match scalar {
+        RuntimeValue::Int(value) => value as f64,
+        RuntimeValue::Scalar {
+            ty: ValueType::Float,
+            value,
+        } => value,
+        _ => return Err(EXECUTION_ERROR),
+    };
+    let apply = |component: f64| match operation {
+        Arithmetic::Multiply => component * scalar,
+        Arithmetic::Divide => component / scalar,
+        _ => unreachable!(),
+    };
+    vector(ty, [apply(value[0]), apply(value[1])])
 }
 
 fn negate(value: RuntimeValue) -> Result<RuntimeValue, &'static str> {
@@ -841,30 +856,7 @@ fn interpolate_value(
 }
 
 fn easing(id: u16, progress: f64) -> Result<f64, &'static str> {
-    if !(0.0..=1.0).contains(&progress) {
-        return Err(EXECUTION_ERROR);
-    }
-    let output = match id {
-        0 => progress,
-        1 => 1.0 - (progress * std::f64::consts::FRAC_PI_2).cos(),
-        2 => (progress * std::f64::consts::FRAC_PI_2).sin(),
-        3 => (1.0 - (std::f64::consts::PI * progress).cos()) / 2.0,
-        4 => progress * progress,
-        5 => 1.0 - (1.0 - progress) * (1.0 - progress),
-        6 => {
-            if progress < 0.5 {
-                2.0 * progress * progress
-            } else {
-                1.0 - (-2.0 * progress + 2.0).powi(2) / 2.0
-            }
-        }
-        _ => return Err(EXECUTION_ERROR),
-    };
-    if output.is_finite() {
-        Ok(output)
-    } else {
-        Err(EXECUTION_ERROR)
-    }
+    evaluate_easing(id, progress).map_err(|_| EXECUTION_ERROR)
 }
 
 fn cubic_bezier_progress(bezier: [f64; 4], progress: f64) -> Result<f64, &'static str> {
@@ -1056,6 +1048,18 @@ fn integrate_scroll_product(
     start: f64,
     end: f64,
 ) -> Result<f64, &'static str> {
+    if start.to_bits() == end.to_bits() {
+        return Ok(0.0);
+    }
+    if end < start {
+        return Ok(-integrate_scroll_product(
+            chart,
+            speed_descriptor,
+            tempo_descriptor,
+            end,
+            start,
+        )?);
+    }
     if let Some(tempo) = constant_descriptor_scalar(chart, tempo_descriptor)? {
         let speed_integral = integrate_descriptor(chart, speed_descriptor, start, end, 0)?;
         let result = speed_integral * tempo / 60.0;
@@ -1066,7 +1070,53 @@ fn integrate_scroll_product(
         let result = tempo_integral * speed / 60.0;
         return result.is_finite().then_some(result).ok_or(EXECUTION_ERROR);
     }
-    Err(EXECUTION_ERROR)
+
+    let descriptor = chart
+        .descriptors
+        .get(tempo_descriptor as usize)
+        .ok_or(EXECUTION_ERROR)?;
+    let DescriptorKind::SegmentTrack(segments) = &descriptor.kind else {
+        return Err(EXECUTION_ERROR);
+    };
+    if segments
+        .iter()
+        .any(|segment| segment.flags & 1 == 0 && segment.interpolation != 1)
+    {
+        return Err(EXECUTION_ERROR);
+    }
+    let mut breakpoints = vec![start, end];
+    for segment in segments {
+        if start < segment.start && segment.start < end {
+            breakpoints.push(segment.start);
+        }
+        if segment.flags & 1 == 0 && start < segment.end && segment.end < end {
+            breakpoints.push(segment.end);
+        }
+    }
+    breakpoints.sort_by(f64::total_cmp);
+    breakpoints.dedup_by(|left, right| left.to_bits() == right.to_bits());
+    let mut total = 0.0;
+    for interval in breakpoints.windows(2) {
+        let interval_start = interval[0];
+        let interval_end = interval[1];
+        let midpoint = interval_start + (interval_end - interval_start) * 0.5;
+        let tempo = scalar_payload(
+            &query_descriptor(
+                chart,
+                tempo_descriptor,
+                midpoint,
+                EvaluationEnvironment::at_time(midpoint),
+            )?
+            .value,
+        )?;
+        if !tempo.is_finite() || tempo <= 0.0 {
+            return Err(EXECUTION_ERROR);
+        }
+        total += integrate_descriptor(chart, speed_descriptor, interval_start, interval_end, 0)?
+            * tempo
+            / 60.0;
+    }
+    total.is_finite().then_some(total).ok_or(EXECUTION_ERROR)
 }
 
 fn constant_descriptor_scalar(
@@ -1086,4 +1136,78 @@ fn constant_descriptor_scalar(
             .get(*index as usize)
             .ok_or(EXECUTION_ERROR)?,
     )?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::loader::{DescriptorKind, Domain, ExpressionNode, PropertyDescriptor};
+
+    fn unbounded() -> Domain {
+        Domain {
+            start: 0.0,
+            end: 0.0,
+            unbounded_before: true,
+            unbounded_after: true,
+        }
+    }
+
+    #[test]
+    fn vec2_int_expression_scales_by_int_operand() {
+        let mut chart = crate::load_chart(&crate::write_nonempty_execution()).unwrap();
+        let vector_constant = chart.constants.len() as u32;
+        chart.constants.push(RuntimeValue::Vec2 {
+            ty: ValueType::Vec2Int,
+            value: [1.0, 2.0],
+        });
+        let factor_constant = chart.constants.len() as u32;
+        chart.constants.push(RuntimeValue::Int(3));
+
+        let vector_node = chart.expressions.len() as u32;
+        chart.expressions.push(ExpressionNode {
+            opcode: 1,
+            result_type: ValueType::Vec2Int,
+            operands: [u32::MAX; 3],
+            arity: 0,
+            immediate: vector_constant,
+        });
+        let factor_node = chart.expressions.len() as u32;
+        chart.expressions.push(ExpressionNode {
+            opcode: 1,
+            result_type: ValueType::Int,
+            operands: [u32::MAX; 3],
+            arity: 0,
+            immediate: factor_constant,
+        });
+
+        for operands in [
+            [vector_node, factor_node, u32::MAX],
+            [factor_node, vector_node, u32::MAX],
+        ] {
+            let root = chart.expressions.len() as u32;
+            chart.expressions.push(ExpressionNode {
+                opcode: 22,
+                result_type: ValueType::Vec2Int,
+                operands,
+                arity: 2,
+                immediate: 0,
+            });
+            let descriptor = chart.descriptors.len() as u32;
+            chart.descriptors.push(PropertyDescriptor {
+                property_type: ValueType::Vec2Int,
+                domain: unbounded(),
+                kind: DescriptorKind::Expression(root),
+            });
+
+            assert_eq!(
+                query_descriptor(&chart, descriptor, 0.0, EvaluationEnvironment::at_time(0.0))
+                    .unwrap()
+                    .value,
+                RuntimeValue::Vec2 {
+                    ty: ValueType::Vec2Int,
+                    value: [3.0, 6.0],
+                }
+            );
+        }
+    }
 }

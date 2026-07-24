@@ -8,6 +8,7 @@ description = "FCBC 2 container framing, codec primitives, and product loader su
 [dependencies]
 crc.workspace = true
 fcs-model = { path = "../fcs-model" }
+fcs-runtime = { path = "../fcs-runtime" }
 sha2.workspace = true
 
 [dev-dependencies]

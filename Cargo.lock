@@ -348,6 +348,7 @@ version = "0.2.0"
 dependencies = [
  "crc",
  "fcs-model",
+ "fcs-runtime",
  "fcs-source",
  "serde",
  "sha2",

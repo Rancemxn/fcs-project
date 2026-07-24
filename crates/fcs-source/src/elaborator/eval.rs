@@ -422,11 +422,38 @@ pub(super) fn infer_expression_with_expected(
                 })
             })
         }
-        SourceExpression::Object { span, .. } | SourceExpression::Choose { span, .. } => {
-            Err(Diagnostic::FeatureUnavailable {
-                feature: "extended source expression",
-                span: *span,
-            })
+        SourceExpression::Object { span, .. } => Err(Diagnostic::FeatureUnavailable {
+            feature: "extended source expression",
+            span: *span,
+        }),
+        SourceExpression::Choose {
+            arms, else_value, ..
+        } => {
+            let ty =
+                infer_expression_with_expected(else_value, scope, functions, schema, expected)?;
+            if let Some(expected) = expected {
+                require_type(expected, &ty, else_value.span())?;
+            }
+            for arm in arms {
+                let condition = infer_expression_with_expected(
+                    &arm.condition,
+                    scope,
+                    functions,
+                    schema,
+                    Some(&Type::Bool),
+                )?;
+                require_type(&Type::Bool, &condition, arm.condition.span())?;
+                let expected = expected.unwrap_or(&ty);
+                let actual = infer_expression_with_expected(
+                    &arm.value,
+                    scope,
+                    functions,
+                    schema,
+                    Some(expected),
+                )?;
+                require_type(expected, &actual, arm.value.span())?;
+            }
+            Ok(ty)
         }
         SourceExpression::Reference { .. } => Ok(Type::Line),
         SourceExpression::Array { elements, span } => {

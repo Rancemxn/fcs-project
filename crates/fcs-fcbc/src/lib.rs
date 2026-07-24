@@ -30,9 +30,10 @@ pub use evaluator::{
     query_distance, query_scroll_coordinate,
 };
 pub use loader::{
-    DecodedChart, DescriptorKind, DistanceClassification, DistanceDescriptor, Domain,
-    ExpressionNode, LineRecord, NULL_INDEX, NoteRecord, PropertyDescriptor, RuntimeValue,
-    SectionInfo, Segment, TempoPoint, ValueType, load, load_chart,
+    DecodedChart, DecodedJudgeShape, DecodedNoteScorePolicy, DecodedNoteSoundPolicy,
+    DescriptorKind, DistanceClassification, DistanceDescriptor, Domain, ExpressionNode,
+    ExtensionRecord, LineRecord, NULL_INDEX, NoteRecord, PropertyDescriptor, ResourceRecord,
+    RuntimeValue, SectionInfo, Segment, TempoPoint, ValueType, load, load_chart,
     validate_descriptor_env_p_context, validate_descriptor_environment_for_target,
 };
 pub use writer::{write_from_compilation, write_nonempty_execution};

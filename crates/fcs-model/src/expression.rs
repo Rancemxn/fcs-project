@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::Beat;
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CanonicalExpressionType {
     Bool,
@@ -9,6 +11,7 @@ pub enum CanonicalExpressionType {
     Beat,
     Length,
     Angle,
+    Color,
     Vec2(Box<Self>),
 }
 
@@ -75,6 +78,7 @@ impl CanonicalExpressionType {
             Self::Beat => output.push(4),
             Self::Length => output.push(5),
             Self::Angle => output.push(6),
+            Self::Color => output.push(8),
             Self::Vec2(element) => {
                 output.push(7);
                 element.append_structural_key(output);
@@ -90,8 +94,10 @@ pub enum CanonicalExpressionValue {
     Float(f64),
     Time(f64),
     Beat(f64),
+    ExactBeat(Beat),
     Length(f64),
     Angle(f64),
+    Color([f64; 4]),
     Vec2(Box<Self>, Box<Self>),
 }
 
@@ -102,9 +108,10 @@ impl CanonicalExpressionValue {
             Self::Int(_) => CanonicalExpressionType::Int,
             Self::Float(_) => CanonicalExpressionType::Float,
             Self::Time(_) => CanonicalExpressionType::Time,
-            Self::Beat(_) => CanonicalExpressionType::Beat,
+            Self::Beat(_) | Self::ExactBeat(_) => CanonicalExpressionType::Beat,
             Self::Length(_) => CanonicalExpressionType::Length,
             Self::Angle(_) => CanonicalExpressionType::Angle,
+            Self::Color(_) => CanonicalExpressionType::Color,
             Self::Vec2(x, y) => {
                 let x_type = x.value_type();
                 if x_type == y.value_type() {
@@ -118,18 +125,24 @@ impl CanonicalExpressionValue {
 
     pub fn is_finite(&self) -> bool {
         match self {
-            Self::Bool(_) | Self::Int(_) => true,
+            Self::Bool(_) | Self::Int(_) | Self::ExactBeat(_) => true,
             Self::Float(value)
             | Self::Time(value)
             | Self::Beat(value)
             | Self::Length(value)
             | Self::Angle(value) => value.is_finite(),
+            Self::Color(components) => components
+                .iter()
+                .all(|component| component.is_finite() && (0.0..=1.0).contains(component)),
             Self::Vec2(x, y) => x.is_finite() && y.is_finite(),
         }
     }
 
     fn is_valid(&self) -> bool {
         match self {
+            Self::Color(components) => components
+                .iter()
+                .all(|component| (0.0..=1.0).contains(component)),
             Self::Vec2(x, y) => {
                 x.is_valid()
                     && y.is_valid()
@@ -150,6 +163,15 @@ impl CanonicalExpressionValue {
             | Self::Beat(value)
             | Self::Length(value)
             | Self::Angle(value) => output.extend_from_slice(&value.to_bits().to_le_bytes()),
+            Self::ExactBeat(value) => {
+                output.extend_from_slice(&value.numerator().to_le_bytes());
+                output.extend_from_slice(&value.denominator().to_le_bytes());
+            }
+            Self::Color(components) => {
+                for component in components {
+                    output.extend_from_slice(&component.to_bits().to_le_bytes());
+                }
+            }
             Self::Vec2(x, y) => {
                 append_key(output, |key| x.append_structural_key(key));
                 append_key(output, |key| y.append_structural_key(key));
@@ -464,9 +486,20 @@ fn expression_value_equal(
             (CanonicalExpressionValue::Int(left), CanonicalExpressionValue::Int(right)) => {
                 left == right
             }
+            (
+                CanonicalExpressionValue::ExactBeat(left),
+                CanonicalExpressionValue::ExactBeat(right),
+            ) => left == right,
             (left, right) => match (expression_float(left), expression_float(right)) {
                 (Some(left), Some(right)) => left.to_bits() == right.to_bits(),
                 _ => match (left, right) {
+                    (
+                        CanonicalExpressionValue::Color(left),
+                        CanonicalExpressionValue::Color(right),
+                    ) => left
+                        .iter()
+                        .zip(right)
+                        .all(|(left, right)| left.to_bits() == right.to_bits()),
                     (
                         CanonicalExpressionValue::Vec2(left_x, left_y),
                         CanonicalExpressionValue::Vec2(right_x, right_y),

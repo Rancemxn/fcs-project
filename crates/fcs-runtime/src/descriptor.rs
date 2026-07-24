@@ -2,7 +2,10 @@ use std::fmt;
 
 use fcs_model::{CanonicalDescriptorKind, CanonicalDescriptorTable, CanonicalExpressionValue};
 
-use crate::{ExpressionEnvironment, ExpressionEvaluationError, evaluate_expression};
+use crate::{
+    ExpressionEnvironment, ExpressionEvaluationError, evaluate_expression,
+    expression::runtime_constant,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DescriptorEvaluationError {
@@ -79,7 +82,7 @@ fn evaluate_descriptor_inner(
         return Err(DescriptorEvaluationError::OutsideDomain { descriptor });
     }
     let result = match value.kind() {
-        CanonicalDescriptorKind::Constant(value) => value.clone(),
+        CanonicalDescriptorKind::Constant(value) => runtime_constant(value.clone()),
         CanonicalDescriptorKind::Expression(expression) => {
             evaluate_expression(expression, environment)?
         }
@@ -115,7 +118,7 @@ fn evaluate_descriptor_inner(
 mod tests {
     use super::*;
     use fcs_model::{
-        CanonicalDescriptorDomain, CanonicalDescriptorRoot, CanonicalExpressionDag,
+        Beat, CanonicalDescriptorDomain, CanonicalDescriptorRoot, CanonicalExpressionDag,
         CanonicalExpressionNode, CanonicalExpressionOpcode, CanonicalExpressionType,
         CanonicalPiece, CanonicalPropertyDescriptor,
     };
@@ -139,6 +142,51 @@ mod tests {
 
     fn environment(time: f64) -> ExpressionEnvironment {
         ExpressionEnvironment::new(time, 0.0, 0.0, 0.0).unwrap()
+    }
+
+    #[test]
+    fn constant_descriptor_uses_runtime_constant_values() {
+        let beat = CanonicalPropertyDescriptor::new(
+            CanonicalExpressionType::Beat,
+            domain(None, None, false),
+            CanonicalDescriptorKind::Constant(CanonicalExpressionValue::ExactBeat(
+                Beat::new(1, 2).unwrap(),
+            )),
+        )
+        .unwrap();
+        let vector = CanonicalPropertyDescriptor::new(
+            CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Beat)),
+            domain(None, None, false),
+            CanonicalDescriptorKind::Constant(CanonicalExpressionValue::Vec2(
+                Box::new(CanonicalExpressionValue::ExactBeat(
+                    Beat::new(1, 2).unwrap(),
+                )),
+                Box::new(CanonicalExpressionValue::ExactBeat(
+                    Beat::new(3, 2).unwrap(),
+                )),
+            )),
+        )
+        .unwrap();
+        let table = CanonicalDescriptorTable::new(
+            vec![beat, vector],
+            vec![
+                CanonicalDescriptorRoot::new("line.beat", 1, 0).unwrap(),
+                CanonicalDescriptorRoot::new("line.position", 1, 1).unwrap(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            evaluate_descriptor(&table, 0, environment(0.0)).unwrap(),
+            CanonicalExpressionValue::Beat(0.5)
+        );
+        assert_eq!(
+            evaluate_descriptor(&table, 1, environment(0.0)).unwrap(),
+            CanonicalExpressionValue::Vec2(
+                Box::new(CanonicalExpressionValue::Beat(0.5)),
+                Box::new(CanonicalExpressionValue::Beat(1.5)),
+            )
+        );
     }
 
     #[test]

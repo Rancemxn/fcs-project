@@ -703,6 +703,26 @@ collections {
 }
 
 #[test]
+fn runtime_environment_names_can_be_compile_time_bindings() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions { const d: float = 0.25; }
+lines { line main {} }
+collections {
+  notes {
+    tap {
+      line: @main;
+      gameplay.time: 1s;
+      presentation.alpha: d + seconds(s);
+    };
+  }
+}"#;
+
+    elaborate_source(source).expect("compile-time const d must not shadow runtime EnvD");
+}
+
+#[test]
 fn closed_schema_values_do_not_infer_unresolved_names_as_strings() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }

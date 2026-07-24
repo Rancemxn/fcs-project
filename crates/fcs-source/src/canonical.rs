@@ -105,6 +105,7 @@ impl Document {
         })?;
         let notes = expanded.canonical_notes(&time_map, &lines)?;
         let tracks = expanded.canonical_tracks(&time_map, &lines)?;
+        let descriptors = expanded.canonical_runtime_descriptors()?;
         let scroll = self.canonical_scroll_set_for_graph(&time_map, &lines)?;
         let source_version = CanonicalSourceVersion::new(self.source_version.to_string())
             .map_err(|error| vec![chart_diagnostic(error, self.format.span)])?;
@@ -122,7 +123,7 @@ impl Document {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| vec![chart_diagnostic(error, self.format.span)])?;
 
-        Ok(CanonicalChart::new(
+        let chart = CanonicalChart::new(
             source_version,
             canonical_profile(self.profile),
             canonical_features(self),
@@ -133,7 +134,11 @@ impl Document {
             tracks,
             scroll,
             required_extensions,
-        ))
+        );
+        Ok(match descriptors {
+            Some(descriptors) => chart.with_descriptors(descriptors),
+            None => chart,
+        })
     }
 
     /// Assembles the FCS §17 CanonicalCompilation product.

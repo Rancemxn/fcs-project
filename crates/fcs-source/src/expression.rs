@@ -1,13 +1,16 @@
 //! Canonical lowering for bounded Core runtime expressions.
 
 use fcs_model::{
-    CanonicalExpressionBuilder, CanonicalExpressionDag, CanonicalExpressionNode,
+    Beat as CanonicalBeat, CanonicalDescriptorDomain, CanonicalDescriptorKind,
+    CanonicalDescriptorRoot, CanonicalDescriptorTable, CanonicalExpressionBuilder,
+    CanonicalExpressionDag, CanonicalExpressionEnvironment, CanonicalExpressionNode,
     CanonicalExpressionOpcode, CanonicalExpressionType, CanonicalExpressionValue,
+    CanonicalPropertyDescriptor,
 };
 
 use crate::ast::{
-    BinaryOperator, CollectionItem, Document, EntityExpression, SourceExpression, SourceLiteral,
-    SourceSpan, UnaryOperator,
+    BinaryOperator, CollectionItem, Document, EntityExpression, ExpandedSourceDocument,
+    SourceExpression, SourceLiteral, SourceSpan, Type, TypedValue, UnaryOperator,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticStage};
 
@@ -15,9 +18,17 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticStage};
 pub fn lower_runtime_expression(
     expression: &SourceExpression,
 ) -> Result<CanonicalExpressionDag, Diagnostic> {
+    lower_runtime_expression_with_resolver(expression, |_| None)
+}
+
+pub(crate) fn lower_runtime_expression_with_resolver(
+    expression: &SourceExpression,
+    mut resolve: impl FnMut(&SourceExpression) -> Option<TypedValue>,
+) -> Result<CanonicalExpressionDag, Diagnostic> {
     let mut lowerer = Lowerer {
         builder: CanonicalExpressionBuilder::new(),
         allow_progress: false,
+        resolve: &mut resolve,
     };
     let root = lowerer.lower(expression)?;
     lowerer.builder.finish(root.index).map_err(|error| {
@@ -89,22 +100,142 @@ impl Document {
     }
 }
 
+impl ExpandedSourceDocument {
+    pub(crate) fn canonical_runtime_descriptors(
+        &self,
+    ) -> Result<Option<CanonicalDescriptorTable>, Vec<Diagnostic>> {
+        let ids = self
+            .canonical_note_ids_with_spans()
+            .map_err(|(error, span)| {
+                vec![Diagnostic::new(
+                    DiagnosticCode::NAME_DUPLICATE,
+                    DiagnosticStage::Canonical,
+                    error.to_string(),
+                    span,
+                )]
+            })?;
+        let mut ids = ids.into_iter();
+        let mut descriptors = Vec::new();
+        let mut roots = Vec::new();
+        let mut first_span = None;
+
+        for entity in self
+            .collections()
+            .flat_map(|collection| collection.entities())
+            .filter(|entity| entity.entity_type() == &Type::Note)
+        {
+            let (id, _) = ids
+                .next()
+                .expect("canonical Note IDs and expanded Notes have equal cardinality");
+            for field in entity.fields() {
+                let Some(expression) = field.runtime_expression() else {
+                    continue;
+                };
+                let Some(target_path) = note_runtime_target_path(field.path()) else {
+                    return Err(vec![Diagnostic::new(
+                        DiagnosticCode::SCHEMA_DYNAMIC_FIELD_FORBIDDEN,
+                        DiagnosticStage::Canonical,
+                        format!(
+                            "field {} cannot depend on a runtime expression",
+                            field.path()
+                        ),
+                        field.span(),
+                    )]);
+                };
+                if field.path() == "presentation.scrollFactor"
+                    && expression
+                        .required_environment()
+                        .contains(&CanonicalExpressionEnvironment::D)
+                {
+                    return Err(vec![Diagnostic::new(
+                        DiagnosticCode::EXPRESSION_ENVIRONMENT_UNAVAILABLE,
+                        DiagnosticStage::Canonical,
+                        "presentation.scrollFactor cannot depend on d",
+                        field.span(),
+                    )]);
+                }
+                first_span.get_or_insert(field.span());
+                let descriptor = CanonicalPropertyDescriptor::new(
+                    expression.result_type().clone(),
+                    CanonicalDescriptorDomain::new(None, None, false)
+                        .expect("the unbounded runtime property domain is valid"),
+                    CanonicalDescriptorKind::Expression(expression.clone()),
+                )
+                .map_err(|error| {
+                    vec![Diagnostic::new(
+                        DiagnosticCode::TYPE_INVALID_OPERATION,
+                        DiagnosticStage::Canonical,
+                        error.to_string(),
+                        field.span(),
+                    )]
+                })?;
+                let descriptor_index = descriptors.len();
+                descriptors.push(descriptor);
+                roots.push(
+                    CanonicalDescriptorRoot::new(target_path, id.value(), descriptor_index)
+                        .map_err(|error| {
+                            vec![Diagnostic::new(
+                                DiagnosticCode::TYPE_INVALID_OPERATION,
+                                DiagnosticStage::Canonical,
+                                error.to_string(),
+                                field.span(),
+                            )]
+                        })?,
+                );
+            }
+        }
+
+        if descriptors.is_empty() {
+            return Ok(None);
+        }
+        CanonicalDescriptorTable::new(descriptors, roots)
+            .map(Some)
+            .map_err(|error| {
+                vec![Diagnostic::new(
+                    DiagnosticCode::TYPE_INVALID_OPERATION,
+                    DiagnosticStage::Canonical,
+                    error.to_string(),
+                    first_span.expect("a nonempty descriptor table has a source span"),
+                )]
+            })
+    }
+}
+
+fn note_runtime_target_path(path: &str) -> Option<&'static str> {
+    match path {
+        "presentation.positionX" => Some("note.presentation.positionX"),
+        "presentation.scrollFactor" => Some("note.presentation.scrollFactor"),
+        "presentation.xOffset" => Some("note.presentation.xOffset"),
+        "presentation.yOffset" => Some("note.presentation.yOffset"),
+        "presentation.alpha" => Some("note.presentation.alpha"),
+        "presentation.scaleX" => Some("note.presentation.scaleX"),
+        "presentation.scaleY" => Some("note.presentation.scaleY"),
+        "presentation.rotation" => Some("note.presentation.rotation"),
+        "presentation.color" => Some("note.presentation.color"),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone)]
 struct LoweredNode {
     index: usize,
     ty: CanonicalExpressionType,
 }
 
-struct Lowerer {
+struct Lowerer<'a, R> {
     builder: CanonicalExpressionBuilder,
     allow_progress: bool,
+    resolve: &'a mut R,
 }
 
-impl Lowerer {
+impl<R> Lowerer<'_, R>
+where
+    R: FnMut(&SourceExpression) -> Option<TypedValue>,
+{
     fn lower(&mut self, expression: &SourceExpression) -> Result<LoweredNode, Diagnostic> {
         match expression {
             SourceExpression::Literal { literal, span } => self.lower_literal(literal, *span),
-            SourceExpression::Name { name, span } => self.lower_environment(name, *span),
+            SourceExpression::Name { name, span } => self.lower_name(expression, name, *span),
             SourceExpression::Unary {
                 operator,
                 operand,
@@ -196,6 +327,40 @@ impl Lowerer {
         }
     }
 
+    fn lower_name(
+        &mut self,
+        expression: &SourceExpression,
+        name: &str,
+        span: SourceSpan,
+    ) -> Result<LoweredNode, Diagnostic> {
+        match (self.resolve)(expression) {
+            Some(value) => self.lower_typed_value(&value, span),
+            None => self.lower_environment(name, span),
+        }
+    }
+
+    fn lower_typed_value(
+        &mut self,
+        value: &TypedValue,
+        span: SourceSpan,
+    ) -> Result<LoweredNode, Diagnostic> {
+        let value = canonical_value(value).ok_or_else(|| {
+            self.error(
+                DiagnosticCode::TYPE_INVALID_OPERATION,
+                "compile-time binding is not a Core runtime expression value",
+                span,
+            )
+        })?;
+        let result_type = value.value_type();
+        self.insert_with_constant(
+            CanonicalExpressionOpcode::Constant,
+            result_type,
+            [None, None, None],
+            Some(value),
+            span,
+        )
+    }
+
     fn lower_literal(
         &mut self,
         literal: &SourceLiteral,
@@ -232,8 +397,9 @@ impl Lowerer {
                 CanonicalExpressionType::Time,
             ),
             SourceLiteral::Beat(value) => (
-                CanonicalExpressionValue::Beat(
-                    value.numerator() as f64 / value.denominator() as f64,
+                CanonicalExpressionValue::ExactBeat(
+                    CanonicalBeat::new(value.numerator(), value.denominator())
+                        .expect("a source Beat is already a valid normalized rational"),
                 ),
                 CanonicalExpressionType::Beat,
             ),
@@ -245,10 +411,11 @@ impl Lowerer {
                 CanonicalExpressionValue::Angle(*value),
                 CanonicalExpressionType::Angle,
             ),
-            SourceLiteral::Null
-            | SourceLiteral::String(_)
-            | SourceLiteral::Color(_)
-            | SourceLiteral::Line(_) => {
+            SourceLiteral::Color(value) => (
+                CanonicalExpressionValue::Color(value.to_linear()),
+                CanonicalExpressionType::Color,
+            ),
+            SourceLiteral::Null | SourceLiteral::String(_) | SourceLiteral::Line(_) => {
                 return Err(self.error(
                     DiagnosticCode::TYPE_INVALID_OPERATION,
                     "literal is not a Core runtime expression value",
@@ -545,6 +712,27 @@ impl Lowerer {
         span: SourceSpan,
     ) -> Diagnostic {
         Diagnostic::new(code, DiagnosticStage::Canonical, message, span)
+    }
+}
+
+fn canonical_value(value: &TypedValue) -> Option<CanonicalExpressionValue> {
+    match value {
+        TypedValue::Bool(value) => Some(CanonicalExpressionValue::Bool(*value)),
+        TypedValue::Int(value) => Some(CanonicalExpressionValue::Int(*value)),
+        TypedValue::Float(value) => Some(CanonicalExpressionValue::Float(*value)),
+        TypedValue::Time(value) => Some(CanonicalExpressionValue::Time(*value)),
+        TypedValue::Beat(value) => Some(CanonicalExpressionValue::ExactBeat(
+            CanonicalBeat::new(value.numerator(), value.denominator())
+                .expect("a typed Beat is already a valid normalized rational"),
+        )),
+        TypedValue::Length(value) => Some(CanonicalExpressionValue::Length(*value)),
+        TypedValue::Angle(value) => Some(CanonicalExpressionValue::Angle(*value)),
+        TypedValue::Color(value) => Some(CanonicalExpressionValue::Color(value.to_linear())),
+        TypedValue::Vec2(x, y) => Some(CanonicalExpressionValue::Vec2(
+            Box::new(canonical_value(x)?),
+            Box::new(canonical_value(y)?),
+        )),
+        _ => None,
     }
 }
 

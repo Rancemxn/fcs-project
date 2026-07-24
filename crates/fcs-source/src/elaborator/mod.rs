@@ -158,6 +158,7 @@ impl Default for CompileTimeLimits {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum ElaboratorError {
+    CanonicalDiagnostic(Box<Diagnostic>),
     FeatureUnavailable {
         feature: &'static str,
         span: SourceSpan,
@@ -369,6 +370,7 @@ fn preflight_names(document: &Document) -> Result<(), ElaboratorError> {
 impl ElaboratorError {
     fn into_diagnostic(self) -> Diagnostic {
         match self {
+            Self::CanonicalDiagnostic(diagnostic) => *diagnostic,
             Self::FeatureUnavailable { feature, span } => Diagnostic::new(
                 DiagnosticCode::IMPLEMENTATION_FEATURE_UNAVAILABLE,
                 DiagnosticStage::Implementation,

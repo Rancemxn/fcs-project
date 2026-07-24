@@ -7,8 +7,8 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use crate::{
-    CanonicalLineGraph, CanonicalMetadata, CanonicalNoteSet, CanonicalScrollSet, CanonicalTrackSet,
-    ChartTimeMap,
+    CanonicalDescriptorTable, CanonicalLineGraph, CanonicalMetadata, CanonicalNoteSet,
+    CanonicalScrollSet, CanonicalTrackSet, ChartTimeMap,
 };
 
 /// The profile declared by a canonical chart's source format envelope.
@@ -116,6 +116,7 @@ pub struct CanonicalChart {
     notes: CanonicalNoteSet,
     tracks: CanonicalTrackSet,
     scroll: CanonicalScrollSet,
+    descriptors: Option<CanonicalDescriptorTable>,
     required_extensions: Vec<CanonicalRequiredExtension>,
 }
 
@@ -143,8 +144,14 @@ impl CanonicalChart {
             notes,
             tracks,
             scroll,
+            descriptors: None,
             required_extensions: required_extensions.into_iter().collect(),
         }
+    }
+
+    pub fn with_descriptors(mut self, descriptors: CanonicalDescriptorTable) -> Self {
+        self.descriptors = Some(descriptors);
+        self
     }
 
     pub fn source_version(&self) -> &CanonicalSourceVersion {
@@ -181,6 +188,10 @@ impl CanonicalChart {
 
     pub const fn scroll(&self) -> &CanonicalScrollSet {
         &self.scroll
+    }
+
+    pub const fn descriptors(&self) -> Option<&CanonicalDescriptorTable> {
+        self.descriptors.as_ref()
     }
 
     pub fn required_extensions(&self) -> &[CanonicalRequiredExtension] {

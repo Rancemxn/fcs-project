@@ -765,7 +765,10 @@ fn parse_runtime_constant(cursor: &mut Cursor<'_>) -> Result<RuntimeValue, &'sta
             let ty = ValueType::vector_of(element).ok_or("fcbc.invalid-record")?;
             RuntimeValue::Vec2 {
                 ty,
-                value: [value.f64()?, value.f64()?],
+                value: [
+                    parse_scalar_value(&mut value, element_tag)?,
+                    parse_scalar_value(&mut value, element_tag)?,
+                ],
             }
         }
         11 => RuntimeValue::ResourceRef(value.u64()?),
@@ -2609,22 +2612,23 @@ fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedVal
 }
 
 fn parse_scalar_payload(cursor: &mut Cursor<'_>, tag: u8) -> Result<(), &'static str> {
+    parse_scalar_value(cursor, tag).map(|_| ())
+}
+
+fn parse_scalar_value(cursor: &mut Cursor<'_>, tag: u8) -> Result<f64, &'static str> {
     match tag {
-        2 => {
-            cursor.i64()?;
-        }
-        3 | 5 | 7 | 8 => {
-            cursor.f64()?;
-        }
+        2 => Ok(cursor.i64()? as f64),
+        3 | 5 | 7 | 8 => cursor.f64(),
         6 => {
-            cursor.i64()?;
-            if cursor.i64()? <= 0 {
+            let numerator = cursor.i64()?;
+            let denominator = cursor.i64()?;
+            if denominator <= 0 {
                 return Err("fcbc.invalid-record");
             }
+            Ok(numerator as f64 / denominator as f64)
         }
-        _ => return Err("fcbc.invalid-record"),
+        _ => Err("fcbc.invalid-record"),
     }
-    Ok(())
 }
 
 fn parse_bytes(cursor: &mut Cursor<'_>) -> Result<Vec<u8>, &'static str> {
