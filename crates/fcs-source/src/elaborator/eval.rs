@@ -484,7 +484,7 @@ pub(super) fn infer_expression_with_expected(
         SourceExpression::Name { name, span } => scope
             .lookup(name)
             .map(|binding| binding.ty.clone())
-            .or_else(|| match name.as_str() {
+            .or(match name.as_str() {
                 "s" => Some(Type::Time),
                 "b" => Some(Type::Beat),
                 "q" => Some(Type::Float),

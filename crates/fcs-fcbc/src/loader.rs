@@ -2758,10 +2758,6 @@ fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedVal
     Ok(parsed)
 }
 
-fn parse_scalar_payload(cursor: &mut Cursor<'_>, tag: u8) -> Result<(), &'static str> {
-    parse_scalar_value(cursor, tag).map(|_| ())
-}
-
 fn parse_scalar_value(cursor: &mut Cursor<'_>, tag: u8) -> Result<f64, &'static str> {
     match tag {
         2 => Ok(cursor.i64()? as f64),
