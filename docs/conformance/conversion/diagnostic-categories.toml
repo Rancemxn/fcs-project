@@ -80,6 +80,12 @@ domain = "cross-domain"
 description = "The target profile and actual writer/runtime capability intersection cannot represent a required feature."
 
 [[category]]
+id = "conversion.capability-negotiated"
+uses = ["report-entry"]
+domain = "cross-domain"
+description = "A target capability domain was deterministically negotiated before writing."
+
+[[category]]
 id = "conversion.repair-not-authorized"
 uses = ["diagnostic"]
 domain = "syntax"

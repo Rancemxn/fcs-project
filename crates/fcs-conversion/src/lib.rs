@@ -11,6 +11,8 @@ use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 
+mod capability;
+mod comparison;
 mod exact;
 mod export;
 mod fixture_lane;
@@ -23,10 +25,21 @@ mod repair;
 mod rpe;
 mod rpe_canonical;
 
+pub use capability::{
+    ApproximationAuthorization, CapabilityDescriptor, CapabilityDomain, CapabilityDomainDescriptor,
+    CapabilityError, DropAuthorization,
+};
+pub use comparison::{
+    CanonicalComparison, ComparisonMismatch, compare_canonical_charts,
+    compare_canonical_charts_with_budgets,
+};
 pub use exact::{DecimalLimits, ExactDecimal, ExactNumberError, ExactRational};
 pub use export::{
-    CapabilitySet, ExportError, NegotiationAction, export_pec_line, export_pgr_v3, export_rpe_json,
-    format_fcs_source, negotiate_export, roundtrip_pgr_v3_public_bytes,
+    CapabilitySet, ExportError, ExportOptions, ExportOutcome, NegotiationAction, NegotiationEntry,
+    NegotiationPlan, export_pec_line, export_pec_line_with_options, export_pgr_v3,
+    export_pgr_v3_with_options, export_pgr_with_options, export_rpe_json,
+    export_rpe_json_with_options, format_fcs_source, negotiate_export,
+    negotiate_export_with_options, roundtrip_pgr_v3_public_bytes,
 };
 pub use fixture_lane::{
     COPYRIGHT_FIXTURE_ROOT_ENV, CopyrightLaneStatus, FixtureClass, FixtureEntry,
