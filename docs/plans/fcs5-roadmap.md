@@ -720,8 +720,11 @@ git diff --check
 - I3.1–I6.7 的实现单元和后续 I7–I10 partial product units 已经合并，但 I10 RC 尚未完成。当前
   residual frontier is tracked by root Issue #9 and children #292–#296: governance/Frozen-state
   correction; native
-  `CanonicalCompilation -> FCBC -> load_chart` descriptor and ResourceData closure; typed Conversion
-  capability and canonical target reparse; canonical Render product/semantic/raster closure; and CLI
+  `CanonicalCompilation -> FCBC -> load_chart` descriptor and ResourceData closure; completion evidence
+  for the typed Conversion capability/canonical target-reparse corrective implementation in draft PR
+  #299; canonical Render product/semantic/raster closure; and CLI
   I10.2-I10.7 assembly plus final executable conformance. Existing product crates and successful Full
   gates are implementation evidence only; they do not authorize Frozen or root completion while these
-  acceptance units remain open.
+  acceptance units remain open. PR #299 currently has local static evidence only under the user's
+  temporary GitHub Actions queue waiver; this is not an exact-head Full Gate pass and does not close
+  #294 or I10.

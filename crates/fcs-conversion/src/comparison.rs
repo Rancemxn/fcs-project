@@ -168,10 +168,10 @@ pub fn compare_canonical_charts_with_budgets(
             ),
         );
     }
-    if !ignored("entity") && expected.required_extensions() != actual.required_extensions() {
+    if !ignored("expression") && expected.required_extensions() != actual.required_extensions() {
         mismatch(
             &mut mismatches,
-            "entity",
+            "expression",
             "required_extensions",
             format!("{:?}", expected.required_extensions()),
             format!("{:?}", actual.required_extensions()),

@@ -36,9 +36,10 @@ pub use comparison::{
 pub use exact::{DecimalLimits, ExactDecimal, ExactNumberError, ExactRational};
 pub use export::{
     CapabilitySet, ExportError, ExportOptions, ExportOutcome, NegotiationAction, NegotiationEntry,
-    NegotiationPlan, export_pec_line, export_pec_line_with_options, export_pgr_v3,
-    export_pgr_v3_with_options, export_pgr_with_options, export_rpe_json,
-    export_rpe_json_with_options, format_fcs_source, negotiate_export,
+    NegotiationPlan, export_pec_compilation_with_options, export_pec_line,
+    export_pec_line_with_options, export_pgr_compilation_with_options, export_pgr_v3,
+    export_pgr_v3_with_options, export_pgr_with_options, export_rpe_compilation_with_options,
+    export_rpe_json, export_rpe_json_with_options, format_fcs_source, negotiate_export,
     negotiate_export_with_options, roundtrip_pgr_v3_public_bytes,
 };
 pub use fixture_lane::{

@@ -4,15 +4,16 @@
 //! semantics. `export_pgr_v3` emits a formatVersion-3 PGR chart from a product
 //! CanonicalChart so target reparse can run through the existing importer.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use fcs_model::{
-    CanonicalChart, CanonicalColor, CanonicalJudgeShape, CanonicalLine, CanonicalLineInherit,
-    CanonicalNoteKind, CanonicalNoteScorePolicy, CanonicalNoteSide, CanonicalNoteSoundPolicy,
-    CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation,
-    CanonicalTrackPiece, CanonicalTrackTarget, CanonicalTrackValue, ConversionDomain,
-    ConversionEntry, ConversionPhase, ConversionPolicy, ConversionReport, ConversionSeverity,
-    ConversionStatus, RepairMode, SemanticStatus,
+    CanonicalChart, CanonicalColor, CanonicalCompilation, CanonicalJudgeShape, CanonicalLine,
+    CanonicalLineInherit, CanonicalNoteKind, CanonicalNoteScorePolicy, CanonicalNoteSide,
+    CanonicalNoteSoundPolicy, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
+    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackTarget, CanonicalTrackValue,
+    ConversionDomain, ConversionEntry, ConversionPhase, ConversionPolicy, ConversionReport,
+    ConversionSeverity, ConversionStatus, RepairMode, SemanticStatus,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -43,7 +44,11 @@ struct PgrLineTracks<'a> {
     speed: Option<&'a CanonicalTrack>,
 }
 
-fn pgr_line_tracks(chart: &CanonicalChart, owner: u64) -> Result<PgrLineTracks<'_>, ExportError> {
+fn pgr_line_tracks(
+    chart: &CanonicalChart,
+    owner: u64,
+    negotiation: &NegotiationPlan,
+) -> Result<PgrLineTracks<'_>, ExportError> {
     let mut found = PgrLineTracks::default();
     for track in chart
         .tracks()
@@ -56,6 +61,7 @@ fn pgr_line_tracks(chart: &CanonicalChart, owner: u64) -> Result<PgrLineTracks<'
             ("pgr.rotation", CanonicalTrackTarget::Rotation) => &mut found.rotation,
             ("pgr.alpha", CanonicalTrackTarget::Alpha) => &mut found.alpha,
             ("pgr.speed", CanonicalTrackTarget::ScrollSpeed) => &mut found.speed,
+            _ if negotiation.drops(CapabilityDomain::Motion) => continue,
             _ => {
                 return Err(ExportError::new(
                     "conversion.capability-mismatch",
@@ -66,7 +72,12 @@ fn pgr_line_tracks(chart: &CanonicalChart, owner: u64) -> Result<PgrLineTracks<'
                 ));
             }
         };
-        *slot = Some(track);
+        if slot.replace(track).is_some() {
+            return Err(ExportError::new(
+                "conversion.capability-mismatch",
+                format!("duplicate PGR Track slot for {}", track.name()),
+            ));
+        }
     }
     Ok(found)
 }
@@ -74,46 +85,32 @@ fn pgr_line_tracks(chart: &CanonicalChart, owner: u64) -> Result<PgrLineTracks<'
 fn require_pgr_chart_shape(
     chart: &CanonicalChart,
     options: &ExportOptions,
+    negotiation: &NegotiationPlan,
 ) -> Result<(), ExportError> {
-    let metadata = chart.metadata();
-    if metadata.meta().is_some()
-        || !metadata.contributors().is_empty()
-        || !metadata.credits().is_empty()
-        || !metadata.resources().is_empty()
-        || metadata.artwork().is_some()
-        || metadata
-            .sync()
-            .is_some_and(|sync| sync.primary_audio().is_some() || sync.preview().is_some())
-        || chart.descriptors().is_some()
-        || !chart.required_extensions().is_empty()
-    {
-        return Err(ExportError::new(
-            "conversion.capability-mismatch",
-            "PGR target cannot represent canonical metadata, resources, descriptors, or extensions",
-        ));
-    }
+    require_external_payload_losses(chart, negotiation, "PGR")?;
     let floor_scale = options.floor_scale_px.to_f64().map_err(|error| {
         ExportError::new("conversion.profile-parameter-invalid", error.to_string())
     })?;
     for line in chart.lines().lines() {
         let base = line.base();
-        if line.parent().is_some()
-            || line.inherit() != &CanonicalLineInherit::default()
-            || base.position().x() != 0.0
-            || base.position().y() != 0.0
-            || base.rotation() != 0.0
-            || base.scale().x() != 1.0
-            || base.scale().y() != 1.0
-            || base.alpha() != 1.0
-            || base.transform_origin().x() != 0.0
-            || base.transform_origin().y() != 0.0
-            || base.texture_anchor().x() != 0.5
-            || base.texture_anchor().y() != 0.5
-            || base.floor_scale() != floor_scale
-            || base.integration_origin() != 0.0
-            || base.initial_floor_position() != 0.0
-            || base.allow_reverse_scroll()
-            || base.z_order() != 0
+        if !negotiation.drops(CapabilityDomain::Motion)
+            && (line.parent().is_some()
+                || line.inherit() != &CanonicalLineInherit::default()
+                || base.position().x() != 0.0
+                || base.position().y() != 0.0
+                || base.rotation() != 0.0
+                || base.scale().x() != 1.0
+                || base.scale().y() != 1.0
+                || base.alpha() != 1.0
+                || base.transform_origin().x() != 0.0
+                || base.transform_origin().y() != 0.0
+                || base.texture_anchor().x() != 0.5
+                || base.texture_anchor().y() != 0.5
+                || base.floor_scale() != floor_scale
+                || base.integration_origin() != 0.0
+                || base.initial_floor_position() != 0.0
+                || base.allow_reverse_scroll()
+                || base.z_order() != 0)
         {
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
@@ -123,7 +120,7 @@ fn require_pgr_chart_shape(
                 ),
             ));
         }
-        let tracks = pgr_line_tracks(chart, line.id().value())?;
+        let tracks = pgr_line_tracks(chart, line.id().value(), negotiation)?;
         if tracks.speed.is_none() {
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
@@ -134,11 +131,11 @@ fn require_pgr_chart_shape(
     for note in chart.notes().notes() {
         let gameplay = note.gameplay();
         let presentation = note.presentation();
-        if !gameplay.judgment_enabled()
+        let gameplay_unsupported = !gameplay.judgment_enabled()
             || gameplay.judge_shape() != &CanonicalJudgeShape::LineDefault
             || gameplay.sound_policy() != &CanonicalNoteSoundPolicy::Default
-            || gameplay.score_policy() != &CanonicalNoteScorePolicy::Default
-            || presentation.x_offset() != 0.0
+            || gameplay.score_policy() != &CanonicalNoteScorePolicy::Default;
+        let presentation_unsupported = presentation.x_offset() != 0.0
             || presentation.y_offset() != 0.0
             || presentation.alpha() != 1.0
             || presentation.scale_x() != 1.0
@@ -149,7 +146,9 @@ fn require_pgr_chart_shape(
             || !presentation.render_enabled()
             || presentation.visible_from().is_some()
             || presentation.visible_until().is_some()
-            || presentation.scroll_factor() < 0.0
+            || presentation.scroll_factor() < 0.0;
+        if (gameplay_unsupported && !negotiation.drops(CapabilityDomain::Gameplay))
+            || (presentation_unsupported && !negotiation.drops(CapabilityDomain::Presentation))
         {
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
@@ -557,6 +556,21 @@ impl NegotiationPlan {
             .unwrap_or(NegotiationAction::Direct)
     }
 
+    pub fn action_for(&self, domain: CapabilityDomain) -> Option<NegotiationAction> {
+        self.entries
+            .iter()
+            .find(|entry| entry.domain == domain)
+            .map(|entry| entry.action)
+    }
+
+    pub fn drops(&self, domain: CapabilityDomain) -> bool {
+        self.action_for(domain) == Some(NegotiationAction::Drop)
+    }
+
+    pub fn approximates(&self, domain: CapabilityDomain) -> bool {
+        self.action_for(domain) == Some(NegotiationAction::Bake)
+    }
+
     fn has_unsupported(&self) -> bool {
         self.entries
             .iter()
@@ -658,6 +672,17 @@ pub fn export_pgr_v3_with_options(
     export_pgr_with_options(chart, options)
 }
 
+/// Export a complete canonical product. External chart-only targets must
+/// explicitly negotiate any resource/package loss before this wrapper succeeds.
+pub fn export_pgr_compilation_with_options(
+    compilation: &CanonicalCompilation,
+    options: &ExportOptions,
+) -> Result<ExportOutcome, ExportError> {
+    validate_compilation_resource_closure(compilation)?;
+    let outcome = export_pgr_with_options(compilation.chart(), options)?;
+    record_compilation_roundtrip_context(outcome, compilation, options)
+}
+
 /// Export PGR v1 or v3 according to the explicit target profile.
 pub fn export_pgr_with_options(
     chart: &CanonicalChart,
@@ -671,7 +696,7 @@ pub fn export_pgr_with_options(
         ));
     }
     let (negotiation, entries) = negotiate_export_with_options(chart, options)?;
-    require_pgr_chart_shape(chart, options)?;
+    require_pgr_chart_shape(chart, options, &negotiation)?;
     let bpm = single_global_bpm(chart, "PGR")?;
     let offset = chart
         .metadata()
@@ -683,7 +708,7 @@ pub fn export_pgr_with_options(
     ordered_lines.sort_by_key(|line| line.document_order());
     for line in ordered_lines {
         let line_id = line.id().value();
-        let tracks = pgr_line_tracks(chart, line_id)?;
+        let tracks = pgr_line_tracks(chart, line_id, &negotiation)?;
         let speed = tracks.speed.ok_or_else(|| {
             ExportError::new(
                 "conversion.capability-mismatch",
@@ -711,7 +736,11 @@ pub fn export_pgr_with_options(
                 .map(|end| chart_time_to_pgr_t(end.chart_time_seconds(), bpm) - time_t)
                 .unwrap_or(0.0)
                 .max(0.0);
-            let position_x = note.presentation().position_x() / 108.0;
+            let position_x = if negotiation.drops(CapabilityDomain::Presentation) {
+                0.0
+            } else {
+                note.presentation().position_x() / 108.0
+            };
             let floor_position = pgr_floor_position(speed, start_seconds)?;
             let note_type = match note.kind() {
                 CanonicalNoteKind::Tap => 1,
@@ -724,7 +753,11 @@ pub fn export_pgr_with_options(
                 "time": time_t,
                 "holdTime": hold_time,
                 "positionX": position_x,
-                "speed": note.presentation().scroll_factor(),
+                "speed": if negotiation.drops(CapabilityDomain::Presentation) {
+                    1.0
+                } else {
+                    note.presentation().scroll_factor()
+                },
                 "floorPosition": floor_position
             });
             match note.gameplay().side() {
@@ -732,9 +765,16 @@ pub fn export_pgr_with_options(
                 CanonicalNoteSide::Below => notes_below.push(payload),
             }
         }
-        let move_events = pgr_track_events(tracks.position, bpm, profile)?;
-        let rotate_events = pgr_track_events(tracks.rotation, bpm, profile)?;
-        let alpha_events = pgr_track_events(tracks.alpha, bpm, profile)?;
+        let (move_events, rotate_events, alpha_events) =
+            if negotiation.drops(CapabilityDomain::Motion) {
+                (Vec::new(), Vec::new(), Vec::new())
+            } else {
+                (
+                    pgr_track_events(tracks.position, bpm, profile)?,
+                    pgr_track_events(tracks.rotation, bpm, profile)?,
+                    pgr_track_events(tracks.alpha, bpm, profile)?,
+                )
+            };
         let speed_events = pgr_track_events(Some(speed), bpm, profile)?;
         lines.push(json!({
             "bpm": bpm,
@@ -910,7 +950,7 @@ impl CapabilitySet {
             version: "json",
             time: true,
             notes: true,
-            tracks: true,
+            tracks: false,
             expressions: false,
             resources: false,
         }
@@ -945,7 +985,7 @@ impl CapabilitySet {
                 exact(CapabilityDomain::Scroll, self.time),
                 exact(CapabilityDomain::Presentation, self.notes),
                 exact(CapabilityDomain::Resource, self.resources),
-                exact(CapabilityDomain::Metadata, true),
+                exact(CapabilityDomain::Metadata, false),
                 exact(CapabilityDomain::Numeric, true),
                 exact(CapabilityDomain::Entity, true),
                 exact(CapabilityDomain::Limits, true),
@@ -992,19 +1032,30 @@ pub fn negotiate_export_with_options(
             CapabilityDomain::Motion => !chart.tracks().tracks().is_empty(),
             CapabilityDomain::Scroll => !chart.scroll().lines().is_empty(),
             CapabilityDomain::Presentation => !chart.notes().notes().is_empty(),
-            CapabilityDomain::Resource => !chart.metadata().resources().is_empty(),
+            CapabilityDomain::Resource => {
+                !chart.metadata().resources().is_empty()
+                    || chart.metadata().sync().is_some_and(|sync| {
+                        sync.primary_audio().is_some() || sync.preview().is_some()
+                    })
+            }
             CapabilityDomain::Metadata => {
                 chart.metadata().meta().is_some()
                     || !chart.metadata().contributors().is_empty()
                     || !chart.metadata().credits().is_empty()
                     || chart.metadata().artwork().is_some()
-                    || chart.metadata().sync().is_some()
             }
             CapabilityDomain::Numeric => true,
             CapabilityDomain::Entity => chart.lines().lines().next().is_some(),
             CapabilityDomain::Limits => true,
-            CapabilityDomain::Expression => chart.descriptors().is_some(),
-            CapabilityDomain::Package => !chart.metadata().resources().is_empty(),
+            CapabilityDomain::Expression => {
+                chart.descriptors().is_some() || !chart.required_extensions().is_empty()
+            }
+            CapabilityDomain::Package => {
+                !chart.metadata().resources().is_empty()
+                    || chart.metadata().sync().is_some_and(|sync| {
+                        sync.primary_audio().is_some() || sync.preview().is_some()
+                    })
+            }
         };
         if !needed {
             continue;
@@ -1012,6 +1063,11 @@ pub fn negotiate_export_with_options(
         let limit_exceeded = descriptor
             .and_then(CapabilityDomainDescriptor::max_entities)
             .is_some_and(|limit| capability_entity_count(chart, domain) > limit);
+        let requested_approximation_segments = descriptor
+            .filter(|descriptor| {
+                descriptor.approximation() && options.approximation.allows(domain.as_str())
+            })
+            .map_or(0, |_| approximation_segment_count(chart, domain));
         let action = match descriptor {
             _ if limit_exceeded => NegotiationAction::Unsupported,
             Some(descriptor) if descriptor.exact() => NegotiationAction::Direct,
@@ -1082,7 +1138,7 @@ pub fn negotiate_export_with_options(
                 None,
                 None,
                 None,
-                format!("{} domain negotiated as {}", domain, action.as_str()),
+                negotiation_message(domain, action, options, requested_approximation_segments),
                 [],
             )
             .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
@@ -1138,20 +1194,90 @@ fn capability_entity_count(chart: &CanonicalChart, domain: CapabilityDomain) -> 
         CapabilityDomain::Resource | CapabilityDomain::Package => {
             chart.metadata().resources().len()
         }
-        CapabilityDomain::Metadata => usize::from(
-            chart.metadata().meta().is_some()
-                || !chart.metadata().contributors().is_empty()
-                || !chart.metadata().credits().is_empty()
-                || chart.metadata().artwork().is_some()
-                || chart.metadata().sync().is_some(),
-        ),
+        CapabilityDomain::Metadata => {
+            chart.metadata().meta().map_or(0, BTreeMap::len)
+                + chart.metadata().contributors().len()
+                + chart.metadata().credits().len()
+                + usize::from(chart.metadata().artwork().is_some())
+        }
         CapabilityDomain::Entity => {
             chart.lines().lines().count()
                 + chart.notes().notes().len()
                 + chart.tracks().tracks().len()
         }
-        CapabilityDomain::Expression => usize::from(chart.descriptors().is_some()),
+        CapabilityDomain::Expression => {
+            chart
+                .descriptors()
+                .map_or(0, |table| table.descriptors().len())
+                + chart.required_extensions().len()
+        }
         CapabilityDomain::Numeric | CapabilityDomain::Limits => 0,
+    }
+}
+
+fn approximation_segment_count(chart: &CanonicalChart, domain: CapabilityDomain) -> usize {
+    match domain {
+        CapabilityDomain::Timing => chart.time_map().segments().count(),
+        CapabilityDomain::Gameplay | CapabilityDomain::Presentation => chart.notes().notes().len(),
+        CapabilityDomain::Motion => chart
+            .tracks()
+            .tracks()
+            .iter()
+            .map(|track| track.pieces().len())
+            .sum(),
+        CapabilityDomain::Scroll => chart
+            .scroll()
+            .lines()
+            .iter()
+            .map(|line| line.coordinate().points().len())
+            .sum(),
+        CapabilityDomain::Resource | CapabilityDomain::Package => {
+            chart.metadata().resources().len()
+        }
+        CapabilityDomain::Metadata => capability_entity_count(chart, domain),
+        CapabilityDomain::Numeric | CapabilityDomain::Limits => 0,
+        CapabilityDomain::Entity => capability_entity_count(chart, domain),
+        CapabilityDomain::Expression => capability_entity_count(chart, domain),
+    }
+}
+
+fn negotiation_message(
+    domain: CapabilityDomain,
+    action: NegotiationAction,
+    options: &ExportOptions,
+    approximation_segments: usize,
+) -> String {
+    match action {
+        NegotiationAction::Bake => {
+            let budgets = options
+                .approximation
+                .error_budgets()
+                .iter()
+                .filter(|(metric, _)| {
+                    metric.as_str() == domain.as_str()
+                        || metric
+                            .strip_prefix(domain.as_str())
+                            .is_some_and(|suffix| suffix.starts_with('.'))
+                })
+                .map(|(metric, budget)| format!("{metric}={budget}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "{} domain negotiated as bake using {}@{} with {} input features, output segment cap {}, and budgets [{}]",
+                domain,
+                options.approximation.algorithm_id(),
+                options.approximation.algorithm_version(),
+                approximation_segments,
+                options.approximation.maximum_segments(),
+                budgets
+            )
+        }
+        NegotiationAction::Drop => format!(
+            "{} domain negotiated as drop: {}",
+            domain,
+            options.drop.reason()
+        ),
+        _ => format!("{} domain negotiated as {}", domain, action.as_str()),
     }
 }
 
@@ -1198,7 +1324,7 @@ pub fn export_rpe_json_with_options(
 ) -> Result<ExportOutcome, ExportError> {
     let (profile, binding, rpe_version) = selected_rpe_binding(options)?;
     let (negotiation, entries) = negotiate_export_with_options(chart, options)?;
-    require_rpe_chart_shape(chart)?;
+    require_rpe_chart_shape(chart, &negotiation)?;
     let offset_ms = chart
         .metadata()
         .sync()
@@ -1260,20 +1386,31 @@ pub fn export_rpe_json_with_options(
                 CanonicalNoteSide::Above => 1,
                 CanonicalNoteSide::Below => 0,
             };
-            let raw_speed = note.presentation().scroll_factor() * 4.5;
+            let presentation_dropped = negotiation.drops(CapabilityDomain::Presentation);
+            let raw_speed = if presentation_dropped {
+                4.5
+            } else {
+                note.presentation().scroll_factor() * 4.5
+            };
             let mut payload = json!({
                 "type": note_type,
                 "startTime": start,
                 "endTime": end,
-                "positionX": note.presentation().position_x(),
+                "positionX": if presentation_dropped {
+                    0.0
+                } else {
+                    note.presentation().position_x()
+                },
                 "speed": raw_speed,
                 "above": above,
                 "isFake": if note.gameplay().judgment_enabled() { 0 } else { 1 }
             });
-            if matches!(
-                profile,
-                RpeProfile::PhiraLegacySpeed | RpeProfile::PhiraRpe170Speed
-            ) {
+            if !presentation_dropped
+                && matches!(
+                    profile,
+                    RpeProfile::PhiraLegacySpeed | RpeProfile::PhiraRpe170Speed
+                )
+            {
                 let object = payload.as_object_mut().expect("Note payload is an object");
                 if note.presentation().alpha() != 1.0 {
                     let alpha = note.presentation().alpha() * 255.0;
@@ -1362,6 +1499,16 @@ pub fn export_rpe_json_with_options(
     )
 }
 
+/// Export a complete canonical product through the RPE target boundary.
+pub fn export_rpe_compilation_with_options(
+    compilation: &CanonicalCompilation,
+    options: &ExportOptions,
+) -> Result<ExportOutcome, ExportError> {
+    validate_compilation_resource_closure(compilation)?;
+    let outcome = export_rpe_json_with_options(compilation.chart(), options)?;
+    record_compilation_roundtrip_context(outcome, compilation, options)
+}
+
 /// Export a Phira line-command PEC chart from CanonicalChart (I8.7 product surface).
 pub fn export_pec_line(chart: &CanonicalChart) -> Result<Vec<u8>, ExportError> {
     let profile = PecProfile::Phira;
@@ -1384,17 +1531,22 @@ pub fn export_pec_line_with_options(
         ));
     }
     let (negotiation, entries) = negotiate_export_with_options(chart, options)?;
-    require_pec_chart_shape(chart, options)?;
+    require_pec_chart_shape(chart, options, &negotiation)?;
     let offset = chart
         .metadata()
         .sync()
         .map(|sync| sync.audio_offset().seconds())
         .unwrap_or(0.0);
-    let raw_offset = offset * 1000.0 + profile.offset_bias_ms() as f64;
+    let raw_offset = finite_decimal(
+        offset * 1000.0 + profile.offset_bias_ms() as f64,
+        "PEC offset",
+    )?;
     let mut lines = String::new();
     lines.push_str(&format!("{raw_offset}\n"));
     for (beat, _, bpm) in chart.time_map().segments() {
-        lines.push_str(&format!("bp {} {bpm}\n", beat.as_f64()));
+        let beat = finite_decimal(beat.as_f64(), "PEC BPM beat")?;
+        let bpm = finite_decimal(bpm, "PEC BPM value")?;
+        lines.push_str(&format!("bp {beat} {bpm}\n"));
     }
     let mut ordered_lines: Vec<_> = chart.lines().lines().collect();
     ordered_lines.sort_by_key(|line| line.document_order());
@@ -1419,7 +1571,14 @@ pub fn export_pec_line_with_options(
             .map_err(|error| {
                 ExportError::new("conversion.capability-mismatch", error.to_string())
             })?;
-        let x = note.presentation().position_x() * 16.0 / 15.0;
+        let beat = finite_decimal(beat, "PEC Note beat")?;
+        let presentation_dropped = negotiation.drops(CapabilityDomain::Presentation);
+        let x = if presentation_dropped {
+            0.0
+        } else {
+            note.presentation().position_x() * 16.0 / 15.0
+        };
+        let x = finite_decimal(x, "PEC Note X")?;
         let side = match note.gameplay().side() {
             CanonicalNoteSide::Above => 1,
             CanonicalNoteSide::Below => 2,
@@ -1443,6 +1602,7 @@ pub fn export_pec_line_with_options(
                     .map_err(|error| {
                         ExportError::new("conversion.capability-mismatch", error.to_string())
                     })?;
+                let end = finite_decimal(end, "PEC Hold end beat")?;
                 lines.push_str(&format!("n2 {line_index} {beat} {end} {x} {side} {fake}\n"));
             }
             CanonicalNoteKind::Tap => {
@@ -1455,11 +1615,23 @@ pub fn export_pec_line_with_options(
                 lines.push_str(&format!("n4 {line_index} {beat} {x} {side} {fake}\n"));
             }
         }
-        lines.push_str(&format!(
-            "# {}\n& {}\n",
-            note.presentation().scroll_factor(),
-            note.presentation().scale_x()
-        ));
+        let scroll_factor = finite_decimal(
+            if presentation_dropped {
+                1.0
+            } else {
+                note.presentation().scroll_factor()
+            },
+            "PEC Note scroll factor",
+        )?;
+        let scale = finite_decimal(
+            if presentation_dropped {
+                1.0
+            } else {
+                note.presentation().scale_x()
+            },
+            "PEC Note scale",
+        )?;
+        lines.push_str(&format!("# {scroll_factor}\n& {scale}\n"));
     }
     let bytes = lines.into_bytes();
     let artifact = SourceArtifact::new("export.pec", ArtifactRole::Chart, bytes.clone())
@@ -1483,11 +1655,125 @@ pub fn export_pec_line_with_options(
     )
 }
 
+/// Export a complete canonical product through the PEC target boundary.
+pub fn export_pec_compilation_with_options(
+    compilation: &CanonicalCompilation,
+    options: &ExportOptions,
+) -> Result<ExportOutcome, ExportError> {
+    validate_compilation_resource_closure(compilation)?;
+    let outcome = export_pec_line_with_options(compilation.chart(), options)?;
+    record_compilation_roundtrip_context(outcome, compilation, options)
+}
+
 fn seconds_to_rpe_beat(beats: f64) -> [i64; 3] {
     const DENOMINATOR: i64 = 1_000_000_000;
     let whole = beats.floor() as i64;
     let numerator = ((beats - whole as f64) * DENOMINATOR as f64).round() as i64;
     [whole, numerator, DENOMINATOR]
+}
+
+fn finite_decimal(value: f64, field: &str) -> Result<String, ExportError> {
+    if !value.is_finite() {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!("{field} must be finite"),
+        ));
+    }
+    Ok(ryu::Buffer::new().format_finite(value).to_owned())
+}
+
+fn validate_compilation_resource_closure(
+    compilation: &CanonicalCompilation,
+) -> Result<(), ExportError> {
+    let declared = compilation.chart().metadata().resources();
+    let bundled = compilation.resources().resources();
+    if declared.len() != bundled.len() {
+        return Err(ExportError::new(
+            "conversion.resource-missing",
+            format!(
+                "canonical resource declarations ({}) do not match bundled resources ({})",
+                declared.len(),
+                bundled.len()
+            ),
+        ));
+    }
+    for (id, resource) in declared {
+        let Some(payload) = bundled.get(id) else {
+            return Err(ExportError::new(
+                "conversion.resource-missing",
+                format!("canonical resource {id} has no bundled payload"),
+            ));
+        };
+        if payload.resource() != resource {
+            return Err(ExportError::new(
+                "conversion.resource-missing",
+                format!("canonical resource {id} descriptor differs from its bundled payload"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn record_compilation_roundtrip_context(
+    mut outcome: ExportOutcome,
+    compilation: &CanonicalCompilation,
+    options: &ExportOptions,
+) -> Result<ExportOutcome, ExportError> {
+    if options.policy != ConversionPolicy::Roundtrip {
+        return Ok(outcome);
+    }
+    let stale_count = compilation
+        .distribution()
+        .provenance()
+        .facts()
+        .values()
+        .filter(|fact| fact.is_stale())
+        .count();
+    if stale_count == 0 {
+        return Ok(outcome);
+    }
+    let mut entries = outcome.report.entries().to_vec();
+    entries.push(
+        ConversionEntry::new(
+            "roundtrip/stale-source-representation",
+            "conversion.tool-rewrite",
+            ConversionDomain::Profile,
+            ConversionSeverity::Warning,
+            SemanticStatus::Equivalent,
+            ConversionPhase::Export,
+            None,
+            None,
+            None,
+            Some("source-representation".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            format!(
+                "rebuilt the target from canonical semantics because {stale_count} source round-trip facts are stale"
+            ),
+            [],
+        )
+        .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+    );
+    let operation_id = outcome.report.operation_id().to_owned();
+    let conversion_policy = outcome.report.conversion_policy();
+    let repair_mode = outcome.report.repair_mode().clone();
+    let repairs = outcome.report.repairs().to_vec();
+    let status = outcome.report.status();
+    let output_hash = outcome.report.output_hash().map(str::to_owned);
+    outcome.report = ConversionReport::new(
+        operation_id,
+        conversion_policy,
+        repair_mode,
+        entries,
+        repairs,
+        [status],
+        output_hash,
+    )
+    .map_err(|error| ExportError::new("conversion.report", error.to_string()))?;
+    Ok(outcome)
 }
 
 fn profile_reference(id: &str, version: &str) -> String {
@@ -1611,18 +1897,46 @@ fn single_global_bpm(chart: &CanonicalChart, format: &str) -> Result<f64, Export
     Ok(segments[0].2)
 }
 
-fn metadata_is_external_minimal(chart: &CanonicalChart) -> bool {
+fn require_external_payload_losses(
+    chart: &CanonicalChart,
+    negotiation: &NegotiationPlan,
+    format: &str,
+) -> Result<(), ExportError> {
     let metadata = chart.metadata();
-    metadata.meta().is_none()
-        && metadata.contributors().is_empty()
-        && metadata.credits().is_empty()
-        && metadata.resources().is_empty()
-        && metadata.artwork().is_none()
-        && metadata
+    let has_metadata = metadata.meta().is_some()
+        || !metadata.contributors().is_empty()
+        || !metadata.credits().is_empty()
+        || metadata.artwork().is_some();
+    if has_metadata && !negotiation.drops(CapabilityDomain::Metadata) {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!("{format} writer cannot represent canonical metadata"),
+        ));
+    }
+
+    let has_resources = !metadata.resources().is_empty()
+        || metadata
             .sync()
-            .is_none_or(|sync| sync.primary_audio().is_none() && sync.preview().is_none())
-        && chart.descriptors().is_none()
-        && chart.required_extensions().is_empty()
+            .is_some_and(|sync| sync.primary_audio().is_some() || sync.preview().is_some());
+    if has_resources
+        && !(negotiation.drops(CapabilityDomain::Resource)
+            && negotiation.drops(CapabilityDomain::Package))
+    {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!("{format} writer cannot represent canonical resources or package bindings"),
+        ));
+    }
+
+    if (chart.descriptors().is_some() || !chart.required_extensions().is_empty())
+        && !negotiation.drops(CapabilityDomain::Expression)
+    {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!("{format} writer cannot represent descriptors or required extensions"),
+        ));
+    }
+    Ok(())
 }
 
 fn line_base_is_default(line: &CanonicalLine, floor_scale: f64) -> bool {
@@ -1656,17 +1970,22 @@ fn note_gameplay_is_external_default(chart_note: &fcs_model::CanonicalNote) -> b
         }
 }
 
-fn require_rpe_chart_shape(chart: &CanonicalChart) -> Result<(), ExportError> {
-    if !metadata_is_external_minimal(chart) || !chart.tracks().tracks().is_empty() {
+fn require_rpe_chart_shape(
+    chart: &CanonicalChart,
+    negotiation: &NegotiationPlan,
+) -> Result<(), ExportError> {
+    require_external_payload_losses(chart, negotiation, "RPE")?;
+    if !chart.tracks().tracks().is_empty() && !negotiation.drops(CapabilityDomain::Motion) {
         return Err(ExportError::new(
             "conversion.capability-mismatch",
-            "RPE writer cannot represent canonical resources, descriptors, or Tracks",
+            "RPE writer cannot represent canonical Tracks",
         ));
     }
     for line in chart.lines().lines() {
-        if !line_base_is_default(line, 1.0)
-            || *line.inherit()
-                != CanonicalLineInherit::new(true, line.inherit().rotation(), true, true, true)
+        if !negotiation.drops(CapabilityDomain::Motion)
+            && (!line_base_is_default(line, 1.0)
+                || *line.inherit()
+                    != CanonicalLineInherit::new(true, line.inherit().rotation(), true, true, true))
         {
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
@@ -1679,15 +1998,17 @@ fn require_rpe_chart_shape(chart: &CanonicalChart) -> Result<(), ExportError> {
     }
     for note in chart.notes().notes() {
         let presentation = note.presentation();
-        if !note_gameplay_is_external_default(note)
-            || presentation.x_offset() != 0.0
+        let gameplay_unsupported = !note_gameplay_is_external_default(note);
+        let presentation_unsupported = presentation.x_offset() != 0.0
             || presentation.scale_x() != presentation.scale_y()
             || !(0.0..=1.0).contains(&presentation.alpha())
             || presentation.rotation() != 0.0
             || presentation.color() != CanonicalColor::rgba(255, 255, 255, 255)
             || presentation.texture().is_some()
             || !presentation.render_enabled()
-            || presentation.visible_until().is_some()
+            || presentation.visible_until().is_some();
+        if (gameplay_unsupported && !negotiation.drops(CapabilityDomain::Gameplay))
+            || (presentation_unsupported && !negotiation.drops(CapabilityDomain::Presentation))
         {
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
@@ -1704,11 +2025,13 @@ fn require_rpe_chart_shape(chart: &CanonicalChart) -> Result<(), ExportError> {
 fn require_pec_chart_shape(
     chart: &CanonicalChart,
     options: &ExportOptions,
+    negotiation: &NegotiationPlan,
 ) -> Result<(), ExportError> {
-    if !metadata_is_external_minimal(chart) || !chart.tracks().tracks().is_empty() {
+    require_external_payload_losses(chart, negotiation, "PEC")?;
+    if !chart.tracks().tracks().is_empty() && !negotiation.drops(CapabilityDomain::Motion) {
         return Err(ExportError::new(
             "conversion.capability-mismatch",
-            "PEC writer cannot represent canonical resources, descriptors, or Tracks",
+            "PEC writer cannot represent canonical Tracks",
         ));
     }
     let floor_scale = options.floor_scale_px.to_f64().map_err(|error| {
@@ -1717,10 +2040,11 @@ fn require_pec_chart_shape(
     let mut lines: Vec<_> = chart.lines().lines().collect();
     lines.sort_by_key(|line| line.document_order());
     for (index, line) in lines.iter().enumerate() {
-        if line.document_order() != index as u64
-            || line.parent().is_some()
-            || line.inherit() != &CanonicalLineInherit::default()
-            || !line_base_is_default(line, floor_scale)
+        if !negotiation.drops(CapabilityDomain::Motion)
+            && (line.document_order() != index as u64
+                || line.parent().is_some()
+                || line.inherit() != &CanonicalLineInherit::default()
+                || !line_base_is_default(line, floor_scale))
         {
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
@@ -1733,8 +2057,8 @@ fn require_pec_chart_shape(
     }
     for note in chart.notes().notes() {
         let presentation = note.presentation();
-        if !note_gameplay_is_external_default(note)
-            || presentation.x_offset() != 0.0
+        let gameplay_unsupported = !note_gameplay_is_external_default(note);
+        let presentation_unsupported = presentation.x_offset() != 0.0
             || presentation.y_offset() != 0.0
             || presentation.alpha() != 1.0
             || presentation.scale_x() != presentation.scale_y()
@@ -1743,7 +2067,9 @@ fn require_pec_chart_shape(
             || presentation.texture().is_some()
             || !presentation.render_enabled()
             || presentation.visible_from().is_some()
-            || presentation.visible_until().is_some()
+            || presentation.visible_until().is_some();
+        if (gameplay_unsupported && !negotiation.drops(CapabilityDomain::Gameplay))
+            || (presentation_unsupported && !negotiation.drops(CapabilityDomain::Presentation))
         {
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
@@ -1782,18 +2108,72 @@ fn finish_export(
             .with_entries(entries));
         }
     }
+    let approximation_output_segments = CapabilityDomain::ALL
+        .into_iter()
+        .filter(|domain| negotiation.approximates(*domain))
+        .map(|domain| approximation_segment_count(actual, domain))
+        .fold(0usize, usize::saturating_add);
+    if approximation_output_segments > options.approximation.maximum_segments() {
+        entries.push(
+            ConversionEntry::new(
+                "approximation/segment-budget",
+                "conversion.approximation-budget-exceeded",
+                ConversionDomain::Profile,
+                ConversionSeverity::Error,
+                SemanticStatus::Unsupported,
+                ConversionPhase::ReparseCompare,
+                None,
+                None,
+                None,
+                Some("maximumSegments".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                format!(
+                    "target reparse produced {approximation_output_segments} approximation segments, exceeding maximum {}",
+                    options.approximation.maximum_segments()
+                ),
+                [],
+            )
+            .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+        );
+        return Err(ExportError::new(
+            "conversion.approximation-budget-exceeded",
+            format!(
+                "target approximation produced {approximation_output_segments} segments, exceeding maximum {}",
+                options.approximation.maximum_segments()
+            ),
+        )
+        .with_entries(entries));
+    }
+    let comparison_budgets = negotiated_comparison_budgets(options, &negotiation);
+    let dropped_domains = negotiation
+        .entries()
+        .iter()
+        .filter(|entry| entry.action() == NegotiationAction::Drop)
+        .map(|entry| entry.domain().as_str().to_owned())
+        .collect::<Vec<_>>();
     let comparison = compare_canonical_charts_with_budgets(
         expected,
         actual,
-        options.approximation.error_budgets(),
-        options.drop.target_domains(),
+        &comparison_budgets,
+        &dropped_domains,
     );
     if !comparison.is_equivalent() {
         for (index, mismatch) in comparison.mismatches().iter().enumerate() {
+            let category = if mismatch.error().is_some()
+                && comparison_budgets.contains_key(mismatch.metric())
+            {
+                "conversion.approximation-budget-exceeded"
+            } else {
+                "conversion.roundtrip-mismatch"
+            };
             entries.push(
                 ConversionEntry::new(
                     format!("roundtrip/{index:06}"),
-                    "conversion.roundtrip-mismatch",
+                    category,
                     conversion_domain_from_str(mismatch.domain()),
                     ConversionSeverity::Error,
                     SemanticStatus::Unsupported,
@@ -1818,8 +2198,15 @@ fn finish_export(
                 .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
             );
         }
+        let category = if comparison.mismatches().iter().any(|mismatch| {
+            mismatch.error().is_some() && comparison_budgets.contains_key(mismatch.metric())
+        }) {
+            "conversion.approximation-budget-exceeded"
+        } else {
+            "conversion.roundtrip-mismatch"
+        };
         return Err(ExportError::new(
-            "conversion.roundtrip-mismatch",
+            category,
             format!(
                 "{} canonical fields differ after same-profile reparse",
                 comparison.mismatches().len()
@@ -1878,6 +2265,27 @@ fn finish_export(
     })
 }
 
+fn negotiated_comparison_budgets(
+    options: &ExportOptions,
+    negotiation: &NegotiationPlan,
+) -> BTreeMap<String, f64> {
+    options
+        .approximation
+        .error_budgets()
+        .iter()
+        .filter(|(metric, _)| {
+            CapabilityDomain::ALL.into_iter().any(|domain| {
+                negotiation.approximates(domain)
+                    && (metric.as_str() == domain.as_str()
+                        || metric
+                            .strip_prefix(domain.as_str())
+                            .is_some_and(|suffix| suffix.starts_with('.')))
+            })
+        })
+        .map(|(metric, budget)| (metric.clone(), *budget))
+        .collect()
+}
+
 fn conversion_domain_from_str(domain: &str) -> ConversionDomain {
     match domain {
         "timing" => ConversionDomain::Timing,
@@ -1904,7 +2312,11 @@ fn lower_hex(bytes: impl AsRef<[u8]>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fcs_model::{CanonicalChart, CanonicalSourceVersion};
+    use fcs_model::{
+        CanonicalChart, CanonicalMetadata, CanonicalObject, CanonicalResourceBundle,
+        CanonicalSourceVersion, CanonicalValue, DistributionMetadata, OriginState, ProvenanceGraph,
+        RestrictedProvenanceFact,
+    };
     use std::fs;
     use std::path::PathBuf;
 
@@ -1999,6 +2411,47 @@ mod tests {
         .unwrap()
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn descriptor_with_domain(
+        set: CapabilitySet,
+        profile: &str,
+        target: CapabilityDomain,
+        exact: bool,
+        approximation: bool,
+        drop: bool,
+        max_entities: Option<usize>,
+        max_bytes: Option<usize>,
+    ) -> CapabilityDescriptor {
+        let base = set.descriptor(Some(profile.into()));
+        let domains = base
+            .domains()
+            .iter()
+            .map(|descriptor| {
+                if descriptor.domain() == target {
+                    CapabilityDomainDescriptor::new(
+                        target,
+                        exact,
+                        false,
+                        approximation,
+                        false,
+                        drop,
+                        max_entities,
+                        max_bytes,
+                    )
+                } else {
+                    descriptor.clone()
+                }
+            })
+            .collect();
+        CapabilityDescriptor::new(
+            base.format(),
+            base.version(),
+            base.profile().map(str::to_owned),
+            domains,
+        )
+        .unwrap()
+    }
+
     fn with_source_version(chart: &CanonicalChart, version: &str) -> CanonicalChart {
         let mut changed = CanonicalChart::new(
             CanonicalSourceVersion::new(version).unwrap(),
@@ -2016,6 +2469,85 @@ mod tests {
             changed = changed.with_descriptors(descriptors.clone());
         }
         changed
+    }
+
+    fn with_metadata_fact(chart: &CanonicalChart) -> CanonicalChart {
+        let mut meta = BTreeMap::new();
+        meta.insert(
+            "title".into(),
+            CanonicalValue::String("dropped title".into()),
+        );
+        let metadata = CanonicalMetadata::new(
+            Some(meta),
+            chart.metadata().contributors().clone(),
+            chart.metadata().credits().to_vec(),
+            chart.metadata().resources().clone(),
+            chart.metadata().artwork().cloned(),
+            chart.metadata().sync().cloned(),
+        );
+        let mut changed = CanonicalChart::new(
+            chart.source_version().clone(),
+            chart.profile(),
+            chart.features().iter().copied(),
+            chart.time_map().clone(),
+            metadata,
+            chart.lines().clone(),
+            chart.notes().clone(),
+            chart.tracks().clone(),
+            chart.scroll().clone(),
+            chart.required_extensions().iter().cloned(),
+        );
+        if let Some(descriptors) = chart.descriptors() {
+            changed = changed.with_descriptors(descriptors.clone());
+        }
+        changed
+    }
+
+    fn compilation_with_stale_roundtrip_fact(chart: &CanonicalChart) -> CanonicalCompilation {
+        let root = RestrictedProvenanceFact::new(
+            "canonical-edit",
+            None,
+            None,
+            Some("old canonical value".into()),
+            Some(0),
+            None,
+            OriginState::Imported,
+            Some(SemanticStatus::Mapped),
+            std::iter::empty(),
+        )
+        .unwrap();
+        let dependent = RestrictedProvenanceFact::new(
+            "source-roundtrip-handle",
+            None,
+            None,
+            Some("stale source representation".into()),
+            Some(1),
+            None,
+            OriginState::Imported,
+            Some(SemanticStatus::Preserved),
+            ["canonical-edit".into()],
+        )
+        .unwrap();
+        let mut provenance = ProvenanceGraph::new([root, dependent]).unwrap();
+        let stale = provenance
+            .mark_user_modified_and_stale_dependents("canonical-edit")
+            .unwrap();
+        assert_eq!(
+            stale.into_iter().collect::<Vec<_>>(),
+            vec!["source-roundtrip-handle".to_owned()]
+        );
+        let distribution = DistributionMetadata::new(
+            provenance,
+            Vec::new(),
+            Vec::new(),
+            CanonicalObject::new(Vec::new()).unwrap(),
+        )
+        .unwrap();
+        CanonicalCompilation::new(
+            chart.clone(),
+            CanonicalResourceBundle::new(Vec::new()).unwrap(),
+            distribution,
+        )
     }
 
     #[test]
@@ -2142,6 +2674,121 @@ mod tests {
         let (plan, _) =
             negotiate_export_with_options(&chart, &drop.with_drop(authorization)).unwrap();
         assert_eq!(plan.action(), NegotiationAction::Drop);
+    }
+
+    #[test]
+    fn approximation_segment_limit_is_a_hard_reparse_budget() {
+        let chart = pgr_chart("pgr-feature.pgr.json", PgrProfile::PhiraV3);
+        let profile = profile_reference(PgrProfile::PhiraV3.id(), PgrProfile::PhiraV3.version());
+        let descriptor = descriptor_with_domain(
+            CapabilitySet::pgr_v3(),
+            &profile,
+            CapabilityDomain::Presentation,
+            false,
+            true,
+            false,
+            None,
+            None,
+        );
+        let authorization = ApproximationAuthorization::new(
+            ["presentation".into()],
+            [("presentation.value".into(), 0.001)],
+            1,
+            "linear-segment",
+            "1.0.0",
+        )
+        .unwrap();
+        let error = export_pgr_v3_with_options(
+            &chart,
+            &ExportOptions::semantic(descriptor).with_approximation(authorization),
+        )
+        .unwrap_err();
+        assert_eq!(error.category(), "conversion.approximation-budget-exceeded");
+    }
+
+    #[test]
+    fn authorized_metadata_drop_is_applied_by_the_writer_and_reported() {
+        let chart = with_metadata_fact(&rpe_chart());
+        let profile = profile_reference(
+            RpeProfile::PhiraLegacySpeed.id(),
+            RpeProfile::PhiraLegacySpeed.version(),
+        );
+        let descriptor = descriptor_with_domain(
+            CapabilitySet::rpe_json(),
+            &profile,
+            CapabilityDomain::Metadata,
+            false,
+            false,
+            true,
+            None,
+            None,
+        );
+        let authorization =
+            DropAuthorization::new(["metadata".into()], "remove target-inexpressible metadata")
+                .unwrap();
+        let outcome = export_rpe_json_with_options(
+            &chart,
+            &ExportOptions::semantic(descriptor).with_drop(authorization),
+        )
+        .unwrap();
+        assert!(outcome.negotiation().drops(CapabilityDomain::Metadata));
+        assert_eq!(outcome.report().status(), ConversionStatus::Approximate);
+        assert_eq!(outcome.report().summary().drop_count(), 1);
+    }
+
+    #[test]
+    fn unused_drop_authorization_cannot_mask_a_direct_roundtrip_mismatch() {
+        let chart = with_source_version(&rpe_chart(), "5.0.1");
+        let options = profile_options(
+            CapabilitySet::rpe_json(),
+            RpeProfile::PhiraLegacySpeed.id(),
+            RpeProfile::PhiraLegacySpeed.version(),
+        )
+        .with_drop(DropAuthorization::new(["entity".into()], "not negotiated").unwrap());
+        let error = export_rpe_json_with_options(&chart, &options).unwrap_err();
+        assert_eq!(error.category(), "conversion.roundtrip-mismatch");
+    }
+
+    #[test]
+    fn roundtrip_policy_rebuilds_from_canonical_when_source_fidelity_is_stale() {
+        let chart = rpe_chart();
+        let compilation = compilation_with_stale_roundtrip_fact(&chart);
+        let mut options = profile_options(
+            CapabilitySet::rpe_json(),
+            RpeProfile::PhiraLegacySpeed.id(),
+            RpeProfile::PhiraLegacySpeed.version(),
+        );
+        options.policy = ConversionPolicy::Roundtrip;
+        let outcome = export_rpe_compilation_with_options(&compilation, &options).unwrap();
+        assert!(outcome.comparison().is_equivalent());
+        assert_eq!(outcome.report().status(), ConversionStatus::Equivalent);
+        assert!(outcome.report().entries().iter().any(|entry| {
+            entry.id() == "roundtrip/stale-source-representation"
+                && entry.category() == "conversion.tool-rewrite"
+        }));
+    }
+
+    #[test]
+    fn serialized_target_bytes_obey_the_declared_hard_limit() {
+        let chart = rpe_chart();
+        let profile = profile_reference(
+            RpeProfile::PhiraLegacySpeed.id(),
+            RpeProfile::PhiraLegacySpeed.version(),
+        );
+        let descriptor = descriptor_with_domain(
+            CapabilitySet::rpe_json(),
+            &profile,
+            CapabilityDomain::Limits,
+            true,
+            false,
+            false,
+            None,
+            Some(1),
+        );
+        let error =
+            export_rpe_json_with_options(&chart, &ExportOptions::semantic(descriptor)).unwrap_err();
+        assert_eq!(error.category(), "conversion.capability-mismatch");
+        assert!(error.message().contains("byte limit"));
     }
 
     #[test]
