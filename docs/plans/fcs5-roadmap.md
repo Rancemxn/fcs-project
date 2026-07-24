@@ -729,5 +729,8 @@ git diff --check
   compile error `E0106`; run `30111866831` on head `9176c7e` confirmed that fix and advanced to a Clippy
   `manual_pattern_char_comparison` finding. Run `30112119818` on head `0097123` passed dependency/fmt/Clippy/compile
   and exposed a formatter test ordering bug: CRLF/trailing-whitespace normalization must precede parse validation.
-  The active checkpoint fixes all three findings and adds the §7.1 top-level typed approximation/drop authorization records; it otherwise has local static evidence only under the user's
+  Run `30112879965` on head `86b4d59` passed dependency/fmt/Clippy/compile and 429 tests before exposing a stale
+  conformance assertion: the registered diagnostic/report category total is 33 after adding
+  `conversion.capability-negotiated`, not 32; the active branch updates that integrity count.
+  The active checkpoints fix all four findings, add the §7.1 top-level typed approximation/drop authorization records, and retain verified maximum absolute error plus segment-count evidence for every exercised approximation budget. A declared metric that canonical comparison does not exercise now fails instead of silently passing. The active branch otherwise has local static evidence only under the user's
   temporary GitHub Actions waiver. It is not an exact-head Full Gate pass and does not close #294 or I10.

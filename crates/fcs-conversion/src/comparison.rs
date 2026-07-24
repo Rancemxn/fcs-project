@@ -68,6 +68,7 @@ impl ComparisonMismatch {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalComparison {
     mismatches: Vec<ComparisonMismatch>,
+    verified_maximum_errors: BTreeMap<String, f64>,
 }
 
 impl CanonicalComparison {
@@ -77,6 +78,16 @@ impl CanonicalComparison {
 
     pub fn mismatches(&self) -> &[ComparisonMismatch] {
         &self.mismatches
+    }
+
+    /// Maximum absolute error observed for every budgeted metric that was
+    /// actually exercised by canonical comparison.
+    pub fn verified_maximum_errors(&self) -> &BTreeMap<String, f64> {
+        &self.verified_maximum_errors
+    }
+
+    pub fn verified_maximum_error(&self, metric: &str) -> Option<f64> {
+        self.verified_maximum_errors.get(metric).copied()
     }
 }
 
@@ -97,6 +108,7 @@ pub fn compare_canonical_charts_with_budgets(
     dropped_domains: &[String],
 ) -> CanonicalComparison {
     let mut mismatches = Vec::new();
+    let mut verified_maximum_errors = BTreeMap::new();
     let ignored = |domain: &str| {
         dropped_domains.iter().any(|allowed| {
             domain == allowed
@@ -128,8 +140,20 @@ pub fn compare_canonical_charts_with_budgets(
     }
 
     if !ignored("timing") {
-        compare_time_map(expected, actual, budgets, &mut mismatches);
-        compare_sync(expected, actual, budgets, &mut mismatches);
+        compare_time_map(
+            expected,
+            actual,
+            budgets,
+            &mut verified_maximum_errors,
+            &mut mismatches,
+        );
+        compare_sync(
+            expected,
+            actual,
+            budgets,
+            &mut verified_maximum_errors,
+            &mut mismatches,
+        );
     }
     if !ignored("metadata") {
         compare_metadata(expected, actual, &mut mismatches);
@@ -144,16 +168,41 @@ pub fn compare_canonical_charts_with_budgets(
         );
     }
     if !ignored("motion") {
-        compare_lines(expected, actual, budgets, &mut mismatches);
+        compare_lines(
+            expected,
+            actual,
+            budgets,
+            &mut verified_maximum_errors,
+            &mut mismatches,
+        );
     }
     if !ignored("gameplay") || !ignored("presentation") {
-        compare_notes(expected, actual, budgets, &mut mismatches, &ignored);
+        compare_notes(
+            expected,
+            actual,
+            budgets,
+            &mut verified_maximum_errors,
+            &mut mismatches,
+            &ignored,
+        );
     }
     if !ignored("motion") {
-        compare_tracks(expected, actual, budgets, &mut mismatches);
+        compare_tracks(
+            expected,
+            actual,
+            budgets,
+            &mut verified_maximum_errors,
+            &mut mismatches,
+        );
     }
     if !ignored("scroll") {
-        compare_scroll(expected, actual, budgets, &mut mismatches);
+        compare_scroll(
+            expected,
+            actual,
+            budgets,
+            &mut verified_maximum_errors,
+            &mut mismatches,
+        );
     }
     if !ignored("expression") && expected.descriptors() != actual.descriptors() {
         mismatch(
@@ -178,13 +227,17 @@ pub fn compare_canonical_charts_with_budgets(
         );
     }
 
-    CanonicalComparison { mismatches }
+    CanonicalComparison {
+        mismatches,
+        verified_maximum_errors,
+    }
 }
 
 fn compare_time_map(
     expected: &CanonicalChart,
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
+    verified_maximum_errors: &mut BTreeMap<String, f64>,
     mismatches: &mut Vec<ComparisonMismatch>,
 ) {
     let left: Vec<_> = expected.time_map().segments().collect();
@@ -213,6 +266,7 @@ fn compare_time_map(
             left.1,
             right.1,
             budgets,
+            verified_maximum_errors,
             mismatches,
         );
         compare_float(
@@ -222,6 +276,7 @@ fn compare_time_map(
             left.2,
             right.2,
             budgets,
+            verified_maximum_errors,
             mismatches,
         );
     }
@@ -276,6 +331,7 @@ fn compare_sync(
     expected: &CanonicalChart,
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
+    verified_maximum_errors: &mut BTreeMap<String, f64>,
     mismatches: &mut Vec<ComparisonMismatch>,
 ) {
     match (expected.metadata().sync(), actual.metadata().sync()) {
@@ -287,6 +343,7 @@ fn compare_sync(
                 left.audio_offset().seconds(),
                 right.audio_offset().seconds(),
                 budgets,
+                verified_maximum_errors,
                 mismatches,
             );
             if left.primary_audio() != right.primary_audio() || left.preview() != right.preview() {
@@ -314,6 +371,7 @@ fn compare_lines(
     expected: &CanonicalChart,
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
+    verified_maximum_errors: &mut BTreeMap<String, f64>,
     mismatches: &mut Vec<ComparisonMismatch>,
 ) {
     let left = ordered_lines(expected);
@@ -413,6 +471,7 @@ fn compare_lines(
                 lv,
                 rv,
                 budgets,
+                verified_maximum_errors,
                 mismatches,
             );
         }
@@ -432,6 +491,7 @@ fn compare_notes(
     expected: &CanonicalChart,
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
+    verified_maximum_errors: &mut BTreeMap<String, f64>,
     mismatches: &mut Vec<ComparisonMismatch>,
     ignored: &impl Fn(&str) -> bool,
 ) {
@@ -497,6 +557,7 @@ fn compare_notes(
                 lg.time().chart_time_seconds(),
                 rg.time().chart_time_seconds(),
                 budgets,
+                verified_maximum_errors,
                 mismatches,
             );
             compare_optional_time(
@@ -506,6 +567,7 @@ fn compare_notes(
                 lg.end_time().map(|time| time.chart_time_seconds()),
                 rg.end_time().map(|time| time.chart_time_seconds()),
                 budgets,
+                verified_maximum_errors,
                 mismatches,
             );
         }
@@ -529,6 +591,7 @@ fn compare_notes(
                     lv,
                     rv,
                     budgets,
+                    verified_maximum_errors,
                     mismatches,
                 );
             }
@@ -554,6 +617,7 @@ fn compare_tracks(
     expected: &CanonicalChart,
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
+    verified_maximum_errors: &mut BTreeMap<String, f64>,
     mismatches: &mut Vec<ComparisonMismatch>,
 ) {
     let left = ordered_tracks(expected);
@@ -593,7 +657,15 @@ fn compare_tracks(
             mismatches,
         );
         for (piece_index, (left, right)) in left.pieces().iter().zip(right.pieces()).enumerate() {
-            compare_track_piece(index, piece_index, left, right, budgets, mismatches);
+            compare_track_piece(
+                index,
+                piece_index,
+                left,
+                right,
+                budgets,
+                verified_maximum_errors,
+                mismatches,
+            );
         }
     }
 }
@@ -604,6 +676,7 @@ fn compare_track_piece(
     left: &CanonicalTrackPiece,
     right: &CanonicalTrackPiece,
     budgets: &BTreeMap<String, f64>,
+    verified_maximum_errors: &mut BTreeMap<String, f64>,
     mismatches: &mut Vec<ComparisonMismatch>,
 ) {
     let field = |name: &str| format!("tracks[{track}].pieces[{piece}].{name}");
@@ -616,6 +689,7 @@ fn compare_track_piece(
                 left.start().chart_time_seconds(),
                 right.start().chart_time_seconds(),
                 budgets,
+                verified_maximum_errors,
                 mismatches,
             );
             compare_float(
@@ -625,6 +699,7 @@ fn compare_track_piece(
                 left.end().chart_time_seconds(),
                 right.end().chart_time_seconds(),
                 budgets,
+                verified_maximum_errors,
                 mismatches,
             );
             compare_track_value(
@@ -632,6 +707,7 @@ fn compare_track_piece(
                 left.start_value(),
                 right.start_value(),
                 budgets,
+                verified_maximum_errors,
                 mismatches,
             );
             compare_track_value(
@@ -639,6 +715,7 @@ fn compare_track_piece(
                 left.end_value(),
                 right.end_value(),
                 budgets,
+                verified_maximum_errors,
                 mismatches,
             );
             if left.interpolation() != right.interpolation()
@@ -661,6 +738,7 @@ fn compare_track_piece(
                 left.time().chart_time_seconds(),
                 right.time().chart_time_seconds(),
                 budgets,
+                verified_maximum_errors,
                 mismatches,
             );
             compare_track_value(
@@ -668,6 +746,7 @@ fn compare_track_piece(
                 left.value(),
                 right.value(),
                 budgets,
+                verified_maximum_errors,
                 mismatches,
             );
             if left.document_order() != right.document_order() {
@@ -695,6 +774,7 @@ fn compare_track_value(
     left: CanonicalTrackValue,
     right: CanonicalTrackValue,
     budgets: &BTreeMap<String, f64>,
+    verified_maximum_errors: &mut BTreeMap<String, f64>,
     mismatches: &mut Vec<ComparisonMismatch>,
 ) {
     match (left, right) {
@@ -706,6 +786,7 @@ fn compare_track_value(
             left,
             right,
             budgets,
+            verified_maximum_errors,
             mismatches,
         ),
         (CanonicalTrackValue::Vec2Float(left), CanonicalTrackValue::Vec2Float(right))
@@ -717,6 +798,7 @@ fn compare_track_value(
                 left.x(),
                 right.x(),
                 budgets,
+                verified_maximum_errors,
                 mismatches,
             );
             compare_float(
@@ -726,6 +808,7 @@ fn compare_track_value(
                 left.y(),
                 right.y(),
                 budgets,
+                verified_maximum_errors,
                 mismatches,
             );
         }
@@ -743,6 +826,7 @@ fn compare_scroll(
     expected: &CanonicalChart,
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
+    verified_maximum_errors: &mut BTreeMap<String, f64>,
     mismatches: &mut Vec<ComparisonMismatch>,
 ) {
     let left = ordered_scroll(expected);
@@ -785,6 +869,7 @@ fn compare_scroll(
                 lv,
                 rv,
                 budgets,
+                verified_maximum_errors,
                 mismatches,
             );
         }
@@ -811,6 +896,7 @@ fn compare_scroll(
                 lp.chart_time(),
                 rp.chart_time(),
                 budgets,
+                verified_maximum_errors,
                 mismatches,
             );
             compare_float(
@@ -820,6 +906,7 @@ fn compare_scroll(
                 lp.bpm(),
                 rp.bpm(),
                 budgets,
+                verified_maximum_errors,
                 mismatches,
             );
         }
@@ -868,9 +955,19 @@ fn compare_time(
     expected: f64,
     actual: f64,
     budgets: &BTreeMap<String, f64>,
+    verified_maximum_errors: &mut BTreeMap<String, f64>,
     mismatches: &mut Vec<ComparisonMismatch>,
 ) {
-    compare_float(domain, metric, field, expected, actual, budgets, mismatches);
+    compare_float(
+        domain,
+        metric,
+        field,
+        expected,
+        actual,
+        budgets,
+        verified_maximum_errors,
+        mismatches,
+    );
 }
 
 fn compare_optional_time(
@@ -880,12 +977,20 @@ fn compare_optional_time(
     expected: Option<f64>,
     actual: Option<f64>,
     budgets: &BTreeMap<String, f64>,
+    verified_maximum_errors: &mut BTreeMap<String, f64>,
     mismatches: &mut Vec<ComparisonMismatch>,
 ) {
     match (expected, actual) {
-        (Some(expected), Some(actual)) => {
-            compare_float(domain, metric, field, expected, actual, budgets, mismatches)
-        }
+        (Some(expected), Some(actual)) => compare_float(
+            domain,
+            metric,
+            field,
+            expected,
+            actual,
+            budgets,
+            verified_maximum_errors,
+            mismatches,
+        ),
         (None, None) => {}
         (expected, actual) => mismatch(
             mismatches,
@@ -904,11 +1009,20 @@ fn compare_float(
     expected: f64,
     actual: f64,
     budgets: &BTreeMap<String, f64>,
+    verified_maximum_errors: &mut BTreeMap<String, f64>,
     mismatches: &mut Vec<ComparisonMismatch>,
 ) {
     let exact = expected.to_bits() == actual.to_bits();
     let error = (expected - actual).abs();
-    if exact || budgets.get(metric).is_some_and(|budget| error <= *budget) {
+    if let Some(budget) = budgets.get(metric) {
+        verified_maximum_errors
+            .entry(metric.to_owned())
+            .and_modify(|maximum| *maximum = maximum.max(error))
+            .or_insert(error);
+        if error <= *budget {
+            return;
+        }
+    } else if exact {
         return;
     }
     mismatches.push(ComparisonMismatch::new(

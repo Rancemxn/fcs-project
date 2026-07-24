@@ -12,8 +12,8 @@ use fcs_model::{
     CanonicalLineInherit, CanonicalNoteKind, CanonicalNoteScorePolicy, CanonicalNoteSide,
     CanonicalNoteSoundPolicy, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
     CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackTarget, CanonicalTrackValue,
-    ConversionDomain, ConversionEntry, ConversionPhase, ConversionPolicy, ConversionReport,
-    ConversionSeverity, ConversionStatus, RepairMode, SemanticStatus,
+    CanonicalValue, ConversionDomain, ConversionEntry, ConversionPhase, ConversionPolicy,
+    ConversionReport, ConversionSeverity, ConversionStatus, RepairMode, SemanticStatus,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -2212,6 +2212,49 @@ fn finish_export(
         &comparison_budgets,
         &dropped_domains,
     );
+    let unverified_metrics = comparison_budgets
+        .keys()
+        .filter(|metric| comparison.verified_maximum_error(metric).is_none())
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unverified_metrics.is_empty() {
+        for (index, metric) in unverified_metrics.iter().enumerate() {
+            entries.push(
+                ConversionEntry::new(
+                    format!("approximation/unverified/{index:06}"),
+                    "conversion.approximation-budget-exceeded",
+                    conversion_domain_from_str(
+                        metric
+                            .split_once('.')
+                            .map_or(metric.as_str(), |(domain, _)| domain),
+                    ),
+                    ConversionSeverity::Error,
+                    SemanticStatus::Unsupported,
+                    ConversionPhase::ReparseCompare,
+                    None,
+                    None,
+                    None,
+                    Some(metric.clone()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "declared approximation metric was not exercised by canonical comparison",
+                    [],
+                )
+                .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+            );
+        }
+        return Err(ExportError::new(
+            "conversion.approximation-budget-exceeded",
+            format!(
+                "canonical comparison did not verify declared metrics: {}",
+                unverified_metrics.join(", ")
+            ),
+        )
+        .with_entries(entries));
+    }
     if !comparison.is_equivalent() {
         for (index, mismatch) in comparison.mismatches().iter().enumerate() {
             let category = if mismatch.error().is_some()
@@ -2287,6 +2330,44 @@ fn finish_export(
         )
         .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
     );
+    for (index, (metric, declared_maximum)) in comparison_budgets.iter().enumerate() {
+        let verified_maximum = comparison
+            .verified_maximum_error(metric)
+            .expect("unverified approximation metrics fail before report construction");
+        let metric_domain = metric
+            .split_once('.')
+            .map_or(metric.as_str(), |(domain, _)| domain);
+        let verified_output_segments = CapabilityDomain::ALL
+            .into_iter()
+            .find(|domain| domain.as_str() == metric_domain)
+            .map_or(0, |domain| approximation_segment_count(actual, domain));
+        entries.push(
+            ConversionEntry::new(
+                format!("approximation/verified/{index:06}"),
+                "conversion.capability-negotiated",
+                conversion_domain_from_str(metric_domain),
+                ConversionSeverity::Warning,
+                SemanticStatus::Approximated,
+                ConversionPhase::ReparseCompare,
+                None,
+                None,
+                None,
+                Some(metric.clone()),
+                None,
+                Some(CanonicalValue::Float(*declared_maximum)),
+                None,
+                None,
+                Some(CanonicalValue::Float(verified_maximum)),
+                format!(
+                    "same-profile canonical reparse verified maximum absolute error {verified_maximum} against declared maximum {declared_maximum} across {verified_output_segments} {metric_domain} target segments using {}@{}",
+                    options.approximation.algorithm_id(),
+                    options.approximation.algorithm_version()
+                ),
+                [],
+            )
+            .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+        );
+    }
     let output_hash = lower_hex(Sha256::digest(&bytes));
     let mut status_signals = vec![ConversionStatus::Equivalent];
     for entry in negotiation.entries() {
@@ -2805,6 +2886,103 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.category(), "conversion.approximation-budget-exceeded");
+    }
+
+    #[test]
+    fn successful_approximation_reports_verified_maximum_and_segment_count() {
+        let chart = pgr_chart("pgr-feature.pgr.json", PgrProfile::PhiraV3);
+        let profile = profile_reference(PgrProfile::PhiraV3.id(), PgrProfile::PhiraV3.version());
+        let descriptor = descriptor_with_domain(
+            CapabilitySet::pgr_v3(),
+            &profile,
+            CapabilityDomain::Presentation,
+            false,
+            true,
+            false,
+            None,
+            None,
+        );
+        let authorization = ApproximationAuthorization::new(
+            ["presentation".into()],
+            [("presentation.value".into(), 0.001)],
+            1024,
+            "linear-segment",
+            "1.0.0",
+        )
+        .unwrap();
+
+        let outcome = export_pgr_v3_with_options(
+            &chart,
+            &ExportOptions::semantic(descriptor).with_approximation(authorization),
+        )
+        .unwrap();
+
+        assert!(
+            outcome
+                .negotiation()
+                .approximates(CapabilityDomain::Presentation)
+        );
+        assert_eq!(outcome.report().status(), ConversionStatus::Approximate);
+        assert_eq!(
+            outcome
+                .comparison()
+                .verified_maximum_error("presentation.value"),
+            Some(0.0)
+        );
+        let verification = outcome
+            .report()
+            .entries()
+            .iter()
+            .find(|entry| entry.id() == "approximation/verified/000000")
+            .unwrap();
+        assert_eq!(verification.field_key(), Some("presentation.value"));
+        assert_eq!(
+            verification.source_value(),
+            Some(&CanonicalValue::Float(0.001))
+        );
+        assert_eq!(
+            verification.target_value(),
+            Some(&CanonicalValue::Float(0.0))
+        );
+        assert!(verification.message().contains("target segments"));
+        assert!(verification.message().contains("linear-segment@1.0.0"));
+    }
+
+    #[test]
+    fn declared_approximation_metric_must_be_exercised_by_comparison() {
+        let chart = pgr_chart("pgr-feature.pgr.json", PgrProfile::PhiraV3);
+        let profile = profile_reference(PgrProfile::PhiraV3.id(), PgrProfile::PhiraV3.version());
+        let descriptor = descriptor_with_domain(
+            CapabilitySet::pgr_v3(),
+            &profile,
+            CapabilityDomain::Presentation,
+            false,
+            true,
+            false,
+            None,
+            None,
+        );
+        let authorization = ApproximationAuthorization::new(
+            ["presentation".into()],
+            [("presentation.unmeasured".into(), 0.001)],
+            1024,
+            "linear-segment",
+            "1.0.0",
+        )
+        .unwrap();
+
+        let error = export_pgr_v3_with_options(
+            &chart,
+            &ExportOptions::semantic(descriptor).with_approximation(authorization),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.category(), "conversion.approximation-budget-exceeded");
+        assert!(error.message().contains("presentation.unmeasured"));
+        assert!(error.entries().iter().any(|entry| {
+            entry.field_key() == Some("presentation.unmeasured")
+                && entry.category() == "conversion.approximation-budget-exceeded"
+        }));
     }
 
     #[test]
