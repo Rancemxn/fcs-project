@@ -60,9 +60,9 @@ pub use provenance::{
     SemanticStatus,
 };
 pub use report::{
-    ConversionDomain, ConversionEntry, ConversionPhase, ConversionPolicy, ConversionReport,
-    ConversionReportSummary, ConversionSeverity, ConversionStatus, RepairMode, RepairRecord,
-    ReportError,
+    ApproximationAuthorization, ConversionDomain, ConversionEntry, ConversionPhase,
+    ConversionPolicy, ConversionReport, ConversionReportSummary, ConversionSeverity,
+    ConversionStatus, DropAuthorization, RepairMode, RepairRecord, ReportError,
 };
 pub use scroll::{
     CanonicalScrollCoordinate, CanonicalScrollLine, CanonicalScrollSet,

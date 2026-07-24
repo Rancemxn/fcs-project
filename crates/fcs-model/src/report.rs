@@ -2,8 +2,9 @@
 //!
 //! I5.7 owns the source-free report/repair data model, status aggregation,
 //! deterministic entry ordering, and repair-record attachment to
-//! DistributionMetadata. Importer execution, FCBC section encoding, and CLI
-//! converter assembly remain later stages.
+//! DistributionMetadata. I8 adds the typed approximation/drop authority that
+//! successful target conversion reports must retain. Importer execution, FCBC
+//! section encoding, and CLI converter assembly remain later stages.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -51,6 +52,190 @@ impl RepairMode {
                 .authorized_rules
                 .iter()
                 .any(|authorized| authorized.as_str() == rule.as_str())
+    }
+}
+
+/// Conversion §6.3 approximation authority retained at report top level.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ApproximationAuthorization {
+    enabled: bool,
+    target_domains: Vec<String>,
+    error_budgets: BTreeMap<String, f64>,
+    maximum_segments: usize,
+    algorithm_id: String,
+    algorithm_version: String,
+}
+
+impl ApproximationAuthorization {
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            target_domains: Vec::new(),
+            error_budgets: BTreeMap::new(),
+            maximum_segments: 0,
+            algorithm_id: String::new(),
+            algorithm_version: String::new(),
+        }
+    }
+
+    pub fn new(
+        target_domains: impl IntoIterator<Item = String>,
+        budgets: impl IntoIterator<Item = (String, f64)>,
+        maximum_segments: usize,
+        algorithm_id: impl Into<String>,
+        algorithm_version: impl Into<String>,
+    ) -> Result<Self, ReportError> {
+        let mut target_domains: Vec<_> = target_domains.into_iter().collect();
+        target_domains.sort();
+        target_domains.dedup();
+        let mut error_budgets = BTreeMap::new();
+        for (metric, budget) in budgets {
+            if metric.is_empty() || !budget.is_finite() || budget < 0.0 {
+                return Err(ReportError::InvalidAuthorization(
+                    "error budgets require non-empty metrics and finite non-negative values".into(),
+                ));
+            }
+            if error_budgets.insert(metric, budget).is_some() {
+                return Err(ReportError::InvalidAuthorization(
+                    "error budget metrics must be unique".into(),
+                ));
+            }
+        }
+        let algorithm_id = algorithm_id.into();
+        let algorithm_version = algorithm_version.into();
+        if target_domains.is_empty()
+            || error_budgets.is_empty()
+            || maximum_segments == 0
+            || algorithm_id.is_empty()
+            || algorithm_version.is_empty()
+        {
+            return Err(ReportError::InvalidAuthorization(
+                "approximation authorization requires domains, budgets, segment limit, and algorithm identity"
+                    .into(),
+            ));
+        }
+        if target_domains.iter().any(|domain| {
+            !error_budgets.keys().any(|metric| {
+                metric == domain
+                    || metric
+                        .strip_prefix(domain)
+                        .is_some_and(|suffix| suffix.starts_with('.'))
+            })
+        }) {
+            return Err(ReportError::InvalidAuthorization(
+                "every approximation domain requires at least one domain-scoped metric budget"
+                    .into(),
+            ));
+        }
+        Ok(Self {
+            enabled: true,
+            target_domains,
+            error_budgets,
+            maximum_segments,
+            algorithm_id,
+            algorithm_version,
+        })
+    }
+
+    pub const fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn target_domains(&self) -> &[String] {
+        &self.target_domains
+    }
+
+    pub fn error_budgets(&self) -> &BTreeMap<String, f64> {
+        &self.error_budgets
+    }
+
+    pub const fn maximum_segments(&self) -> usize {
+        self.maximum_segments
+    }
+
+    pub fn algorithm_id(&self) -> &str {
+        &self.algorithm_id
+    }
+
+    pub fn algorithm_version(&self) -> &str {
+        &self.algorithm_version
+    }
+
+    pub fn allows(&self, domain: &str) -> bool {
+        self.enabled
+            && self.target_domains.iter().any(|allowed| {
+                domain == allowed
+                    || domain
+                        .strip_prefix(allowed)
+                        .is_some_and(|suffix| suffix.starts_with('.'))
+            })
+    }
+
+    pub fn budget(&self, metric: &str) -> Option<f64> {
+        if !self.enabled {
+            return None;
+        }
+        self.error_budgets.get(metric).copied()
+    }
+}
+
+/// Conversion §6.3 drop authority retained at report top level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DropAuthorization {
+    enabled: bool,
+    target_domains: Vec<String>,
+    reason: String,
+}
+
+impl DropAuthorization {
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            target_domains: Vec::new(),
+            reason: String::new(),
+        }
+    }
+
+    pub fn new(
+        target_domains: impl IntoIterator<Item = String>,
+        reason: impl Into<String>,
+    ) -> Result<Self, ReportError> {
+        let mut target_domains: Vec<_> = target_domains.into_iter().collect();
+        target_domains.sort();
+        target_domains.dedup();
+        let reason = reason.into();
+        if target_domains.is_empty() || reason.trim().is_empty() {
+            return Err(ReportError::InvalidAuthorization(
+                "drop authorization requires target domains and a reason".into(),
+            ));
+        }
+        Ok(Self {
+            enabled: true,
+            target_domains,
+            reason,
+        })
+    }
+
+    pub const fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn target_domains(&self) -> &[String] {
+        &self.target_domains
+    }
+
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+
+    pub fn allows(&self, domain: &str) -> bool {
+        self.enabled
+            && self.target_domains.iter().any(|allowed| {
+                domain == allowed
+                    || domain
+                        .strip_prefix(allowed)
+                        .is_some_and(|suffix| suffix.starts_with('.'))
+            })
     }
 }
 
@@ -522,6 +707,8 @@ pub struct ConversionReport {
     operation_id: String,
     conversion_policy: ConversionPolicy,
     repair_mode: RepairMode,
+    approximation_authorization: Option<ApproximationAuthorization>,
+    drop_authorization: Option<DropAuthorization>,
     status: ConversionStatus,
     entries: Vec<ConversionEntry>,
     repairs: Vec<RepairRecord>,
@@ -537,6 +724,31 @@ impl ConversionReport {
         operation_id: impl Into<String>,
         conversion_policy: ConversionPolicy,
         repair_mode: RepairMode,
+        entries: Vec<ConversionEntry>,
+        repairs: Vec<RepairRecord>,
+        status_signals: impl IntoIterator<Item = ConversionStatus>,
+        output_hash: Option<String>,
+    ) -> Result<Self, ReportError> {
+        Self::new_with_authorizations(
+            operation_id,
+            conversion_policy,
+            repair_mode,
+            None,
+            None,
+            entries,
+            repairs,
+            status_signals,
+            output_hash,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_authorizations(
+        operation_id: impl Into<String>,
+        conversion_policy: ConversionPolicy,
+        repair_mode: RepairMode,
+        approximation_authorization: Option<ApproximationAuthorization>,
+        drop_authorization: Option<DropAuthorization>,
         mut entries: Vec<ConversionEntry>,
         repairs: Vec<RepairRecord>,
         status_signals: impl IntoIterator<Item = ConversionStatus>,
@@ -605,6 +817,8 @@ impl ConversionReport {
             operation_id,
             conversion_policy,
             repair_mode,
+            approximation_authorization,
+            drop_authorization,
             status,
             entries,
             repairs,
@@ -627,6 +841,14 @@ impl ConversionReport {
 
     pub fn repair_mode(&self) -> &RepairMode {
         &self.repair_mode
+    }
+
+    pub fn approximation_authorization(&self) -> Option<&ApproximationAuthorization> {
+        self.approximation_authorization.as_ref()
+    }
+
+    pub fn drop_authorization(&self) -> Option<&DropAuthorization> {
+        self.drop_authorization.as_ref()
     }
 
     pub const fn status(&self) -> ConversionStatus {
@@ -705,6 +927,7 @@ pub enum ReportError {
     DuplicateEntryId(String),
     DuplicateRepairId(String),
     RepairNotAuthorized { rule_id: String },
+    InvalidAuthorization(String),
     InvalidOutputHash(String),
 }
 
@@ -724,6 +947,9 @@ impl fmt::Display for ReportError {
             Self::DuplicateRepairId(id) => write!(formatter, "duplicate repair record id: {id}"),
             Self::RepairNotAuthorized { rule_id } => {
                 write!(formatter, "repair rule is not authorized: {rule_id}")
+            }
+            Self::InvalidAuthorization(message) => {
+                write!(formatter, "invalid conversion authorization: {message}")
             }
             Self::InvalidOutputHash(hash) => {
                 write!(
@@ -989,6 +1215,62 @@ mod tests {
         .unwrap();
         assert_eq!(report.status(), ConversionStatus::Approximate);
         assert_eq!(report.summary().drop_count(), 1);
+    }
+
+    #[test]
+    fn report_retains_typed_loss_authorizations_without_treating_unused_authority_as_loss() {
+        let approximation = ApproximationAuthorization::new(
+            ["motion".into()],
+            [("motion.track_value".into(), 0.001)],
+            128,
+            "adaptive-linear",
+            "1.0.0",
+        )
+        .unwrap();
+        let drop = DropAuthorization::new(["metadata".into()], "target has no metadata").unwrap();
+        let report = ConversionReport::new_with_authorizations(
+            "op-authorizations",
+            ConversionPolicy::Semantic,
+            RepairMode::disabled(),
+            Some(approximation),
+            Some(drop),
+            Vec::new(),
+            Vec::new(),
+            [ConversionStatus::Equivalent],
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(report.status(), ConversionStatus::Equivalent);
+        let approximation = report.approximation_authorization().unwrap();
+        assert!(approximation.enabled());
+        assert_eq!(approximation.target_domains(), ["motion"]);
+        assert_eq!(approximation.error_budgets()["motion.track_value"], 0.001);
+        assert_eq!(approximation.maximum_segments(), 128);
+        assert_eq!(approximation.algorithm_id(), "adaptive-linear");
+        assert_eq!(approximation.algorithm_version(), "1.0.0");
+        let drop = report.drop_authorization().unwrap();
+        assert!(drop.enabled());
+        assert_eq!(drop.target_domains(), ["metadata"]);
+        assert_eq!(drop.reason(), "target has no metadata");
+    }
+
+    #[test]
+    fn report_authorization_objects_reject_incomplete_audit_inputs() {
+        assert!(matches!(
+            ApproximationAuthorization::new(
+                Vec::new(),
+                [("motion.value".into(), 0.1)],
+                1,
+                "adaptive",
+                "1.0.0",
+            ),
+            Err(ReportError::InvalidAuthorization(_))
+        ));
+        assert!(matches!(
+            DropAuthorization::new(["metadata".into()], "  "),
+            Err(ReportError::InvalidAuthorization(_))
+        ));
     }
 
     #[test]

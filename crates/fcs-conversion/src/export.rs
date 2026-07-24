@@ -627,15 +627,6 @@ impl std::error::Error for ExportError {}
 /// Validate FCS source and apply the fixed text policy: LF line endings, no
 /// trailing horizontal whitespace, no trailing blank lines, one final LF.
 pub fn format_fcs_source(source: &str) -> Result<String, ExportError> {
-    fcs_source::parser::parse_document(source)
-        .into_result()
-        .map_err(|diagnostics| {
-            let message = diagnostics
-                .first()
-                .map(|diagnostic| format!("{}: {}", diagnostic.code(), diagnostic.message()))
-                .unwrap_or_else(|| "source invalid".into());
-            ExportError::new("source.invalid", message)
-        })?;
     let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
     let mut lines: Vec<_> = normalized
         .split('\n')
@@ -1771,13 +1762,17 @@ fn record_compilation_roundtrip_context(
     let operation_id = outcome.report.operation_id().to_owned();
     let conversion_policy = outcome.report.conversion_policy();
     let repair_mode = outcome.report.repair_mode().clone();
+    let approximation_authorization = outcome.report.approximation_authorization().cloned();
+    let drop_authorization = outcome.report.drop_authorization().cloned();
     let repairs = outcome.report.repairs().to_vec();
     let status = outcome.report.status();
     let output_hash = outcome.report.output_hash().map(str::to_owned);
-    outcome.report = ConversionReport::new(
+    outcome.report = ConversionReport::new_with_authorizations(
         operation_id,
         conversion_policy,
         repair_mode,
+        approximation_authorization,
+        drop_authorization,
         entries,
         repairs,
         [status],
@@ -2303,10 +2298,15 @@ fn finish_export(
             _ => {}
         }
     }
-    let report = ConversionReport::new(
+    let report = ConversionReport::new_with_authorizations(
         format!("{format}-export-{output_hash}"),
         options.policy,
         options.repair_mode.clone(),
+        options
+            .approximation
+            .enabled()
+            .then(|| options.approximation.clone()),
+        options.drop.enabled().then(|| options.drop.clone()),
         entries,
         Vec::new(),
         status_signals,
@@ -2758,6 +2758,8 @@ mod tests {
             "1.0.0",
         )
         .unwrap();
+        assert_eq!(authorization.target_domains(), ["motion"]);
+        assert_eq!(authorization.error_budgets()["motion.track_value"], 0.001);
         let (plan, _) =
             negotiate_export_with_options(&chart, &approximation.with_approximation(authorization))
                 .unwrap();
@@ -2768,6 +2770,8 @@ mod tests {
         assert_eq!(error.category(), "conversion.drop-not-authorized");
         let authorization =
             DropAuthorization::new(["motion".into()], "explicit target loss").unwrap();
+        assert_eq!(authorization.target_domains(), ["motion"]);
+        assert_eq!(authorization.reason(), "explicit target loss");
         let (plan, _) =
             negotiate_export_with_options(&chart, &drop.with_drop(authorization)).unwrap();
         assert_eq!(plan.action(), NegotiationAction::Drop);
@@ -2831,6 +2835,43 @@ mod tests {
         assert!(outcome.negotiation().drops(CapabilityDomain::Metadata));
         assert_eq!(outcome.report().status(), ConversionStatus::Approximate);
         assert_eq!(outcome.report().summary().drop_count(), 1);
+        let recorded = outcome.report().drop_authorization().unwrap();
+        assert_eq!(recorded.target_domains(), ["metadata"]);
+        assert_eq!(recorded.reason(), "remove target-inexpressible metadata");
+    }
+
+    #[test]
+    fn successful_export_retains_unused_loss_authorizations_without_lowering_status() {
+        let approximation = ApproximationAuthorization::new(
+            ["motion".into()],
+            [("motion.track_value".into(), 0.001)],
+            1024,
+            "linear-segment",
+            "1.0.0",
+        )
+        .unwrap();
+        let drop =
+            DropAuthorization::new(["metadata".into()], "explicit target loss boundary").unwrap();
+        let options = profile_options(
+            CapabilitySet::rpe_json(),
+            RpeProfile::PhiraLegacySpeed.id(),
+            RpeProfile::PhiraLegacySpeed.version(),
+        )
+        .with_approximation(approximation)
+        .with_drop(drop);
+
+        let outcome = export_rpe_json_with_options(&rpe_chart(), &options).unwrap();
+
+        assert_eq!(outcome.report().status(), ConversionStatus::Equivalent);
+        let approximation = outcome.report().approximation_authorization().unwrap();
+        assert_eq!(approximation.target_domains(), ["motion"]);
+        assert_eq!(approximation.error_budgets()["motion.track_value"], 0.001);
+        assert_eq!(approximation.maximum_segments(), 1024);
+        assert_eq!(approximation.algorithm_id(), "linear-segment");
+        assert_eq!(approximation.algorithm_version(), "1.0.0");
+        let drop = outcome.report().drop_authorization().unwrap();
+        assert_eq!(drop.target_domains(), ["metadata"]);
+        assert_eq!(drop.reason(), "explicit target loss boundary");
     }
 
     #[test]

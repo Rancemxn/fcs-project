@@ -4,8 +4,9 @@
 //! than inferred from a writer's success.  A target write may only use
 //! approximation or drop after an explicit, domain-scoped authorization.
 
-use std::collections::BTreeMap;
 use std::fmt;
+
+pub use fcs_model::{ApproximationAuthorization, DropAuthorization};
 
 /// Canonical feature domains used by Conversion §6.2 and §7.2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -238,194 +239,9 @@ impl CapabilityDescriptor {
     }
 }
 
-/// Explicit approximation authorization from Conversion §6.3.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ApproximationAuthorization {
-    enabled: bool,
-    target_domains: Vec<String>,
-    error_budgets: BTreeMap<String, f64>,
-    maximum_segments: usize,
-    algorithm_id: String,
-    algorithm_version: String,
-}
-
-impl ApproximationAuthorization {
-    pub fn disabled() -> Self {
-        Self {
-            enabled: false,
-            target_domains: Vec::new(),
-            error_budgets: BTreeMap::new(),
-            maximum_segments: 0,
-            algorithm_id: String::new(),
-            algorithm_version: String::new(),
-        }
-    }
-
-    pub fn new(
-        target_domains: impl IntoIterator<Item = String>,
-        budgets: impl IntoIterator<Item = (String, f64)>,
-        maximum_segments: usize,
-        algorithm_id: impl Into<String>,
-        algorithm_version: impl Into<String>,
-    ) -> Result<Self, CapabilityError> {
-        let mut target_domains: Vec<_> = target_domains.into_iter().collect();
-        target_domains.sort();
-        target_domains.dedup();
-        let mut error_budgets = BTreeMap::new();
-        for (metric, budget) in budgets {
-            if metric.is_empty() || !budget.is_finite() || budget < 0.0 {
-                return Err(CapabilityError::InvalidAuthorization(
-                    "error budgets require non-empty metrics and finite non-negative values".into(),
-                ));
-            }
-            if error_budgets.insert(metric, budget).is_some() {
-                return Err(CapabilityError::InvalidAuthorization(
-                    "error budget metrics must be unique".into(),
-                ));
-            }
-        }
-        let algorithm_id = algorithm_id.into();
-        let algorithm_version = algorithm_version.into();
-        if target_domains.is_empty()
-            || error_budgets.is_empty()
-            || maximum_segments == 0
-            || algorithm_id.is_empty()
-            || algorithm_version.is_empty()
-        {
-            return Err(CapabilityError::InvalidAuthorization(
-                "enabled approximation requires domains, budgets, segment limit, and algorithm identity"
-                    .into(),
-            ));
-        }
-        if target_domains.iter().any(|domain| {
-            !error_budgets.keys().any(|metric| {
-                metric == domain
-                    || metric
-                        .strip_prefix(domain)
-                        .is_some_and(|suffix| suffix.starts_with('.'))
-            })
-        }) {
-            return Err(CapabilityError::InvalidAuthorization(
-                "every approximation domain requires at least one domain-scoped metric budget"
-                    .into(),
-            ));
-        }
-        Ok(Self {
-            enabled: true,
-            target_domains,
-            error_budgets,
-            maximum_segments,
-            algorithm_id,
-            algorithm_version,
-        })
-    }
-
-    pub const fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    pub fn target_domains(&self) -> &[String] {
-        &self.target_domains
-    }
-
-    pub fn error_budgets(&self) -> &BTreeMap<String, f64> {
-        &self.error_budgets
-    }
-
-    pub const fn maximum_segments(&self) -> usize {
-        self.maximum_segments
-    }
-
-    pub fn algorithm_id(&self) -> &str {
-        &self.algorithm_id
-    }
-
-    pub fn algorithm_version(&self) -> &str {
-        &self.algorithm_version
-    }
-
-    pub fn allows(&self, domain: &str) -> bool {
-        self.enabled
-            && self.target_domains.iter().any(|allowed| {
-                domain == allowed
-                    || domain
-                        .strip_prefix(allowed)
-                        .is_some_and(|suffix| suffix.starts_with('.'))
-            })
-    }
-
-    pub fn budget(&self, metric: &str) -> Option<f64> {
-        if !self.enabled {
-            return None;
-        }
-        self.error_budgets.get(metric).copied()
-    }
-}
-
-/// Explicit drop authorization from Conversion §6.3.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DropAuthorization {
-    enabled: bool,
-    target_domains: Vec<String>,
-    reason: String,
-}
-
-impl DropAuthorization {
-    pub fn disabled() -> Self {
-        Self {
-            enabled: false,
-            target_domains: Vec::new(),
-            reason: String::new(),
-        }
-    }
-
-    pub fn new(
-        target_domains: impl IntoIterator<Item = String>,
-        reason: impl Into<String>,
-    ) -> Result<Self, CapabilityError> {
-        let mut target_domains: Vec<_> = target_domains.into_iter().collect();
-        target_domains.sort();
-        target_domains.dedup();
-        let reason = reason.into();
-        if target_domains.is_empty() || reason.trim().is_empty() {
-            return Err(CapabilityError::InvalidAuthorization(
-                "enabled drop requires target domains and a reason".into(),
-            ));
-        }
-        Ok(Self {
-            enabled: true,
-            target_domains,
-            reason,
-        })
-    }
-
-    pub const fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    pub fn target_domains(&self) -> &[String] {
-        &self.target_domains
-    }
-
-    pub fn reason(&self) -> &str {
-        &self.reason
-    }
-
-    pub fn allows(&self, domain: &str) -> bool {
-        self.enabled
-            && self.target_domains.iter().any(|allowed| {
-                domain == allowed
-                    || domain
-                        .strip_prefix(allowed)
-                        .is_some_and(|suffix| suffix.starts_with('.'))
-            })
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CapabilityError {
     InvalidDescriptor(String),
-    InvalidAuthorization(String),
 }
 
 impl fmt::Display for CapabilityError {
@@ -433,9 +249,6 @@ impl fmt::Display for CapabilityError {
         match self {
             Self::InvalidDescriptor(message) => {
                 write!(formatter, "invalid capability descriptor: {message}")
-            }
-            Self::InvalidAuthorization(message) => {
-                write!(formatter, "invalid authorization: {message}")
             }
         }
     }
