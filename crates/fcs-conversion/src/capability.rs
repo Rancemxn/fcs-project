@@ -263,7 +263,7 @@ impl ApproximationAuthorization {
 
     pub fn new(
         target_domains: impl IntoIterator<Item = String>,
-        error_budgets: impl IntoIterator<Item = (String, f64)>,
+        budgets: impl IntoIterator<Item = (String, f64)>,
         maximum_segments: usize,
         algorithm_id: impl Into<String>,
         algorithm_version: impl Into<String>,
@@ -272,7 +272,7 @@ impl ApproximationAuthorization {
         target_domains.sort();
         target_domains.dedup();
         let mut error_budgets = BTreeMap::new();
-        for (metric, budget) in error_budgets {
+        for (metric, budget) in budgets {
             if metric.is_empty() || !budget.is_finite() || budget < 0.0 {
                 return Err(CapabilityError::InvalidAuthorization(
                     "error budgets require non-empty metrics and finite non-negative values".into(),
