@@ -720,8 +720,19 @@ git diff --check
 - I3.1–I6.7 的实现单元和后续 I7–I10 partial product units 已经合并，但 I10 RC 尚未完成。当前
   residual frontier is tracked by root Issue #9 and children #292–#296: governance/Frozen-state
   correction; native
-  `CanonicalCompilation -> FCBC -> load_chart` descriptor and ResourceData closure; typed Conversion
-  capability and canonical target reparse; canonical Render product/semantic/raster closure; and CLI
+  `CanonicalCompilation -> FCBC -> load_chart` descriptor and ResourceData closure; completion evidence
+  for the typed Conversion capability/canonical target-reparse corrective implementation in draft PR
+  #299, including explicit RPE `speedMode` target bindings reused by the writer and reparse; canonical Render product/semantic/raster closure; and CLI
   I10.2-I10.7 assembly plus final executable conformance. Existing product crates and successful Full
   gates are implementation evidence only; they do not authorize Frozen or root completion while these
-  acceptance units remain open.
+  acceptance units remain open. Full Gate run `30110694784` on PR #299 prior head `29563018` exposed
+  compile error `E0106`; run `30111866831` on head `9176c7e` confirmed that fix and advanced to a Clippy
+  `manual_pattern_char_comparison` finding. Run `30112119818` on head `0097123` passed dependency/fmt/Clippy/compile
+  and exposed a formatter test ordering bug: CRLF/trailing-whitespace normalization must precede parse validation.
+  Run `30112879965` on head `86b4d59` passed dependency/fmt/Clippy/compile and 429 tests before exposing a stale
+  conformance assertion: the registered diagnostic/report category total is 33 after adding
+  `conversion.capability-negotiated`, not 32; the active branch updates that integrity count.
+  Run `30113604433` on head `1f14675` reached Clippy and exposed `too_many_arguments` on the three comparison
+  helpers widened for verified metric collection; the active branch applies the same local lint boundary already
+  used by other explicit multi-field constructors. The active checkpoints fix all five findings, add the §7.1 top-level typed approximation/drop authorization records, and retain verified maximum absolute error plus segment-count evidence for every exercised approximation budget. A declared metric that canonical comparison does not exercise now fails instead of silently passing. The active branch otherwise has local static evidence only under the user's
+  temporary GitHub Actions waiver. It is not an exact-head Full Gate pass and does not close #294 or I10.

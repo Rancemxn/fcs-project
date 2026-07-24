@@ -2379,7 +2379,7 @@ fn manifests_preserve_integrity_invariants() {
     assert_eq!(profile_registry.profile.len(), 12);
     assert_eq!(dialect_registry.dialect.len(), 7);
     assert_eq!(rule_registry.rule.len(), 56);
-    assert_eq!(diagnostic_registry.category.len(), 32);
+    assert_eq!(diagnostic_registry.category.len(), 33);
     assert_eq!(mapping_vectors.vector.len(), 38);
     assert_eq!(mapping_vectors.invalid.len(), 5);
     assert_eq!(selection_vectors.selection.len(), 10);
