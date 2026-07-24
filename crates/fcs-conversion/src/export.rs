@@ -44,11 +44,11 @@ struct PgrLineTracks<'a> {
     speed: Option<&'a CanonicalTrack>,
 }
 
-fn pgr_line_tracks(
-    chart: &CanonicalChart,
+fn pgr_line_tracks<'a>(
+    chart: &'a CanonicalChart,
     owner: u64,
     negotiation: &NegotiationPlan,
-) -> Result<PgrLineTracks<'_>, ExportError> {
+) -> Result<PgrLineTracks<'a>, ExportError> {
     let mut found = PgrLineTracks::default();
     for track in chart
         .tracks()
@@ -420,6 +420,7 @@ pub struct ExportOptions {
     pub policy: ConversionPolicy,
     pub repair_mode: RepairMode,
     pub target_profile: Option<String>,
+    pub rpe_profile_binding: Option<RpeProfileBinding>,
     pub capabilities: CapabilityDescriptor,
     pub floor_scale_px: ExactDecimal,
     pub approximation: ApproximationAuthorization,
@@ -432,6 +433,7 @@ impl ExportOptions {
             policy: ConversionPolicy::Semantic,
             repair_mode: RepairMode::disabled(),
             target_profile: capabilities.profile().map(str::to_owned),
+            rpe_profile_binding: None,
             capabilities,
             floor_scale_px: ExactDecimal::parse("120", DecimalLimits::default())
                 .expect("static exporter floor scale"),
@@ -445,6 +447,7 @@ impl ExportOptions {
             policy: ConversionPolicy::Strict,
             repair_mode: RepairMode::disabled(),
             target_profile: None,
+            rpe_profile_binding: None,
             capabilities,
             floor_scale_px: ExactDecimal::parse("120", DecimalLimits::default())
                 .expect("static exporter floor scale"),
@@ -455,6 +458,14 @@ impl ExportOptions {
 
     pub fn with_target_profile(mut self, profile: impl Into<String>) -> Self {
         self.target_profile = Some(profile.into());
+        self
+    }
+
+    /// Bind all target-specific RPE parameters and select the same profile ID.
+    pub fn with_rpe_profile_binding(mut self, binding: RpeProfileBinding) -> Self {
+        let profile = binding.profile();
+        self.target_profile = Some(profile_reference(profile.id(), profile.version()));
+        self.rpe_profile_binding = Some(binding);
         self
     }
 
@@ -1834,30 +1845,75 @@ fn selected_rpe_binding(
             "RPE target profile is required",
         )
     })?;
-    match profile {
-        "rpe.phira.legacy-speed@1.0.0" => Ok((
-            RpeProfile::PhiraLegacySpeed,
-            RpeProfileBinding::phira_legacy_speed(),
-            150,
-        )),
-        "rpe.phira.rpe170-speed@1.0.0" => Ok((
-            RpeProfile::PhiraRpe170Speed,
-            RpeProfileBinding::phira_rpe170_speed(Some(RpeVersionEra::AtLeast170)),
-            170,
-        )),
-        "rpe.community.divide-bpmfactor@1.0.0" | "rpe.docs-example.multiply-bpmfactor@1.0.0" => {
-            Err(ExportError::new(
-                "conversion.profile-parameter-invalid",
-                "this RPE target profile requires an explicit speedMode binding",
-            ))
+    let selected_profile = match profile {
+        "rpe.community.divide-bpmfactor@1.0.0" => RpeProfile::CommunityDivideBpmfactor,
+        "rpe.docs-example.multiply-bpmfactor@1.0.0" => RpeProfile::DocsExampleMultiplyBpmfactor,
+        "rpe.phira.legacy-speed@1.0.0" => RpeProfile::PhiraLegacySpeed,
+        "rpe.phira.rpe170-speed@1.0.0" => RpeProfile::PhiraRpe170Speed,
+        "rpe.phichain-import@1.0.0" => {
+            return Err(ExportError::new(
+                "conversion.profile-not-applicable",
+                "rpe.phichain-import is source-only and cannot be an export target",
+            ));
         }
-        "rpe.phichain-import@1.0.0" => Err(ExportError::new(
+        _ => {
+            return Err(ExportError::new(
+                "conversion.profile-not-found",
+                format!("unknown RPE target profile {profile}"),
+            ));
+        }
+    };
+    let binding = match options.rpe_profile_binding.as_ref() {
+        Some(binding) => binding.clone(),
+        None => match selected_profile {
+            RpeProfile::CommunityDivideBpmfactor | RpeProfile::DocsExampleMultiplyBpmfactor => {
+                return Err(ExportError::new(
+                    "conversion.profile-parameter-invalid",
+                    "this RPE target profile requires an explicit speedMode binding",
+                ));
+            }
+            RpeProfile::PhiraLegacySpeed => RpeProfileBinding::phira_legacy_speed(),
+            RpeProfile::PhiraRpe170Speed => {
+                RpeProfileBinding::phira_rpe170_speed(Some(RpeVersionEra::AtLeast170))
+            }
+            RpeProfile::PhichainImport => unreachable!("source-only profile rejected above"),
+        },
+    };
+    if binding.profile() != selected_profile {
+        return Err(ExportError::new(
+            "conversion.profile-parameter-invalid",
+            format!(
+                "RPE target binding {}@{} does not match selected profile {profile}",
+                binding.profile().id(),
+                binding.profile().version()
+            ),
+        ));
+    }
+    let rpe_version = rpe_target_version(&binding)?;
+    Ok((selected_profile, binding, rpe_version))
+}
+
+fn rpe_target_version(binding: &RpeProfileBinding) -> Result<i64, ExportError> {
+    match binding.profile() {
+        RpeProfile::CommunityDivideBpmfactor | RpeProfile::DocsExampleMultiplyBpmfactor => {
+            match binding.speed_mode() {
+                // RPEVersion is evidence-only for these profiles. The typed
+                // speedMode remains part of the external target binding.
+                Some(_) => Ok(150),
+                None => Err(ExportError::new(
+                    "conversion.profile-parameter-invalid",
+                    "this RPE target profile requires an explicit speedMode binding",
+                )),
+            }
+        }
+        RpeProfile::PhiraLegacySpeed => Ok(150),
+        RpeProfile::PhiraRpe170Speed => match binding.rpe_version_era() {
+            Some(RpeVersionEra::Pre170) => Ok(169),
+            Some(RpeVersionEra::AtLeast170) | None => Ok(170),
+        },
+        RpeProfile::PhichainImport => Err(ExportError::new(
             "conversion.profile-not-applicable",
             "rpe.phichain-import is source-only and cannot be an export target",
-        )),
-        _ => Err(ExportError::new(
-            "conversion.profile-not-found",
-            format!("unknown RPE target profile {profile}"),
         )),
     }
 }
@@ -2312,6 +2368,7 @@ fn lower_hex(bytes: impl AsRef<[u8]>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RpeSpeedMode;
     use fcs_model::{
         CanonicalChart, CanonicalMetadata, CanonicalObject, CanonicalResourceBundle,
         CanonicalSourceVersion, CanonicalValue, DistributionMetadata, OriginState, ProvenanceGraph,
@@ -2630,6 +2687,46 @@ mod tests {
                 .comparison()
                 .is_equivalent()
         );
+    }
+
+    #[test]
+    fn rpe_parameterized_target_profiles_reuse_the_typed_binding_for_reparse() {
+        let chart = rpe_chart();
+        let cases = [
+            (
+                RpeProfileBinding::community_divide(RpeSpeedMode::LegacyDerivative),
+                150,
+            ),
+            (
+                RpeProfileBinding::docs_example_multiply(RpeSpeedMode::ModernEased),
+                150,
+            ),
+        ];
+        for (binding, expected_rpe_version) in cases {
+            let profile = binding.profile();
+            let descriptor = CapabilitySet::rpe_json()
+                .descriptor(Some(profile_reference(profile.id(), profile.version())));
+            let options = ExportOptions::semantic(descriptor).with_rpe_profile_binding(binding);
+            let outcome = export_rpe_json_with_options(&chart, &options).unwrap();
+            assert!(outcome.comparison().is_equivalent());
+            let target: Value = serde_json::from_slice(outcome.bytes()).unwrap();
+            assert_eq!(target["META"]["RPEVersion"], expected_rpe_version);
+        }
+    }
+
+    #[test]
+    fn rpe_target_binding_profile_identity_must_match_the_selected_profile() {
+        let selected = RpeProfile::CommunityDivideBpmfactor;
+        let descriptor = CapabilitySet::rpe_json()
+            .descriptor(Some(profile_reference(selected.id(), selected.version())));
+        let options = ExportOptions::semantic(descriptor)
+            .with_rpe_profile_binding(RpeProfileBinding::docs_example_multiply(
+                RpeSpeedMode::LegacyLinear,
+            ))
+            .with_target_profile(profile_reference(selected.id(), selected.version()));
+        let error = export_rpe_json_with_options(&rpe_chart(), &options).unwrap_err();
+        assert_eq!(error.category(), "conversion.profile-parameter-invalid");
+        assert!(error.message().contains("does not match selected profile"));
     }
 
     #[test]

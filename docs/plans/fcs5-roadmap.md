@@ -722,9 +722,9 @@ git diff --check
   correction; native
   `CanonicalCompilation -> FCBC -> load_chart` descriptor and ResourceData closure; completion evidence
   for the typed Conversion capability/canonical target-reparse corrective implementation in draft PR
-  #299; canonical Render product/semantic/raster closure; and CLI
+  #299, including explicit RPE `speedMode` target bindings reused by the writer and reparse; canonical Render product/semantic/raster closure; and CLI
   I10.2-I10.7 assembly plus final executable conformance. Existing product crates and successful Full
   gates are implementation evidence only; they do not authorize Frozen or root completion while these
-  acceptance units remain open. PR #299 currently has local static evidence only under the user's
-  temporary GitHub Actions queue waiver; this is not an exact-head Full Gate pass and does not close
-  #294 or I10.
+  acceptance units remain open. Full Gate run `30110694784` on PR #299 prior head `29563018` exposed
+  compile error `E0106`; the active checkpoint fixes that lifetime boundary and otherwise has local static evidence only under the user's
+  temporary GitHub Actions waiver. It is not an exact-head Full Gate pass and does not close #294 or I10.
