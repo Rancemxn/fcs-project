@@ -732,5 +732,7 @@ git diff --check
   Run `30112879965` on head `86b4d59` passed dependency/fmt/Clippy/compile and 429 tests before exposing a stale
   conformance assertion: the registered diagnostic/report category total is 33 after adding
   `conversion.capability-negotiated`, not 32; the active branch updates that integrity count.
-  The active checkpoints fix all four findings, add the §7.1 top-level typed approximation/drop authorization records, and retain verified maximum absolute error plus segment-count evidence for every exercised approximation budget. A declared metric that canonical comparison does not exercise now fails instead of silently passing. The active branch otherwise has local static evidence only under the user's
+  Run `30113604433` on head `1f14675` reached Clippy and exposed `too_many_arguments` on the three comparison
+  helpers widened for verified metric collection; the active branch applies the same local lint boundary already
+  used by other explicit multi-field constructors. The active checkpoints fix all five findings, add the §7.1 top-level typed approximation/drop authorization records, and retain verified maximum absolute error plus segment-count evidence for every exercised approximation budget. A declared metric that canonical comparison does not exercise now fails instead of silently passing. The active branch otherwise has local static evidence only under the user's
   temporary GitHub Actions waiver. It is not an exact-head Full Gate pass and does not close #294 or I10.

@@ -948,6 +948,7 @@ fn ordered_tracks(chart: &CanonicalChart) -> Vec<&CanonicalTrack> {
     tracks
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compare_time(
     domain: &str,
     metric: &str,
@@ -970,6 +971,7 @@ fn compare_time(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compare_optional_time(
     domain: &str,
     metric: &str,
@@ -1002,6 +1004,7 @@ fn compare_optional_time(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compare_float(
     domain: &str,
     metric: &str,
