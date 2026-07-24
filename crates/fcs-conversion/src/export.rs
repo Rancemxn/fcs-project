@@ -639,7 +639,7 @@ pub fn format_fcs_source(source: &str) -> Result<String, ExportError> {
     let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
     let mut lines: Vec<_> = normalized
         .split('\n')
-        .map(|line| line.trim_end_matches(|character| matches!(character, ' ' | '\t')))
+        .map(|line| line.trim_end_matches([' ', '\t']))
         .collect();
     while lines.last().is_some_and(|line| line.is_empty()) {
         lines.pop();

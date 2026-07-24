@@ -726,5 +726,6 @@ git diff --check
   I10.2-I10.7 assembly plus final executable conformance. Existing product crates and successful Full
   gates are implementation evidence only; they do not authorize Frozen or root completion while these
   acceptance units remain open. Full Gate run `30110694784` on PR #299 prior head `29563018` exposed
-  compile error `E0106`; the active checkpoint fixes that lifetime boundary and otherwise has local static evidence only under the user's
+  compile error `E0106`; run `30111866831` on head `9176c7e` confirmed that fix and advanced to a Clippy
+  `manual_pattern_char_comparison` finding. The active checkpoint fixes both boundaries and otherwise has local static evidence only under the user's
   temporary GitHub Actions waiver. It is not an exact-head Full Gate pass and does not close #294 or I10.
