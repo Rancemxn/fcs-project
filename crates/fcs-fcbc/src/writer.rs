@@ -1,5 +1,7 @@
 use fcs_model::{
-    CanonicalCompilation, CanonicalJudgeShape, CanonicalNoteKind, CanonicalNoteScorePolicy,
+    CanonicalCompilation, CanonicalDescriptorKind, CanonicalDescriptorTable,
+    CanonicalExpressionDag, CanonicalExpressionOpcode, CanonicalExpressionType,
+    CanonicalExpressionValue, CanonicalJudgeShape, CanonicalNoteKind, CanonicalNoteScorePolicy,
     CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalRequiredExtension, CanonicalResourceKind,
     CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation,
     CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget, CanonicalTrackValue,
@@ -34,11 +36,16 @@ const TY_BOOL: u8 = 1;
 const TY_INT: u8 = 2;
 const TY_FLOAT: u8 = 3;
 const TY_TIME: u8 = 4;
+const TY_BEAT: u8 = 5;
 const TY_LENGTH: u8 = 6;
 const TY_ANGLE: u8 = 7;
 const TY_COLOR: u8 = 8;
 const TY_VEC2_FLOAT: u8 = 9;
 const TY_VEC2_LENGTH: u8 = 10;
+const TY_VEC2_INT: u8 = 11;
+const TY_VEC2_TIME: u8 = 12;
+const TY_VEC2_BEAT: u8 = 13;
+const TY_VEC2_ANGLE: u8 = 14;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Constant {
@@ -158,6 +165,73 @@ struct Section {
 enum ExecutionGraph {
     Fixture,
     Native { has_notes: bool },
+}
+
+#[derive(Default)]
+struct NativeExpressionPool {
+    nodes: Vec<Vec<u8>>,
+}
+
+impl NativeExpressionPool {
+    fn emit(
+        &mut self,
+        expression: &CanonicalExpressionDag,
+        constants: &[Constant],
+    ) -> FcbcResult<u32> {
+        fn emit_node(
+            pool: &mut NativeExpressionPool,
+            expression: &CanonicalExpressionDag,
+            index: usize,
+            constants: &[Constant],
+            mapped: &mut [Option<u32>],
+        ) -> FcbcResult<u32> {
+            if let Some(index) = mapped[index] {
+                return Ok(index);
+            }
+            let node = &expression.nodes()[index];
+            let mut operands = [NULL_INDEX; 3];
+            let mut arity = 0;
+            for (slot, operand) in node.operands().iter().enumerate() {
+                if let Some(operand) = operand {
+                    operands[slot] = emit_node(pool, expression, *operand, constants, mapped)?;
+                    arity += 1;
+                }
+            }
+            let immediate = match node.constant() {
+                Some(value) => find_constant(constants, &canonical_expression_constant(value)?),
+                None => node.immediate(),
+            };
+            let mut encoded = Vec::with_capacity(20);
+            expression_node(
+                &mut encoded,
+                canonical_expression_opcode(node.opcode()),
+                canonical_expression_type(node.result_type()),
+                &operands[..arity],
+                immediate,
+            );
+            let global = if let Some(index) = pool.nodes.iter().position(|item| item == &encoded) {
+                index as u32
+            } else {
+                let index = pool.nodes.len() as u32;
+                pool.nodes.push(encoded);
+                index
+            };
+            mapped[index] = Some(global);
+            Ok(global)
+        }
+
+        let mut mapped = vec![None; expression.nodes().len()];
+        emit_node(self, expression, expression.root(), constants, &mut mapped)
+    }
+
+    fn section(&self) -> Vec<u8> {
+        let mut section = Vec::with_capacity(4 + self.nodes.len() * 20);
+        put_u32(&mut section, self.nodes.len() as u32);
+        for node in &self.nodes {
+            section.extend_from_slice(node);
+        }
+        section
+    }
 }
 
 /// Builds the deterministic, non-empty FCBC 2 / Execution ABI 1 reference fixture.
@@ -299,7 +373,9 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         &[],
         &[],
         ExecutionGraph::Fixture,
+        None,
     )
+    .expect("the fixed execution fixture is valid")
 }
 
 /// Product CanonicalCompilation → FCBC runtime package writer.
@@ -603,7 +679,7 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
     let resources = native_resources(compilation)?;
     let extensions = native_extensions(chart.required_extensions())?;
 
-    Ok(assemble_package(
+    assemble_package(
         &lines,
         &notes,
         &tempo,
@@ -614,7 +690,8 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
         ExecutionGraph::Native {
             has_notes: !notes.is_empty(),
         },
-    ))
+        chart.descriptors(),
+    )
 }
 
 #[cfg(test)]
@@ -657,6 +734,168 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
         assert_eq!(
             decoded.notes.len(),
             compilation.chart().notes().notes().len()
+        );
+    }
+
+    #[test]
+    fn write_from_compilation_preserves_exact_expression_dag() {
+        let workspace = tempdir().unwrap();
+        let document = parse_document(include_str!(
+            "../../../docs/conformance/fcs5/source/valid/exact-expression-dag.fcs"
+        ))
+        .into_result()
+        .expect("exact Expression DAG fixture must parse");
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .expect("exact Expression DAG fixture must compile");
+        let table = compilation
+            .chart()
+            .descriptors()
+            .expect("dynamic alpha must produce a descriptor table");
+        let root = table
+            .roots()
+            .iter()
+            .find(|root| root.target_path() == "note.presentation.alpha")
+            .expect("dynamic alpha root");
+        let CanonicalDescriptorKind::Expression(expression) =
+            table.descriptor(root.descriptor()).unwrap().kind()
+        else {
+            panic!("dynamic alpha must remain an Expression DAG");
+        };
+
+        let bytes = write_from_compilation(&compilation).expect("native Expression DAG write");
+        let decoded = crate::load_chart(&bytes).expect("native Expression DAG load");
+        let note = decoded.notes.first().expect("exact-expression Note");
+        assert!(matches!(
+            &decoded.descriptors[note.property_descriptors[4] as usize].kind,
+            crate::DescriptorKind::Expression(_)
+        ));
+        assert!(decoded.expressions.iter().any(|node| node.opcode == 70));
+        assert!(decoded.expressions.iter().any(|node| node.opcode == 50));
+
+        for distance in [50.0, 150.0] {
+            let canonical = fcs_runtime::evaluate_expression(
+                expression,
+                fcs_runtime::ExpressionEnvironment::new(1.0, 0.0, 0.0, distance).unwrap(),
+            )
+            .unwrap();
+            let fcs_model::CanonicalExpressionValue::Float(canonical) = canonical else {
+                panic!("alpha expression must return float");
+            };
+            let encoded = crate::query_descriptor(
+                &decoded,
+                note.property_descriptors[4],
+                1.0,
+                crate::EvaluationEnvironment {
+                    s: 1.0,
+                    b: 0.0,
+                    q: 0.0,
+                    d: distance,
+                    p: 0.0,
+                },
+            )
+            .expect("encoded alpha query")
+            .value;
+            assert_eq!(
+                encoded,
+                crate::RuntimeValue::Scalar {
+                    ty: crate::ValueType::Float,
+                    value: canonical,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn write_from_compilation_preserves_dynamic_color() {
+        let workspace = tempdir().unwrap();
+        let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+    notes {
+        tap {
+            id: "color";
+            line: @main;
+            gameplay.time: 1s;
+            presentation.color: choose {
+                when d < 100px => #FF0000;
+                else => #00FF0080;
+            };
+        };
+    }
+}
+"#;
+        let document = parse_document(source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .expect("dynamic color must compile");
+        let bytes = write_from_compilation(&compilation).expect("dynamic color write");
+        let decoded = crate::load_chart(&bytes).expect("dynamic color load");
+        let note = decoded.notes.first().unwrap();
+
+        for (distance, expected) in [
+            (50.0, crate::RuntimeValue::Color([1.0, 0.0, 0.0, 1.0])),
+            (
+                150.0,
+                crate::RuntimeValue::Color([0.0, 1.0, 0.0, 128.0 / 255.0]),
+            ),
+        ] {
+            let actual = crate::query_descriptor(
+                &decoded,
+                note.property_descriptors[8],
+                1.0,
+                crate::EvaluationEnvironment {
+                    s: 1.0,
+                    b: 0.0,
+                    q: 0.0,
+                    d: distance,
+                    p: 0.0,
+                },
+            )
+            .unwrap()
+            .value;
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn expression_vec2_constants_use_element_payload_layout() {
+        let int = canonical_expression_constant(&CanonicalExpressionValue::Vec2(
+            Box::new(CanonicalExpressionValue::Int(-2)),
+            Box::new(CanonicalExpressionValue::Int(3)),
+        ))
+        .unwrap();
+        assert_eq!(int.payload.len(), 24);
+        assert_eq!(&int.payload[8..16], &(-2_i64).to_le_bytes());
+        assert_eq!(&int.payload[16..24], &3_i64.to_le_bytes());
+
+        let beat = canonical_expression_constant(&CanonicalExpressionValue::Vec2(
+            Box::new(CanonicalExpressionValue::ExactBeat(
+                fcs_model::Beat::new(1, 3).unwrap(),
+            )),
+            Box::new(CanonicalExpressionValue::ExactBeat(
+                fcs_model::Beat::new(2, 3).unwrap(),
+            )),
+        ))
+        .unwrap();
+        assert_eq!(beat.payload.len(), 40);
+        assert_eq!(
+            &beat.payload[8..24],
+            &[1, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(
+            &beat.payload[24..40],
+            &[2, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0]
         );
     }
 
@@ -1740,7 +1979,8 @@ fn assemble_package(
     tracks: &[NativeTrackFixture],
     extensions: &[ExtensionFixture],
     execution_graph: ExecutionGraph,
-) -> Vec<u8> {
+    runtime_descriptors: Option<&CanonicalDescriptorTable>,
+) -> FcbcResult<Vec<u8>> {
     let mut lines = lines.to_vec();
     let mut notes = notes.to_vec();
     let mut constants = fixture_constants();
@@ -1769,6 +2009,23 @@ fn assemble_package(
                 constants.extend([segment.start_constant.clone(), segment.end_constant.clone()]);
             }
         }
+        if let Some(runtime_descriptors) = runtime_descriptors {
+            for descriptor in runtime_descriptors.descriptors() {
+                match descriptor.kind() {
+                    CanonicalDescriptorKind::Constant(value) => {
+                        constants.push(canonical_expression_constant(value)?);
+                    }
+                    CanonicalDescriptorKind::Expression(expression) => {
+                        for node in expression.nodes() {
+                            if let Some(value) = node.constant() {
+                                constants.push(canonical_expression_constant(value)?);
+                            }
+                        }
+                    }
+                    CanonicalDescriptorKind::Piecewise(_) => {}
+                }
+            }
+        }
     }
     constants.sort_by(|left, right| {
         (left.tag, left.payload.as_slice()).cmp(&(right.tag, right.payload.as_slice()))
@@ -1777,12 +2034,15 @@ fn assemble_package(
     let indices = constant_indices(&constants);
     let (track_section, expressions) = match execution_graph {
         ExecutionGraph::Fixture => (tracks_section(&indices), expression_section(&indices)),
-        ExecutionGraph::Native { has_notes } => (
-            native_tracks_section(
-                &constants, &indices, &mut lines, &mut notes, tracks, has_notes,
-            ),
-            count_zero_section(),
-        ),
+        ExecutionGraph::Native { has_notes } => native_tracks_section(
+            &constants,
+            &indices,
+            &mut lines,
+            &mut notes,
+            tracks,
+            has_notes,
+            runtime_descriptors,
+        )?,
     };
     let distances = distance_section_for_lines(&lines, tracks);
     let mut feature_flags = if lines.iter().any(|line| line.line_flags & 1 != 0) {
@@ -1828,7 +2088,7 @@ fn assemble_package(
 
     write_header(&mut bytes, sections.len() as u32, feature_flags);
     write_section_table(&mut bytes, &sections);
-    bytes
+    Ok(bytes)
 }
 
 impl Section {
@@ -1922,6 +2182,153 @@ fn vec2_constant(element_tag: u8, value: [f64; 2]) -> Constant {
     put_f64(&mut payload, value[0]);
     put_f64(&mut payload, value[1]);
     Constant { tag: 10, payload }
+}
+
+fn canonical_expression_constant(value: &CanonicalExpressionValue) -> FcbcResult<Constant> {
+    let constant = match value {
+        CanonicalExpressionValue::Bool(value) => bool_constant(*value),
+        CanonicalExpressionValue::Int(value) => int_constant(*value),
+        CanonicalExpressionValue::Float(value) => float_constant(*value),
+        CanonicalExpressionValue::Time(value) => scalar_constant(5, *value),
+        CanonicalExpressionValue::Beat(value) => beat_constant(*value)?,
+        CanonicalExpressionValue::ExactBeat(value) => exact_beat_constant(*value),
+        CanonicalExpressionValue::Length(value) => scalar_constant(7, *value),
+        CanonicalExpressionValue::Angle(value) => scalar_constant(8, *value),
+        CanonicalExpressionValue::Color(value) => color_constant(*value),
+        CanonicalExpressionValue::Vec2(x, y) => canonical_vec2_constant(x, y)?,
+    };
+    Ok(constant)
+}
+
+fn canonical_vec2_constant(
+    x: &CanonicalExpressionValue,
+    y: &CanonicalExpressionValue,
+) -> FcbcResult<Constant> {
+    let (tag, mut payload) = match (x, y) {
+        (CanonicalExpressionValue::Int(x), CanonicalExpressionValue::Int(y)) => {
+            let mut payload = Vec::with_capacity(24);
+            put_i64(&mut payload, *x);
+            put_i64(&mut payload, *y);
+            (2, payload)
+        }
+        (CanonicalExpressionValue::Float(x), CanonicalExpressionValue::Float(y)) => {
+            (3, scalar_pair(*x, *y))
+        }
+        (CanonicalExpressionValue::Time(x), CanonicalExpressionValue::Time(y)) => {
+            (5, scalar_pair(*x, *y))
+        }
+        (x, y)
+            if x.value_type() == CanonicalExpressionType::Beat
+                && y.value_type() == CanonicalExpressionType::Beat =>
+        {
+            let mut payload = Vec::with_capacity(40);
+            put_beat_value(&mut payload, x)?;
+            put_beat_value(&mut payload, y)?;
+            (6, payload)
+        }
+        (CanonicalExpressionValue::Length(x), CanonicalExpressionValue::Length(y)) => {
+            (7, scalar_pair(*x, *y))
+        }
+        (CanonicalExpressionValue::Angle(x), CanonicalExpressionValue::Angle(y)) => {
+            (8, scalar_pair(*x, *y))
+        }
+        _ => {
+            return Err(FcbcError::new(
+                "fcbc.invalid-expression",
+                "canonical vec2 constant elements must have the same numeric type",
+            ));
+        }
+    };
+    let mut encoded = vec![tag];
+    encoded.resize(8, 0);
+    encoded.append(&mut payload);
+    Ok(Constant {
+        tag: 10,
+        payload: encoded,
+    })
+}
+
+fn scalar_pair(x: f64, y: f64) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(16);
+    put_f64(&mut payload, x);
+    put_f64(&mut payload, y);
+    payload
+}
+
+fn beat_constant(value: f64) -> FcbcResult<Constant> {
+    let mut payload = Vec::with_capacity(16);
+    put_beat(&mut payload, value)?;
+    Ok(Constant { tag: 6, payload })
+}
+
+fn exact_beat_constant(value: fcs_model::Beat) -> Constant {
+    let mut payload = Vec::with_capacity(16);
+    put_i64(&mut payload, value.numerator());
+    put_i64(&mut payload, value.denominator());
+    Constant { tag: 6, payload }
+}
+
+fn put_beat_value(output: &mut Vec<u8>, value: &CanonicalExpressionValue) -> FcbcResult<()> {
+    match value {
+        CanonicalExpressionValue::Beat(value) => put_beat(output, *value),
+        CanonicalExpressionValue::ExactBeat(value) => {
+            put_i64(output, value.numerator());
+            put_i64(output, value.denominator());
+            Ok(())
+        }
+        _ => Err(FcbcError::new(
+            "fcbc.invalid-expression",
+            "canonical vec2 Beat constant has a non-Beat element",
+        )),
+    }
+}
+
+fn put_beat(output: &mut Vec<u8>, value: f64) -> FcbcResult<()> {
+    let (numerator, denominator) = exact_f64_ratio(value).ok_or_else(|| {
+        FcbcError::new(
+            "fcbc.invalid-expression",
+            "canonical Beat constant is not representable as FCBC i64/i64",
+        )
+    })?;
+    put_i64(output, numerator);
+    put_i64(output, denominator);
+    Ok(())
+}
+
+fn exact_f64_ratio(value: f64) -> Option<(i64, i64)> {
+    if !value.is_finite() {
+        return None;
+    }
+    if value == 0.0 {
+        return Some((0, 1));
+    }
+    let bits = value.to_bits();
+    let negative = bits >> 63 != 0;
+    let exponent_bits = ((bits >> 52) & 0x7ff) as i32;
+    let mut mantissa = bits & ((1_u64 << 52) - 1);
+    let mut exponent = if exponent_bits == 0 {
+        -1074
+    } else {
+        mantissa |= 1_u64 << 52;
+        exponent_bits - 1023 - 52
+    };
+    while exponent < 0 && mantissa & 1 == 0 {
+        mantissa >>= 1;
+        exponent += 1;
+    }
+    let (numerator, denominator) = if exponent >= 0 {
+        (i128::from(mantissa).checked_shl(exponent as u32)?, 1_i128)
+    } else {
+        (
+            i128::from(mantissa),
+            1_i128.checked_shl((-exponent) as u32)?,
+        )
+    };
+    let numerator = if negative { -numerator } else { numerator };
+    Some((
+        i64::try_from(numerator).ok()?,
+        i64::try_from(denominator).ok()?,
+    ))
 }
 
 fn native_resources(compilation: &CanonicalCompilation) -> FcbcResult<Vec<ResourceFixture<'_>>> {
@@ -2741,8 +3148,13 @@ fn native_tracks_section(
     notes: &mut [NoteFixture],
     tracks: &[NativeTrackFixture],
     has_notes: bool,
-) -> Vec<u8> {
+    runtime_descriptors: Option<&CanonicalDescriptorTable>,
+) -> FcbcResult<(Vec<u8>, Vec<u8>)> {
     let mut descriptors = Vec::new();
+    let mut expressions = NativeExpressionPool::default();
+    let mut runtime_descriptor_indices = runtime_descriptors
+        .map(|table| vec![None; table.descriptors().len()])
+        .unwrap_or_default();
 
     // Descriptor order follows the canonical direct-root path order used by the loader:
     // all Line roots are grouped by path, then by stable Line ID.
@@ -2815,7 +3227,26 @@ fn native_tracks_section(
         // Direct roots are allocated by canonical target path, then stable Note ID.
         for property in [4usize, 8, 0, 7, 5, 6, 1, 9, 2, 3] {
             for &index in &note_order {
-                let descriptor = if property == 9 {
+                let runtime_descriptor = runtime_descriptors.and_then(|table| {
+                    table
+                        .roots()
+                        .iter()
+                        .find(|root| {
+                            root.target_path() == note_property_path(property)
+                                && root.owner() == notes[index].id
+                        })
+                        .map(|root| (table, root.descriptor()))
+                });
+                let descriptor = if let Some((table, descriptor)) = runtime_descriptor {
+                    native_canonical_descriptor(
+                        table,
+                        descriptor,
+                        constants,
+                        &mut descriptors,
+                        &mut expressions,
+                        &mut runtime_descriptor_indices,
+                    )?
+                } else if property == 9 {
                     native_note_visibility_descriptor(
                         &mut descriptors,
                         indices.bool_false,
@@ -2846,7 +3277,168 @@ fn native_tracks_section(
     for descriptor in descriptors {
         section.extend_from_slice(&descriptor);
     }
-    section
+    Ok((section, expressions.section()))
+}
+
+fn note_property_path(property: usize) -> &'static str {
+    match property {
+        0 => "note.presentation.positionX",
+        1 => "note.presentation.scrollFactor",
+        2 => "note.presentation.xOffset",
+        3 => "note.presentation.yOffset",
+        4 => "note.presentation.alpha",
+        5 => "note.presentation.scaleX",
+        6 => "note.presentation.scaleY",
+        7 => "note.presentation.rotation",
+        8 => "note.presentation.color",
+        9 => "note.presentation.visibility",
+        _ => unreachable!("Note property descriptor index is fixed by FCBC 2"),
+    }
+}
+
+fn native_canonical_descriptor(
+    table: &CanonicalDescriptorTable,
+    canonical_index: usize,
+    constants: &[Constant],
+    descriptors: &mut Vec<Vec<u8>>,
+    expressions: &mut NativeExpressionPool,
+    mapped: &mut [Option<u32>],
+) -> FcbcResult<u32> {
+    if let Some(index) = mapped[canonical_index] {
+        return Ok(index);
+    }
+    let descriptor = table.descriptor(canonical_index).ok_or_else(|| {
+        FcbcError::new(
+            "fcbc.dangling-reference",
+            format!("canonical descriptor {canonical_index} is missing"),
+        )
+    })?;
+    let property_type = canonical_expression_type(descriptor.property_type());
+    let encoded = match descriptor.kind() {
+        CanonicalDescriptorKind::Constant(value) => constant_descriptor(
+            property_type,
+            find_constant(constants, &canonical_expression_constant(value)?),
+        ),
+        CanonicalDescriptorKind::Expression(expression) => {
+            expression_descriptor(property_type, expressions.emit(expression, constants)?)
+        }
+        CanonicalDescriptorKind::Piecewise(pieces) => {
+            let domain = descriptor.domain();
+            let mut flags = 0;
+            if domain.start().is_none() {
+                flags |= 1;
+            }
+            if domain.end().is_none() {
+                flags |= 2;
+            }
+            let mut payload = descriptor_common(
+                property_type,
+                3,
+                flags,
+                domain.start().unwrap_or(0.0),
+                domain.end().unwrap_or(0.0),
+            );
+            put_u32(&mut payload, pieces.len() as u32);
+            for piece in pieces {
+                let child = native_canonical_descriptor(
+                    table,
+                    piece.descriptor(),
+                    constants,
+                    descriptors,
+                    expressions,
+                    mapped,
+                )?;
+                put_f64(&mut payload, piece.start().unwrap_or(0.0));
+                put_f64(&mut payload, piece.end().unwrap_or(0.0));
+                put_u32(&mut payload, child);
+                put_u32(
+                    &mut payload,
+                    u32::from(piece.end_inclusive())
+                        | (u32::from(piece.start().is_none()) << 1)
+                        | (u32::from(piece.end().is_none()) << 2),
+                );
+            }
+            record(payload)
+        }
+    };
+    let index = intern_descriptor(descriptors, encoded);
+    mapped[canonical_index] = Some(index);
+    Ok(index)
+}
+
+fn canonical_expression_type(value: &CanonicalExpressionType) -> u8 {
+    match value {
+        CanonicalExpressionType::Bool => TY_BOOL,
+        CanonicalExpressionType::Int => TY_INT,
+        CanonicalExpressionType::Float => TY_FLOAT,
+        CanonicalExpressionType::Time => TY_TIME,
+        CanonicalExpressionType::Beat => TY_BEAT,
+        CanonicalExpressionType::Length => TY_LENGTH,
+        CanonicalExpressionType::Angle => TY_ANGLE,
+        CanonicalExpressionType::Color => TY_COLOR,
+        CanonicalExpressionType::Vec2(element) => match element.as_ref() {
+            CanonicalExpressionType::Int => TY_VEC2_INT,
+            CanonicalExpressionType::Float => TY_VEC2_FLOAT,
+            CanonicalExpressionType::Time => TY_VEC2_TIME,
+            CanonicalExpressionType::Beat => TY_VEC2_BEAT,
+            CanonicalExpressionType::Length => TY_VEC2_LENGTH,
+            CanonicalExpressionType::Angle => TY_VEC2_ANGLE,
+            _ => unreachable!("canonical expression vectors have numeric elements"),
+        },
+    }
+}
+
+fn canonical_expression_opcode(value: CanonicalExpressionOpcode) -> u16 {
+    match value {
+        CanonicalExpressionOpcode::Constant => 1,
+        CanonicalExpressionOpcode::EnvS => 2,
+        CanonicalExpressionOpcode::EnvB => 3,
+        CanonicalExpressionOpcode::EnvQ => 4,
+        CanonicalExpressionOpcode::EnvD => 5,
+        CanonicalExpressionOpcode::EnvP => 6,
+        CanonicalExpressionOpcode::Neg => 10,
+        CanonicalExpressionOpcode::Not => 11,
+        CanonicalExpressionOpcode::Add => 20,
+        CanonicalExpressionOpcode::Sub => 21,
+        CanonicalExpressionOpcode::Mul => 22,
+        CanonicalExpressionOpcode::Div => 23,
+        CanonicalExpressionOpcode::Mod => 24,
+        CanonicalExpressionOpcode::Pow => 25,
+        CanonicalExpressionOpcode::Eq => 30,
+        CanonicalExpressionOpcode::Ne => 31,
+        CanonicalExpressionOpcode::Lt => 32,
+        CanonicalExpressionOpcode::Le => 33,
+        CanonicalExpressionOpcode::Gt => 34,
+        CanonicalExpressionOpcode::Ge => 35,
+        CanonicalExpressionOpcode::And => 36,
+        CanonicalExpressionOpcode::Or => 37,
+        CanonicalExpressionOpcode::ApproxEq => 38,
+        CanonicalExpressionOpcode::Abs => 40,
+        CanonicalExpressionOpcode::Min => 41,
+        CanonicalExpressionOpcode::Max => 42,
+        CanonicalExpressionOpcode::Clamp => 43,
+        CanonicalExpressionOpcode::Floor => 44,
+        CanonicalExpressionOpcode::Ceil => 45,
+        CanonicalExpressionOpcode::Round => 46,
+        CanonicalExpressionOpcode::Sqrt => 47,
+        CanonicalExpressionOpcode::Exp => 48,
+        CanonicalExpressionOpcode::Ln => 49,
+        CanonicalExpressionOpcode::Sin => 50,
+        CanonicalExpressionOpcode::Cos => 51,
+        CanonicalExpressionOpcode::Tan => 52,
+        CanonicalExpressionOpcode::Asin => 53,
+        CanonicalExpressionOpcode::Acos => 54,
+        CanonicalExpressionOpcode::Atan => 55,
+        CanonicalExpressionOpcode::Atan2 => 56,
+        CanonicalExpressionOpcode::Easing => 60,
+        CanonicalExpressionOpcode::ToFloat => 61,
+        CanonicalExpressionOpcode::Seconds => 62,
+        CanonicalExpressionOpcode::Radians => 63,
+        CanonicalExpressionOpcode::Choose => 70,
+        CanonicalExpressionOpcode::Vec2 => 80,
+        CanonicalExpressionOpcode::Vec2X => 81,
+        CanonicalExpressionOpcode::Vec2Y => 82,
+    }
 }
 
 fn native_scroll_tempo_descriptor(

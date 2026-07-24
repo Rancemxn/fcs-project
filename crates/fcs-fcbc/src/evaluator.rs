@@ -515,24 +515,38 @@ fn arithmetic(
             };
             vector(ty, [apply(left_x, right_x), apply(left_y, right_y)])
         }
-        (
-            RuntimeValue::Vec2 { ty, value },
-            RuntimeValue::Scalar {
-                ty: scalar_type,
-                value: scalar_value,
-            },
-        ) if matches!(operation, Arithmetic::Multiply | Arithmetic::Divide)
-            && matches!(scalar_type, ValueType::Float) =>
+        (RuntimeValue::Vec2 { ty, value }, scalar)
+            if matches!(operation, Arithmetic::Multiply | Arithmetic::Divide) =>
         {
-            let apply = |component: f64| match operation {
-                Arithmetic::Multiply => component * scalar_value,
-                Arithmetic::Divide => component / scalar_value,
-                _ => unreachable!(),
-            };
-            vector(ty, [apply(value[0]), apply(value[1])])
+            scale_vector(ty, value, scalar, operation)
+        }
+        (scalar, RuntimeValue::Vec2 { ty, value }) if matches!(operation, Arithmetic::Multiply) => {
+            scale_vector(ty, value, scalar, operation)
         }
         _ => Err(EXECUTION_ERROR),
     }
+}
+
+fn scale_vector(
+    ty: ValueType,
+    value: [f64; 2],
+    scalar: RuntimeValue,
+    operation: Arithmetic,
+) -> Result<RuntimeValue, &'static str> {
+    let scalar = match scalar {
+        RuntimeValue::Int(value) => value as f64,
+        RuntimeValue::Scalar {
+            ty: ValueType::Float,
+            value,
+        } => value,
+        _ => return Err(EXECUTION_ERROR),
+    };
+    let apply = |component: f64| match operation {
+        Arithmetic::Multiply => component * scalar,
+        Arithmetic::Divide => component / scalar,
+        _ => unreachable!(),
+    };
+    vector(ty, [apply(value[0]), apply(value[1])])
 }
 
 fn negate(value: RuntimeValue) -> Result<RuntimeValue, &'static str> {
@@ -1122,4 +1136,78 @@ fn constant_descriptor_scalar(
             .get(*index as usize)
             .ok_or(EXECUTION_ERROR)?,
     )?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::loader::{DescriptorKind, Domain, ExpressionNode, PropertyDescriptor};
+
+    fn unbounded() -> Domain {
+        Domain {
+            start: 0.0,
+            end: 0.0,
+            unbounded_before: true,
+            unbounded_after: true,
+        }
+    }
+
+    #[test]
+    fn vec2_int_expression_scales_by_int_operand() {
+        let mut chart = crate::load_chart(&crate::write_nonempty_execution()).unwrap();
+        let vector_constant = chart.constants.len() as u32;
+        chart.constants.push(RuntimeValue::Vec2 {
+            ty: ValueType::Vec2Int,
+            value: [1.0, 2.0],
+        });
+        let factor_constant = chart.constants.len() as u32;
+        chart.constants.push(RuntimeValue::Int(3));
+
+        let vector_node = chart.expressions.len() as u32;
+        chart.expressions.push(ExpressionNode {
+            opcode: 1,
+            result_type: ValueType::Vec2Int,
+            operands: [u32::MAX; 3],
+            arity: 0,
+            immediate: vector_constant,
+        });
+        let factor_node = chart.expressions.len() as u32;
+        chart.expressions.push(ExpressionNode {
+            opcode: 1,
+            result_type: ValueType::Int,
+            operands: [u32::MAX; 3],
+            arity: 0,
+            immediate: factor_constant,
+        });
+
+        for operands in [
+            [vector_node, factor_node, u32::MAX],
+            [factor_node, vector_node, u32::MAX],
+        ] {
+            let root = chart.expressions.len() as u32;
+            chart.expressions.push(ExpressionNode {
+                opcode: 22,
+                result_type: ValueType::Vec2Int,
+                operands,
+                arity: 2,
+                immediate: 0,
+            });
+            let descriptor = chart.descriptors.len() as u32;
+            chart.descriptors.push(PropertyDescriptor {
+                property_type: ValueType::Vec2Int,
+                domain: unbounded(),
+                kind: DescriptorKind::Expression(root),
+            });
+
+            assert_eq!(
+                query_descriptor(&chart, descriptor, 0.0, EvaluationEnvironment::at_time(0.0))
+                    .unwrap()
+                    .value,
+                RuntimeValue::Vec2 {
+                    ty: ValueType::Vec2Int,
+                    value: [3.0, 6.0],
+                }
+            );
+        }
+    }
 }

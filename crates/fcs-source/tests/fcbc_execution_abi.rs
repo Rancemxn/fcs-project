@@ -667,6 +667,71 @@ fn piecewise_rebinds_env_p_and_direct_env_p_is_rejected() {
 }
 
 #[test]
+fn vec2_int_expression_scales_by_int_operand() {
+    let mut chart = load(&fcbc_reference_writer::write_nonempty_execution())
+        .expect("reviewed Execution fixture");
+    let vector_constant = chart.constants.len() as u32;
+    chart.constants.push(RuntimeValue::Vec2 {
+        ty: ValueType::Vec2Int,
+        value: [1.0, 2.0],
+    });
+    let factor_constant = chart.constants.len() as u32;
+    chart.constants.push(RuntimeValue::Int(3));
+
+    let vector_node = chart.expressions.len() as u32;
+    chart.expressions.push(ExpressionNode {
+        opcode: 1,
+        result_type: ValueType::Vec2Int,
+        operands: [u32::MAX; 3],
+        arity: 0,
+        immediate: vector_constant,
+    });
+    let factor_node = chart.expressions.len() as u32;
+    chart.expressions.push(ExpressionNode {
+        opcode: 1,
+        result_type: ValueType::Int,
+        operands: [u32::MAX; 3],
+        arity: 0,
+        immediate: factor_constant,
+    });
+
+    for operands in [
+        [vector_node, factor_node, u32::MAX],
+        [factor_node, vector_node, u32::MAX],
+    ] {
+        let root = chart.expressions.len() as u32;
+        chart.expressions.push(ExpressionNode {
+            opcode: 22,
+            result_type: ValueType::Vec2Int,
+            operands,
+            arity: 2,
+            immediate: 0,
+        });
+        let descriptor = chart.descriptors.len() as u32;
+        chart.descriptors.push(PropertyDescriptor {
+            property_type: ValueType::Vec2Int,
+            domain: Domain {
+                start: 0.0,
+                end: 0.0,
+                unbounded_before: true,
+                unbounded_after: true,
+            },
+            kind: DescriptorKind::Expression(root),
+        });
+
+        assert_eq!(
+            query_descriptor(&chart, descriptor, 0.0, EvaluationEnvironment::at_time(0.0))
+                .unwrap()
+                .value,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Int,
+                value: [3.0, 6.0],
+            }
+        );
+    }
+}
+
+#[test]
 fn line_scroll_coordinate_is_direct_seek_and_anchored_at_zero() {
     let chart = load(&fcbc_reference_writer::write_nonempty_execution())
         .expect("reviewed Execution fixture");

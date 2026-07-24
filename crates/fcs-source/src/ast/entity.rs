@@ -6,8 +6,9 @@ use super::{DocumentProfile, LetStatement, ResourceKind, TempoMap};
 use super::{SourceExpression, SourceSpan, Type, TypedValue};
 use crate::version::Version;
 use fcs_model::{
-    AudioOffset, Beat as CanonicalBeat, CanonicalTextualId, CanonicalTime, ChartTimeMap,
-    EntityKind, ExpansionPath, IdError, StableId, StableIdRegistry, TempoError, TempoPoint,
+    AudioOffset, Beat as CanonicalBeat, CanonicalExpressionDag, CanonicalTextualId, CanonicalTime,
+    ChartTimeMap, EntityKind, ExpansionPath, IdError, StableId, StableIdRegistry, TempoError,
+    TempoPoint,
 };
 
 /// A violation detected while constructing or auditing expanded output.
@@ -781,19 +782,39 @@ pub struct CollectionsBlock {
     pub span: SourceSpan,
 }
 
-/// A concrete field value retained after successful elaboration.
+/// A source-free field value retained after successful elaboration.
 ///
-/// Lowered fields own their value and source span and cannot retain a source expression.
+/// Dynamic fields retain an exact canonical DAG alongside their schema base value.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExpandedField {
     path: String,
     value: TypedValue,
+    runtime_expression: Option<CanonicalExpressionDag>,
     span: SourceSpan,
 }
 
 impl ExpandedField {
     pub(crate) fn new(path: String, value: TypedValue, span: SourceSpan) -> Self {
-        Self { path, value, span }
+        Self {
+            path,
+            value,
+            runtime_expression: None,
+            span,
+        }
+    }
+
+    pub(crate) fn runtime(
+        path: String,
+        value: TypedValue,
+        runtime_expression: CanonicalExpressionDag,
+        span: SourceSpan,
+    ) -> Self {
+        Self {
+            path,
+            value,
+            runtime_expression: Some(runtime_expression),
+            span,
+        }
     }
 
     /// Returns the canonical dotted field path.
@@ -804,6 +825,10 @@ impl ExpandedField {
     /// Returns the concrete value produced by elaboration.
     pub fn value(&self) -> &TypedValue {
         &self.value
+    }
+
+    pub fn runtime_expression(&self) -> Option<&CanonicalExpressionDag> {
+        self.runtime_expression.as_ref()
     }
 
     /// Returns the source provenance span of this field value.
@@ -916,11 +941,13 @@ mod tests {
         let first = ExpandedField {
             path: "gameplay.time".into(),
             value: TypedValue::Beat(super::super::Beat::new(1, 1).unwrap()),
+            runtime_expression: None,
             span: first_span,
         };
         let second = ExpandedField {
             path: "presentation.positionX".into(),
             value: TypedValue::Length(12.0),
+            runtime_expression: None,
             span: second_span,
         };
         let entity = ExpandedEntity {
@@ -954,6 +981,7 @@ mod tests {
                 Box::new(TypedValue::Int(0)),
                 Box::new(TypedValue::String("runtime".into())),
             ),
+            runtime_expression: None,
             span,
         };
         let invalid_field_entity = ExpandedEntity {
@@ -987,6 +1015,7 @@ mod tests {
                 ExpandedField {
                     path: String::new(),
                     value: TypedValue::Int(0),
+                    runtime_expression: None,
                     span,
                 },
             )]
@@ -1014,6 +1043,7 @@ mod tests {
                 ExpandedField {
                     path: "gameplay.time".into(),
                     value: TypedValue::Int(0),
+                    runtime_expression: None,
                     span,
                 },
             )]

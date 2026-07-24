@@ -7,6 +7,7 @@ use crate::ast::{
     TemplateStatement, Type, TypedValue, WithExpression,
 };
 use crate::diagnostic::{ExpansionTraceFrame, ExpansionTraceKind};
+use crate::expression::lower_runtime_expression_with_resolver;
 use crate::schema::{ConstructionSchema, EntitySchema, FieldConstraint};
 use fcs_model::ExpansionPath;
 
@@ -757,7 +758,9 @@ impl<'a> StaticEntityValidator<'a> {
                         field: path.clone(),
                         span: field.path.span,
                     })?;
-            if is_structural_field(&path) && contains_runtime_choose(&field.value) {
+            if contains_runtime_environment(&field.value, &|name| scope.lookup(name).is_some())
+                && !is_dynamic_field(&path)
+            {
                 return Err(Diagnostic::DynamicFieldForbidden {
                     field: path,
                     span: field.value.span(),
@@ -913,44 +916,80 @@ fn validate_line_references(
     }
 }
 
-fn contains_runtime_choose(expression: &SourceExpression) -> bool {
+fn contains_runtime_environment(
+    expression: &SourceExpression,
+    is_bound: &impl Fn(&str) -> bool,
+) -> bool {
     match expression {
-        SourceExpression::Choose { .. } => true,
+        SourceExpression::Name { name, .. } => {
+            matches!(name.as_str(), "s" | "b" | "q" | "d" | "p") && !is_bound(name)
+        }
         SourceExpression::Unary { operand, .. }
-        | SourceExpression::FieldAccess { base: operand, .. } => contains_runtime_choose(operand),
+        | SourceExpression::FieldAccess { base: operand, .. } => {
+            contains_runtime_environment(operand, is_bound)
+        }
         SourceExpression::Binary { left, right, .. }
         | SourceExpression::Vec2 {
             x: left, y: right, ..
-        } => contains_runtime_choose(left) || contains_runtime_choose(right),
+        } => {
+            contains_runtime_environment(left, is_bound)
+                || contains_runtime_environment(right, is_bound)
+        }
         SourceExpression::Call {
             callee, arguments, ..
-        } => contains_runtime_choose(callee) || arguments.iter().any(contains_runtime_choose),
-        SourceExpression::Array { elements, .. } => elements.iter().any(contains_runtime_choose),
+        } => {
+            contains_runtime_environment(callee, is_bound)
+                || arguments
+                    .iter()
+                    .any(|argument| contains_runtime_environment(argument, is_bound))
+        }
+        SourceExpression::Array { elements, .. } => elements
+            .iter()
+            .any(|element| contains_runtime_environment(element, is_bound)),
         SourceExpression::Object { entries, .. } => entries
             .iter()
-            .any(|entry| contains_runtime_choose(&entry.value)),
+            .any(|entry| contains_runtime_environment(&entry.value, is_bound)),
         SourceExpression::Index { base, index, .. } => {
-            contains_runtime_choose(base) || contains_runtime_choose(index)
+            contains_runtime_environment(base, is_bound)
+                || contains_runtime_environment(index, is_bound)
         }
-        SourceExpression::Literal { .. }
-        | SourceExpression::Reference { .. }
-        | SourceExpression::Name { .. } => false,
+        SourceExpression::Choose {
+            arms, else_value, ..
+        } => {
+            arms.iter().any(|arm| {
+                contains_runtime_environment(&arm.condition, is_bound)
+                    || contains_runtime_environment(&arm.value, is_bound)
+            }) || contains_runtime_environment(else_value, is_bound)
+        }
+        SourceExpression::Literal { .. } | SourceExpression::Reference { .. } => false,
     }
 }
 
-fn is_structural_field(path: &str) -> bool {
+fn document_defines(document: &Document, name: &str) -> bool {
+    document.definitions.as_ref().is_some_and(|definitions| {
+        definitions
+            .declarations
+            .iter()
+            .any(|definition| match definition {
+                Definition::Const(declaration) => declaration.name == name,
+                Definition::Function(declaration) => declaration.name == name,
+                Definition::Template(declaration) => declaration.name == name,
+            })
+    })
+}
+
+fn is_dynamic_field(path: &str) -> bool {
     matches!(
         path,
-        "line"
-            | "gameplay.time"
-            | "gameplay.endTime"
-            | "gameplay.side"
-            | "gameplay.judgment.enabled"
-            | "gameplay.judgeShape.kind"
-            | "gameplay.soundPolicy"
-            | "gameplay.soundResource"
-            | "gameplay.scorePolicy"
-            | "gameplay.scoreExtension"
+        "presentation.positionX"
+            | "presentation.scrollFactor"
+            | "presentation.xOffset"
+            | "presentation.yOffset"
+            | "presentation.alpha"
+            | "presentation.scaleX"
+            | "presentation.scaleY"
+            | "presentation.rotation"
+            | "presentation.color"
     )
 }
 
@@ -1624,14 +1663,17 @@ impl<'a> ExpansionContext<'a> {
                         field: path.clone(),
                         span: field.path.span,
                     })?;
-            let value = self.evaluate_field_value(
+            let (value, runtime_expression) = self.evaluate_field_value(
                 &path,
                 &field.value,
                 field_schema.expected_type(),
                 bindings,
             )?;
             validate_field_type(field_schema, &value, field.value.span())?;
-            entity.replace_field(ExpandedField::new(path, value, field.span));
+            entity.replace_field(match runtime_expression {
+                Some(expression) => ExpandedField::runtime(path, value, expression, field.span),
+                None => ExpandedField::new(path, value, field.span),
+            });
         }
         self.require_entity_fields(schema, &entity, expression.span)?;
         Ok(entity)
@@ -1661,14 +1703,20 @@ impl<'a> ExpansionContext<'a> {
                         field: path.clone(),
                         span: field.path.span,
                     })?;
-            let value = self.evaluate_field_value(
+            let (value, runtime_expression) = self.evaluate_field_value(
                 &path,
                 &field.value,
                 field_schema.expected_type(),
                 bindings,
             )?;
             validate_field_type(field_schema, &value, field.value.span())?;
-            result.insert(path.clone(), ExpandedField::new(path, value, field.span));
+            result.insert(
+                path.clone(),
+                match runtime_expression {
+                    Some(expression) => ExpandedField::runtime(path, value, expression, field.span),
+                    None => ExpandedField::new(path, value, field.span),
+                },
+            );
         }
         Ok(result)
     }
@@ -1679,20 +1727,54 @@ impl<'a> ExpansionContext<'a> {
         expression: &SourceExpression,
         expected: Option<&Type>,
         bindings: &BTreeMap<String, TypedValue>,
-    ) -> Result<TypedValue, Diagnostic> {
+    ) -> Result<(TypedValue, Option<fcs_model::CanonicalExpressionDag>), Diagnostic> {
         if path == "gameplay.soundResource"
             && let SourceExpression::Reference { name, .. } = expression
         {
-            return Ok(TypedValue::String(name.clone()));
+            return Ok((TypedValue::String(name.clone()), None));
         }
-        evaluate_with_context_expected(
+        match evaluate_with_context_expected(
             expression,
             self.document.definitions.as_ref(),
             bindings,
             self.schema,
             &self.context,
             expected,
-        )
+        ) {
+            Ok(value) => Ok((value, None)),
+            Err(error)
+                if contains_runtime_environment(expression, &|name| {
+                    bindings.contains_key(name) || document_defines(self.document, name)
+                }) =>
+            {
+                let runtime_expression =
+                    lower_runtime_expression_with_resolver(expression, |candidate| {
+                        evaluate_with_context_expected(
+                            candidate,
+                            self.document.definitions.as_ref(),
+                            bindings,
+                            self.schema,
+                            &self.context,
+                            None,
+                        )
+                        .ok()
+                    })
+                    .map_err(|diagnostic| Diagnostic::CanonicalDiagnostic(Box::new(diagnostic)))?;
+                let actual = source_type(runtime_expression.result_type());
+                if expected.is_some_and(|expected| expected != &actual) {
+                    return Err(Diagnostic::TypeMismatch {
+                        expected: expected.cloned().expect("checked above"),
+                        actual,
+                        span: expression.span(),
+                    });
+                }
+                Ok((
+                    runtime_base_value(path, runtime_expression.result_type()).ok_or(error)?,
+                    Some(runtime_expression),
+                ))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn apply_defaults(
@@ -1777,6 +1859,46 @@ impl<'a> ExpansionContext<'a> {
             });
         }
         Ok(())
+    }
+}
+
+fn source_type(value: &fcs_model::CanonicalExpressionType) -> Type {
+    use fcs_model::CanonicalExpressionType as CanonicalType;
+    match value {
+        CanonicalType::Bool => Type::Bool,
+        CanonicalType::Int => Type::Int,
+        CanonicalType::Float => Type::Float,
+        CanonicalType::Time => Type::Time,
+        CanonicalType::Beat => Type::Beat,
+        CanonicalType::Length => Type::Length,
+        CanonicalType::Angle => Type::Angle,
+        CanonicalType::Color => Type::Color,
+        CanonicalType::Vec2(element) => Type::Vec2(Box::new(source_type(element))),
+    }
+}
+
+fn runtime_base_value(
+    path: &str,
+    value_type: &fcs_model::CanonicalExpressionType,
+) -> Option<TypedValue> {
+    use fcs_model::CanonicalExpressionType as CanonicalType;
+    match (path, value_type) {
+        (
+            "presentation.scrollFactor"
+            | "presentation.alpha"
+            | "presentation.scaleX"
+            | "presentation.scaleY",
+            CanonicalType::Float,
+        ) => Some(TypedValue::Float(1.0)),
+        (
+            "presentation.positionX" | "presentation.xOffset" | "presentation.yOffset",
+            CanonicalType::Length,
+        ) => Some(TypedValue::Length(0.0)),
+        ("presentation.rotation", CanonicalType::Angle) => Some(TypedValue::Angle(0.0)),
+        ("presentation.color", CanonicalType::Color) => {
+            Some(TypedValue::Color(crate::ast::Color::WHITE))
+        }
+        _ => None,
     }
 }
 

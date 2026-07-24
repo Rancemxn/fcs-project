@@ -196,12 +196,12 @@ fn evaluate_node_inner(
     };
     let result = match opcode {
         CanonicalExpressionOpcode::Constant => {
-            node.constant()
-                .cloned()
-                .ok_or(ExpressionEvaluationError::TypeMismatch {
+            node.constant().cloned().map(runtime_constant).ok_or(
+                ExpressionEvaluationError::TypeMismatch {
                     node: index,
                     opcode,
-                })
+                },
+            )
         }
         CanonicalExpressionOpcode::EnvS => {
             Ok(CanonicalExpressionValue::Time(environment.chart_time()))
@@ -455,6 +455,19 @@ fn evaluate_node_inner(
         return Err(ExpressionEvaluationError::NonFiniteResult { node: index });
     }
     Ok(result)
+}
+
+pub(crate) fn runtime_constant(value: CanonicalExpressionValue) -> CanonicalExpressionValue {
+    match value {
+        CanonicalExpressionValue::ExactBeat(value) => {
+            CanonicalExpressionValue::Beat(value.as_f64())
+        }
+        CanonicalExpressionValue::Vec2(x, y) => CanonicalExpressionValue::Vec2(
+            Box::new(runtime_constant(*x)),
+            Box::new(runtime_constant(*y)),
+        ),
+        value => value,
+    }
 }
 
 fn unary_numeric(
@@ -982,6 +995,9 @@ fn equal_values(left: &CanonicalExpressionValue, right: &CanonicalExpressionValu
         | (CanonicalExpressionValue::Beat(left), CanonicalExpressionValue::Beat(right))
         | (CanonicalExpressionValue::Length(left), CanonicalExpressionValue::Length(right))
         | (CanonicalExpressionValue::Angle(left), CanonicalExpressionValue::Angle(right)) => {
+            left == right
+        }
+        (CanonicalExpressionValue::Color(left), CanonicalExpressionValue::Color(right)) => {
             left == right
         }
         (
