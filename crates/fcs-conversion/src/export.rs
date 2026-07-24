@@ -1005,7 +1005,10 @@ pub fn negotiate_export_with_options(
     options: &ExportOptions,
 ) -> Result<(NegotiationPlan, Vec<ConversionEntry>), ExportError> {
     if options.policy == ConversionPolicy::Strict
-        && options.target_profile.as_deref().is_none_or(str::is_empty)
+        && options
+            .target_profile
+            .as_deref()
+            .is_none_or(|profile| profile.trim().is_empty())
     {
         return Err(ExportError::new(
             "conversion.target-profile-required",
@@ -2819,6 +2822,11 @@ mod tests {
         )));
         let options = ExportOptions::strict(descriptor)
             .with_repair_mode(RepairMode::new(true, std::iter::empty()));
+        let error = negotiate_export_with_options(&chart, &options).unwrap_err();
+        assert_eq!(error.category(), "conversion.target-profile-required");
+
+        let options = ExportOptions::strict(CapabilitySet::pec_line().descriptor(None))
+            .with_target_profile("  ");
         let error = negotiate_export_with_options(&chart, &options).unwrap_err();
         assert_eq!(error.category(), "conversion.target-profile-required");
     }

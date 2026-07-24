@@ -132,6 +132,18 @@ impl ApproximationAuthorization {
                     .into(),
             ));
         }
+        if error_budgets.keys().any(|metric| {
+            !target_domains.iter().any(|domain| {
+                metric == domain
+                    || metric
+                        .strip_prefix(domain)
+                        .is_some_and(|suffix| suffix.starts_with('.'))
+            })
+        }) {
+            return Err(ReportError::InvalidAuthorization(
+                "every approximation metric must belong to a declared target domain".into(),
+            ));
+        }
         Ok(Self {
             enabled: true,
             target_domains,
@@ -1316,6 +1328,19 @@ mod tests {
                 1,
                 "adaptive",
                 "  ",
+            ),
+            Err(ReportError::InvalidAuthorization(_))
+        ));
+        assert!(matches!(
+            ApproximationAuthorization::new(
+                ["motion".into()],
+                [
+                    ("motion.value".into(), 0.1),
+                    ("presentation.value".into(), 0.1),
+                ],
+                1,
+                "adaptive",
+                "1.0.0",
             ),
             Err(ReportError::InvalidAuthorization(_))
         ));

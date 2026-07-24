@@ -179,12 +179,15 @@ impl CapabilityDescriptor {
     ) -> Result<Self, CapabilityError> {
         let format = format.into();
         let version = version.into();
-        if format.is_empty() || version.is_empty() {
+        if format.trim().is_empty() || version.trim().is_empty() {
             return Err(CapabilityError::InvalidDescriptor(
                 "format and version must be non-empty".into(),
             ));
         }
-        if profile.as_deref().is_some_and(str::is_empty) {
+        if profile
+            .as_deref()
+            .is_some_and(|profile| profile.trim().is_empty())
+        {
             return Err(CapabilityError::InvalidDescriptor(
                 "profile must be absent or non-empty".into(),
             ));
@@ -255,3 +258,33 @@ impl fmt::Display for CapabilityError {
 }
 
 impl std::error::Error for CapabilityError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn exact_domains() -> Vec<CapabilityDomainDescriptor> {
+        CapabilityDomain::ALL
+            .into_iter()
+            .map(|domain| {
+                CapabilityDomainDescriptor::new(
+                    domain, true, false, false, false, false, None, None,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn capability_identity_rejects_whitespace_only_fields() {
+        for (format, version, profile) in [
+            ("  ", "1", None),
+            ("pgr", "\t", None),
+            ("pgr", "1", Some("  ".into())),
+        ] {
+            assert!(matches!(
+                CapabilityDescriptor::new(format, version, profile, exact_domains()),
+                Err(CapabilityError::InvalidDescriptor(_))
+            ));
+        }
+    }
+}
