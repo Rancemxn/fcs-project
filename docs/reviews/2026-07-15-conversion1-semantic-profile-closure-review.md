@@ -199,3 +199,13 @@ a5d4071a61338fcb5990c4fa804b06e6a432c8702ad0f8b651820abb419f1a25
 
 因此 Conversion Specification 1.0.0 保持 Draft。本 review 不授权开始 I1；最终 gate 由
 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md` 与治理文件统一记录。
+
+## Amendment 指针
+
+2026-07-26：本 record 的第 6 章计数与第 7 章内容哈希 ledger 一律保持 2026-07-15 原文不变。此后发生的
+stable category 变更（新增 `conversion.capability-negotiated`，集合由 32 变为 33）、其 governance 第 6 章
+变更流程补记，以及第 7 章 hash ledger 退役为历史 pin 的声明，记录在
+`docs/reviews/2026-07-26-conversion1-diagnostic-category-amendment.md`。
+
+读者需要当前值时应查该 amendment 与 `docs/conformance/conversion/diagnostic-categories.toml`，
+不要把本 record 的数字当作对当前树的断言。
