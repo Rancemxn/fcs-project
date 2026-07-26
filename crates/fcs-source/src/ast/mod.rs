@@ -4,6 +4,7 @@ mod document;
 mod entity;
 mod extension;
 mod metadata;
+mod render;
 mod time;
 mod track;
 mod types;
@@ -24,6 +25,10 @@ pub use extension::{
 pub use metadata::{
     ArtworkBlock, ContributorDeclaration, ContributorsBlock, CreditEntry, CreditsBlock, MetaBlock,
     ResourceDeclaration, ResourceKind, ResourcesBlock, SyncBlock,
+};
+pub use render::{
+    RenderBodyItem, RenderChildrenBlock, RenderIf, RenderItem, RenderLayerDeclaration,
+    RenderNodeDeclaration, RenderNodeKind, RenderScene, RenderViewport,
 };
 pub use time::{Beat, BeatError, Bpm, InvalidBpm, SourceBpm};
 pub use track::{
