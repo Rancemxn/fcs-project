@@ -950,7 +950,7 @@ impl CanonicalRenderStroke {
             return Err(CanonicalRenderError::InvalidMiterLimit);
         }
         if !dash.is_empty() {
-            if dash.len() % 2 != 0 {
+            if !dash.len().is_multiple_of(2) {
                 return Err(CanonicalRenderError::OddDashArray);
             }
             if dash.iter().any(|value| !value.is_finite() || *value < 0.0) {
