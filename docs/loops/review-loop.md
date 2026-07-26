@@ -192,6 +192,11 @@
 - 创建 corrective PR 必须使用 `/tmp` 下的独立 worktree 和独立分支；推荐路径为
   `/tmp/fcs-finding-<finding>-<slug>`，分支命名为 `codex/<finding>-<slug>`。单独分支不等于工作树隔离，
   两者都必须满足。reviewer loop 不得把 worktree 放在主仓库、主仓库旁、用户 home 或其他任意路径。
+- 本文件中的 `/tmp` 指宿主的系统临时目录：POSIX 宿主即 `/tmp`；Windows 宿主为 `%TEMP%`（通常是
+  `C:\Users\<user>\AppData\Local\Temp`），推荐路径按该目录等价展开（如 `%TEMP%\fcs-finding-<finding>-<slug>`）。
+  路径验证以该目录为准：`git worktree list --porcelain` 输出的绝对路径位于系统临时目录下即满足
+  「位于 `/tmp/`」。Windows 系统临时目录位于用户 profile 之内不违反「不得放在用户 home」；该禁令针对
+  home 下系统临时目录以外的任意路径。
 - 对需修复的当前-stage implementation/conformance finding，reviewer 是该 corrective worktree 的执行 owner：
   从固定 base/head SHA 建立 worktree 后，只在其中修改代码和测试，保留主会话 dirty worktree、活动实现分支和
   `main` 不变。修复必须最小化地针对已确认根因，并包含能失败于旧行为、通过于新行为的回归证据。
