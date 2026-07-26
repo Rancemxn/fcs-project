@@ -547,6 +547,18 @@ impl CanonicalRenderNode {
         if spec.id.namespace() != EntityKind::RenderNode {
             return Err(CanonicalRenderError::WrongNamespace);
         }
+        if let Some(target) = spec.attachment.target() {
+            let expected = match &spec.attachment {
+                CanonicalRenderAttachment::Line(_) => EntityKind::Line,
+                CanonicalRenderAttachment::Note(_) => EntityKind::Note,
+                CanonicalRenderAttachment::World | CanonicalRenderAttachment::Screen => {
+                    unreachable!("target() is None for non-target attachments")
+                }
+            };
+            if target.namespace() != expected {
+                return Err(CanonicalRenderError::WrongNamespace);
+            }
+        }
         match spec.kind {
             CanonicalRenderNodeKind::Group => {
                 if spec.geometry.is_some() {
@@ -775,6 +787,11 @@ impl CanonicalRenderGeometry {
         if id.namespace() != EntityKind::RenderGeometry {
             return Err(CanonicalRenderError::WrongNamespace);
         }
+        if let CanonicalRenderGeometryData::Image { resource, .. } = &data
+            && resource.namespace() != EntityKind::Resource
+        {
+            return Err(CanonicalRenderError::WrongNamespace);
+        }
         match &data {
             CanonicalRenderGeometryData::Polyline { points } if points.len() < 2 => {
                 return Err(CanonicalRenderError::DegeneratePointList);
@@ -951,6 +968,11 @@ pub struct CanonicalRenderPaint {
 impl CanonicalRenderPaint {
     pub fn new(id: StableId, data: CanonicalRenderPaintData) -> Result<Self, CanonicalRenderError> {
         if id.namespace() != EntityKind::RenderPaint {
+            return Err(CanonicalRenderError::WrongNamespace);
+        }
+        if let CanonicalRenderPaintData::ImagePattern { resource, .. } = &data
+            && resource.namespace() != EntityKind::Resource
+        {
             return Err(CanonicalRenderError::WrongNamespace);
         }
         let stops = match &data {
@@ -1201,7 +1223,7 @@ impl CanonicalGlyphRun {
 /// Construction validates every structural invariant later stages rely on:
 /// the node graph is a forest in parent-before-child order, every reference
 /// resolves, node and record kinds agree, single ownership holds, and stable
-/// IDs are unique inside each namespace.
+/// IDs are unique across all Render namespaces.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalRenderScene {
     viewport: CanonicalViewport,
@@ -1278,8 +1300,10 @@ impl CanonicalRenderScene {
     }
 
     fn validate_layers(&self) -> Result<(), CanonicalRenderError> {
+        let mut roots = Owners::new(self.nodes.len());
         for (index, layer) in self.layers.iter().enumerate() {
             for root in layer.roots() {
+                roots.claim(*root)?;
                 let node = self
                     .nodes
                     .get(*root)
@@ -2055,6 +2079,25 @@ mod tests {
     }
 
     #[test]
+    fn repeated_layer_roots_are_rejected() {
+        let mut fixture = Fixture::new();
+        let mut spec = fixture.solid_rect();
+        let layer = spec.layers[0].clone();
+        spec.layers[0] = CanonicalRenderLayer::new(
+            layer.id().clone(),
+            layer.pass(),
+            layer.z_order(),
+            layer.document_order(),
+            vec![0, 0],
+        )
+        .expect("layer");
+        assert_eq!(
+            CanonicalRenderScene::new(spec).expect_err("repeated root"),
+            CanonicalRenderError::SharedRecord
+        );
+    }
+
+    #[test]
     fn unreferenced_geometry_is_rejected() {
         let mut fixture = Fixture::new();
         let mut spec = fixture.solid_rect();
@@ -2250,9 +2293,131 @@ mod tests {
         );
         assert_eq!(
             CanonicalRenderPath::new(
-                node_ns,
+                node_ns.clone(),
                 CanonicalRenderFillRule::NonZero,
                 vec![CanonicalPathCommand::MoveTo(0)]
+            ),
+            Err(CanonicalRenderError::WrongNamespace)
+        );
+        assert_eq!(
+            CanonicalRenderGeometry::new(
+                node_ns.clone(),
+                CanonicalRenderGeometryData::Rect { origin: 0, size: 1 }
+            ),
+            Err(CanonicalRenderError::WrongNamespace)
+        );
+        assert_eq!(
+            CanonicalRenderPaint::new(
+                node_ns.clone(),
+                CanonicalRenderPaintData::Solid { color: 0 }
+            ),
+            Err(CanonicalRenderError::WrongNamespace)
+        );
+        assert_eq!(
+            CanonicalRenderStroke::new(
+                node_ns.clone(),
+                0,
+                1,
+                CanonicalStrokeCap::Butt,
+                CanonicalStrokeJoin::Miter,
+                4.0,
+                2,
+                Vec::new(),
+            ),
+            Err(CanonicalRenderError::WrongNamespace)
+        );
+        assert_eq!(
+            CanonicalGlyphRun::new(
+                node_ns,
+                fixture.id(EntityKind::Resource, "font/main"),
+                0,
+                0,
+                [0.0, 0.0],
+                Vec::new()
+            ),
+            Err(CanonicalRenderError::WrongNamespace)
+        );
+    }
+
+    #[test]
+    fn wrong_namespace_is_rejected_for_every_embedded_stable_id() {
+        let mut fixture = Fixture::new();
+        let geometry_id = fixture.id(EntityKind::RenderGeometry, "geometry/image");
+        let paint_id = fixture.id(EntityKind::RenderPaint, "paint/pattern");
+        let node_id = fixture.id(EntityKind::RenderNode, "node/attached");
+        let not_resource = fixture.id(EntityKind::Line, "line/not-resource");
+        assert_eq!(
+            CanonicalRenderGeometry::new(
+                geometry_id,
+                CanonicalRenderGeometryData::Image {
+                    resource: not_resource.clone(),
+                    destination: [0, 1, 2, 3],
+                    source: None,
+                    sampling: CanonicalImageSampling::Bilinear,
+                },
+            ),
+            Err(CanonicalRenderError::WrongNamespace)
+        );
+        assert_eq!(
+            CanonicalRenderPaint::new(
+                paint_id,
+                CanonicalRenderPaintData::ImagePattern {
+                    resource: not_resource,
+                    transform: CanonicalPatternTransform {
+                        position: 0,
+                        origin: 1,
+                        rotation: 2,
+                        scale: 3,
+                    },
+                    repeat: CanonicalImageRepeat::Both,
+                    sampling: CanonicalImageSampling::Nearest,
+                },
+            ),
+            Err(CanonicalRenderError::WrongNamespace)
+        );
+        let spec = |attachment: CanonicalRenderAttachment| CanonicalRenderNodeSpec {
+            id: node_id.clone(),
+            kind: CanonicalRenderNodeKind::Group,
+            parent: None,
+            layer: 0,
+            document_order: 0,
+            z_order: 0,
+            attachment,
+            active: CanonicalActiveInterval::unbounded(),
+            isolate: false,
+            follow_hidden_attachment: false,
+            position: 0,
+            origin: 1,
+            rotation: 2,
+            scale: 3,
+            opacity: 4,
+            visibility: 5,
+            geometry: None,
+            fill_paint: None,
+            stroke: None,
+            clip: None,
+            composite: CanonicalRenderComposite::SourceOver,
+        };
+        assert_eq!(
+            CanonicalRenderNode::new(spec(CanonicalRenderAttachment::Line(
+                fixture.id(EntityKind::Note, "note/not-line"),
+            ))),
+            Err(CanonicalRenderError::WrongNamespace)
+        );
+        assert_eq!(
+            CanonicalRenderNode::new(spec(CanonicalRenderAttachment::Note(
+                fixture.id(EntityKind::Line, "line/not-note"),
+            ))),
+            Err(CanonicalRenderError::WrongNamespace)
+        );
+        assert_eq!(
+            CanonicalGlyphRun::new(
+                fixture.id(EntityKind::RenderGlyphRun, "glyph/run"),
+                fixture.id(EntityKind::Line, "line/not-font"),
+                0,
+                0,
+                [0.0, 0.0],
+                Vec::new(),
             ),
             Err(CanonicalRenderError::WrongNamespace)
         );
