@@ -1556,7 +1556,7 @@ impl Owners {
 }
 
 /// Structural rejection reasons for canonical Render scene construction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CanonicalRenderError {
     InvalidViewport,
     InvalidActiveInterval,
@@ -2533,9 +2533,16 @@ mod tests {
     #[test]
     fn no_rejection_invents_a_diagnostic_category() {
         let all = CanonicalRenderError::all();
-        // The walk is compiler-enforced, so this also proves no variant was
-        // added without reaching the guard.
-        assert_eq!(all.len(), 31, "variant walk is incomplete");
+        // `next_variant` has no wildcard arm, so a new variant cannot compile
+        // without an arm. This count catches the remaining hole: a chain that
+        // skips a variant whose arm exists but that nothing points at. A stale
+        // number fails loudly here rather than silently shrinking coverage.
+        assert_eq!(all.len(), 33, "variant walk skips a variant");
+        assert_eq!(
+            all.iter().collect::<BTreeSet<_>>().len(),
+            all.len(),
+            "variant walk repeats a variant"
+        );
         for error in all {
             let code = error.code();
             assert!(
