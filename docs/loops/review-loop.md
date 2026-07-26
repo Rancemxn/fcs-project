@@ -192,6 +192,17 @@
 - 创建 corrective PR 必须使用 `/tmp` 下的独立 worktree 和独立分支；推荐路径为
   `/tmp/fcs-finding-<finding>-<slug>`，分支命名为 `codex/<finding>-<slug>`。单独分支不等于工作树隔离，
   两者都必须满足。reviewer loop 不得把 worktree 放在主仓库、主仓库旁、用户 home 或其他任意路径。
+- `docs/loops/` 两份 loop 契约中的 `/tmp` 都指宿主的系统临时目录：POSIX 宿主即 `/tmp`；Windows 宿主为
+  用户 profile 下的默认系统临时目录 `C:\Users\<user>\AppData\Local\Temp`，推荐路径按该目录等价展开
+  （如 `<系统临时目录>\fcs-finding-<finding>-<slug>`）。Windows 系统临时目录位于用户 profile 之内不违反
+  「不得放在用户 home」；该禁令继续覆盖 home 下系统临时目录以外的任意路径，以及主仓库、主仓库旁和
+  其他任意路径。
+- 路径验证以该目录为准：`git worktree list --porcelain` 输出的绝对路径位于系统临时目录下即满足
+  「位于 `/tmp/`」。比较前先归一化两侧：统一路径分隔符、按平台规则统一大小写、解析 8.3 短名和
+  drive substitution，再判断包含关系。锚点是上述默认系统临时目录本身，不是 `TMP`/`TEMP` 环境变量的
+  当前取值；不得用符号链接、目录 junction 或其他 reparse point、`subst` 映射，或重定义 `TMP`/`TEMP`
+  绕过该约束。Audit result 的 `Worktree` 字段记录保留 worktree 时必须写归一化后的绝对路径，使主会话
+  能独立复核隔离是否成立。
 - 对需修复的当前-stage implementation/conformance finding，reviewer 是该 corrective worktree 的执行 owner：
   从固定 base/head SHA 建立 worktree 后，只在其中修改代码和测试，保留主会话 dirty worktree、活动实现分支和
   `main` 不变。修复必须最小化地针对已确认根因，并包含能失败于旧行为、通过于新行为的回归证据。
