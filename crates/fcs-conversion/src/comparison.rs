@@ -107,16 +107,9 @@ pub fn compare_canonical_charts_with_budgets(
     budgets: &BTreeMap<String, f64>,
     dropped_domains: &[String],
 ) -> CanonicalComparison {
-    let mut mismatches = Vec::new();
+    let mut mismatches = Mismatches::new(dropped_domains);
     let mut verified_maximum_errors = BTreeMap::new();
-    let ignored = |domain: &str| {
-        dropped_domains.iter().any(|allowed| {
-            domain == allowed
-                || domain
-                    .strip_prefix(allowed)
-                    .is_some_and(|suffix| suffix.starts_with('.'))
-        })
-    };
+    let ignored = |domain: &str| Mismatches::is_dropped(dropped_domains, domain);
 
     if !ignored("entity") {
         if expected.source_version() != actual.source_version() {
@@ -167,43 +160,37 @@ pub fn compare_canonical_charts_with_budgets(
             format!("{:?}", actual.metadata().resources()),
         );
     }
-    if !ignored("motion") {
-        compare_lines(
-            expected,
-            actual,
-            budgets,
-            &mut verified_maximum_errors,
-            &mut mismatches,
-        );
-    }
-    if !ignored("gameplay") || !ignored("presentation") {
-        compare_notes(
-            expected,
-            actual,
-            budgets,
-            &mut verified_maximum_errors,
-            &mut mismatches,
-            &ignored,
-        );
-    }
-    if !ignored("motion") {
-        compare_tracks(
-            expected,
-            actual,
-            budgets,
-            &mut verified_maximum_errors,
-            &mut mismatches,
-        );
-    }
-    if !ignored("scroll") {
-        compare_scroll(
-            expected,
-            actual,
-            budgets,
-            &mut verified_maximum_errors,
-            &mut mismatches,
-        );
-    }
+    // These four routines each report more than one domain, so they always run
+    // and the sink drops only the domains that were actually authorized.
+    compare_lines(
+        expected,
+        actual,
+        budgets,
+        &mut verified_maximum_errors,
+        &mut mismatches,
+    );
+    compare_notes(
+        expected,
+        actual,
+        budgets,
+        &mut verified_maximum_errors,
+        &mut mismatches,
+        &ignored,
+    );
+    compare_tracks(
+        expected,
+        actual,
+        budgets,
+        &mut verified_maximum_errors,
+        &mut mismatches,
+    );
+    compare_scroll(
+        expected,
+        actual,
+        budgets,
+        &mut verified_maximum_errors,
+        &mut mismatches,
+    );
     if !ignored("expression") && expected.descriptors() != actual.descriptors() {
         mismatch(
             &mut mismatches,
@@ -228,8 +215,51 @@ pub fn compare_canonical_charts_with_budgets(
     }
 
     CanonicalComparison {
-        mismatches,
+        mismatches: mismatches.into_inner(),
         verified_maximum_errors,
+    }
+}
+
+/// The single sink every canonical mismatch is recorded through.
+///
+/// Drop authorization is per domain, but one comparison routine can report
+/// facts belonging to several domains: `compare_lines` is the only checker of
+/// `entity` documentOrder and `scroll` scrollTempo as well as `motion` fields.
+/// Filtering here, rather than at the call sites, keeps an authorization for
+/// one domain from silently suppressing verification of another.
+struct Mismatches<'a> {
+    dropped: &'a [String],
+    items: Vec<ComparisonMismatch>,
+}
+
+impl<'a> Mismatches<'a> {
+    fn new(dropped: &'a [String]) -> Self {
+        Self {
+            dropped,
+            items: Vec::new(),
+        }
+    }
+
+    /// A domain is dropped by an exact match or by a dotted-prefix ancestor,
+    /// so `motion` covers `motion.transform` but never `motionBlur`.
+    fn is_dropped(dropped: &[String], domain: &str) -> bool {
+        dropped.iter().any(|allowed| {
+            domain == allowed
+                || domain
+                    .strip_prefix(allowed)
+                    .is_some_and(|suffix| suffix.starts_with('.'))
+        })
+    }
+
+    fn push(&mut self, mismatch: ComparisonMismatch) {
+        if Self::is_dropped(self.dropped, mismatch.domain()) {
+            return;
+        }
+        self.items.push(mismatch);
+    }
+
+    fn into_inner(self) -> Vec<ComparisonMismatch> {
+        self.items
     }
 }
 
@@ -238,7 +268,7 @@ fn compare_time_map(
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut BTreeMap<String, f64>,
-    mismatches: &mut Vec<ComparisonMismatch>,
+    mismatches: &mut Mismatches<'_>,
 ) {
     let left: Vec<_> = expected.time_map().segments().collect();
     let right: Vec<_> = actual.time_map().segments().collect();
@@ -285,7 +315,7 @@ fn compare_time_map(
 fn compare_metadata(
     expected: &CanonicalChart,
     actual: &CanonicalChart,
-    mismatches: &mut Vec<ComparisonMismatch>,
+    mismatches: &mut Mismatches<'_>,
 ) {
     let left = expected.metadata();
     let right = actual.metadata();
@@ -332,7 +362,7 @@ fn compare_sync(
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut BTreeMap<String, f64>,
-    mismatches: &mut Vec<ComparisonMismatch>,
+    mismatches: &mut Mismatches<'_>,
 ) {
     match (expected.metadata().sync(), actual.metadata().sync()) {
         (Some(left), Some(right)) => {
@@ -372,7 +402,7 @@ fn compare_lines(
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut BTreeMap<String, f64>,
-    mismatches: &mut Vec<ComparisonMismatch>,
+    mismatches: &mut Mismatches<'_>,
 ) {
     let left = ordered_lines(expected);
     let right = ordered_lines(actual);
@@ -492,7 +522,7 @@ fn compare_notes(
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut BTreeMap<String, f64>,
-    mismatches: &mut Vec<ComparisonMismatch>,
+    mismatches: &mut Mismatches<'_>,
     ignored: &impl Fn(&str) -> bool,
 ) {
     let left = expected.notes().notes();
@@ -618,7 +648,7 @@ fn compare_tracks(
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut BTreeMap<String, f64>,
-    mismatches: &mut Vec<ComparisonMismatch>,
+    mismatches: &mut Mismatches<'_>,
 ) {
     let left = ordered_tracks(expected);
     let right = ordered_tracks(actual);
@@ -677,7 +707,7 @@ fn compare_track_piece(
     right: &CanonicalTrackPiece,
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut BTreeMap<String, f64>,
-    mismatches: &mut Vec<ComparisonMismatch>,
+    mismatches: &mut Mismatches<'_>,
 ) {
     let field = |name: &str| format!("tracks[{track}].pieces[{piece}].{name}");
     match (left, right) {
@@ -775,7 +805,7 @@ fn compare_track_value(
     right: CanonicalTrackValue,
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut BTreeMap<String, f64>,
-    mismatches: &mut Vec<ComparisonMismatch>,
+    mismatches: &mut Mismatches<'_>,
 ) {
     match (left, right) {
         (CanonicalTrackValue::Float(left), CanonicalTrackValue::Float(right))
@@ -827,7 +857,7 @@ fn compare_scroll(
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut BTreeMap<String, f64>,
-    mismatches: &mut Vec<ComparisonMismatch>,
+    mismatches: &mut Mismatches<'_>,
 ) {
     let left = ordered_scroll(expected);
     let right = ordered_scroll(actual);
@@ -957,7 +987,7 @@ fn compare_time(
     actual: f64,
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut BTreeMap<String, f64>,
-    mismatches: &mut Vec<ComparisonMismatch>,
+    mismatches: &mut Mismatches<'_>,
 ) {
     compare_float(
         domain,
@@ -980,7 +1010,7 @@ fn compare_optional_time(
     actual: Option<f64>,
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut BTreeMap<String, f64>,
-    mismatches: &mut Vec<ComparisonMismatch>,
+    mismatches: &mut Mismatches<'_>,
 ) {
     match (expected, actual) {
         (Some(expected), Some(actual)) => compare_float(
@@ -1013,7 +1043,7 @@ fn compare_float(
     actual: f64,
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut BTreeMap<String, f64>,
-    mismatches: &mut Vec<ComparisonMismatch>,
+    mismatches: &mut Mismatches<'_>,
 ) {
     let exact = expected.to_bits() == actual.to_bits();
     let error = (expected - actual).abs();
@@ -1043,7 +1073,7 @@ fn compare_len(
     field: impl Into<String>,
     expected: usize,
     actual: usize,
-    mismatches: &mut Vec<ComparisonMismatch>,
+    mismatches: &mut Mismatches<'_>,
 ) {
     if expected != actual {
         mismatch(
@@ -1057,7 +1087,7 @@ fn compare_len(
 }
 
 fn mismatch(
-    mismatches: &mut Vec<ComparisonMismatch>,
+    mismatches: &mut Mismatches<'_>,
     domain: impl Into<String>,
     field: impl Into<String>,
     expected: impl Into<String>,
@@ -1066,4 +1096,53 @@ fn mismatch(
     mismatches.push(ComparisonMismatch::new(
         domain, "discrete", field, expected, actual, None,
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(sink: &mut Mismatches<'_>, domain: &str) {
+        sink.push(ComparisonMismatch::new(
+            domain, "discrete", "field", "expected", "actual", None,
+        ));
+    }
+
+    #[test]
+    fn a_drop_authorization_only_suppresses_its_own_domain() {
+        // compare_lines is the sole checker of entity documentOrder and scroll
+        // scrollTempo as well as motion fields, so a motion-only authorization
+        // must not take those other domains down with it.
+        let dropped = vec!["motion".to_owned()];
+        let mut sink = Mismatches::new(&dropped);
+        record(&mut sink, "motion");
+        record(&mut sink, "entity");
+        record(&mut sink, "scroll");
+        let kept: Vec<String> = sink
+            .into_inner()
+            .iter()
+            .map(|mismatch| mismatch.domain().to_owned())
+            .collect();
+        assert_eq!(kept, ["entity", "scroll"]);
+    }
+
+    #[test]
+    fn a_dropped_domain_covers_its_dotted_descendants_only() {
+        let dropped = vec!["motion".to_owned()];
+        let mut sink = Mismatches::new(&dropped);
+        record(&mut sink, "motion.transform");
+        record(&mut sink, "motionBlur");
+        let kept = sink.into_inner();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].domain(), "motionBlur");
+    }
+
+    #[test]
+    fn an_empty_authorization_keeps_every_domain() {
+        let dropped: Vec<String> = Vec::new();
+        let mut sink = Mismatches::new(&dropped);
+        record(&mut sink, "motion");
+        record(&mut sink, "entity");
+        assert_eq!(sink.into_inner().len(), 2);
+    }
 }
