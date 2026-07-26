@@ -8,7 +8,7 @@ use std::fmt;
 
 use crate::{
     CanonicalDescriptorTable, CanonicalLineGraph, CanonicalMetadata, CanonicalNoteSet,
-    CanonicalScrollSet, CanonicalTrackSet, ChartTimeMap,
+    CanonicalRenderScene, CanonicalScrollSet, CanonicalTrackSet, ChartTimeMap,
 };
 
 /// The profile declared by a canonical chart's source format envelope.
@@ -117,6 +117,7 @@ pub struct CanonicalChart {
     tracks: CanonicalTrackSet,
     scroll: CanonicalScrollSet,
     descriptors: Option<CanonicalDescriptorTable>,
+    render: Option<CanonicalRenderScene>,
     required_extensions: Vec<CanonicalRequiredExtension>,
 }
 
@@ -145,12 +146,20 @@ impl CanonicalChart {
             tracks,
             scroll,
             descriptors: None,
+            render: None,
             required_extensions: required_extensions.into_iter().collect(),
         }
     }
 
     pub fn with_descriptors(mut self, descriptors: CanonicalDescriptorTable) -> Self {
         self.descriptors = Some(descriptors);
+        self
+    }
+
+    /// Attaches the canonical Render scene. Only a chart carrying the
+    /// `renderable` feature is expected to have one; Core stages ignore it.
+    pub fn with_render(mut self, render: CanonicalRenderScene) -> Self {
+        self.render = Some(render);
         self
     }
 
@@ -188,6 +197,10 @@ impl CanonicalChart {
 
     pub const fn scroll(&self) -> &CanonicalScrollSet {
         &self.scroll
+    }
+
+    pub const fn render(&self) -> Option<&CanonicalRenderScene> {
+        self.render.as_ref()
     }
 
     pub const fn descriptors(&self) -> Option<&CanonicalDescriptorTable> {
