@@ -11,6 +11,19 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{FcbcError, FcbcResult};
 
+/// The section 12 NoteRecord `kind` ordinals.
+///
+/// The loader only range-checks this byte and never maps it back to a kind, so
+/// a transposition here survives any round trip and has to be pinned directly.
+const fn note_kind_ordinal(kind: CanonicalNoteKind) -> u8 {
+    match kind {
+        CanonicalNoteKind::Tap => 1,
+        CanonicalNoteKind::Hold => 2,
+        CanonicalNoteKind::Flick => 3,
+        CanonicalNoteKind::Drag => 4,
+    }
+}
+
 pub const EVALUABLE_DISTANCE_INDEX: u32 = 0;
 pub const ANALYTIC_DISTANCE_INDEX: u32 = 1;
 
@@ -495,18 +508,17 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
                     ),
                 ));
             }
-            let (kind, has_end, end_time) = match note.kind() {
-                CanonicalNoteKind::Tap => (1u8, 0u16, 0.0),
+            let kind = note_kind_ordinal(note.kind());
+            let (has_end, end_time) = match note.kind() {
                 CanonicalNoteKind::Hold => {
                     let end = note
                         .gameplay()
                         .end_time()
                         .map(|time| time.chart_time_seconds())
                         .unwrap_or(note.gameplay().time().chart_time_seconds() + 0.5);
-                    (2u8, 0b100u16, end)
+                    (0b100u16, end)
                 }
-                CanonicalNoteKind::Drag => (3u8, 0u16, 0.0),
-                CanonicalNoteKind::Flick => (4u8, 0u16, 0.0),
+                _ => (0u16, 0.0),
             };
             let side = match note.gameplay().side() {
                 CanonicalNoteSide::Above => 1u8,
@@ -660,8 +672,16 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
         .segments()
         .enumerate()
         .map(|(order, (beat, chart_time, bpm))| {
-            let whole = beat.as_f64().floor() as i64;
-            (whole, 1i64, chart_time, bpm, order as u32)
+            // Section 10 carries the exact rational beat. Flooring to an
+            // integer would collapse every sub-beat tempo point onto the same
+            // beat, and the canonical Beat is already reduced.
+            (
+                beat.numerator(),
+                beat.denominator(),
+                chart_time,
+                bpm,
+                order as u32,
+            )
         })
         .collect();
     if tempo.is_empty() {
@@ -703,6 +723,60 @@ mod compilation_tests {
     use fcs_source::elaborator::CompileTimeLimits;
     use fcs_source::parser::parse_document;
     use tempfile::tempdir;
+
+    /// Compiles `source` and returns the product FCBC bytes.
+    fn compile(source: &str) -> Vec<u8> {
+        let workspace = tempdir().unwrap();
+        let document = parse_document(source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .unwrap();
+        write_from_compilation(&compilation).unwrap()
+    }
+
+    #[test]
+    fn a_sub_beat_tempo_point_keeps_its_exact_rational_beat() {
+        // Flooring collapsed 1/2 and 3/2 onto 0 and 1, so two distinct tempo
+        // points could land on the same beat.
+        let bytes = compile(
+            r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; 1/2beat -> 180bpm; 3/2beat -> 240bpm; }
+lines { line main {} }
+collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
+"#,
+        );
+        let decoded = crate::load_chart(&bytes).expect("chart must load");
+        let beats: Vec<(i64, i64)> = decoded
+            .tempo_points
+            .iter()
+            .map(|point| (point.beat_numerator, point.beat_denominator))
+            .collect();
+        assert_eq!(beats, vec![(0, 1), (1, 2), (3, 2)]);
+    }
+
+    #[test]
+    fn a_flick_is_written_as_the_section_12_kind() {
+        let bytes = compile(
+            r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections { notes { flick { id: "f"; line: @main; gameplay.time: 1s; }; } }
+"#,
+        );
+        let decoded = crate::load_chart(&bytes).expect("chart must load");
+        assert_eq!(decoded.notes.len(), 1);
+        assert_eq!(
+            decoded.notes[0].kind,
+            note_kind_ordinal(CanonicalNoteKind::Flick)
+        );
+        assert_eq!(decoded.notes[0].kind, 3, "section 12 assigns 3 to flick");
+    }
 
     #[test]
     fn write_from_compilation_round_trips_through_product_load() {
@@ -4041,4 +4115,39 @@ fn write_u32_at(bytes: &mut [u8], offset: usize, value: u32) {
 
 fn write_u64_at(bytes: &mut [u8], offset: usize, value: u64) {
     bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+#[cfg(test)]
+mod note_kind_tests {
+    use super::*;
+
+    #[test]
+    fn note_kind_ordinals_match_section_12() {
+        // fcbc.md section 12: kind:u8  1 tap, 2 hold, 3 flick, 4 drag.
+        assert_eq!(note_kind_ordinal(CanonicalNoteKind::Tap), 1);
+        assert_eq!(note_kind_ordinal(CanonicalNoteKind::Hold), 2);
+        assert_eq!(note_kind_ordinal(CanonicalNoteKind::Flick), 3);
+        assert_eq!(note_kind_ordinal(CanonicalNoteKind::Drag), 4);
+    }
+
+    #[test]
+    fn every_note_kind_has_a_distinct_ordinal_in_range() {
+        let ordinals: Vec<u8> = [
+            CanonicalNoteKind::Tap,
+            CanonicalNoteKind::Hold,
+            CanonicalNoteKind::Flick,
+            CanonicalNoteKind::Drag,
+        ]
+        .into_iter()
+        .map(note_kind_ordinal)
+        .collect();
+        let mut sorted = ordinals.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted,
+            vec![1, 2, 3, 4],
+            "ordinals must be 1..=4 and distinct"
+        );
+    }
 }
