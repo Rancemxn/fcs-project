@@ -37,7 +37,7 @@ workspace resource resolution、opaque bytes/computed SHA-256 和 bundle binding
 以及其他已交付边界按下表记录，不能再用历史 I0 状态替代当前 implementation evidence。
 
 S15 Conversion closure 又建立 12 个 content-hash-bound semantic profile、7 个 parser dialect、56 个
-mapping rule、32 个 diagnostic/report category、38 个 exact mapping vector、5 个 invalid vector 与
+mapping rule、33 个 diagnostic/report category、38 个 exact mapping vector、5 个 invalid vector 与
 10 个 selection/ambiguity vector。
 当前 Rust test 只强类型加载这些 manifest、复算 descriptor/contract SHA-256 并检查跨引用；活动
 workspace 没有外部格式 parser、profile selector、canonical converter 或 target reparse comparator。

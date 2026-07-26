@@ -138,7 +138,7 @@ closed。随后未参与修改的只读 reviewer 在第 10 节固定 hash 上以
 decoder/shaper/raster 和 mutation corpus 及其独立复审仍是 I9/重新 Frozen 的 gate。
 
 Conversion Specification 1.0 的 parser/profile/Repair 分层、source/target selector、12-profile registry、
-7 个 parser dialect、56 个 mapping rule、32 个 diagnostic/report category、38 个 exact mapping
+7 个 parser dialect、56 个 mapping rule、33 个 diagnostic/report category、38 个 exact mapping
 vector、5 个非法边界、10 个选择/歧义向量以及 FCBC no-source-snapshot 投影记录在
 `docs/reviews/2026-07-15-conversion1-semantic-profile-closure-review.md`。这些向量已由 Rust 强类型
 manifest integrity test 验证，但活动 workspace 尚无 converter，也尚未提供真实外部 source→canonical
