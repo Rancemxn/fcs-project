@@ -1339,7 +1339,7 @@ impl CanonicalRenderScene {
                 geometry.kind(),
                 CanonicalRenderNodeKind::Image | CanonicalRenderNodeKind::Text
             ) {
-                return Err(CanonicalRenderError::GeometryKindMismatch);
+                return Err(CanonicalRenderError::ClipGeometryKindNotAllowed);
             }
         }
         Ok(())
@@ -1441,6 +1441,7 @@ pub enum CanonicalRenderError {
     ClipGroupWithoutClip,
     DrawableWithoutGeometry,
     GeometryKindMismatch,
+    ClipGeometryKindNotAllowed,
     SharedGeometry,
     UnreachableRecord,
     DegeneratePointList,
@@ -1457,36 +1458,78 @@ pub enum CanonicalRenderError {
     ZeroDashTotal,
 }
 
+/// The stable Render diagnostic categories fixed by `fcs-render.md` section 16.
+///
+/// Implementation must not invent a category: the specification's list is
+/// closed, and a value outside it would silently create normative behavior.
+pub const RENDER_DIAGNOSTIC_CATEGORIES: [&str; 16] = [
+    "render.unsupported-profile",
+    "render.invalid-section",
+    "render.invalid-record",
+    "render.resource-not-found",
+    "render.resource-type-mismatch",
+    "render.resource-decode-failed",
+    "render.resource-capability-missing",
+    "render.invalid-reference",
+    "render.invalid-geometry",
+    "render.invalid-paint",
+    "render.invalid-stroke",
+    "render.invalid-clip",
+    "render.invalid-composite",
+    "render.invalid-graph",
+    "render.invalid-descriptor",
+    "render.limit-exceeded",
+];
+
 impl CanonicalRenderError {
     /// The stable Render diagnostic category this rejection maps to.
+    ///
+    /// The mapping follows the ordered failure-surface table in
+    /// `fcs-render.md` section 16, so a rejection reports the same category the
+    /// FCBC Render validator would report for the same fact.
     pub const fn code(self) -> &'static str {
         match self {
-            Self::InvalidViewport => "render.invalid-viewport",
-            Self::InvalidActiveInterval => "render.invalid-active-interval",
-            Self::WrongNamespace | Self::DuplicateStableId => "render.invalid-identity",
-            Self::EmptyPass => "render.invalid-layer",
-            Self::UnresolvedReference | Self::UnreachableRecord => "render.invalid-reference",
-            Self::ParentNotBeforeChild
+            // Row 3: viewport width/height/colorSpace belong to the section header.
+            Self::InvalidViewport => "render.invalid-section",
+            // Row 5: duplicate or zero ID, Layer pass and root range, Node
+            // active interval, parent, layer and order, cycles, orphan
+            // ownership and cross-owner sharing.
+            Self::InvalidActiveInterval
+            | Self::WrongNamespace
+            | Self::DuplicateStableId
+            | Self::EmptyPass
+            | Self::ParentNotBeforeChild
             | Self::LayerMembershipMismatch
             | Self::LayerRootHasParent
             | Self::UnlistedLayerRoot
-            | Self::AttachmentOverrideBelowRoot => "render.invalid-graph",
-            Self::GroupCarriesGeometry
+            | Self::SharedGeometry
+            | Self::UnreachableRecord => "render.invalid-graph",
+            // Row 6: table reference bounds, nullability and kind
+            // incompatibility, and attachment target/kind.
+            Self::UnresolvedReference
+            | Self::AttachmentOverrideBelowRoot
+            | Self::GroupCarriesGeometry
             | Self::GroupCarriesPaint
             | Self::ClipGroupWithoutClip
-            | Self::DrawableWithoutGeometry
-            | Self::GeometryKindMismatch
-            | Self::SharedGeometry
+            | Self::DrawableWithoutGeometry => "render.invalid-reference",
+            // Row 7: Node/Geometry kind, path state and compile-time geometry
+            // ranges. Glyph run problems are geometry too once the font
+            // decoded, and must not fall back to a resource category.
+            Self::GeometryKindMismatch
             | Self::DegeneratePointList
             | Self::EmptyGlyphRunList
+            | Self::EmptyGlyphRun
+            | Self::NonFiniteGlyphMetric
             | Self::EmptyPath
             | Self::PathWithoutInitialMoveTo => "render.invalid-geometry",
-            Self::EmptyGlyphRun | Self::NonFiniteGlyphMetric => "render.invalid-text",
+            // Row 8 and row 9.
             Self::InvalidGradientStop | Self::UnorderedGradientStops => "render.invalid-paint",
             Self::InvalidMiterLimit
             | Self::OddDashArray
             | Self::InvalidDashElement
             | Self::ZeroDashTotal => "render.invalid-stroke",
+            // Row 10: the geometry kinds a clip may use.
+            Self::ClipGeometryKindNotAllowed => "render.invalid-clip",
         }
     }
 }
@@ -2035,19 +2078,98 @@ mod tests {
         assert_eq!(scene.layer_draw_order(), vec![1, 2, 0]);
     }
 
+    /// Every rejection this module can produce. Kept explicit so a new variant
+    /// has to be listed here, which is what forces it through the category
+    /// membership check below.
+    const ALL_ERRORS: [CanonicalRenderError; 31] = [
+        CanonicalRenderError::InvalidViewport,
+        CanonicalRenderError::InvalidActiveInterval,
+        CanonicalRenderError::WrongNamespace,
+        CanonicalRenderError::EmptyPass,
+        CanonicalRenderError::DuplicateStableId,
+        CanonicalRenderError::UnresolvedReference,
+        CanonicalRenderError::ParentNotBeforeChild,
+        CanonicalRenderError::LayerMembershipMismatch,
+        CanonicalRenderError::LayerRootHasParent,
+        CanonicalRenderError::UnlistedLayerRoot,
+        CanonicalRenderError::AttachmentOverrideBelowRoot,
+        CanonicalRenderError::GroupCarriesGeometry,
+        CanonicalRenderError::GroupCarriesPaint,
+        CanonicalRenderError::ClipGroupWithoutClip,
+        CanonicalRenderError::DrawableWithoutGeometry,
+        CanonicalRenderError::GeometryKindMismatch,
+        CanonicalRenderError::ClipGeometryKindNotAllowed,
+        CanonicalRenderError::SharedGeometry,
+        CanonicalRenderError::UnreachableRecord,
+        CanonicalRenderError::DegeneratePointList,
+        CanonicalRenderError::EmptyGlyphRunList,
+        CanonicalRenderError::EmptyGlyphRun,
+        CanonicalRenderError::NonFiniteGlyphMetric,
+        CanonicalRenderError::EmptyPath,
+        CanonicalRenderError::PathWithoutInitialMoveTo,
+        CanonicalRenderError::InvalidGradientStop,
+        CanonicalRenderError::UnorderedGradientStops,
+        CanonicalRenderError::InvalidMiterLimit,
+        CanonicalRenderError::OddDashArray,
+        CanonicalRenderError::InvalidDashElement,
+        CanonicalRenderError::ZeroDashTotal,
+    ];
+
     #[test]
-    fn error_codes_are_stable_render_categories() {
+    fn no_rejection_invents_a_diagnostic_category() {
+        for error in ALL_ERRORS {
+            let code = error.code();
+            assert!(
+                RENDER_DIAGNOSTIC_CATEGORIES.contains(&code),
+                "{error:?} reports {code}, which fcs-render.md section 16 does not define"
+            );
+        }
+    }
+
+    #[test]
+    fn error_codes_follow_the_section_16_failure_surface_order() {
+        // Row 3: the viewport lives in the RenderSection header.
         assert_eq!(
             CanonicalRenderError::InvalidViewport.code(),
-            "render.invalid-viewport"
+            "render.invalid-section"
         );
-        assert_eq!(
-            CanonicalRenderError::ParentNotBeforeChild.code(),
-            "render.invalid-graph"
-        );
+        // Row 5: duplicate identity, layer pass, node graph shape, orphans.
+        for error in [
+            CanonicalRenderError::DuplicateStableId,
+            CanonicalRenderError::EmptyPass,
+            CanonicalRenderError::ParentNotBeforeChild,
+            CanonicalRenderError::InvalidActiveInterval,
+            CanonicalRenderError::SharedGeometry,
+            CanonicalRenderError::UnreachableRecord,
+        ] {
+            assert_eq!(error.code(), "render.invalid-graph", "{error:?}");
+        }
+        // Row 6: reference bounds, nullability and attachment.
+        for error in [
+            CanonicalRenderError::UnresolvedReference,
+            CanonicalRenderError::GroupCarriesGeometry,
+            CanonicalRenderError::ClipGroupWithoutClip,
+            CanonicalRenderError::AttachmentOverrideBelowRoot,
+        ] {
+            assert_eq!(error.code(), "render.invalid-reference", "{error:?}");
+        }
+        // Row 7: a decoded font's glyph problems stay geometry and must not
+        // fall back to render.resource-decode-failed.
+        for error in [
+            CanonicalRenderError::GeometryKindMismatch,
+            CanonicalRenderError::EmptyGlyphRun,
+            CanonicalRenderError::NonFiniteGlyphMetric,
+        ] {
+            assert_eq!(error.code(), "render.invalid-geometry", "{error:?}");
+        }
+        // Rows 9 and 10.
         assert_eq!(
             CanonicalRenderError::ZeroDashTotal.code(),
             "render.invalid-stroke"
+        );
+        assert_eq!(
+            CanonicalRenderError::ClipGeometryKindNotAllowed.code(),
+            "render.invalid-clip"
         );
     }
 }
