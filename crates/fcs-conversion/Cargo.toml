@@ -11,6 +11,7 @@ fcs-source = { path = "../fcs-source" }
 num-bigint.workspace = true
 num-rational.workspace = true
 num-traits.workspace = true
+ryu.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true

@@ -212,7 +212,7 @@ Core、FCBC/ABI、Render 与 Conversion 的候选 delta 已依序写入；阶段
 `docs/reviews/2026-07-15-fcbc2-execution-abi-closure-review.md`、
 `docs/reviews/2026-07-15-render1-resource-binding-closure-review.md` 和
 `docs/reviews/2026-07-15-conversion1-semantic-profile-closure-review.md`。Conversion corpus 当前绑定
-12 个 profile、7 个 parser dialect、56 个 mapping rule、32 个 diagnostic/report category、38 个
+12 个 profile、7 个 parser dialect、56 个 mapping rule、33 个 diagnostic/report category、38 个
 exact vector、5 个 invalid vector 与 10 个 selection vector。非空 Execution ABI
 writer→static bytes→independent loader/evaluator、bits/trace/direct-seek 与 mutation corpus 已完成并
 通过独立复审，见 `docs/reviews/2026-07-16-fcbc2-execution-abi-nonempty-review.md`。RenderSection
@@ -690,7 +690,7 @@ git diff --check
   又使五个版本域进入 Draft/联合重审，不能把 S14 hash 当作当前完整规范 hash；
 - S15：FCS Core、FCBC/ABI、Render 与 Conversion 候选 delta 已依依赖顺序写入；FCS manifest 为
   39 项，FCBC 有三个 schema 2 golden/17 个 mutation，Render 有 embedded-resource binding，
-  Conversion 有 12-profile/7-dialect/56-rule/32-category/38-valid/5-invalid/10-selection registry。统一
+  Conversion 有 12-profile/7-dialect/56-rule/33-category/38-valid/5-invalid/10-selection registry。统一
   cross-spec/hash/test 候选自检见 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md`；非空 ABI
   artifact 已由 `docs/reviews/2026-07-16-fcbc2-execution-abi-nonempty-review.md` 独立复审关闭；Render
   binary/raster 的历史 closure 已被 executable-vector 审计发现的 REN-I08–I16 重新打开；随后固定
@@ -720,8 +720,19 @@ git diff --check
 - I3.1–I6.7 的实现单元和后续 I7–I10 partial product units 已经合并，但 I10 RC 尚未完成。当前
   residual frontier is tracked by root Issue #9 and children #292–#296: governance/Frozen-state
   correction; native
-  `CanonicalCompilation -> FCBC -> load_chart` descriptor and ResourceData closure; typed Conversion
-  capability and canonical target reparse; canonical Render product/semantic/raster closure; and CLI
+  `CanonicalCompilation -> FCBC -> load_chart` descriptor and ResourceData closure; completion evidence
+  for the typed Conversion capability/canonical target-reparse corrective implementation in draft PR
+  #299, including explicit RPE `speedMode` target bindings reused by the writer and reparse; canonical Render product/semantic/raster closure; and CLI
   I10.2-I10.7 assembly plus final executable conformance. Existing product crates and successful Full
   gates are implementation evidence only; they do not authorize Frozen or root completion while these
-  acceptance units remain open.
+  acceptance units remain open. Full Gate run `30110694784` on PR #299 prior head `29563018` exposed
+  compile error `E0106`; run `30111866831` on head `9176c7e` confirmed that fix and advanced to a Clippy
+  `manual_pattern_char_comparison` finding. Run `30112119818` on head `0097123` passed dependency/fmt/Clippy/compile
+  and exposed a formatter test ordering bug: CRLF/trailing-whitespace normalization must precede parse validation.
+  Run `30112879965` on head `86b4d59` passed dependency/fmt/Clippy/compile and 429 tests before exposing a stale
+  conformance assertion: the registered diagnostic/report category total is 33 after adding
+  `conversion.capability-negotiated`, not 32; the active branch updates that integrity count.
+  Run `30113604433` on head `1f14675` reached Clippy and exposed `too_many_arguments` on the three comparison
+  helpers widened for verified metric collection; the active branch applies the same local lint boundary already
+  used by other explicit multi-field constructors. The active checkpoints fix all five findings, add the §7.1 top-level typed approximation/drop authorization records, and retain verified maximum absolute error plus segment-count evidence for every exercised approximation budget. A declared metric that canonical comparison does not exercise now fails instead of silently passing. The active branch otherwise has local static evidence only under the user's
+  temporary GitHub Actions waiver. It is not an exact-head Full Gate pass and does not close #294 or I10.
