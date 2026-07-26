@@ -582,7 +582,7 @@ fn compare_notes(
             }
             compare_time(
                 "gameplay",
-                "timing.note_time",
+                "gameplay.note_time",
                 field("time"),
                 lg.time().chart_time_seconds(),
                 rg.time().chart_time_seconds(),
@@ -592,7 +592,7 @@ fn compare_notes(
             );
             compare_optional_time(
                 "gameplay",
-                "timing.hold_time",
+                "gameplay.hold_time",
                 field("endTime"),
                 lg.end_time().map(|time| time.chart_time_seconds()),
                 rg.end_time().map(|time| time.chart_time_seconds()),
@@ -714,7 +714,7 @@ fn compare_track_piece(
         (CanonicalTrackPiece::Segment(left), CanonicalTrackPiece::Segment(right)) => {
             compare_float(
                 "motion",
-                "timing.track_time",
+                "motion.track_time",
                 field("start"),
                 left.start().chart_time_seconds(),
                 right.start().chart_time_seconds(),
@@ -724,7 +724,7 @@ fn compare_track_piece(
             );
             compare_float(
                 "motion",
-                "timing.track_time",
+                "motion.track_time",
                 field("end"),
                 left.end().chart_time_seconds(),
                 right.end().chart_time_seconds(),
@@ -763,7 +763,7 @@ fn compare_track_piece(
         (CanonicalTrackPiece::Point(left), CanonicalTrackPiece::Point(right)) => {
             compare_float(
                 "motion",
-                "timing.track_time",
+                "motion.track_time",
                 field("time"),
                 left.time().chart_time_seconds(),
                 right.time().chart_time_seconds(),
