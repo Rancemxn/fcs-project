@@ -258,6 +258,18 @@ impl<'a> Mismatches<'a> {
         self.items.push(mismatch);
     }
 
+    /// Record a structural existence fact, which no authorization can drop.
+    ///
+    /// Section 6.3 scopes a `DropAuthorization` to domain/entity/field, so it
+    /// authorizes losing named content *within* entities that still exist. An
+    /// entity count is the check that they exist at all, so filtering it would
+    /// let the strongest authorization turn the section 14 round-trip oracle
+    /// into a no-op for that domain. The mismatch keeps its own domain so the
+    /// report still names the domain that lost the entities.
+    fn push_structural(&mut self, mismatch: ComparisonMismatch) {
+        self.items.push(mismatch);
+    }
+
     fn into_inner(self) -> Vec<ComparisonMismatch> {
         self.items
     }
@@ -903,15 +915,13 @@ fn compare_scroll(
                 mismatches,
             );
         }
-        if left.coordinate().points().len() != right.coordinate().points().len() {
-            mismatch(
-                mismatches,
-                "scroll",
-                format!("scroll[{index}].tempo.count"),
-                left.coordinate().points().len().to_string(),
-                right.coordinate().points().len().to_string(),
-            );
-        }
+        compare_len(
+            "scroll",
+            format!("scroll[{index}].tempo.count"),
+            left.coordinate().points().len(),
+            right.coordinate().points().len(),
+            mismatches,
+        );
         for (point_index, (lp, rp)) in left
             .coordinate()
             .points()
@@ -1076,13 +1086,14 @@ fn compare_len(
     mismatches: &mut Mismatches<'_>,
 ) {
     if expected != actual {
-        mismatch(
-            mismatches,
+        mismatches.push_structural(ComparisonMismatch::new(
             domain,
+            "discrete",
             field,
             expected.to_string(),
             actual.to_string(),
-        );
+            None,
+        ));
     }
 }
 
@@ -1101,6 +1112,14 @@ fn mismatch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fcs_model::{
+        Beat, CanonicalColor, CanonicalJudgeShape, CanonicalLineBase, CanonicalLineGraph,
+        CanonicalLineInherit, CanonicalMetadata, CanonicalNote, CanonicalNoteGameplay,
+        CanonicalNoteKind, CanonicalNotePresentation, CanonicalNoteScorePolicy, CanonicalNoteSet,
+        CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalProfile, CanonicalScrollSet,
+        CanonicalScrollTempo, CanonicalSourceVersion, CanonicalTextualId, CanonicalTrackSet,
+        ChartTimeMap, EntityKind, StableId, StableIdRegistry, TempoPoint,
+    };
 
     fn record(sink: &mut Mismatches<'_>, domain: &str) {
         sink.push(ComparisonMismatch::new(
@@ -1135,6 +1154,116 @@ mod tests {
         let kept = sink.into_inner();
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].domain(), "motionBlur");
+    }
+
+    /// A chart holding `notes` on one Line, with everything else minimal.
+    fn chart_with_notes(notes: Vec<CanonicalNote>) -> CanonicalChart {
+        CanonicalChart::new(
+            CanonicalSourceVersion::new("5.0.0").unwrap(),
+            CanonicalProfile::Chart,
+            [],
+            time_map(),
+            CanonicalMetadata::new(
+                None,
+                Default::default(),
+                Vec::new(),
+                Default::default(),
+                None,
+                None,
+            ),
+            CanonicalLineGraph::new([CanonicalLine::new(
+                ids().0,
+                None,
+                0,
+                CanonicalLineBase::default(),
+                CanonicalLineInherit::default(),
+                CanonicalScrollTempo::Global,
+            )
+            .unwrap()])
+            .unwrap(),
+            CanonicalNoteSet::new(notes).unwrap(),
+            CanonicalTrackSet::new(Vec::new()).unwrap(),
+            CanonicalScrollSet::new(Vec::new()).unwrap(),
+            [],
+        )
+    }
+
+    fn time_map() -> ChartTimeMap {
+        ChartTimeMap::new([TempoPoint {
+            beat: Beat::zero(),
+            bpm: 120.0,
+        }])
+        .unwrap()
+    }
+
+    fn ids() -> (StableId, StableId) {
+        let mut registry = StableIdRegistry::new();
+        let line = registry
+            .insert(
+                EntityKind::Line,
+                CanonicalTextualId::explicit("main").unwrap(),
+            )
+            .unwrap();
+        let note = registry
+            .insert(
+                EntityKind::Note,
+                CanonicalTextualId::explicit("note").unwrap(),
+            )
+            .unwrap();
+        (line, note)
+    }
+
+    fn tap_note() -> CanonicalNote {
+        let (line, note) = ids();
+        let gameplay = CanonicalNoteGameplay::new(
+            CanonicalNoteKind::Tap,
+            line,
+            time_map().chart_time(Beat::zero()).unwrap(),
+            None,
+            CanonicalNoteSide::Above,
+            true,
+            CanonicalJudgeShape::LineDefault,
+            CanonicalNoteSoundPolicy::Default,
+            CanonicalNoteScorePolicy::Default,
+        )
+        .unwrap();
+        let presentation = CanonicalNotePresentation::new(
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            1.0,
+            0.0,
+            CanonicalColor::rgba(255, 255, 255, 255),
+            None,
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        CanonicalNote::new(note, CanonicalNoteKind::Tap, 0, gameplay, presentation).unwrap()
+    }
+
+    #[test]
+    fn a_gameplay_drop_cannot_authorize_losing_every_note() {
+        // Section 6.3 scopes a drop to domain/entity/field, so authorizing the
+        // gameplay domain never authorizes losing the notes themselves: the
+        // reparse that kept no note is not canonically equivalent.
+        let comparison = compare_canonical_charts_with_budgets(
+            &chart_with_notes(vec![tap_note()]),
+            &chart_with_notes(Vec::new()),
+            &BTreeMap::new(),
+            &["gameplay".to_owned()],
+        );
+        assert!(!comparison.is_equivalent());
+        let counts: Vec<&str> = comparison
+            .mismatches()
+            .iter()
+            .map(ComparisonMismatch::field)
+            .collect();
+        assert_eq!(counts, ["note.count"]);
     }
 
     #[test]
