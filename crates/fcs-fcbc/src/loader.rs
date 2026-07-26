@@ -1104,14 +1104,111 @@ fn parse_tempo(bytes: &[u8]) -> Result<Vec<TempoPoint>, &'static str> {
     if points[0].beat_numerator != 0 {
         return Err("fcbc.invalid-tempo");
     }
+    // Section 10: "ChartTime 是该 point beat 的 canonical time"; the canonical time of
+    // the first exact beat is fixed by `fcs.md` 8.2 "0beat 对应 0s；audio offset 不改变
+    // 此映射". Signed zero is not distinguished here, only the bitwise same-beat rule is.
+    if points[0].chart_time != 0.0 {
+        return Err("fcbc.invalid-tempo");
+    }
     for pair in points.windows(2) {
         let left = pair[0].beat_numerator as i128 * pair[1].beat_denominator as i128;
         let right = pair[1].beat_numerator as i128 * pair[0].beat_denominator as i128;
         if left > right || (left == right && pair[0].source_order >= pair[1].source_order) {
             return Err("fcbc.invalid-tempo");
         }
+        if left == right {
+            // Section 10: "同 beat step 的 chartTime 必须 bitwise 相同，不应用该 tolerance。"
+            if pair[0].chart_time.to_bits() != pair[1].chart_time.to_bits() {
+                return Err("fcbc.invalid-tempo");
+            }
+            continue;
+        }
+        // Section 10: "对不同 beat 的相邻 point，先从前一 point 的 exact beat、存储 chartTime
+        // 与生效 BPM 按 Core 公式计算并正确舍入 `referenceChartTime`；存储值允许的绝对误差为
+        // `2 * ULP(referenceChartTime)`". The effective BPM is the previous point's, which is
+        // the last point at that beat because this pair straddles a beat change.
+        let reference = reference_chart_time(
+            pair[0].chart_time,
+            pair[0].bpm,
+            // Saturating only for the i128 corner where both beats sit at extreme
+            // numerators; the reference is then out of range and rejected either way.
+            right.saturating_sub(left),
+            pair[0].beat_denominator as i128 * pair[1].beat_denominator as i128,
+        );
+        if !reference.is_finite() || (pair[1].chart_time - reference).abs() > 2.0 * ulp(reference) {
+            return Err("fcbc.invalid-tempo");
+        }
     }
     Ok(points)
+}
+
+/// Section 10 `referenceChartTime`: the Core mapping
+/// `chartTime(b0) + (b1 - b0) * 60 / bpm(b0)`, where `b1 - b0` is the exact rational
+/// `delta_numerator / delta_denominator`.
+///
+/// The tolerance the caller applies is `2 * ULP`, so the reference itself has to be
+/// correctly rounded: a plainly evaluated chain would already spend that budget on its
+/// own rounding and reject conformant files. Each step therefore keeps its exact error
+/// term, which brings the result within far less than half an ULP of the exact value.
+fn reference_chart_time(
+    chart_time: f64,
+    bpm: f64,
+    delta_numerator: i128,
+    delta_denominator: i128,
+) -> f64 {
+    let (numerator, numerator_error) = split_integer(delta_numerator);
+    let (denominator, denominator_error) = split_integer(delta_denominator);
+    let (top, top_error) = two_product(numerator, 60.0);
+    let top_error = top_error + numerator_error * 60.0;
+    let (bottom, bottom_error) = two_product(denominator, bpm);
+    let bottom_error = bottom_error + denominator_error * bpm;
+    let quotient = top / bottom;
+    let (product, product_error) = two_product(quotient, bottom);
+    // `top - product` is exact by Sterbenz: `product` is `top` rounded through one
+    // division and one multiplication.
+    let residual = ((top - product) - product_error) + top_error - quotient * bottom_error;
+    let correction = residual / bottom;
+    // A non-finite correction means the leading term already saturated or underflowed the
+    // exponent range, where the uncorrected value is the best available reference.
+    let correction = if correction.is_finite() {
+        correction
+    } else {
+        0.0
+    };
+    let (seconds, seconds_error) = two_sum(chart_time, quotient);
+    seconds + (seconds_error + correction)
+}
+
+/// Spacing of `value` per FCBC section 1: the larger gap to an adjacent finite binary64,
+/// falling back to the finite side at `±MAX_FINITE`. Zero and subnormals fall out of the
+/// same expression as the smallest positive subnormal spacing.
+fn ulp(value: f64) -> f64 {
+    let (down, up) = (value.next_down(), value.next_up());
+    match (down.is_finite(), up.is_finite()) {
+        (true, true) => (value - down).max(up - value),
+        (true, false) => value - down,
+        _ => up - value,
+    }
+}
+
+/// Rounded sum of `a + b` plus its exact error term.
+fn two_sum(a: f64, b: f64) -> (f64, f64) {
+    let sum = a + b;
+    let b_virtual = sum - a;
+    let a_virtual = sum - b_virtual;
+    (sum, (a - a_virtual) + (b - b_virtual))
+}
+
+/// Rounded product of `a * b` plus its exact error term.
+fn two_product(a: f64, b: f64) -> (f64, f64) {
+    let product = a * b;
+    (product, a.mul_add(b, -product))
+}
+
+/// Rounded `f64` of an exact integer plus its remainder.
+fn split_integer(value: i128) -> (f64, f64) {
+    let high = value as f64;
+    (high, (value - high as i128) as f64)
 }
 
 fn parse_lines(bytes: &[u8], strings: &[String]) -> Result<Vec<LineRecord>, &'static str> {
@@ -3076,5 +3173,83 @@ mod custom_value_depth_tests {
         // returning; the payload is only about 24 kB.
         let bytes = nest(2_000, empty_array());
         assert_eq!(parse(&bytes).unwrap_err(), "fcbc.limit-exceeded");
+    }
+}
+
+#[cfg(test)]
+mod tempo_revalidation_tests {
+    use super::parse_tempo;
+
+    /// Encodes a TempoMap section payload: `count:u32` then the section 10 points as
+    /// `beatNumerator, beatDenominator, chartTime, bpm, sourceOrder, reserved=0`.
+    fn tempo_section(points: &[(i64, i64, f64, f64, u32)]) -> Vec<u8> {
+        let mut bytes = (points.len() as u32).to_le_bytes().to_vec();
+        for (numerator, denominator, chart_time, bpm, source_order) in points {
+            bytes.extend_from_slice(&numerator.to_le_bytes());
+            bytes.extend_from_slice(&denominator.to_le_bytes());
+            bytes.extend_from_slice(&chart_time.to_bits().to_le_bytes());
+            bytes.extend_from_slice(&bpm.to_bits().to_le_bytes());
+            bytes.extend_from_slice(&source_order.to_le_bytes());
+            bytes.extend_from_slice(&0u32.to_le_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    fn adjacent_mapping_within_two_ulp_is_accepted() {
+        // 3/2 beat at 120bpm is 0.75s exactly, and ULP(0.75) is one step of the
+        // binade, so two steps in either direction is the tolerance boundary.
+        for chart_time in [
+            0.75,
+            0.75f64.next_up().next_up(),
+            0.75f64.next_down().next_down(),
+        ] {
+            let bytes = tempo_section(&[(0, 1, 0.0, 120.0, 0), (3, 2, chart_time, 240.0, 1)]);
+            assert!(parse_tempo(&bytes).is_ok(), "{chart_time} is within 2 ULP");
+        }
+    }
+
+    #[test]
+    fn adjacent_mapping_beyond_two_ulp_is_rejected() {
+        let chart_time = 0.75f64.next_up().next_up().next_up();
+        let bytes = tempo_section(&[(0, 1, 0.0, 120.0, 0), (3, 2, chart_time, 240.0, 1)]);
+        assert_eq!(parse_tempo(&bytes).unwrap_err(), "fcbc.invalid-tempo");
+    }
+
+    #[test]
+    fn a_floored_exact_beat_is_rejected() {
+        // The writer defect this guards: the 3/2 beat is emitted as 1/1 while the
+        // chartTime still denotes 3/2, so the stored mapping is a quarter second off.
+        let bytes = tempo_section(&[(0, 1, 0.0, 120.0, 0), (1, 1, 0.75, 240.0, 1)]);
+        assert_eq!(parse_tempo(&bytes).unwrap_err(), "fcbc.invalid-tempo");
+    }
+
+    #[test]
+    fn a_same_beat_step_must_repeat_the_chart_time_bitwise() {
+        let step = |chart_time: f64| {
+            tempo_section(&[
+                (0, 1, 0.0, 120.0, 0),
+                (1, 1, 0.5, 120.0, 1),
+                (1, 1, chart_time, 240.0, 2),
+            ])
+        };
+        assert!(parse_tempo(&step(0.5)).is_ok());
+        assert_eq!(
+            parse_tempo(&step(0.5f64.next_up())).unwrap_err(),
+            "fcbc.invalid-tempo"
+        );
+    }
+
+    #[test]
+    fn a_same_beat_step_rejects_the_opposite_signed_zero() {
+        // Bitwise, not numeric: -0.0 == 0.0 but the stored bits differ.
+        let bytes = tempo_section(&[(0, 1, 0.0, 120.0, 0), (0, 1, -0.0, 240.0, 1)]);
+        assert_eq!(parse_tempo(&bytes).unwrap_err(), "fcbc.invalid-tempo");
+    }
+
+    #[test]
+    fn the_first_point_must_carry_the_canonical_time_of_beat_zero() {
+        let bytes = tempo_section(&[(0, 1, 1.0, 120.0, 0), (1, 1, 1.5, 120.0, 1)]);
+        assert_eq!(parse_tempo(&bytes).unwrap_err(), "fcbc.invalid-tempo");
     }
 }
