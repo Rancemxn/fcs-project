@@ -4,11 +4,18 @@
 //! Render-aware parser consumes that payload against the grammar in
 //! `fcs-render.md` section 2 and produces the nodes here. These types are
 //! grammar-shaped only: field meaning, enum membership and node-kind schema
-//! belong to Render static validation, not to parsing.
+//! belong to Render static validation, not to parsing. Node kinds therefore
+//! reuse `fcs_model::CanonicalRenderNodeKind` and only their source spellings
+//! are defined here.
+
+use fcs_model::CanonicalRenderNodeKind;
 
 use super::{EntityExpression, Generator, SchemaField, SourceExpression, SourceSpan, TracksBlock};
 
-/// A parsed `render profile <semver> { ... }` payload.
+/// The body of a `render profile <semver> { ... }` payload.
+///
+/// The declared semver is not repeated here: it stays on `RenderBlock::version`,
+/// which is what the section 2 profile-version gate reads.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderScene {
     pub viewport: RenderViewport,
@@ -63,6 +70,10 @@ pub struct RenderChildrenBlock {
 }
 
 /// One item inside a `children` block.
+///
+/// A generator here is an ordinary Core `Generator` whose owner is
+/// `GeneratorOwner::RenderChildren`, so expansion diagnostics are framed by the
+/// enclosing layer or node rather than by a fabricated collection.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RenderItem {
     Node(RenderNodeDeclaration),
@@ -87,10 +98,10 @@ impl RenderItem {
 pub struct RenderIf {
     pub condition: SourceExpression,
     pub then_items: Vec<RenderItem>,
-    /// Empty when the source has no `else` arm; the parser records the arm's
-    /// presence in `else_span` so validation can tell empty from absent.
+    /// Empty when the source has no `else` arm. Section 3.2 expands the
+    /// construct away before the canonical scene graph, so an empty arm and an
+    /// absent arm contribute the same nothing and are not distinguished.
     pub else_items: Vec<RenderItem>,
-    pub else_span: Option<SourceSpan>,
     pub span: SourceSpan,
     pub keyword_span: SourceSpan,
 }
@@ -98,7 +109,7 @@ pub struct RenderIf {
 /// A named render node declaration and its ordered body items.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderNodeDeclaration {
-    pub kind: RenderNodeKind,
+    pub kind: CanonicalRenderNodeKind,
     pub kind_span: SourceSpan,
     pub name: String,
     pub name_span: SourceSpan,
@@ -106,98 +117,118 @@ pub struct RenderNodeDeclaration {
     pub span: SourceSpan,
 }
 
-/// The closed set of render node kinds.
+/// The exact source spelling of a node kind.
+///
+/// The kind set is closed and identical on both sides of lowering, so the
+/// canonical enum is the single definition of it; only the spellings are
+/// grammar-owned. The match is exhaustive, so a future kind added to the
+/// canonical enum fails to compile here instead of diverging silently.
 ///
 /// `line`, `image` and `path` are already Core keywords; every other spelling
 /// is a contextual keyword that the Core lexer emits as a plain identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum RenderNodeKind {
-    Group,
-    ClipGroup,
-    Rect,
-    RoundedRect,
-    Circle,
-    Ellipse,
-    Line,
-    Polyline,
-    Polygon,
-    Path,
-    Image,
-    Text,
+/// Node kinds are structural terminals and are never quoted, so this is also
+/// the identifier the parser matches.
+pub const fn render_node_kind_spelling(kind: CanonicalRenderNodeKind) -> &'static str {
+    match kind {
+        CanonicalRenderNodeKind::Group => "group",
+        CanonicalRenderNodeKind::ClipGroup => "clipGroup",
+        CanonicalRenderNodeKind::Rect => "rect",
+        CanonicalRenderNodeKind::RoundedRect => "roundedRect",
+        CanonicalRenderNodeKind::Circle => "circle",
+        CanonicalRenderNodeKind::Ellipse => "ellipse",
+        CanonicalRenderNodeKind::Line => "line",
+        CanonicalRenderNodeKind::Polyline => "polyline",
+        CanonicalRenderNodeKind::Polygon => "polygon",
+        CanonicalRenderNodeKind::Path => "path",
+        CanonicalRenderNodeKind::Image => "image",
+        CanonicalRenderNodeKind::Text => "text",
+    }
 }
 
-impl RenderNodeKind {
-    /// The exact source spelling. Node kinds are structural terminals and are
-    /// never quoted, so this is also the identifier the parser matches.
-    pub const fn spelling(self) -> &'static str {
-        match self {
-            Self::Group => "group",
-            Self::ClipGroup => "clipGroup",
-            Self::Rect => "rect",
-            Self::RoundedRect => "roundedRect",
-            Self::Circle => "circle",
-            Self::Ellipse => "ellipse",
-            Self::Line => "line",
-            Self::Polyline => "polyline",
-            Self::Polygon => "polygon",
-            Self::Path => "path",
-            Self::Image => "image",
-            Self::Text => "text",
-        }
-    }
-
-    /// Resolves a contextual-keyword spelling. Returns `None` for any other
-    /// identifier so the parser reports an unknown node kind rather than
-    /// guessing a Core-adjacent meaning.
-    pub fn from_spelling(spelling: &str) -> Option<Self> {
-        Some(match spelling {
-            "group" => Self::Group,
-            "clipGroup" => Self::ClipGroup,
-            "rect" => Self::Rect,
-            "roundedRect" => Self::RoundedRect,
-            "circle" => Self::Circle,
-            "ellipse" => Self::Ellipse,
-            "line" => Self::Line,
-            "polyline" => Self::Polyline,
-            "polygon" => Self::Polygon,
-            "path" => Self::Path,
-            "image" => Self::Image,
-            "text" => Self::Text,
-            _ => return None,
-        })
-    }
-
-    /// Group and ClipGroup organize children; every other kind draws and so
-    /// must carry a kind-compatible geometry.
-    pub const fn is_drawable(self) -> bool {
-        !matches!(self, Self::Group | Self::ClipGroup)
-    }
+/// Resolves a contextual-keyword spelling. Returns `None` for any other
+/// identifier so the parser reports an unknown node kind rather than guessing a
+/// Core-adjacent meaning.
+pub fn render_node_kind_from_spelling(spelling: &str) -> Option<CanonicalRenderNodeKind> {
+    Some(match spelling {
+        "group" => CanonicalRenderNodeKind::Group,
+        "clipGroup" => CanonicalRenderNodeKind::ClipGroup,
+        "rect" => CanonicalRenderNodeKind::Rect,
+        "roundedRect" => CanonicalRenderNodeKind::RoundedRect,
+        "circle" => CanonicalRenderNodeKind::Circle,
+        "ellipse" => CanonicalRenderNodeKind::Ellipse,
+        "line" => CanonicalRenderNodeKind::Line,
+        "polyline" => CanonicalRenderNodeKind::Polyline,
+        "polygon" => CanonicalRenderNodeKind::Polygon,
+        "path" => CanonicalRenderNodeKind::Path,
+        "image" => CanonicalRenderNodeKind::Image,
+        "text" => CanonicalRenderNodeKind::Text,
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::{
+        FieldPath, GeneratorOwner, SchemaValue, SourceExpression, SourceLiteral, SourceRange, Type,
+    };
 
-    const ALL: [RenderNodeKind; 12] = [
-        RenderNodeKind::Group,
-        RenderNodeKind::ClipGroup,
-        RenderNodeKind::Rect,
-        RenderNodeKind::RoundedRect,
-        RenderNodeKind::Circle,
-        RenderNodeKind::Ellipse,
-        RenderNodeKind::Line,
-        RenderNodeKind::Polyline,
-        RenderNodeKind::Polygon,
-        RenderNodeKind::Path,
-        RenderNodeKind::Image,
-        RenderNodeKind::Text,
+    /// Every spelling section 2 lists for `renderNodeKind`, in grammar order.
+    const SPELLINGS: [&str; 12] = [
+        "group",
+        "clipGroup",
+        "rect",
+        "roundedRect",
+        "circle",
+        "ellipse",
+        "line",
+        "polyline",
+        "polygon",
+        "path",
+        "image",
+        "text",
     ];
 
-    #[test]
-    fn every_kind_round_trips_through_its_source_spelling() {
-        for kind in ALL {
-            assert_eq!(RenderNodeKind::from_spelling(kind.spelling()), Some(kind));
+    fn span(start: usize, end: usize) -> SourceSpan {
+        SourceSpan::new(start, end)
+    }
+
+    fn field(start: usize, end: usize) -> SchemaField {
+        SchemaField {
+            path: FieldPath {
+                segments: vec!["opacity".to_owned()],
+                span: span(start, start),
+            },
+            value: SchemaValue::Expression(SourceExpression::Literal {
+                literal: SourceLiteral::Bool(true),
+                span: span(start, end),
+            }),
+            span: span(start, end),
         }
+    }
+
+    #[test]
+    fn every_grammar_spelling_round_trips_through_the_canonical_kind() {
+        for spelling in SPELLINGS {
+            let kind =
+                render_node_kind_from_spelling(spelling).expect("grammar spelling must resolve");
+            assert_eq!(render_node_kind_spelling(kind), spelling);
+        }
+    }
+
+    #[test]
+    fn the_grammar_spellings_cover_every_canonical_kind_ordinal() {
+        let mut ordinals: Vec<u16> = SPELLINGS
+            .iter()
+            .map(|spelling| {
+                render_node_kind_from_spelling(spelling)
+                    .expect("grammar spelling must resolve")
+                    .ordinal()
+            })
+            .collect();
+        ordinals.sort_unstable();
+        ordinals.dedup();
+        assert_eq!(ordinals, (1..=12).collect::<Vec<u16>>());
     }
 
     #[test]
@@ -212,7 +243,7 @@ mod tests {
             "",
         ] {
             assert_eq!(
-                RenderNodeKind::from_spelling(spelling),
+                render_node_kind_from_spelling(spelling),
                 None,
                 "{spelling} must not resolve"
             );
@@ -220,12 +251,80 @@ mod tests {
     }
 
     #[test]
-    fn only_group_and_clip_group_are_non_drawable() {
-        let non_drawable: Vec<&str> = ALL
-            .iter()
-            .filter(|kind| !kind.is_drawable())
-            .map(|kind| kind.spelling())
-            .collect();
-        assert_eq!(non_drawable, ["group", "clipGroup"]);
+    fn body_item_span_reports_the_wrapped_item_span() {
+        let items = [
+            RenderBodyItem::Field(Box::new(field(1, 4))),
+            RenderBodyItem::Tracks(TracksBlock {
+                tracks: Vec::new(),
+                span: span(5, 9),
+                keyword_span: span(5, 6),
+            }),
+            RenderBodyItem::Children(RenderChildrenBlock {
+                items: Vec::new(),
+                span: span(10, 16),
+                keyword_span: span(10, 11),
+            }),
+        ];
+        let spans: Vec<SourceSpan> = items.iter().map(RenderBodyItem::span).collect();
+        assert_eq!(spans, [span(1, 4), span(5, 9), span(10, 16)]);
+    }
+
+    #[test]
+    fn render_item_span_reports_the_wrapped_item_span() {
+        let items = [
+            RenderItem::Node(RenderNodeDeclaration {
+                kind: CanonicalRenderNodeKind::Rect,
+                kind_span: span(1, 5),
+                name: "bar".to_owned(),
+                name_span: span(6, 9),
+                items: Vec::new(),
+                span: span(1, 12),
+            }),
+            RenderItem::Entity(EntityExpression::Source(SourceExpression::Name {
+                name: "tick".to_owned(),
+                span: span(13, 17),
+            })),
+            RenderItem::If(RenderIf {
+                condition: SourceExpression::Literal {
+                    literal: SourceLiteral::Bool(true),
+                    span: span(21, 25),
+                },
+                then_items: Vec::new(),
+                else_items: Vec::new(),
+                span: span(18, 30),
+                keyword_span: span(18, 20),
+            }),
+            RenderItem::Generator(Generator {
+                owner: Box::new(GeneratorOwner::RenderChildren {
+                    name: "background".to_owned(),
+                }),
+                variable: "i".to_owned(),
+                variable_span: span(40, 41),
+                variable_type: Type::Int,
+                range: SourceRange {
+                    start: SourceExpression::Literal {
+                        literal: SourceLiteral::Int(0),
+                        span: span(42, 43),
+                    },
+                    end: SourceExpression::Literal {
+                        literal: SourceLiteral::Int(8),
+                        span: span(46, 47),
+                    },
+                    step: SourceExpression::Literal {
+                        literal: SourceLiteral::Int(1),
+                        span: span(53, 54),
+                    },
+                    inclusive_end: false,
+                    span: span(42, 54),
+                },
+                body: Vec::new(),
+                span: span(31, 60),
+            }),
+        ];
+        let spans: Vec<SourceSpan> = items.iter().map(RenderItem::span).collect();
+        assert_eq!(
+            spans,
+            [span(1, 12), span(13, 17), span(18, 30), span(31, 60)]
+        );
     }
 }

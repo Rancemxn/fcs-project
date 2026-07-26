@@ -685,6 +685,11 @@ pub enum GeneratorOwner {
         target: FieldPath,
         span: SourceSpan,
     },
+    /// A generator directly or conditionally contained by a Render `children`
+    /// block (`fcs-render.md` section 3.2). `name` is the enclosing layer or
+    /// render node that owns the block; a `children` block is not a named
+    /// collection and has no collection name to report.
+    RenderChildren { name: String },
 }
 
 /// A source item emitted by a compile-time generator.
