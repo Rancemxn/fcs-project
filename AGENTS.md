@@ -124,16 +124,19 @@
 
 ## Rust 开发与验证
 
-- 本地工作树临时允许运行 `cargo check`（可带 `--workspace`/`--all-targets`），但不得带 `--release`。这只是加快
-  编译错误反馈的开发手段，由用户放开、也可由用户随时撤回并恢复为完全不在本地编译。除此之外仍不运行任何
-  会编译、测试、执行 fuzz 或生成其他 Cargo build artifact 的命令：Clippy、nextest、`cargo build`/`cargo run`、
-  build script、可执行 fixture 和 fuzz 一律由本仓库 `.github/workflows/full-gate.yml` 在 GitHub runner 上执行；
-  本地其余检查仍限于 diff、链接、Markdown/YAML/JSON/schema、格式等静态检查。本条同样适用于
+- 本地工作树临时允许运行 `cargo check` 和 `cargo clippy`（均可带 `--workspace`/`--all-targets`），但都不得带
+  `--release`。这只是加快编译错误与 lint 反馈的开发手段，由用户放开、也可由用户随时撤回并恢复为完全不在
+  本地编译。除此之外仍不运行任何会编译、测试、执行 fuzz 或生成其他 Cargo build artifact 的命令：nextest、
+  `cargo build`/`cargo run`、build script、可执行 fixture 和 fuzz 一律由本仓库
+  `.github/workflows/full-gate.yml` 在 GitHub runner 上执行；本地其余检查仍限于 diff、链接、
+  Markdown/YAML/JSON/schema、格式等静态检查。本地 Clippy 必须使用与 gate 相同的
+  `--workspace --all-targets -- -D warnings`，不得降低告警级别或临时加 `#[allow]` 让本地变绿。本条同样适用于
   `docs/loops/loop.md` 和 `docs/loops/review-loop.md` 中“本地不运行编译命令”的表述，二者其余的门禁与
   证据规则不变。
-- 本地 `cargo check` 只产生开发反馈，不产生门禁证据：不得写成通过，不得替代任何 full-gate step，不得进入
-  Primary audit 或 reviewer `Audit result` 的 full-gate evidence，也不改变“适用 gate 必须由同一 head SHA 的成功
-  Action run 证明”这条要求。`target/` 是 gitignore 的构建产物，不得进入提交。
+- 本地 `cargo check` 和 `cargo clippy` 只产生开发反馈，不产生门禁证据：不得写成通过，不得替代任何
+  full-gate step，不得进入 Primary audit 或 reviewer `Audit result` 的 full-gate evidence，也不改变“适用 gate
+  必须由同一 head SHA 的成功 Action run 证明”这条要求。本地 Clippy 通过不代表 gate 的 Clippy step 通过：
+  toolchain 版本不同会给出不同 lint 集合。`target/` 是 gitignore 的构建产物，不得进入提交。
 - 第一个需要 Rust 门禁反馈的完整 SHA 必须推送到 draft PR；后续每个需要反馈的修改检查点都以新 SHA
   触发 `pull_request` full gate。没有可用 PR run 时，可以对解析为目标 SHA 的 branch/tag ref 使用
   `workflow_dispatch`，但必须回读并确认 run 的 `headSha` 与目标 SHA 完全一致。
@@ -160,7 +163,7 @@
   converter、VM 和旧 bytecode 已不在活动
   workspace。未来跨格式语义变化必须针对 canonical model、ConversionReport、
   round-trip fixture 和 `examples/` 验证，converter 不得直接消费 source AST。
-- 交付说明必须分别列出本地检查（含临时放开的 `cargo check`）和远端 full-gate evidence，以及未运行门禁及
+- 交付说明必须分别列出本地检查（含临时放开的 `cargo check` 和 `cargo clippy`）和远端 full-gate evidence，以及未运行门禁及
   原因。不得将 `queued`、缺失、失败或 non-applicable 写成通过。
 - 使用校验脚本或外部模拟器验证解析逻辑时，先确认校验脚本与模拟器的代码逻辑一致，不能用有问题的校验脚本得出结论。
 - 遇到规范未定义的外部谱面边界时，研究阶段可以记录候选假设，但规范性实现不得发明“通用
