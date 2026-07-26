@@ -11,6 +11,9 @@ cargo-fuzz = true
 members = ["."]
 
 [dependencies]
+fcs-conversion = { path = "../crates/fcs-conversion" }
+fcs-fcbc = { path = "../crates/fcs-fcbc" }
+fcs-render = { path = "../crates/fcs-render" }
 fcs-source = { path = "../crates/fcs-source" }
 libfuzzer-sys = "=0.4.13"
 
@@ -31,6 +34,55 @@ bench = false
 [[bin]]
 name = "expression"
 path = "fuzz_targets/expression.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fcbc_container"
+path = "fuzz_targets/fcbc_container.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "render_section"
+path = "fuzz_targets/render_section.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "asset_image"
+path = "fuzz_targets/asset_image.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "asset_font"
+path = "fuzz_targets/asset_font.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_pgr"
+path = "fuzz_targets/import_pgr.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_rpe"
+path = "fuzz_targets/import_rpe.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "import_pec"
+path = "fuzz_targets/import_pec.rs"
 test = false
 doc = false
 bench = false

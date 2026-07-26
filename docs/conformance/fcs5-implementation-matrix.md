@@ -46,7 +46,9 @@ I0.1–I0.9 已完成：活动 `main` 只有无版本前缀的 `crates/fcs-sourc
 Chumsky 0.11.2 的单一 spanned-token 数据流，并具备稳定诊断、严格 byte decode、固定配置
 Proptest robustness 和强类型 manifest 完整性门。I1.1–I1.8 合并后当前 root workspace 有 218 个通过的
 测试，其中 9 个属于 test-only Execution ABI lane、5 个属于 test-only RenderSection lane；独立 `fuzz/`
-workspace 另有 3 个 libFuzzer targets 和 42-seed bounded smoke。这些证据只证明 source parser boundary、
+workspace 另有 10 个 libFuzzer targets（source parser、FCBC/Render loader、asset decoder 与
+PGR/RPE/PEC importer 的敌意输入面）和 manifest 驱动的 bounded smoke，seed 与 target 契约见
+`docs/conformance/fcs5-fuzz-lane.md`。这些证据只证明对应 hostile-input boundary、source parser boundary、
 治理门与对应 focused artifact，不表示全部 FCS 5 source/canonical/runtime conformance、I7 产品能力
 或 I9 renderer 已完成。
 
