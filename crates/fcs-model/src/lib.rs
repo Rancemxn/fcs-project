@@ -69,7 +69,7 @@ pub use render::{
     CanonicalRenderLayer, CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec,
     CanonicalRenderPaint, CanonicalRenderPaintData, CanonicalRenderPath, CanonicalRenderScene,
     CanonicalRenderSceneSpec, CanonicalRenderStroke, CanonicalStrokeCap, CanonicalStrokeJoin,
-    CanonicalViewport,
+    CanonicalViewport, RENDER_DIAGNOSTIC_CATEGORIES,
 };
 pub use report::{
     ConversionDomain, ConversionEntry, ConversionPhase, ConversionPolicy, ConversionReport,
