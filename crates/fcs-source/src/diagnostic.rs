@@ -123,6 +123,8 @@ pub enum ExpansionTraceKind {
     Generator,
     Index,
     Emit,
+    /// A Render `children` block, named by its enclosing layer or render node.
+    RenderChildren,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

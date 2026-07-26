@@ -480,14 +480,10 @@ impl<'a> StaticEntityValidator<'a> {
         expected_type: &Type,
         schema: &EntitySchema,
     ) -> Result<(), Diagnostic> {
-        if let GeneratorOwner::Collection { name } = generator.owner.as_ref() {
-            self.context.push_trace(ExpansionTraceFrame::new(
-                ExpansionTraceKind::Collection,
-                Some(name.clone()),
-                None,
-                None,
-                Some(generator.span),
-            ));
+        let owner_frame = owner_trace_frame(generator.owner.as_ref(), generator.span);
+        let has_owner_frame = owner_frame.is_some();
+        if let Some(frame) = owner_frame {
+            self.context.push_trace(frame);
         }
         self.context.push_trace(ExpansionTraceFrame::new(
             ExpansionTraceKind::Generator,
@@ -511,7 +507,7 @@ impl<'a> StaticEntityValidator<'a> {
         );
         self.context.pop_trace();
         self.context.pop_trace();
-        if matches!(generator.owner.as_ref(), GeneratorOwner::Collection { .. }) {
+        if has_owner_frame {
             self.context.pop_trace();
         }
         range_result?;
@@ -1056,6 +1052,28 @@ pub(super) fn expand_collections(
         .iter()
         .map(|collection| context.expand_collection(collection))
         .collect()
+}
+
+/// The expansion-trace frame that names the construct a generator expands
+/// inside, if that construct is named.
+///
+/// The match is exhaustive so a new owner cannot silently fall through to "no
+/// frame at all": a Track `segments` generator is already framed by the Track
+/// itself, but a Render `children` generator would otherwise be reported as a
+/// collection expansion under a collection that does not exist.
+fn owner_trace_frame(owner: &GeneratorOwner, span: SourceSpan) -> Option<ExpansionTraceFrame> {
+    let (kind, subject) = match owner {
+        GeneratorOwner::Collection { name } => (ExpansionTraceKind::Collection, name),
+        GeneratorOwner::RenderChildren { name } => (ExpansionTraceKind::RenderChildren, name),
+        GeneratorOwner::TrackSegments { .. } => return None,
+    };
+    Some(ExpansionTraceFrame::new(
+        kind,
+        Some(subject.clone()),
+        None,
+        None,
+        Some(span),
+    ))
 }
 
 fn template_map(
@@ -1976,4 +1994,58 @@ fn validate_schema_type(
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ExpansionTraceKind, GeneratorOwner, SourceSpan, owner_trace_frame};
+    use crate::ast::FieldPath;
+
+    #[test]
+    fn a_render_children_generator_is_framed_by_its_owning_node() {
+        let span = SourceSpan::new(10, 40);
+        let frame = owner_trace_frame(
+            &GeneratorOwner::RenderChildren {
+                name: "pulse".to_owned(),
+            },
+            span,
+        )
+        .expect("a render children generator must carry an expansion frame");
+        assert_eq!(frame.kind(), ExpansionTraceKind::RenderChildren);
+        assert_eq!(frame.subject(), Some("pulse"));
+        assert_eq!(frame.span(), Some(span));
+    }
+
+    #[test]
+    fn a_collection_generator_keeps_its_collection_frame() {
+        let span = SourceSpan::new(0, 4);
+        let frame = owner_trace_frame(
+            &GeneratorOwner::Collection {
+                name: "notes".to_owned(),
+            },
+            span,
+        )
+        .expect("a collection generator must carry an expansion frame");
+        assert_eq!(frame.kind(), ExpansionTraceKind::Collection);
+        assert_eq!(frame.subject(), Some("notes"));
+    }
+
+    #[test]
+    fn a_track_segments_generator_contributes_no_owner_frame() {
+        let span = SourceSpan::new(0, 4);
+        assert_eq!(
+            owner_trace_frame(
+                &GeneratorOwner::TrackSegments {
+                    track: "fade".to_owned(),
+                    target: FieldPath {
+                        segments: vec!["alpha".to_owned()],
+                        span,
+                    },
+                    span,
+                },
+                span,
+            ),
+            None
+        );
+    }
 }

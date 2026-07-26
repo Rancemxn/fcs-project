@@ -28,7 +28,8 @@ pub use metadata::{
 };
 pub use render::{
     RenderBodyItem, RenderChildrenBlock, RenderIf, RenderItem, RenderLayerDeclaration,
-    RenderNodeDeclaration, RenderNodeKind, RenderScene, RenderViewport,
+    RenderNodeDeclaration, RenderScene, RenderViewport, render_node_kind_from_spelling,
+    render_node_kind_spelling,
 };
 pub use time::{Beat, BeatError, Bpm, InvalidBpm, SourceBpm};
 pub use track::{
