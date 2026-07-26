@@ -2663,7 +2663,27 @@ fn take_record<'a>(outer: &mut Cursor<'a>) -> Result<Cursor<'a>, &'static str> {
     Ok(Cursor::new(payload, "fcbc.invalid-record"))
 }
 
+/// The custom-value nesting depth section 17 requires the loader to bound.
+///
+/// It matches `fcs_source::CustomValueLimits::DEFAULT_MAX_DEPTH`, so a chart
+/// that compiled can always be loaded back; a deeper container is rejected as a
+/// resource error rather than exhausting the stack.
+const MAX_CUSTOM_VALUE_DEPTH: usize = 32;
+
 fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedValue, &'static str> {
+    parse_value_at_depth(cursor, string_count, 0)
+}
+
+fn parse_value_at_depth(
+    cursor: &mut Cursor<'_>,
+    string_count: usize,
+    depth: usize,
+) -> Result<ParsedValue, &'static str> {
+    // Depth is file-controlled and each level costs only a few payload bytes,
+    // so this is checked before descending, not after.
+    if depth > MAX_CUSTOM_VALUE_DEPTH {
+        return Err("fcbc.limit-exceeded");
+    }
     let start = cursor.position;
     let tag = cursor.u8()?;
     if cursor.u8()? != 0 || cursor.u16()? != 0 {
@@ -2730,7 +2750,7 @@ fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedVal
             value.zeroes(3)?;
             let count = limited_count(value.u32()?)?;
             for _ in 0..count {
-                let element = parse_value(&mut value, string_count)?;
+                let element = parse_value_at_depth(&mut value, string_count, depth + 1)?;
                 if element.tag != element_tag {
                     return Err("fcbc.invalid-record");
                 }
@@ -2745,9 +2765,10 @@ fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedVal
                 if !keys.insert(key) {
                     return Err("fcbc.invalid-record");
                 }
-                parsed
-                    .fields
-                    .push((key, parse_value(&mut value, string_count)?));
+                parsed.fields.push((
+                    key,
+                    parse_value_at_depth(&mut value, string_count, depth + 1)?,
+                ));
             }
         }
         _ => return Err("fcbc.invalid-record"),
@@ -2993,4 +3014,67 @@ fn crc32_iso_hdlc(bytes: &[u8]) -> u32 {
         }
     }
     !crc
+}
+
+#[cfg(test)]
+mod custom_value_depth_tests {
+    use super::*;
+
+    /// Wraps `payload` in `levels` nested single-element arrays of tag 13.
+    ///
+    /// Each level costs 12 bytes, which is what makes an unbounded parser cheap
+    /// to attack: a few kilobytes reach a depth no native stack survives.
+    fn nest(levels: usize, innermost: Vec<u8>) -> Vec<u8> {
+        let mut value = innermost;
+        for _ in 0..levels {
+            let mut level = Vec::new();
+            level.push(13u8); // tag: array
+            level.push(0);
+            level.extend_from_slice(&0u16.to_le_bytes());
+            let payload_length = 8 + value.len();
+            level.extend_from_slice(&(payload_length as u32).to_le_bytes());
+            level.push(13u8); // element tag, must equal the element's own tag
+            level.extend_from_slice(&[0, 0, 0]);
+            level.extend_from_slice(&1u32.to_le_bytes()); // one element
+            level.extend_from_slice(&value);
+            value = level;
+        }
+        value
+    }
+
+    /// The innermost value is an empty array, so it terminates the nesting.
+    fn empty_array() -> Vec<u8> {
+        let mut value = vec![13u8, 0];
+        value.extend_from_slice(&0u16.to_le_bytes());
+        value.extend_from_slice(&8u32.to_le_bytes());
+        value.push(13u8);
+        value.extend_from_slice(&[0, 0, 0]);
+        value.extend_from_slice(&0u32.to_le_bytes());
+        value
+    }
+
+    fn parse(bytes: &[u8]) -> Result<ParsedValue, &'static str> {
+        let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
+        parse_value(&mut cursor, 0)
+    }
+
+    #[test]
+    fn nesting_within_the_limit_is_accepted() {
+        let bytes = nest(MAX_CUSTOM_VALUE_DEPTH - 1, empty_array());
+        assert!(parse(&bytes).is_ok());
+    }
+
+    #[test]
+    fn nesting_beyond_the_limit_is_a_resource_error_not_a_crash() {
+        let bytes = nest(MAX_CUSTOM_VALUE_DEPTH + 1, empty_array());
+        assert_eq!(parse(&bytes).unwrap_err(), "fcbc.limit-exceeded");
+    }
+
+    #[test]
+    fn a_hostile_depth_returns_rather_than_exhausting_the_stack() {
+        // Without a depth guard this input aborts the process instead of
+        // returning; the payload is only about 24 kB.
+        let bytes = nest(2_000, empty_array());
+        assert_eq!(parse(&bytes).unwrap_err(), "fcbc.limit-exceeded");
+    }
 }
