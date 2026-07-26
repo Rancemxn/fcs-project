@@ -2,7 +2,9 @@
 //!
 //! Executes checked-in public source fixtures through the real PGR/RPE/PEC
 //! import pipeline and compares expected ConversionReport status plus
-//! canonical shape/provenance keys. Copyrighted charts are never required.
+//! canonical shape/provenance keys. Fixtures may additionally declare an
+//! `export_profile` to run a same-format export round trip and require
+//! export report categories. Copyrighted charts are never required.
 
 use std::fmt;
 use std::fs;
@@ -12,11 +14,13 @@ use fcs_model::{CanonicalCompilation, ConversionReport, ConversionStatus};
 use serde::Deserialize;
 
 use crate::{
-    ArtifactRole, DecimalLimits, ExactDecimal, PecLimits, PecProfile, PecProfileBinding, PgrLimits,
-    PgrProfile, PgrProfileBinding, RpeLimits, RpeProfileBinding, RpeSpeedMode, SourceArtifact,
-    SourceFormat, interpret_pec, interpret_pgr, interpret_rpe_semantics, lower_pec_to_canonical,
-    lower_pgr_to_canonical, lower_rpe_to_canonical, parse_json_document, parse_pec_document,
-    parse_pgr_document, parse_rpe_document,
+    ArtifactRole, CapabilitySet, DecimalLimits, ExactDecimal, ExportOptions, PecLimits, PecProfile,
+    PecProfileBinding, PgrFormatVersion, PgrLimits, PgrProfile, PgrProfileBinding, RpeLimits,
+    RpeProfileBinding, RpeSpeedMode, SourceArtifact, SourceFormat, export_pec_line_with_options,
+    export_pgr_with_options, export_rpe_json_with_options, interpret_pec, interpret_pgr,
+    interpret_rpe_semantics, lower_pec_to_canonical, lower_pgr_to_canonical,
+    lower_rpe_to_canonical, parse_json_document, parse_pec_document, parse_pgr_document,
+    parse_rpe_document,
 };
 
 /// Environment variable that enables the private copyright fixture root.
@@ -84,6 +88,9 @@ pub struct FixtureEntry {
     pub profile_version: String,
     #[serde(default)]
     pub floor_scale_px: Option<String>,
+    /// Target profile id for an optional same-format export round trip.
+    #[serde(default)]
+    pub export_profile: Option<String>,
     pub source: String,
     pub expected: String,
     pub producer_evidence: String,
@@ -112,6 +119,10 @@ pub struct FixtureExpectation {
     pub expected_notes: usize,
     #[serde(default)]
     pub required_categories: Vec<String>,
+    /// Categories the export round-trip report must contain when the fixture
+    /// declares an `export_profile`.
+    #[serde(default)]
+    pub required_export_categories: Vec<String>,
     #[serde(default)]
     pub required_provenance_keys: Vec<String>,
     #[serde(default = "default_true")]
@@ -137,6 +148,9 @@ pub struct FixtureObservation {
     pub line_count: usize,
     pub note_count: usize,
     pub categories: Vec<String>,
+    /// Report categories from the export round trip; empty when the fixture
+    /// declares no `export_profile`.
+    pub export_categories: Vec<String>,
     pub provenance_keys: Vec<String>,
     pub empty_resources: bool,
 }
@@ -148,6 +162,7 @@ pub enum FixtureLaneError {
     Manifest(String),
     Expectation(String),
     Import { fixture_id: String, message: String },
+    Export { fixture_id: String, message: String },
     Mismatch { fixture_id: String, message: String },
 }
 
@@ -161,6 +176,10 @@ impl fmt::Display for FixtureLaneError {
                 fixture_id,
                 message,
             } => write!(formatter, "import fixture {fixture_id}: {message}"),
+            Self::Export {
+                fixture_id,
+                message,
+            } => write!(formatter, "export fixture {fixture_id}: {message}"),
             Self::Mismatch {
                 fixture_id,
                 message,
@@ -267,6 +286,49 @@ pub fn run_import_fixture(
     }
 }
 
+/// Run the optional same-format export round trip declared by `export_profile`
+/// and return the export report categories.
+pub fn run_export_fixture(
+    fixture: &FixtureEntry,
+    products: &FixtureImportProducts,
+) -> Result<Vec<String>, FixtureLaneError> {
+    let Some(profile) = fixture.export_profile.as_deref() else {
+        return Ok(Vec::new());
+    };
+    let reference = format!("{profile}@{}", fixture.profile_version);
+    let chart = products.compilation.chart();
+    let outcome = match fixture.format {
+        FixtureFormat::Pgr => {
+            let set = match parse_pgr_profile(profile)?.format_version() {
+                PgrFormatVersion::V1 => CapabilitySet::pgr_v1(),
+                PgrFormatVersion::V3 => CapabilitySet::pgr_v3(),
+            };
+            export_pgr_with_options(
+                chart,
+                &ExportOptions::semantic(set.descriptor(Some(reference))),
+            )
+        }
+        FixtureFormat::Rpe => export_rpe_json_with_options(
+            chart,
+            &ExportOptions::semantic(CapabilitySet::rpe_json().descriptor(Some(reference))),
+        ),
+        FixtureFormat::Pec => export_pec_line_with_options(
+            chart,
+            &ExportOptions::semantic(CapabilitySet::pec_line().descriptor(Some(reference))),
+        ),
+    }
+    .map_err(|error| FixtureLaneError::Export {
+        fixture_id: fixture.id.clone(),
+        message: error.to_string(),
+    })?;
+    Ok(outcome
+        .report()
+        .entries()
+        .iter()
+        .map(|entry| entry.category().to_owned())
+        .collect())
+}
+
 /// Observe products for comparison against an expectation.
 pub fn observe_products(fixture_id: &str, products: &FixtureImportProducts) -> FixtureObservation {
     let chart = products.compilation.chart();
@@ -290,6 +352,7 @@ pub fn observe_products(fixture_id: &str, products: &FixtureImportProducts) -> F
         line_count: chart.lines().lines().count(),
         note_count: chart.notes().notes().len(),
         categories,
+        export_categories: Vec::new(),
         provenance_keys,
         empty_resources: products.compilation.resources().is_empty(),
     }
@@ -360,6 +423,18 @@ pub fn assert_expectation(
             });
         }
     }
+    for category in &expected.required_export_categories {
+        if !observation
+            .export_categories
+            .iter()
+            .any(|value| value == category)
+        {
+            return Err(FixtureLaneError::Mismatch {
+                fixture_id: observation.fixture_id.clone(),
+                message: format!("missing required export category {category}"),
+            });
+        }
+    }
     for key in &expected.required_provenance_keys {
         if !observation.provenance_keys.iter().any(|value| value == key) {
             return Err(FixtureLaneError::Mismatch {
@@ -378,7 +453,8 @@ pub fn run_fixture_corpus(root: &Path) -> Result<Vec<FixtureObservation>, Fixtur
     let mut observations = Vec::with_capacity(manifest.fixtures.len());
     for fixture in &manifest.fixtures {
         let products = run_import_fixture(root, fixture)?;
-        let observation = observe_products(&fixture.id, &products);
+        let mut observation = observe_products(&fixture.id, &products);
+        observation.export_categories = run_export_fixture(fixture, &products)?;
         let expected_path = root.join(&fixture.expected);
         let expected = load_fixture_expectation(&expected_path)?;
         if expected.id != fixture.id {
@@ -606,6 +682,17 @@ mod tests {
                 observation.fixture_id
             );
         }
+        let rpe_minimal = observations
+            .iter()
+            .find(|item| item.fixture_id == "rpe-minimal")
+            .unwrap();
+        assert!(
+            rpe_minimal
+                .export_categories
+                .iter()
+                .any(|category| category == "conversion.capability-negotiated"),
+            "rpe-minimal export round trip must negotiate capability domains"
+        );
     }
 
     #[test]

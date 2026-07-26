@@ -1135,7 +1135,7 @@ pub fn negotiate_export_with_options(
                 negotiation_message(domain, action, options, requested_approximation_segments),
                 [],
             )
-            .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+            .expect("negotiation entry ids and categories are static and well-formed"),
         );
     }
     let plan = NegotiationPlan { entries: plan };
@@ -1749,7 +1749,7 @@ fn record_compilation_roundtrip_context(
             ),
             [],
         )
-        .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+        .expect("stale-roundtrip entry id and category are static and well-formed"),
     );
     let operation_id = outcome.report.operation_id().to_owned();
     let conversion_policy = outcome.report.conversion_policy();
@@ -1770,7 +1770,7 @@ fn record_compilation_roundtrip_context(
         [status],
         output_hash,
     )
-    .map_err(|error| ExportError::new("conversion.report", error.to_string()))?;
+    .expect("rebuilding a validated report with one fresh entry id cannot fail");
     Ok(outcome)
 }
 
@@ -2180,7 +2180,9 @@ fn finish_export(
                 ),
                 [],
             )
-            .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+            .map_err(|error| {
+                ExportError::new("conversion.approximation-budget-exceeded", error.to_string())
+            })?,
         );
         return Err(ExportError::new(
             "conversion.approximation-budget-exceeded",
@@ -2235,7 +2237,12 @@ fn finish_export(
                     "declared approximation metric was not exercised by canonical comparison",
                     [],
                 )
-                .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+                .map_err(|error| {
+                    ExportError::new(
+                        "conversion.approximation-budget-exceeded",
+                        error.to_string(),
+                    )
+                })?,
             );
         }
         return Err(ExportError::new(
@@ -2281,7 +2288,7 @@ fn finish_export(
                     ),
                     [],
                 )
-                .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+                .map_err(|error| ExportError::new(category, error.to_string()))?,
             );
         }
         let category = if comparison.mismatches().iter().any(|mismatch| {
@@ -2300,28 +2307,9 @@ fn finish_export(
         )
         .with_entries(entries));
     }
-    entries.push(
-        ConversionEntry::new(
-            "roundtrip/equivalent",
-            "conversion.capability-negotiated",
-            ConversionDomain::Profile,
-            ConversionSeverity::Info,
-            SemanticStatus::Equivalent,
-            ConversionPhase::ReparseCompare,
-            None,
-            None,
-            None,
-            Some("canonical".into()),
-            None,
-            None,
-            None,
-            None,
-            None,
-            "same-profile target reparse is canonically equivalent",
-            [],
-        )
-        .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
-    );
+    // The reparse-equivalent outcome is carried by ExportOutcome::comparison and
+    // the aggregated report status; no registered section 17.2 report-entry
+    // category describes it, so no entry is emitted for it (#324).
     for (index, (metric, declared_maximum)) in comparison_budgets.iter().enumerate() {
         let verified_maximum = comparison
             .verified_maximum_error(metric)
@@ -2336,6 +2324,10 @@ fn finish_export(
         entries.push(
             ConversionEntry::new(
                 format!("approximation/verified/{index:06}"),
+                // Known defect (#324): no registered section 17.2 category
+                // describes verified approximation evidence, and section 6.3
+                // requires recording it, so this off-meaning id stays until
+                // governance registers a matching category.
                 "conversion.capability-negotiated",
                 conversion_domain_from_str(metric_domain),
                 ConversionSeverity::Warning,
@@ -2357,7 +2349,7 @@ fn finish_export(
                 ),
                 [],
             )
-            .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+            .expect("approximation evidence entry ids and categories are static and well-formed"),
         );
     }
     let output_hash = lower_hex(Sha256::digest(&bytes));
@@ -2385,7 +2377,7 @@ fn finish_export(
         status_signals,
         Some(output_hash),
     )
-    .map_err(|error| ExportError::new("conversion.report", error.to_string()))?;
+    .expect("export entry ids are unique and the operation id and output hash are well-formed");
     Ok(ExportOutcome {
         bytes,
         negotiation,
@@ -3144,11 +3136,40 @@ mod tests {
             first.iter().map(ConversionEntry::id).collect::<Vec<_>>(),
             second.iter().map(ConversionEntry::id).collect::<Vec<_>>()
         );
-        assert!(
-            first
-                .iter()
-                .all(|entry| entry.category() == "conversion.capability-negotiated")
+        assert!(first.iter().all(|entry| {
+            entry.category() == "conversion.capability-negotiated"
+                && entry.phase() == ConversionPhase::CapabilityNegotiation
+                && entry.id().starts_with("capability/")
+        }));
+    }
+
+    #[test]
+    fn capability_negotiated_is_not_reused_for_reparse_outcome_evidence() {
+        let chart = rpe_chart();
+        let options = profile_options(
+            CapabilitySet::rpe_json(),
+            RpeProfile::PhiraLegacySpeed.id(),
+            RpeProfile::PhiraLegacySpeed.version(),
         );
+        let outcome = export_rpe_json_with_options(&chart, &options).unwrap();
+        // The registered meaning of conversion.capability-negotiated is domain
+        // negotiation before writing; without an approximation authorization no
+        // other phase may reuse it, and the reparse-equivalent outcome has no
+        // registered category and therefore no entry.
+        assert!(outcome.report().entries().iter().all(|entry| {
+            entry.category() != "conversion.capability-negotiated"
+                || (entry.phase() == ConversionPhase::CapabilityNegotiation
+                    && entry.id().starts_with("capability/"))
+        }));
+        assert!(
+            !outcome
+                .report()
+                .entries()
+                .iter()
+                .any(|entry| entry.id() == "roundtrip/equivalent")
+        );
+        assert!(outcome.comparison().is_equivalent());
+        assert_eq!(outcome.report().status(), ConversionStatus::Equivalent);
     }
 
     #[test]

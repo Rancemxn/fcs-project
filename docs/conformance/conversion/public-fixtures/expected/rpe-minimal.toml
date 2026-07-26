@@ -3,5 +3,6 @@ expected_status = "equivalent"
 expected_lines = 2
 expected_notes = 2
 required_categories = []
+required_export_categories = ["conversion.capability-negotiated"]
 required_provenance_keys = ["rpe/artifact", "rpe/profile"]
 empty_resources = true

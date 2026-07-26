@@ -47,7 +47,7 @@ pub use fixture_lane::{
     FixtureExpectation, FixtureFormat, FixtureImportProducts, FixtureLaneError, FixtureManifest,
     FixtureObservation, PUBLIC_FIXTURE_RELATIVE, assert_expectation, copyright_lane_status,
     load_fixture_expectation, load_fixture_manifest, observe_products, public_fixture_root,
-    run_fixture_corpus, run_import_fixture,
+    run_export_fixture, run_fixture_corpus, run_import_fixture,
 };
 pub use pec::{
     PecCvScale, PecError, PecLimits, PecNoteKind, PecNoteSide, PecProfile, PecProfileBinding,

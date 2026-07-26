@@ -24,5 +24,11 @@ parse → interpret → lower pipeline, and compares:
 - required restricted provenance keys
 - empty resource bundle for chart-only fixtures
 
+A fixture may also declare `export_profile` in `manifest.toml`; the lane then
+runs a same-format export round trip on the imported canonical chart and
+requires every category listed in the expectation's
+`required_export_categories` (for example `conversion.capability-negotiated`)
+in the export report.
+
 See `copyright/README.md` for the opt-in private lane that must report
 `skipped` when copyrighted charts are not present.
