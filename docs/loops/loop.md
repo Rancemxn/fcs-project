@@ -322,7 +322,8 @@ Issue/PR、review、`gh pr ready` 或 merge；主会话统一审查共享工作�
   也必须给出范围、命令、artifact、限制和 Next。
 - **Acceptance check:** Critical/Important 全部关闭并在最新 SHA 上复审；Minor 只能按延期规则记录。
 - **Concurrency:** 审查会话不得与被审 snapshot 的写入并行；可与不触及该 snapshot 的只读研究并行。若
-  发现必须修改，审查会话使用 `/tmp` 下的独立 worktree/branch 创建 corrective PR，主会话负责审查、合并和
+  发现必须修改，审查会话使用 `/tmp`（含义与路径验证见 `review-loop.md` 的 Corrective Branch & Worktree
+  Isolation）下的独立 worktree/branch 创建 corrective PR，主会话负责审查、合并和
   重新请求主 PR 审查。主会话在审查期间继续本地工作前仍必须执行 Frontier Sync；新出现的当前 stage
   Critical/Important finding 会冻结受影响路径，不能因 reviewer 尚未直接通知而继续交付。
 - **Cleanup handoff:** 审查会话在结束 `Audit result`/corrective PR handoff 时按 `review-loop.md` 清理自己的
