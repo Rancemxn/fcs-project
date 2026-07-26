@@ -740,12 +740,13 @@ mod compilation_tests {
 
     #[test]
     fn a_sub_beat_tempo_point_keeps_its_exact_rational_beat() {
-        // Flooring collapsed 1/2 and 3/2 onto 0 and 1, so two distinct tempo
-        // points could land on the same beat.
+        // Beat literals are decimal, so 0.5 and 1.5 reduce to 1/2 and 3/2.
+        // Flooring collapsed them onto 0 and 1, so two distinct tempo points
+        // could land on the same beat.
         let bytes = compile(
             r#"#fcs 5.0.0
 format { profile: chart; }
-tempoMap { 0beat -> 120bpm; 1/2beat -> 180bpm; 3/2beat -> 240bpm; }
+tempoMap { 0beat -> 120bpm; 0.5beat -> 180bpm; 1.5beat -> 240bpm; }
 lines { line main {} }
 collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
 "#,
