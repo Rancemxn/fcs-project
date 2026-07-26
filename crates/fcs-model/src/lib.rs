@@ -16,6 +16,7 @@ mod line;
 mod metadata;
 mod note;
 mod provenance;
+mod render;
 mod report;
 mod scroll;
 mod time;
@@ -59,6 +60,17 @@ pub use provenance::{
     MappingRuleRef, OriginState, ProvenanceError, ProvenanceGraph, RestrictedProvenanceFact,
     SemanticStatus,
 };
+pub use render::{
+    CanonicalActiveInterval, CanonicalArcDirection, CanonicalGlyphPlacement, CanonicalGlyphRun,
+    CanonicalGradientSpread, CanonicalGradientStop, CanonicalImageRepeat, CanonicalImageSampling,
+    CanonicalPathCommand, CanonicalPatternTransform, CanonicalRenderAttachment,
+    CanonicalRenderClip, CanonicalRenderColorSpace, CanonicalRenderComposite, CanonicalRenderError,
+    CanonicalRenderFillRule, CanonicalRenderGeometry, CanonicalRenderGeometryData,
+    CanonicalRenderLayer, CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec,
+    CanonicalRenderPaint, CanonicalRenderPaintData, CanonicalRenderPath, CanonicalRenderScene,
+    CanonicalRenderSceneSpec, CanonicalRenderStroke, CanonicalStrokeCap, CanonicalStrokeJoin,
+    CanonicalViewport,
+};
 pub use report::{
     ConversionDomain, ConversionEntry, ConversionPhase, ConversionPolicy, ConversionReport,
     ConversionReportSummary, ConversionSeverity, ConversionStatus, RepairMode, RepairRecord,
@@ -85,11 +97,33 @@ pub const LINE_NAMESPACE: &str = "fcs.line";
 /// The fixed FCBC namespace used when deriving a stable Note ID.
 pub const NOTE_NAMESPACE: &str = "fcs.note";
 
+/// The fixed FCBC namespace used when deriving a stable resource ID.
+pub const RESOURCE_NAMESPACE: &str = "fcs.resource";
+
+/// The fixed Render namespaces used when deriving stable scene IDs.
+pub const RENDER_LAYER_NAMESPACE: &str = "fcs.render.layer";
+pub const RENDER_NODE_NAMESPACE: &str = "fcs.render.node";
+pub const RENDER_GEOMETRY_NAMESPACE: &str = "fcs.render.geometry";
+pub const RENDER_PATH_NAMESPACE: &str = "fcs.render.path";
+pub const RENDER_PAINT_NAMESPACE: &str = "fcs.render.paint";
+pub const RENDER_STROKE_NAMESPACE: &str = "fcs.render.stroke";
+pub const RENDER_CLIP_NAMESPACE: &str = "fcs.render.clip";
+pub const RENDER_GLYPH_RUN_NAMESPACE: &str = "fcs.render.glyph-run";
+
 /// A canonical entity kind with a fixed lowercase textual spelling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EntityKind {
     Line,
     Note,
+    Resource,
+    RenderLayer,
+    RenderNode,
+    RenderGeometry,
+    RenderPath,
+    RenderPaint,
+    RenderStroke,
+    RenderClip,
+    RenderGlyphRun,
 }
 
 impl EntityKind {
@@ -97,6 +131,15 @@ impl EntityKind {
         match self {
             Self::Line => LINE_NAMESPACE,
             Self::Note => NOTE_NAMESPACE,
+            Self::Resource => RESOURCE_NAMESPACE,
+            Self::RenderLayer => RENDER_LAYER_NAMESPACE,
+            Self::RenderNode => RENDER_NODE_NAMESPACE,
+            Self::RenderGeometry => RENDER_GEOMETRY_NAMESPACE,
+            Self::RenderPath => RENDER_PATH_NAMESPACE,
+            Self::RenderPaint => RENDER_PAINT_NAMESPACE,
+            Self::RenderStroke => RENDER_STROKE_NAMESPACE,
+            Self::RenderClip => RENDER_CLIP_NAMESPACE,
+            Self::RenderGlyphRun => RENDER_GLYPH_RUN_NAMESPACE,
         }
     }
 
@@ -104,6 +147,15 @@ impl EntityKind {
         match self {
             Self::Line => "line",
             Self::Note => "note",
+            Self::Resource => "resource",
+            Self::RenderLayer => "renderLayer",
+            Self::RenderNode => "renderNode",
+            Self::RenderGeometry => "renderGeometry",
+            Self::RenderPath => "renderPath",
+            Self::RenderPaint => "renderPaint",
+            Self::RenderStroke => "renderStroke",
+            Self::RenderClip => "renderClip",
+            Self::RenderGlyphRun => "renderGlyphRun",
         }
     }
 }
