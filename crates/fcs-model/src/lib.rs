@@ -67,9 +67,9 @@ pub use render::{
     CanonicalRenderClip, CanonicalRenderColorSpace, CanonicalRenderComposite, CanonicalRenderError,
     CanonicalRenderFillRule, CanonicalRenderGeometry, CanonicalRenderGeometryData,
     CanonicalRenderLayer, CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec,
-    CanonicalRenderPaint, CanonicalRenderPaintData, CanonicalRenderPath, CanonicalRenderScene,
-    CanonicalRenderSceneSpec, CanonicalRenderStroke, CanonicalStrokeCap, CanonicalStrokeJoin,
-    CanonicalViewport, RENDER_DIAGNOSTIC_CATEGORIES,
+    CanonicalRenderPaint, CanonicalRenderPaintData, CanonicalRenderPass, CanonicalRenderPath,
+    CanonicalRenderScene, CanonicalRenderSceneSpec, CanonicalRenderStroke, CanonicalStrokeCap,
+    CanonicalStrokeJoin, CanonicalViewport, RENDER_DIAGNOSTIC_CATEGORIES,
 };
 pub use report::{
     ApproximationAuthorization, ConversionDomain, ConversionEntry, ConversionPhase,

@@ -71,6 +71,60 @@ impl CanonicalViewport {
     }
 }
 
+/// The fixed render pass sequence.
+///
+/// Section 5 fixes the order and section 14.1 pins the ordinals, so ordering
+/// is derived from the ordinal rather than from the name: sorting the six
+/// names as text would place `aboveNotes` first instead of fifth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CanonicalRenderPass {
+    Background,
+    BehindLines,
+    Lines,
+    Notes,
+    AboveNotes,
+    Overlay,
+}
+
+impl CanonicalRenderPass {
+    /// RenderSection encodes the pass as this fixed ordinal.
+    pub const fn ordinal(self) -> u16 {
+        match self {
+            Self::Background => 1,
+            Self::BehindLines => 2,
+            Self::Lines => 3,
+            Self::Notes => 4,
+            Self::AboveNotes => 5,
+            Self::Overlay => 6,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Background => "background",
+            Self::BehindLines => "behindLines",
+            Self::Lines => "lines",
+            Self::Notes => "notes",
+            Self::AboveNotes => "aboveNotes",
+            Self::Overlay => "overlay",
+        }
+    }
+
+    /// Resolves a source spelling. The set is closed, and RenderSection cannot
+    /// encode anything else, so an unknown name has no representation.
+    pub fn from_spelling(spelling: &str) -> Option<Self> {
+        Some(match spelling {
+            "background" => Self::Background,
+            "behindLines" => Self::BehindLines,
+            "lines" => Self::Lines,
+            "notes" => Self::Notes,
+            "aboveNotes" => Self::AboveNotes,
+            "overlay" => Self::Overlay,
+            _ => return None,
+        })
+    }
+}
+
 /// Scene object kinds. Layer is an organizational record, not a node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CanonicalRenderNodeKind {
@@ -388,7 +442,7 @@ impl CanonicalActiveInterval {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalRenderLayer {
     id: StableId,
-    pass: String,
+    pass: CanonicalRenderPass,
     z_order: i32,
     document_order: u32,
     roots: Vec<usize>,
@@ -397,17 +451,13 @@ pub struct CanonicalRenderLayer {
 impl CanonicalRenderLayer {
     pub fn new(
         id: StableId,
-        pass: impl Into<String>,
+        pass: CanonicalRenderPass,
         z_order: i32,
         document_order: u32,
         roots: Vec<usize>,
     ) -> Result<Self, CanonicalRenderError> {
         if id.namespace() != EntityKind::RenderLayer {
             return Err(CanonicalRenderError::WrongNamespace);
-        }
-        let pass = pass.into();
-        if pass.is_empty() {
-            return Err(CanonicalRenderError::EmptyPass);
         }
         Ok(Self {
             id,
@@ -422,8 +472,8 @@ impl CanonicalRenderLayer {
         &self.id
     }
 
-    pub fn pass(&self) -> &str {
-        &self.pass
+    pub const fn pass(&self) -> CanonicalRenderPass {
+        self.pass
     }
 
     pub const fn z_order(&self) -> i32 {
@@ -517,8 +567,23 @@ impl CanonicalRenderNode {
                 }
             }
         }
-        if !spec.kind.is_drawable() && (spec.fill_paint.is_some() || spec.stroke.is_some()) {
-            return Err(CanonicalRenderError::GroupCarriesPaint);
+        if !spec.kind.is_drawable() {
+            if spec.fill_paint.is_some() || spec.stroke.is_some() {
+                return Err(CanonicalRenderError::GroupCarriesPaint);
+            }
+            // Section 5: a non-isolated group composites into the parent target
+            // directly, so only sourceOver is defined for it; anything else has
+            // to declare isolate and go through an offscreen buffer.
+            if !spec.isolate && spec.composite != CanonicalRenderComposite::SourceOver {
+                return Err(CanonicalRenderError::NonIsolatedGroupComposite);
+            }
+        }
+        // Section 4: the flag exists to ignore the Note render-enabled and
+        // visibility gates, which only Note attachment has.
+        if spec.follow_hidden_attachment
+            && !matches!(spec.attachment, CanonicalRenderAttachment::Note(_))
+        {
+            return Err(CanonicalRenderError::FollowHiddenWithoutNoteAttachment);
         }
         Ok(Self {
             id: spec.id,
@@ -1091,9 +1156,8 @@ impl CanonicalGlyphRun {
         if !run_offset[0].is_finite() || !run_offset[1].is_finite() {
             return Err(CanonicalRenderError::NonFiniteGlyphMetric);
         }
-        if glyphs.is_empty() {
-            return Err(CanonicalRenderError::EmptyGlyphRun);
-        }
+        // Section 14.7 allows a zero glyph count for empty source content, so
+        // an empty run is legal and must stay representable.
         if !glyphs.iter().all(CanonicalGlyphPlacement::is_finite) {
             return Err(CanonicalRenderError::NonFiniteGlyphMetric);
         }
@@ -1187,45 +1251,28 @@ impl CanonicalRenderScene {
     }
 
     fn validate_unique_ids(&self) -> Result<(), CanonicalRenderError> {
-        fn insert(seen: &mut BTreeSet<u64>, id: &StableId) -> Result<(), CanonicalRenderError> {
+        // Section 14 rejects stable ID 0 and any u64 collision between two
+        // Render records "even when the namespace or table differs", so this
+        // is one set across every namespace, not one set per namespace.
+        let mut seen = BTreeSet::new();
+        let ids = self
+            .layers
+            .iter()
+            .map(CanonicalRenderLayer::id)
+            .chain(self.nodes.iter().map(CanonicalRenderNode::id))
+            .chain(self.geometries.iter().map(CanonicalRenderGeometry::id))
+            .chain(self.paths.iter().map(CanonicalRenderPath::id))
+            .chain(self.paints.iter().map(CanonicalRenderPaint::id))
+            .chain(self.strokes.iter().map(CanonicalRenderStroke::id))
+            .chain(self.clips.iter().map(CanonicalRenderClip::id))
+            .chain(self.glyph_runs.iter().map(CanonicalGlyphRun::id));
+        for id in ids {
+            if id.value() == 0 {
+                return Err(CanonicalRenderError::ZeroStableId);
+            }
             if !seen.insert(id.value()) {
                 return Err(CanonicalRenderError::DuplicateStableId);
             }
-            Ok(())
-        }
-        // Uniqueness is per namespace: a layer and a node may hash to the same
-        // u64 without colliding, because RenderSection keys them separately.
-        let mut layers = BTreeSet::new();
-        for layer in &self.layers {
-            insert(&mut layers, layer.id())?;
-        }
-        let mut nodes = BTreeSet::new();
-        for node in &self.nodes {
-            insert(&mut nodes, node.id())?;
-        }
-        let mut geometries = BTreeSet::new();
-        for geometry in &self.geometries {
-            insert(&mut geometries, geometry.id())?;
-        }
-        let mut paths = BTreeSet::new();
-        for path in &self.paths {
-            insert(&mut paths, path.id())?;
-        }
-        let mut paints = BTreeSet::new();
-        for paint in &self.paints {
-            insert(&mut paints, paint.id())?;
-        }
-        let mut strokes = BTreeSet::new();
-        for stroke in &self.strokes {
-            insert(&mut strokes, stroke.id())?;
-        }
-        let mut clips = BTreeSet::new();
-        for clip in &self.clips {
-            insert(&mut clips, clip.id())?;
-        }
-        let mut glyph_runs = BTreeSet::new();
-        for run in &self.glyph_runs {
-            insert(&mut glyph_runs, run.id())?;
         }
         Ok(())
     }
@@ -1334,37 +1381,88 @@ impl CanonicalRenderScene {
                 .geometries
                 .get(clip.geometry())
                 .ok_or(CanonicalRenderError::UnresolvedReference)?;
-            // A clip is a coverage mask, so it cannot be an Image or Text body.
-            if matches!(
+            // Section 14.6 gives a closed allowlist: a clip is a coverage mask,
+            // so open and non-fillable kinds are excluded, not just Image/Text.
+            if !matches!(
                 geometry.kind(),
-                CanonicalRenderNodeKind::Image | CanonicalRenderNodeKind::Text
+                CanonicalRenderNodeKind::Rect
+                    | CanonicalRenderNodeKind::RoundedRect
+                    | CanonicalRenderNodeKind::Circle
+                    | CanonicalRenderNodeKind::Ellipse
+                    | CanonicalRenderNodeKind::Polygon
+                    | CanonicalRenderNodeKind::Path
             ) {
                 return Err(CanonicalRenderError::ClipGeometryKindNotAllowed);
+            }
+            // A Path clip carries its own fill rule, which section 14.6
+            // requires to equal the referenced path's.
+            if let CanonicalRenderGeometryData::Path { path } = geometry.data() {
+                let record = self
+                    .paths
+                    .get(*path)
+                    .ok_or(CanonicalRenderError::UnresolvedReference)?;
+                if record.fill_rule() != clip.fill_rule() {
+                    return Err(CanonicalRenderError::ClipFillRuleMismatch);
+                }
             }
         }
         Ok(())
     }
 
+    /// Section 14.8 fixes one owner per auxiliary record and forbids orphans
+    /// and cross-owner sharing. The ownership edges are exactly: a drawable
+    /// Node owns its Geometry; `fillPaint` owns a Paint; `strokeRef` owns a
+    /// Stroke whose `paintRef` owns another Paint; `clipRef` owns a Clip which
+    /// owns a Geometry; a Path Geometry owns its Path; a Text Geometry owns
+    /// each GlyphRun it lists.
     fn validate_single_ownership(&self) -> Result<(), CanonicalRenderError> {
-        let mut geometry_owner = vec![false; self.geometries.len()];
+        let mut geometries = Owners::new(self.geometries.len());
+        let mut paths = Owners::new(self.paths.len());
+        let mut paints = Owners::new(self.paints.len());
+        let mut strokes = Owners::new(self.strokes.len());
+        let mut clips = Owners::new(self.clips.len());
+        let mut glyph_runs = Owners::new(self.glyph_runs.len());
+
         for node in &self.nodes {
             if let Some(geometry) = node.geometry() {
-                if geometry_owner[geometry] {
-                    return Err(CanonicalRenderError::SharedGeometry);
-                }
-                geometry_owner[geometry] = true;
+                geometries.claim(geometry)?;
             }
+            if let Some(paint) = node.fill_paint() {
+                paints.claim(paint)?;
+            }
+            if let Some(stroke) = node.stroke() {
+                strokes.claim(stroke)?;
+            }
+            if let Some(clip) = node.clip() {
+                clips.claim(clip)?;
+            }
+        }
+        for stroke in &self.strokes {
+            paints.claim(stroke.paint())?;
         }
         for clip in &self.clips {
-            if geometry_owner[clip.geometry()] {
-                return Err(CanonicalRenderError::SharedGeometry);
+            geometries.claim(clip.geometry())?;
+        }
+        for geometry in &self.geometries {
+            match geometry.data() {
+                CanonicalRenderGeometryData::Path { path } => paths.claim(*path)?,
+                CanonicalRenderGeometryData::Text {
+                    glyph_runs: runs, ..
+                } => {
+                    for run in runs {
+                        glyph_runs.claim(*run)?;
+                    }
+                }
+                _ => {}
             }
-            geometry_owner[clip.geometry()] = true;
         }
-        if geometry_owner.iter().any(|owned| !owned) {
-            return Err(CanonicalRenderError::UnreachableRecord);
-        }
-        Ok(())
+
+        geometries.require_all_owned()?;
+        paths.require_all_owned()?;
+        paints.require_all_owned()?;
+        strokes.require_all_owned()?;
+        clips.require_all_owned()?;
+        glyph_runs.require_all_owned()
     }
 
     pub const fn viewport(&self) -> CanonicalViewport {
@@ -1405,15 +1503,18 @@ impl CanonicalRenderScene {
 
     /// Layer indices in the fixed draw order `(pass, zOrder, documentOrder, id)`.
     ///
-    /// The pass name orders lexicographically; RenderSection interning does not
-    /// change the relative order because it preserves the same comparison.
+    /// Pass ordering uses the section 14.1 ordinal, which is the sequence
+    /// section 5 fixes. It is deliberately not the name's text order: those
+    /// two disagree on `aboveNotes`, which sorts first as text and fifth in
+    /// the specification.
     pub fn layer_draw_order(&self) -> Vec<usize> {
         let mut order: Vec<usize> = (0..self.layers.len()).collect();
         order.sort_by(|left, right| {
             let left = &self.layers[*left];
             let right = &self.layers[*right];
             left.pass()
-                .cmp(right.pass())
+                .ordinal()
+                .cmp(&right.pass().ordinal())
                 .then(left.z_order().cmp(&right.z_order()))
                 .then(left.document_order().cmp(&right.document_order()))
                 .then(left.id().value().cmp(&right.id().value()))
@@ -1422,13 +1523,45 @@ impl CanonicalRenderScene {
     }
 }
 
+/// Tracks the single owner of one auxiliary record table.
+struct Owners {
+    owned: Vec<bool>,
+}
+
+impl Owners {
+    fn new(len: usize) -> Self {
+        Self {
+            owned: vec![false; len],
+        }
+    }
+
+    fn claim(&mut self, index: usize) -> Result<(), CanonicalRenderError> {
+        let owned = self
+            .owned
+            .get_mut(index)
+            .ok_or(CanonicalRenderError::UnresolvedReference)?;
+        if *owned {
+            return Err(CanonicalRenderError::SharedRecord);
+        }
+        *owned = true;
+        Ok(())
+    }
+
+    fn require_all_owned(&self) -> Result<(), CanonicalRenderError> {
+        if self.owned.iter().any(|owned| !owned) {
+            return Err(CanonicalRenderError::UnreachableRecord);
+        }
+        Ok(())
+    }
+}
+
 /// Structural rejection reasons for canonical Render scene construction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CanonicalRenderError {
     InvalidViewport,
     InvalidActiveInterval,
     WrongNamespace,
-    EmptyPass,
+    ZeroStableId,
     DuplicateStableId,
     UnresolvedReference,
     ParentNotBeforeChild,
@@ -1442,11 +1575,13 @@ pub enum CanonicalRenderError {
     DrawableWithoutGeometry,
     GeometryKindMismatch,
     ClipGeometryKindNotAllowed,
-    SharedGeometry,
+    ClipFillRuleMismatch,
+    NonIsolatedGroupComposite,
+    FollowHiddenWithoutNoteAttachment,
+    SharedRecord,
     UnreachableRecord,
     DegeneratePointList,
     EmptyGlyphRunList,
-    EmptyGlyphRun,
     NonFiniteGlyphMetric,
     EmptyPath,
     PathWithoutInitialMoveTo,
@@ -1496,13 +1631,13 @@ impl CanonicalRenderError {
             // ownership and cross-owner sharing.
             Self::InvalidActiveInterval
             | Self::WrongNamespace
+            | Self::ZeroStableId
             | Self::DuplicateStableId
-            | Self::EmptyPass
             | Self::ParentNotBeforeChild
             | Self::LayerMembershipMismatch
             | Self::LayerRootHasParent
             | Self::UnlistedLayerRoot
-            | Self::SharedGeometry
+            | Self::SharedRecord
             | Self::UnreachableRecord => "render.invalid-graph",
             // Row 6: table reference bounds, nullability and kind
             // incompatibility, and attachment target/kind.
@@ -1511,14 +1646,14 @@ impl CanonicalRenderError {
             | Self::GroupCarriesGeometry
             | Self::GroupCarriesPaint
             | Self::ClipGroupWithoutClip
-            | Self::DrawableWithoutGeometry => "render.invalid-reference",
+            | Self::DrawableWithoutGeometry
+            | Self::FollowHiddenWithoutNoteAttachment => "render.invalid-reference",
             // Row 7: Node/Geometry kind, path state and compile-time geometry
             // ranges. Glyph run problems are geometry too once the font
             // decoded, and must not fall back to a resource category.
             Self::GeometryKindMismatch
             | Self::DegeneratePointList
             | Self::EmptyGlyphRunList
-            | Self::EmptyGlyphRun
             | Self::NonFiniteGlyphMetric
             | Self::EmptyPath
             | Self::PathWithoutInitialMoveTo => "render.invalid-geometry",
@@ -1528,9 +1663,66 @@ impl CanonicalRenderError {
             | Self::OddDashArray
             | Self::InvalidDashElement
             | Self::ZeroDashTotal => "render.invalid-stroke",
-            // Row 10: the geometry kinds a clip may use.
-            Self::ClipGeometryKindNotAllowed => "render.invalid-clip",
+            // Row 11: composite enum and isolate applicability.
+            Self::NonIsolatedGroupComposite => "render.invalid-composite",
+            // Row 10: clip fill rule, the geometry kinds a clip may use, and
+            // Path fill-rule consistency.
+            Self::ClipGeometryKindNotAllowed | Self::ClipFillRuleMismatch => "render.invalid-clip",
         }
+    }
+
+    /// The next variant in declaration order, or `None` at the end.
+    ///
+    /// This match has no wildcard arm, so adding a variant without extending
+    /// the chain fails to compile. That is what makes the category guard
+    /// exhaustive by construction instead of by hand.
+    const fn next_variant(self) -> Option<Self> {
+        Some(match self {
+            Self::InvalidViewport => Self::InvalidActiveInterval,
+            Self::InvalidActiveInterval => Self::WrongNamespace,
+            Self::WrongNamespace => Self::ZeroStableId,
+            Self::ZeroStableId => Self::DuplicateStableId,
+            Self::DuplicateStableId => Self::UnresolvedReference,
+            Self::UnresolvedReference => Self::ParentNotBeforeChild,
+            Self::ParentNotBeforeChild => Self::LayerMembershipMismatch,
+            Self::LayerMembershipMismatch => Self::LayerRootHasParent,
+            Self::LayerRootHasParent => Self::UnlistedLayerRoot,
+            Self::UnlistedLayerRoot => Self::AttachmentOverrideBelowRoot,
+            Self::AttachmentOverrideBelowRoot => Self::GroupCarriesGeometry,
+            Self::GroupCarriesGeometry => Self::GroupCarriesPaint,
+            Self::GroupCarriesPaint => Self::ClipGroupWithoutClip,
+            Self::ClipGroupWithoutClip => Self::DrawableWithoutGeometry,
+            Self::DrawableWithoutGeometry => Self::GeometryKindMismatch,
+            Self::GeometryKindMismatch => Self::ClipGeometryKindNotAllowed,
+            Self::ClipGeometryKindNotAllowed => Self::ClipFillRuleMismatch,
+            Self::ClipFillRuleMismatch => Self::NonIsolatedGroupComposite,
+            Self::NonIsolatedGroupComposite => Self::FollowHiddenWithoutNoteAttachment,
+            Self::FollowHiddenWithoutNoteAttachment => Self::SharedRecord,
+            Self::SharedRecord => Self::UnreachableRecord,
+            Self::UnreachableRecord => Self::DegeneratePointList,
+            Self::DegeneratePointList => Self::EmptyGlyphRunList,
+            Self::EmptyGlyphRunList => Self::NonFiniteGlyphMetric,
+            Self::NonFiniteGlyphMetric => Self::EmptyPath,
+            Self::EmptyPath => Self::PathWithoutInitialMoveTo,
+            Self::PathWithoutInitialMoveTo => Self::InvalidGradientStop,
+            Self::InvalidGradientStop => Self::UnorderedGradientStops,
+            Self::UnorderedGradientStops => Self::InvalidMiterLimit,
+            Self::InvalidMiterLimit => Self::OddDashArray,
+            Self::OddDashArray => Self::InvalidDashElement,
+            Self::InvalidDashElement => Self::ZeroDashTotal,
+            Self::ZeroDashTotal => return None,
+        })
+    }
+
+    /// Every variant, walked through [`Self::next_variant`].
+    pub fn all() -> Vec<Self> {
+        let mut variants = Vec::new();
+        let mut current = Some(Self::InvalidViewport);
+        while let Some(variant) = current {
+            variants.push(variant);
+            current = variant.next_variant();
+        }
+        variants
     }
 }
 
@@ -1571,7 +1763,8 @@ mod tests {
             let paint_id = self.id(EntityKind::RenderPaint, "layer/main/full/fill");
 
             let layer =
-                CanonicalRenderLayer::new(layer_id, "overlay", 0, 0, vec![0]).expect("layer");
+                CanonicalRenderLayer::new(layer_id, CanonicalRenderPass::Overlay, 0, 0, vec![0])
+                    .expect("layer");
             let geometry = CanonicalRenderGeometry::new(
                 geometry_id,
                 CanonicalRenderGeometryData::Rect { origin: 0, size: 1 },
@@ -2042,7 +2235,13 @@ mod tests {
         let mut fixture = Fixture::new();
         let node_ns = fixture.id(EntityKind::RenderNode, "wrong/namespace");
         assert_eq!(
-            CanonicalRenderLayer::new(node_ns.clone(), "overlay", 0, 0, Vec::new()),
+            CanonicalRenderLayer::new(
+                node_ns.clone(),
+                CanonicalRenderPass::Overlay,
+                0,
+                0,
+                Vec::new()
+            ),
             Err(CanonicalRenderError::WrongNamespace)
         );
         assert_eq!(
@@ -2060,64 +2259,291 @@ mod tests {
     }
 
     #[test]
+    fn pass_order_is_the_specification_sequence_not_the_name_order() {
+        // Sorting these six names as text yields aboveNotes first; the
+        // specification puts it fifth. Every pass appears so the two orders
+        // cannot coincide by accident.
+        let declaration = [
+            CanonicalRenderPass::Overlay,
+            CanonicalRenderPass::AboveNotes,
+            CanonicalRenderPass::Background,
+            CanonicalRenderPass::Notes,
+            CanonicalRenderPass::BehindLines,
+            CanonicalRenderPass::Lines,
+        ];
+        let mut by_ordinal = declaration;
+        by_ordinal.sort_by_key(|pass| pass.ordinal());
+        assert_eq!(
+            by_ordinal.map(CanonicalRenderPass::as_str),
+            [
+                "background",
+                "behindLines",
+                "lines",
+                "notes",
+                "aboveNotes",
+                "overlay"
+            ]
+        );
+        let mut by_name = declaration;
+        by_name.sort_by_key(|pass| pass.as_str());
+        assert_ne!(
+            by_name.map(CanonicalRenderPass::as_str),
+            by_ordinal.map(CanonicalRenderPass::as_str),
+            "the name order must not be mistaken for the specification order"
+        );
+        for pass in declaration {
+            assert_eq!(
+                CanonicalRenderPass::from_spelling(pass.as_str()),
+                Some(pass)
+            );
+        }
+        assert_eq!(CanonicalRenderPass::from_spelling("Background"), None);
+        assert_eq!(CanonicalRenderPass::from_spelling("hud"), None);
+    }
+
+    #[test]
     fn layer_draw_order_is_pass_then_z_then_document_then_id() {
         let mut fixture = Fixture::new();
         let mut spec = fixture.solid_rect();
-        let second = fixture.id(EntityKind::RenderLayer, "layer/background");
-        let third = fixture.id(EntityKind::RenderLayer, "layer/foreground");
-        spec.layers[0] =
-            CanonicalRenderLayer::new(spec.layers[0].id().clone(), "overlay", 0, 0, vec![0])
-                .expect("layer");
+        let above = fixture.id(EntityKind::RenderLayer, "layer/above");
+        let background = fixture.id(EntityKind::RenderLayer, "layer/background");
+        let same_pass = fixture.id(EntityKind::RenderLayer, "layer/overlay-earlier");
+        spec.layers[0] = CanonicalRenderLayer::new(
+            spec.layers[0].id().clone(),
+            CanonicalRenderPass::Overlay,
+            0,
+            0,
+            vec![0],
+        )
+        .expect("layer");
+        // aboveNotes sorts before overlay by ordinal, and after background;
+        // as text it would sort before both.
         spec.layers.push(
-            CanonicalRenderLayer::new(second, "background", -100, 1, Vec::new()).expect("layer"),
+            CanonicalRenderLayer::new(above, CanonicalRenderPass::AboveNotes, 100, 1, Vec::new())
+                .expect("layer"),
         );
-        spec.layers
-            .push(CanonicalRenderLayer::new(third, "overlay", -5, 2, Vec::new()).expect("layer"));
+        spec.layers.push(
+            CanonicalRenderLayer::new(
+                background,
+                CanonicalRenderPass::Background,
+                500,
+                2,
+                Vec::new(),
+            )
+            .expect("layer"),
+        );
+        spec.layers.push(
+            CanonicalRenderLayer::new(same_pass, CanonicalRenderPass::Overlay, -5, 3, Vec::new())
+                .expect("layer"),
+        );
         let scene = CanonicalRenderScene::new(spec).expect("scene");
-        // "background" < "overlay" lexicographically, then zOrder -5 < 0.
-        assert_eq!(scene.layer_draw_order(), vec![1, 2, 0]);
+        // background, then aboveNotes, then the two overlay layers by zOrder.
+        assert_eq!(scene.layer_draw_order(), vec![2, 1, 3, 0]);
     }
 
-    /// Every rejection this module can produce. Kept explicit so a new variant
-    /// has to be listed here, which is what forces it through the category
-    /// membership check below.
-    const ALL_ERRORS: [CanonicalRenderError; 31] = [
-        CanonicalRenderError::InvalidViewport,
-        CanonicalRenderError::InvalidActiveInterval,
-        CanonicalRenderError::WrongNamespace,
-        CanonicalRenderError::EmptyPass,
-        CanonicalRenderError::DuplicateStableId,
-        CanonicalRenderError::UnresolvedReference,
-        CanonicalRenderError::ParentNotBeforeChild,
-        CanonicalRenderError::LayerMembershipMismatch,
-        CanonicalRenderError::LayerRootHasParent,
-        CanonicalRenderError::UnlistedLayerRoot,
-        CanonicalRenderError::AttachmentOverrideBelowRoot,
-        CanonicalRenderError::GroupCarriesGeometry,
-        CanonicalRenderError::GroupCarriesPaint,
-        CanonicalRenderError::ClipGroupWithoutClip,
-        CanonicalRenderError::DrawableWithoutGeometry,
-        CanonicalRenderError::GeometryKindMismatch,
-        CanonicalRenderError::ClipGeometryKindNotAllowed,
-        CanonicalRenderError::SharedGeometry,
-        CanonicalRenderError::UnreachableRecord,
-        CanonicalRenderError::DegeneratePointList,
-        CanonicalRenderError::EmptyGlyphRunList,
-        CanonicalRenderError::EmptyGlyphRun,
-        CanonicalRenderError::NonFiniteGlyphMetric,
-        CanonicalRenderError::EmptyPath,
-        CanonicalRenderError::PathWithoutInitialMoveTo,
-        CanonicalRenderError::InvalidGradientStop,
-        CanonicalRenderError::UnorderedGradientStops,
-        CanonicalRenderError::InvalidMiterLimit,
-        CanonicalRenderError::OddDashArray,
-        CanonicalRenderError::InvalidDashElement,
-        CanonicalRenderError::ZeroDashTotal,
-    ];
+    #[test]
+    fn every_auxiliary_record_needs_exactly_one_owner() {
+        let mut fixture = Fixture::new();
+        let mut spec = fixture.solid_rect();
+        // An orphan paint has no owner.
+        let orphan = fixture.id(EntityKind::RenderPaint, "paint/orphan");
+        spec.paints.push(
+            CanonicalRenderPaint::new(orphan, CanonicalRenderPaintData::Solid { color: 9 })
+                .expect("paint"),
+        );
+        assert_eq!(
+            CanonicalRenderScene::new(spec).expect_err("orphan paint"),
+            CanonicalRenderError::UnreachableRecord
+        );
+
+        // Two nodes claiming one paint is cross-owner sharing.
+        let mut fixture = Fixture::new();
+        let mut spec = fixture.solid_rect();
+        let sibling_id = fixture.id(EntityKind::RenderNode, "layer/main/sibling");
+        let geometry_id = fixture.id(EntityKind::RenderGeometry, "layer/main/sibling/geometry");
+        spec.geometries.push(
+            CanonicalRenderGeometry::new(
+                geometry_id,
+                CanonicalRenderGeometryData::Rect { origin: 0, size: 1 },
+            )
+            .expect("geometry"),
+        );
+        spec.nodes.push(
+            CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+                id: sibling_id,
+                kind: CanonicalRenderNodeKind::Rect,
+                parent: Some(0),
+                layer: 0,
+                document_order: 1,
+                z_order: 0,
+                attachment: CanonicalRenderAttachment::Screen,
+                active: CanonicalActiveInterval::unbounded(),
+                isolate: false,
+                follow_hidden_attachment: false,
+                position: 3,
+                origin: 4,
+                rotation: 5,
+                scale: 6,
+                opacity: 7,
+                visibility: 8,
+                geometry: Some(1),
+                fill_paint: Some(0),
+                stroke: None,
+                clip: None,
+                composite: CanonicalRenderComposite::SourceOver,
+            })
+            .expect("node"),
+        );
+        assert_eq!(
+            CanonicalRenderScene::new(spec).expect_err("shared paint"),
+            CanonicalRenderError::SharedRecord
+        );
+    }
+
+    #[test]
+    fn stable_ids_collide_across_render_namespaces() {
+        let mut fixture = Fixture::new();
+        let mut spec = fixture.solid_rect();
+        // Section 14 rejects a u64 collision even when the namespace differs,
+        // so reuse the layer's value under the node namespace.
+        let colliding = StableId {
+            namespace: EntityKind::RenderNode,
+            value: spec.layers[0].id().value(),
+            textual: spec.nodes[0].id().textual().clone(),
+        };
+        let node = spec.nodes.remove(0);
+        spec.nodes.push(
+            CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+                id: colliding,
+                kind: node.kind(),
+                parent: node.parent(),
+                layer: node.layer(),
+                document_order: node.document_order(),
+                z_order: node.z_order(),
+                attachment: node.attachment().clone(),
+                active: node.active(),
+                isolate: node.isolate(),
+                follow_hidden_attachment: node.follow_hidden_attachment(),
+                position: node.position(),
+                origin: node.origin(),
+                rotation: node.rotation(),
+                scale: node.scale(),
+                opacity: node.opacity(),
+                visibility: node.visibility(),
+                geometry: node.geometry(),
+                fill_paint: node.fill_paint(),
+                stroke: node.stroke(),
+                clip: node.clip(),
+                composite: node.composite(),
+            })
+            .expect("node"),
+        );
+        assert_eq!(
+            CanonicalRenderScene::new(spec).expect_err("cross-namespace collision"),
+            CanonicalRenderError::DuplicateStableId
+        );
+    }
+
+    #[test]
+    fn a_non_isolated_group_must_composite_source_over() {
+        let mut fixture = Fixture::new();
+        let group_id = fixture.id(EntityKind::RenderNode, "layer/main/group");
+        let spec = |isolate: bool, composite: CanonicalRenderComposite| CanonicalRenderNodeSpec {
+            id: group_id.clone(),
+            kind: CanonicalRenderNodeKind::Group,
+            parent: None,
+            layer: 0,
+            document_order: 0,
+            z_order: 0,
+            attachment: CanonicalRenderAttachment::World,
+            active: CanonicalActiveInterval::unbounded(),
+            isolate,
+            follow_hidden_attachment: false,
+            position: 0,
+            origin: 1,
+            rotation: 2,
+            scale: 3,
+            opacity: 4,
+            visibility: 5,
+            geometry: None,
+            fill_paint: None,
+            stroke: None,
+            clip: None,
+            composite,
+        };
+        assert_eq!(
+            CanonicalRenderNode::new(spec(false, CanonicalRenderComposite::Multiply)),
+            Err(CanonicalRenderError::NonIsolatedGroupComposite)
+        );
+        assert!(CanonicalRenderNode::new(spec(true, CanonicalRenderComposite::Multiply)).is_ok());
+        assert!(
+            CanonicalRenderNode::new(spec(false, CanonicalRenderComposite::SourceOver)).is_ok()
+        );
+    }
+
+    #[test]
+    fn follow_hidden_attachment_requires_note_attachment() {
+        let mut fixture = Fixture::new();
+        let node_id = fixture.id(EntityKind::RenderNode, "layer/main/follower");
+        let note_id = fixture.id(EntityKind::Note, "note/1");
+        let spec = |attachment: CanonicalRenderAttachment| CanonicalRenderNodeSpec {
+            id: node_id.clone(),
+            kind: CanonicalRenderNodeKind::Group,
+            parent: None,
+            layer: 0,
+            document_order: 0,
+            z_order: 0,
+            attachment,
+            active: CanonicalActiveInterval::unbounded(),
+            isolate: false,
+            follow_hidden_attachment: true,
+            position: 0,
+            origin: 1,
+            rotation: 2,
+            scale: 3,
+            opacity: 4,
+            visibility: 5,
+            geometry: None,
+            fill_paint: None,
+            stroke: None,
+            clip: None,
+            composite: CanonicalRenderComposite::SourceOver,
+        };
+        for attachment in [
+            CanonicalRenderAttachment::World,
+            CanonicalRenderAttachment::Screen,
+        ] {
+            assert_eq!(
+                CanonicalRenderNode::new(spec(attachment)),
+                Err(CanonicalRenderError::FollowHiddenWithoutNoteAttachment)
+            );
+        }
+        assert!(CanonicalRenderNode::new(spec(CanonicalRenderAttachment::Note(note_id))).is_ok());
+    }
+
+    #[test]
+    fn an_empty_glyph_run_is_legal() {
+        let mut fixture = Fixture::new();
+        let run_id = fixture.id(EntityKind::RenderGlyphRun, "run/empty");
+        let font_id = fixture.id(EntityKind::Resource, "resource/font");
+        // Section 14.7 allows a zero glyph count for empty source content.
+        assert!(CanonicalGlyphRun::new(run_id, font_id, 0, 0, [0.0, 0.0], Vec::new()).is_ok());
+    }
 
     #[test]
     fn no_rejection_invents_a_diagnostic_category() {
-        for error in ALL_ERRORS {
+        let all = CanonicalRenderError::all();
+        // `next_variant` has no wildcard arm, so a new variant cannot compile
+        // without an arm. This count catches the remaining hole: a chain that
+        // skips a variant whose arm exists but that nothing points at. A stale
+        // number fails loudly here rather than silently shrinking coverage.
+        assert_eq!(all.len(), 33, "variant walk skips a variant");
+        assert_eq!(
+            all.iter().collect::<BTreeSet<_>>().len(),
+            all.len(),
+            "variant walk repeats a variant"
+        );
+        for error in all {
             let code = error.code();
             assert!(
                 RENDER_DIAGNOSTIC_CATEGORIES.contains(&code),
@@ -2136,10 +2562,9 @@ mod tests {
         // Row 5: duplicate identity, layer pass, node graph shape, orphans.
         for error in [
             CanonicalRenderError::DuplicateStableId,
-            CanonicalRenderError::EmptyPass,
             CanonicalRenderError::ParentNotBeforeChild,
             CanonicalRenderError::InvalidActiveInterval,
-            CanonicalRenderError::SharedGeometry,
+            CanonicalRenderError::SharedRecord,
             CanonicalRenderError::UnreachableRecord,
         ] {
             assert_eq!(error.code(), "render.invalid-graph", "{error:?}");
@@ -2157,7 +2582,6 @@ mod tests {
         // fall back to render.resource-decode-failed.
         for error in [
             CanonicalRenderError::GeometryKindMismatch,
-            CanonicalRenderError::EmptyGlyphRun,
             CanonicalRenderError::NonFiniteGlyphMetric,
         ] {
             assert_eq!(error.code(), "render.invalid-geometry", "{error:?}");
