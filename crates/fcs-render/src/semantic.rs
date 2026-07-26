@@ -1,6 +1,6 @@
 //! Product Render semantic evaluation and reference raster surfaces (I9).
 
-use fcs_fcbc::RuntimeValue;
+use fcs_fcbc::{EvaluationEnvironment, RuntimeValue, query_descriptor};
 
 use crate::loader::{DecodedRenderChart, GeometryData, NodeKind, PaintData, PaintRecord};
 
@@ -93,11 +93,20 @@ pub fn rasterize_solid_rgba8(
 
 fn paint_rgba(chart: &DecodedRenderChart, paint: &PaintRecord) -> Option<[f64; 4]> {
     match paint.data {
-        PaintData::Solid { color } => match chart.core.constants.get(color as usize) {
-            Some(RuntimeValue::Color(rgba)) => Some(*rgba),
-            Some(RuntimeValue::Scalar { value, .. }) => Some([*value, *value, *value, 1.0]),
-            _ => Some([1.0, 0.0, 0.0, 1.0]),
-        },
+        // `colorDescriptor` is an FCBC descriptor index, not a constant-pool slot
+        // (fcs-render.md sections 14.5 and 15.3); the loader already validated it as a
+        // Color descriptor, so an unresolvable or wrongly-typed result is an invariant
+        // violation and yields no fill rather than a fabricated color. This surface has
+        // no chartTime parameter yet (#295), so descriptors are evaluated at time 0.0.
+        PaintData::Solid { color } => {
+            let evaluation =
+                query_descriptor(&chart.core, color, 0.0, EvaluationEnvironment::at_time(0.0))
+                    .ok()?;
+            match evaluation.value {
+                RuntimeValue::Color(rgba) => Some(rgba),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -111,7 +120,7 @@ fn geometry_bounds(chart: &DecodedRenderChart, geometry_ref: Option<u32>) -> [f6
     };
     match geometry.data {
         GeometryData::Rect { .. } => {
-            // Constant-pool-backed origin/size are resolved as viewport-centered unit bounds
+            // Descriptor-backed origin/size are resolved as viewport-centered unit bounds
             // for product semantic summaries when only indices are available.
             let half_w = chart.viewport_width / 2.0;
             let half_h = chart.viewport_height / 2.0;
