@@ -240,7 +240,7 @@ payload 的 read-back gate。
   链接 finding Issue，且最终由当前会话合并。
 - stage 的客观 gate 满足后自动进入下一 frontier；不为已经由规范、ADR、fixture 和证据唯一决定的
   普通实现选择反复请求确认。
-- 规范/依赖/API 工作遵守根 `AGENTS.md` 的固定依赖源码和 Context7 路由。添加依赖必须记录版本、
+- 规范/依赖/API 工作遵守根 `AGENTS.md` 的固定依赖源码和 `tavily_hikari` 路由。添加依赖必须记录版本、
   feature、MSRV、license、dependency tree 和激活范围。
 
 # Approval Gates
