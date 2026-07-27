@@ -20,13 +20,12 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     ApproximationAuthorization, ArtifactRole, CapabilityDescriptor, CapabilityDomain,
-    CapabilityDomainDescriptor, CapabilityFeature, CapabilityLimit, DecimalLimits,
-    DropAuthorization, ExactDecimal, PecLimits, PecProfile, PecProfileBinding, PgrLimits,
-    PgrProfile, PgrProfileBinding, RpeLimits, RpeProfile, RpeProfileBinding, RpeVersionEra,
-    SourceArtifact, SourceFormat, compare_canonical_charts_with_budgets, interpret_pec,
-    interpret_pgr, interpret_rpe_semantics, lower_pec_to_canonical, lower_pgr_to_canonical,
-    lower_rpe_to_canonical, parse_json_document, parse_pec_document, parse_pgr_document,
-    parse_rpe_document,
+    CapabilityDomainDescriptor, CapabilityFeature, DecimalLimits, DropAuthorization, ExactDecimal,
+    PecLimits, PecProfile, PecProfileBinding, PgrLimits, PgrProfile, PgrProfileBinding, RpeLimits,
+    RpeProfile, RpeProfileBinding, RpeVersionEra, SourceArtifact, SourceFormat,
+    compare_canonical_charts_with_budgets, interpret_pec, interpret_pgr, interpret_rpe_semantics,
+    lower_pec_to_canonical, lower_pgr_to_canonical, lower_rpe_to_canonical, parse_json_document,
+    parse_pec_document, parse_pgr_document, parse_rpe_document,
 };
 
 /// Stable formatter / exporter diagnostic category.
@@ -1124,7 +1123,7 @@ fn required_capability_features(
     domain: CapabilityDomain,
 ) -> Vec<CapabilityFeature> {
     let mut features = BTreeSet::new();
-    let mut add = |axis: &str, value: impl Into<String>| {
+    let mut add = |axis: &str, value: &str| {
         features.insert(capability_feature(axis, value));
     };
 
@@ -1221,10 +1220,10 @@ fn required_capability_features(
                 add("expression.descriptor", "typed");
             }
             for extension in chart.required_extensions() {
-                add(
+                features.insert(capability_feature(
                     "runtime.extension",
                     format!("{}@{}", extension.namespace(), extension.version()),
-                );
+                ));
             }
         }
         _ => {}
@@ -3424,7 +3423,7 @@ mod tests {
                 )
                 .with_features(descriptor.features().iter().cloned())
                 .unwrap()
-                .with_limits([CapabilityLimit::new("entity.count", 0.0).unwrap()])
+                .with_limits([crate::CapabilityLimit::new("entity.count", 0.0).unwrap()])
                 .unwrap()
             })
             .collect();
