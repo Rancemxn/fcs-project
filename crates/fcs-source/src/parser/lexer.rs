@@ -770,7 +770,15 @@ fn delimiter_balance(tokens: &[SpannedToken]) -> Option<SourceSpan> {
                 | Punctuation::RightBracket
                 | Punctuation::RightBrace),
             ) => {
-                if expected_closers.pop().map(|(expected, _)| expected) != Some(*actual) {
+                let matches = expected_closers
+                    .pop()
+                    .map(|(expected, _)| {
+                        expected == *actual
+                            || (expected == Punctuation::RightBracket
+                                && *actual == Punctuation::RightParenthesis)
+                    })
+                    .unwrap_or(false);
+                if !matches {
                     return Some(source_span(*span));
                 }
                 None
@@ -1285,6 +1293,7 @@ mod tests {
             assert_eq!(diagnostics[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
             assert_eq!(diagnostics[0].primary_span(), expected_span, "{source}");
         }
+        assert!(lex("[0s, 2s)", ParseLimits::default()).is_ok());
     }
 
     #[test]
