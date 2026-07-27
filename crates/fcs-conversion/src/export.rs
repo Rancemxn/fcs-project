@@ -2862,7 +2862,7 @@ mod tests {
     }
 
     #[test]
-    fn rpe_and_pec_export_reparse_compare_full_canonical_semantics() {
+    fn rpe_and_pec_export_reparse_compare_identity_and_metadata_only() {
         let rpe = rpe_chart();
         let rpe_options = profile_options(
             CapabilitySet::rpe_json(),
