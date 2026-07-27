@@ -1135,7 +1135,7 @@ pub fn negotiate_export_with_options(
                 negotiation_message(domain, action, options, requested_approximation_segments),
                 [],
             )
-            .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+            .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
         );
     }
     let plan = NegotiationPlan { entries: plan };
@@ -1749,7 +1749,7 @@ fn record_compilation_roundtrip_context(
             ),
             [],
         )
-        .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+        .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
     );
     let operation_id = outcome.report.operation_id().to_owned();
     let conversion_policy = outcome.report.conversion_policy();
@@ -1770,7 +1770,7 @@ fn record_compilation_roundtrip_context(
         [status],
         output_hash,
     )
-    .map_err(|error| ExportError::new("conversion.report", error.to_string()))?;
+    .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?;
     Ok(outcome)
 }
 
@@ -2180,7 +2180,7 @@ fn finish_export(
                 ),
                 [],
             )
-            .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+            .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
         );
         return Err(ExportError::new(
             "conversion.approximation-budget-exceeded",
@@ -2235,7 +2235,7 @@ fn finish_export(
                     "declared approximation metric was not exercised by canonical comparison",
                     [],
                 )
-                .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+                .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
             );
         }
         return Err(ExportError::new(
@@ -2281,7 +2281,7 @@ fn finish_export(
                     ),
                     [],
                 )
-                .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+                .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
             );
         }
         let category = if comparison.mismatches().iter().any(|mismatch| {
@@ -2321,7 +2321,7 @@ fn finish_export(
                 "same-profile target reparse is canonically equivalent",
                 [],
             )
-            .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+            .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
         );
     } else {
         for (index, domain) in comparison.unverified_domains().iter().enumerate() {
@@ -2347,7 +2347,7 @@ fn finish_export(
                     ),
                     [],
                 )
-                .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+                .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
             );
         }
     }
@@ -2386,7 +2386,7 @@ fn finish_export(
                 ),
                 [],
             )
-            .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+            .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
         );
     }
     let output_hash = lower_hex(Sha256::digest(&bytes));
@@ -2414,7 +2414,7 @@ fn finish_export(
         status_signals,
         Some(output_hash),
     )
-    .map_err(|error| ExportError::new("conversion.report", error.to_string()))?;
+    .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?;
     Ok(ExportOutcome {
         bytes,
         negotiation,
