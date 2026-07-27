@@ -115,6 +115,19 @@ mod tests {
             .iter()
             .position(|node| node.kind == NodeKind::Image)
             .expect("fixture has an image sibling subtree");
+        let root_index = render
+            .nodes
+            .iter()
+            .position(|node| node.parent.is_none() && node.kind == NodeKind::ClipGroup)
+            .expect("fixture has a later root sibling");
+        // The bytes have already passed loader validation. Making this root
+        // drawable isolates traversal order without constructing another full
+        // RenderSection fixture.
+        render.nodes[root_index].kind = NodeKind::Rect;
+        render.nodes[root_index].clip_ref = None;
+        render.nodes[root_index].geometry_ref = None;
+        render.nodes[root_index].fill_paint = None;
+        render.nodes[root_index].stroke_ref = None;
         render.nodes[path_index].z_order = 10;
 
         let draw = evaluate_semantic_draw_list(&render).expect("semantic draw list");
@@ -126,6 +139,11 @@ mod tests {
             .iter()
             .position(|op| op.node_id == render.nodes[image_index].id)
             .expect("image draw op");
+        let root_position = draw
+            .iter()
+            .position(|op| op.node_id == render.nodes[root_index].id)
+            .expect("root draw op");
         assert!(path_position < image_position);
+        assert!(path_position < root_position);
     }
 }
