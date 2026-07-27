@@ -29,6 +29,15 @@ struct LexerState {
     max_literal_bytes: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DelimiterError {
+    Mismatched(SourceSpan),
+    Unclosed {
+        expected: Punctuation,
+        span: SourceSpan,
+    },
+}
+
 pub(super) fn lex(source: &str, limits: ParseLimits) -> Result<Vec<SpannedToken>, Vec<Diagnostic>> {
     lex_with_header_policy(source, limits, false)
 }
@@ -70,6 +79,7 @@ fn lex_with_header_policy(
     }
     let (has_bom, tokens) = tokens.expect("a complete lexer produces tokens when it has no errors");
     let header_start = usize::from(has_bom) * '\u{feff}'.len_utf8();
+    // Keep document-level recovery for unfinished blocks; expression groups must fail before recursion.
     if require_header_at_start
         && matches!(tokens.first(), Some((Token::Header(_), span)) if span.start != header_start)
     {
@@ -144,7 +154,19 @@ fn lex_with_header_policy(
             span,
         )]);
     }
-    if require_header_at_start && let Some(span) = delimiter_balance(&tokens) {
+    if require_header_at_start
+        && let Some(error) = delimiter_balance(&tokens)
+        && !matches!(
+            error,
+            DelimiterError::Unclosed {
+                expected: Punctuation::RightBrace,
+                ..
+            }
+        )
+    {
+        let span = match error {
+            DelimiterError::Mismatched(span) | DelimiterError::Unclosed { span, .. } => span,
+        };
         return Err(vec![syntax(DiagnosticCode::SYNTAX_INVALID_TOKEN, span)]);
     }
     Ok(tokens)
@@ -758,7 +780,7 @@ fn nesting_limit(tokens: &[SpannedToken], maximum: usize) -> Option<(SourceSpan,
     None
 }
 
-fn delimiter_balance(tokens: &[SpannedToken]) -> Option<SourceSpan> {
+fn delimiter_balance(tokens: &[SpannedToken]) -> Option<DelimiterError> {
     let mut expected_closers = Vec::new();
     for (token, span) in tokens {
         let expected = match token {
@@ -779,7 +801,7 @@ fn delimiter_balance(tokens: &[SpannedToken]) -> Option<SourceSpan> {
                     })
                     .unwrap_or(false);
                 if !matches {
-                    return Some(source_span(*span));
+                    return Some(DelimiterError::Mismatched(source_span(*span)));
                 }
                 None
             }
@@ -789,7 +811,12 @@ fn delimiter_balance(tokens: &[SpannedToken]) -> Option<SourceSpan> {
             expected_closers.push((expected, source_span(*span)));
         }
     }
-    expected_closers.last().map(|(_, span)| *span)
+    expected_closers
+        .last()
+        .map(|(expected, span)| DelimiterError::Unclosed {
+            expected: *expected,
+            span: *span,
+        })
 }
 
 fn preserve_custom<'source>(
