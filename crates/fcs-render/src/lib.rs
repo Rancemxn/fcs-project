@@ -45,7 +45,7 @@ mod tests {
         assert!(!render.layers.is_empty());
         assert!(!render.nodes.is_empty());
         assert_eq!(render.core.lines.len(), 2);
-        let draw = evaluate_semantic_draw_list(&render);
+        let draw = evaluate_semantic_draw_list(&render).expect("semantic draw list");
         assert!(!draw.is_empty());
         let pixels = rasterize_solid_rgba8(&render, 4, 4).expect("solid raster");
         assert_eq!(pixels.len(), 4 * 4 * 4);
@@ -80,7 +80,7 @@ mod tests {
             render.core.constants.get(color_descriptor as usize),
             Some(RuntimeValue::Color(_))
         ));
-        let draw = evaluate_semantic_draw_list(&render);
+        let draw = evaluate_semantic_draw_list(&render).expect("semantic draw list");
         let rect = draw
             .iter()
             .find(|op| op.kind == NodeKind::Rect)

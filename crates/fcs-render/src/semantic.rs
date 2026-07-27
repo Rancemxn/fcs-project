@@ -20,17 +20,25 @@ pub struct DrawOp {
 ///
 /// Drawable nodes are sorted by (layer index, node z, node document order, node id).
 /// Group/ClipGroup containers are omitted from the draw list.
-pub fn evaluate_semantic_draw_list(chart: &DecodedRenderChart) -> Vec<DrawOp> {
+pub fn evaluate_semantic_draw_list(
+    chart: &DecodedRenderChart,
+) -> Result<Vec<DrawOp>, &'static str> {
     let mut ops = Vec::new();
     for (layer_index, _layer) in chart.layers.iter().enumerate() {
         for node in &chart.nodes {
             if node.layer_index as usize != layer_index || !node.kind.is_drawable() {
                 continue;
             }
-            let fill_rgba = node
-                .fill_paint
-                .and_then(|index| chart.paints.get(index as usize))
-                .and_then(|paint| paint_rgba(chart, paint));
+            let fill_rgba = match node.fill_paint {
+                Some(index) => paint_rgba(
+                    chart,
+                    chart
+                        .paints
+                        .get(index as usize)
+                        .ok_or("render.invalid-reference")?,
+                )?,
+                None => None,
+            };
             let bounds = geometry_bounds(chart, node.geometry_ref);
             ops.push(DrawOp {
                 node_id: node.id,
@@ -57,7 +65,7 @@ pub fn evaluate_semantic_draw_list(chart: &DecodedRenderChart) -> Vec<DrawOp> {
                 right.node_id,
             ))
     });
-    ops
+    Ok(ops)
 }
 
 /// Rasterize a solid-fill rectangle scene to tightly packed RGBA8 bytes.
@@ -72,7 +80,7 @@ pub fn rasterize_solid_rgba8(
     if width == 0 || height == 0 || width > 4096 || height > 4096 {
         return Err("render.limit-exceeded");
     }
-    let ops = evaluate_semantic_draw_list(chart);
+    let ops = evaluate_semantic_draw_list(chart)?;
     let fill = ops
         .iter()
         .find(|op| op.kind == NodeKind::Rect)
@@ -91,23 +99,25 @@ pub fn rasterize_solid_rgba8(
     Ok(out)
 }
 
-fn paint_rgba(chart: &DecodedRenderChart, paint: &PaintRecord) -> Option<[f64; 4]> {
+fn paint_rgba(
+    chart: &DecodedRenderChart,
+    paint: &PaintRecord,
+) -> Result<Option<[f64; 4]>, &'static str> {
     match paint.data {
         // `colorDescriptor` is an FCBC descriptor index, not a constant-pool slot
         // (fcs-render.md sections 14.5 and 15.3); the loader already validated it as a
         // Color descriptor, so an unresolvable or wrongly-typed result is an invariant
-        // violation and yields no fill rather than a fabricated color. This surface has
-        // no chartTime parameter yet (#295), so descriptors are evaluated at time 0.0.
+        // violation. This surface has no chartTime parameter yet (#295), so descriptors
+        // are evaluated at time 0.0.
         PaintData::Solid { color } => {
             let evaluation =
-                query_descriptor(&chart.core, color, 0.0, EvaluationEnvironment::at_time(0.0))
-                    .ok()?;
+                query_descriptor(&chart.core, color, 0.0, EvaluationEnvironment::at_time(0.0))?;
             match evaluation.value {
-                RuntimeValue::Color(rgba) => Some(rgba),
-                _ => None,
+                RuntimeValue::Color(rgba) => Ok(Some(rgba)),
+                _ => Err("render.invalid-descriptor"),
             }
         }
-        _ => None,
+        _ => Ok(None),
     }
 }
 
