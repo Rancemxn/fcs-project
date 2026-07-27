@@ -229,3 +229,34 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1beat; }; } }
     );
     assert!((distance.floor_position - 0.5).abs() <= 1e-12);
 }
+
+#[test]
+fn deterministic_random_tempo_maps_round_trip_through_product_load() {
+    fn next(seed: &mut u64) -> u64 {
+        *seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        *seed
+    }
+
+    let mut seed = 0xF0C5_0340_u64;
+    for _ in 0..12 {
+        let first_milli = 100 + next(&mut seed) % 900_000;
+        let second_milli = first_milli + 1 + next(&mut seed) % 900_000;
+        let first_bpm = 240.0 + (next(&mut seed) % 960) as f64;
+        let second_bpm = 30.0 + (next(&mut seed) % 240) as f64;
+        let third_bpm = 60.0 + (next(&mut seed) % 600) as f64;
+        let source = format!(
+            r#"#fcs 5.0.0
+format {{ profile: chart; }}
+tempoMap {{ 0beat -> {first_bpm}bpm; {first_whole}.{first_fraction:03}beat -> {second_bpm}bpm; {second_whole}.{second_fraction:03}beat -> {third_bpm}bpm; }}
+lines {{ line main {{}} }}
+collections {{ notes {{ tap {{ id: "tap"; line: @main; gameplay.time: 1s; }}; }} }}
+"#,
+            first_whole = first_milli / 1000,
+            first_fraction = first_milli % 1000,
+            second_whole = second_milli / 1000,
+            second_fraction = second_milli % 1000,
+        );
+        let decoded = load_chart(&compile(&source)).expect("generated tempo map must load");
+        assert_eq!(decoded.tempo_points.len(), 3);
+    }
+}

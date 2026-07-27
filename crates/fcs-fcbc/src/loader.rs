@@ -1162,6 +1162,13 @@ fn reference_chart_time(
     let top_error = top_error + numerator_error * 60.0;
     let (bottom, bottom_error) = two_product(denominator, bpm);
     let bottom_error = bottom_error + denominator_error * bpm;
+    if !top.is_finite() || !bottom.is_finite() || bottom == 0.0 {
+        // Scale before dividing when an intermediate product overflows or
+        // underflows even though the final delta can still be represented.
+        let quotient = (delta_numerator as f64 / delta_denominator as f64) * 60.0 / bpm;
+        let (seconds, seconds_error) = two_sum(chart_time, quotient);
+        return seconds + seconds_error;
+    }
     let quotient = top / bottom;
     let (product, product_error) = two_product(quotient, bottom);
     // `top - product` is exact by Sterbenz: `product` is `top` rounded through one
@@ -3421,6 +3428,13 @@ mod tempo_revalidation_tests {
             let bytes = tempo_section(&[(0, 1, 0.0, 120.0, 0), (3, 2, chart_time, 240.0, 1)]);
             assert!(parse_tempo(&bytes).is_ok(), "{chart_time} is within 2 ULP");
         }
+    }
+
+    #[test]
+    fn overflowing_tempo_denominator_uses_a_scaled_reference() {
+        let chart_time = (1.0 / 2.0) * 60.0 / f64::MAX;
+        let bytes = tempo_section(&[(0, 1, 0.0, f64::MAX, 0), (1, 2, chart_time, 120.0, 1)]);
+        assert!(parse_tempo(&bytes).is_ok());
     }
 
     #[test]
