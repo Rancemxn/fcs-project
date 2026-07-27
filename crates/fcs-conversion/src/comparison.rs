@@ -10,7 +10,7 @@ use fcs_model::{
     CanonicalChart, CanonicalLine, CanonicalScrollLine, CanonicalTrack, CanonicalTrackPiece,
     CanonicalTrackTarget, CanonicalTrackValue,
 };
-use fcs_runtime::evaluate_line_scroll;
+use fcs_runtime::{evaluate_line_scroll, evaluate_line_transform};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComparisonMismatch {
@@ -422,6 +422,7 @@ fn compare_lines(
 ) {
     let left = ordered_lines(expected);
     let right = ordered_lines(actual);
+    let test_times = line_transform_test_times(expected, actual);
     compare_len("motion", "line.count", left.len(), right.len(), mismatches);
     for (index, (left, right)) in left.iter().zip(right.iter()).enumerate() {
         let field = |name: &str| format!("lines[{index}].{name}");
@@ -529,6 +530,121 @@ fn compare_lines(
                 format!("reverse={} z={}", lb.allow_reverse_scroll(), lb.z_order()),
                 format!("reverse={} z={}", rb.allow_reverse_scroll(), rb.z_order()),
             );
+        }
+        compare_world_transform(
+            expected,
+            actual,
+            left,
+            right,
+            index,
+            &test_times,
+            budgets,
+            verified_maximum_errors,
+            mismatches,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compare_world_transform(
+    expected: &CanonicalChart,
+    actual: &CanonicalChart,
+    expected_line: &CanonicalLine,
+    actual_line: &CanonicalLine,
+    line_index: usize,
+    test_times: &[f64],
+    budgets: &BTreeMap<String, f64>,
+    verified_maximum_errors: &mut BTreeMap<String, f64>,
+    mismatches: &mut Mismatches<'_>,
+) {
+    for &chart_time in test_times {
+        let expected_transform = evaluate_line_transform(
+            expected.lines(),
+            expected.tracks(),
+            expected_line.id(),
+            chart_time,
+        );
+        let actual_transform = evaluate_line_transform(
+            actual.lines(),
+            actual.tracks(),
+            actual_line.id(),
+            chart_time,
+        );
+        let field = |name: &str| {
+            format!("lines[{line_index}].worldTransform@chartTime={chart_time}.{name}")
+        };
+        match (expected_transform, actual_transform) {
+            (Ok(expected), Ok(actual)) => {
+                let expected_world = expected.world();
+                let actual_world = actual.world();
+                for (name, expected, actual) in [
+                    (
+                        "position.x",
+                        expected_world.position().x(),
+                        actual_world.position().x(),
+                    ),
+                    (
+                        "position.y",
+                        expected_world.position().y(),
+                        actual_world.position().y(),
+                    ),
+                    (
+                        "rotation",
+                        expected_world.rotation(),
+                        actual_world.rotation(),
+                    ),
+                    (
+                        "scale.x",
+                        expected_world.scale().x(),
+                        actual_world.scale().x(),
+                    ),
+                    (
+                        "scale.y",
+                        expected_world.scale().y(),
+                        actual_world.scale().y(),
+                    ),
+                    ("alpha", expected_world.alpha(), actual_world.alpha()),
+                ] {
+                    compare_float(
+                        "motion",
+                        "motion.world_transform",
+                        field(name),
+                        expected,
+                        actual,
+                        budgets,
+                        verified_maximum_errors,
+                        mismatches,
+                    );
+                }
+                let expected_matrix = expected.world_matrix().rows();
+                let actual_matrix = actual.world_matrix().rows();
+                for (row, (expected_row, actual_row)) in
+                    expected_matrix.iter().zip(actual_matrix).enumerate()
+                {
+                    for (column, (expected, actual)) in
+                        expected_row.iter().zip(actual_row).enumerate()
+                    {
+                        compare_float(
+                            "motion",
+                            "motion.world_transform",
+                            field(&format!("matrix[{row}][{column}]")),
+                            *expected,
+                            actual,
+                            budgets,
+                            verified_maximum_errors,
+                            mismatches,
+                        );
+                    }
+                }
+            }
+            (expected, actual) => metric_mismatch(
+                mismatches,
+                "motion",
+                "motion.world_transform",
+                field("evaluation"),
+                format!("{expected:?}"),
+                format!("{actual:?}"),
+            ),
         }
     }
 }
@@ -1058,6 +1174,42 @@ fn scroll_distance_test_times(expected: &CanonicalChart, actual: &CanonicalChart
     times
 }
 
+fn line_transform_test_times(expected: &CanonicalChart, actual: &CanonicalChart) -> Vec<f64> {
+    let mut times = scroll_distance_test_times(expected, actual);
+    for chart in [expected, actual] {
+        for track in chart.tracks().tracks().iter().filter(|track| {
+            matches!(
+                track.target(),
+                CanonicalTrackTarget::Position
+                    | CanonicalTrackTarget::Rotation
+                    | CanonicalTrackTarget::Scale
+                    | CanonicalTrackTarget::Alpha
+            )
+        }) {
+            for piece in track.pieces() {
+                match piece {
+                    CanonicalTrackPiece::Segment(segment) => {
+                        times.push(segment.start().chart_time_seconds());
+                        times.push(segment.end().chart_time_seconds());
+                    }
+                    CanonicalTrackPiece::Point(point) => {
+                        times.push(point.time().chart_time_seconds());
+                    }
+                }
+            }
+        }
+    }
+    times.sort_by(f64::total_cmp);
+    times.dedup_by(|left, right| *left == *right);
+    if let Some(last) = times.last().copied() {
+        let after_last = last + 1.0;
+        if after_last.is_finite() && after_last > last {
+            times.push(after_last);
+        }
+    }
+    times
+}
+
 fn ordered_lines(chart: &CanonicalChart) -> Vec<&CanonicalLine> {
     let mut lines: Vec<_> = chart.lines().lines().collect();
     lines.sort_by_key(|line| (line.document_order(), line.id().value()));
@@ -1209,8 +1361,19 @@ fn mismatch(
     expected: impl Into<String>,
     actual: impl Into<String>,
 ) {
+    metric_mismatch(mismatches, domain, "discrete", field, expected, actual);
+}
+
+fn metric_mismatch(
+    mismatches: &mut Mismatches<'_>,
+    domain: impl Into<String>,
+    metric: impl Into<String>,
+    field: impl Into<String>,
+    expected: impl Into<String>,
+    actual: impl Into<String>,
+) {
     mismatches.push(ComparisonMismatch::new(
-        domain, "discrete", field, expected, actual, None,
+        domain, metric, field, expected, actual, None,
     ));
 }
 
@@ -1224,7 +1387,7 @@ mod tests {
         CanonicalNoteScorePolicy, CanonicalNoteSet, CanonicalNoteSide, CanonicalNoteSoundPolicy,
         CanonicalProfile, CanonicalScrollCoordinate, CanonicalScrollLine, CanonicalScrollSet,
         CanonicalScrollTempo, CanonicalSourceVersion, CanonicalTextualId, CanonicalTrackSet,
-        ChartTimeMap, EntityKind, StableId, StableIdRegistry, TempoPoint,
+        CanonicalVec2, ChartTimeMap, EntityKind, StableId, StableIdRegistry, TempoPoint,
     };
 
     fn record(sink: &mut Mismatches<'_>, domain: &str) {
@@ -1331,6 +1494,99 @@ mod tests {
             .unwrap(),
             [],
         )
+    }
+
+    fn chart_with_parent(parent_name: &str) -> CanonicalChart {
+        let mut registry = StableIdRegistry::new();
+        let parent_a = registry
+            .insert(
+                EntityKind::Line,
+                CanonicalTextualId::explicit("parent-a").unwrap(),
+            )
+            .unwrap();
+        let parent_b = registry
+            .insert(
+                EntityKind::Line,
+                CanonicalTextualId::explicit("parent-b").unwrap(),
+            )
+            .unwrap();
+        let child = registry
+            .insert(
+                EntityKind::Line,
+                CanonicalTextualId::explicit("child").unwrap(),
+            )
+            .unwrap();
+        let parent = match parent_name {
+            "parent-a" => parent_a.clone(),
+            "parent-b" => parent_b.clone(),
+            _ => panic!("unknown test parent {parent_name}"),
+        };
+        let lines = CanonicalLineGraph::new([
+            CanonicalLine::new(
+                parent_a,
+                None,
+                0,
+                line_base((10.0, 0.0)),
+                CanonicalLineInherit::default(),
+                CanonicalScrollTempo::Global,
+            )
+            .unwrap(),
+            CanonicalLine::new(
+                parent_b,
+                None,
+                0,
+                line_base((20.0, 0.0)),
+                CanonicalLineInherit::default(),
+                CanonicalScrollTempo::Global,
+            )
+            .unwrap(),
+            CanonicalLine::new(
+                child,
+                Some(parent),
+                1,
+                line_base((1.0, 0.0)),
+                CanonicalLineInherit::default(),
+                CanonicalScrollTempo::Global,
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        CanonicalChart::new(
+            CanonicalSourceVersion::new("5.0.0").unwrap(),
+            CanonicalProfile::Chart,
+            [],
+            time_map(),
+            CanonicalMetadata::new(
+                None,
+                Default::default(),
+                Vec::new(),
+                Default::default(),
+                None,
+                None,
+            ),
+            lines,
+            CanonicalNoteSet::new(Vec::new()).unwrap(),
+            CanonicalTrackSet::new(Vec::new()).unwrap(),
+            CanonicalScrollSet::new(Vec::new()).unwrap(),
+            [],
+        )
+    }
+
+    fn line_base(position: (f64, f64)) -> CanonicalLineBase {
+        CanonicalLineBase::new(
+            CanonicalVec2::new(position.0, position.1).unwrap(),
+            0.0,
+            CanonicalVec2::new(1.0, 1.0).unwrap(),
+            1.0,
+            CanonicalVec2::new(0.0, 0.0).unwrap(),
+            CanonicalVec2::new(0.5, 0.5).unwrap(),
+            120.0,
+            0.0,
+            0.0,
+            false,
+            0,
+        )
+        .unwrap()
     }
 
     fn time_map() -> ChartTimeMap {
@@ -1440,6 +1696,21 @@ mod tests {
                 .iter()
                 .any(|mismatch| mismatch.metric() == "scroll.distance")
         );
+        assert!(compare_canonical_charts(&expected, &expected).is_equivalent());
+    }
+
+    #[test]
+    fn world_transform_comparison_catches_parent_identity_hidden_by_document_order() {
+        let expected = chart_with_parent("parent-a");
+        let actual = chart_with_parent("parent-b");
+
+        let comparison = compare_canonical_charts(&expected, &actual);
+
+        assert!(!comparison.is_equivalent());
+        assert!(comparison.mismatches().iter().any(|mismatch| {
+            mismatch.metric() == "motion.world_transform"
+                && mismatch.field().contains("worldTransform")
+        }));
         assert!(compare_canonical_charts(&expected, &expected).is_equivalent());
     }
 
