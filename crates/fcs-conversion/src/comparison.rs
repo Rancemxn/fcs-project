@@ -69,11 +69,12 @@ impl ComparisonMismatch {
 pub struct CanonicalComparison {
     mismatches: Vec<ComparisonMismatch>,
     verified_maximum_errors: BTreeMap<String, f64>,
+    unverified_domains: Vec<String>,
 }
 
 impl CanonicalComparison {
     pub fn is_equivalent(&self) -> bool {
-        self.mismatches.is_empty()
+        self.mismatches.is_empty() && self.unverified_domains.is_empty()
     }
 
     pub fn mismatches(&self) -> &[ComparisonMismatch] {
@@ -88,6 +89,10 @@ impl CanonicalComparison {
 
     pub fn verified_maximum_error(&self, metric: &str) -> Option<f64> {
         self.verified_maximum_errors.get(metric).copied()
+    }
+
+    pub fn unverified_domains(&self) -> &[String] {
+        &self.unverified_domains
     }
 }
 
@@ -109,49 +114,42 @@ pub fn compare_canonical_charts_with_budgets(
 ) -> CanonicalComparison {
     let mut mismatches = Mismatches::new(dropped_domains);
     let mut verified_maximum_errors = BTreeMap::new();
-    let ignored = |domain: &str| Mismatches::is_dropped(dropped_domains, domain);
 
-    if !ignored("entity") {
-        if expected.source_version() != actual.source_version() {
-            mismatch(
-                &mut mismatches,
-                "entity",
-                "chart.sourceVersion",
-                expected.source_version().to_string(),
-                actual.source_version().to_string(),
-            );
-        }
-        if expected.profile() != actual.profile() || expected.features() != actual.features() {
-            mismatch(
-                &mut mismatches,
-                "entity",
-                "chart.profile",
-                format!("{:?}/{:?}", expected.profile(), expected.features()),
-                format!("{:?}/{:?}", actual.profile(), actual.features()),
-            );
-        }
-    }
-
-    if !ignored("timing") {
-        compare_time_map(
-            expected,
-            actual,
-            budgets,
-            &mut verified_maximum_errors,
+    if expected.source_version() != actual.source_version() {
+        mismatch(
             &mut mismatches,
-        );
-        compare_sync(
-            expected,
-            actual,
-            budgets,
-            &mut verified_maximum_errors,
-            &mut mismatches,
+            "entity",
+            "chart.sourceVersion",
+            expected.source_version().to_string(),
+            actual.source_version().to_string(),
         );
     }
-    if !ignored("metadata") {
-        compare_metadata(expected, actual, &mut mismatches);
+    if expected.profile() != actual.profile() || expected.features() != actual.features() {
+        mismatch(
+            &mut mismatches,
+            "entity",
+            "chart.profile",
+            format!("{:?}/{:?}", expected.profile(), expected.features()),
+            format!("{:?}/{:?}", actual.profile(), actual.features()),
+        );
     }
-    if !ignored("resource") && expected.metadata().resources() != actual.metadata().resources() {
+
+    compare_time_map(
+        expected,
+        actual,
+        budgets,
+        &mut verified_maximum_errors,
+        &mut mismatches,
+    );
+    compare_sync(
+        expected,
+        actual,
+        budgets,
+        &mut verified_maximum_errors,
+        &mut mismatches,
+    );
+    compare_metadata(expected, actual, &mut mismatches);
+    if expected.metadata().resources() != actual.metadata().resources() {
         mismatch(
             &mut mismatches,
             "resource",
@@ -175,7 +173,6 @@ pub fn compare_canonical_charts_with_budgets(
         budgets,
         &mut verified_maximum_errors,
         &mut mismatches,
-        &ignored,
     );
     compare_tracks(
         expected,
@@ -191,7 +188,7 @@ pub fn compare_canonical_charts_with_budgets(
         &mut verified_maximum_errors,
         &mut mismatches,
     );
-    if !ignored("expression") && expected.descriptors() != actual.descriptors() {
+    if expected.descriptors() != actual.descriptors() {
         mismatch(
             &mut mismatches,
             "expression",
@@ -204,7 +201,7 @@ pub fn compare_canonical_charts_with_budgets(
             ),
         );
     }
-    if !ignored("expression") && expected.required_extensions() != actual.required_extensions() {
+    if expected.required_extensions() != actual.required_extensions() {
         mismatch(
             &mut mismatches,
             "expression",
@@ -217,6 +214,12 @@ pub fn compare_canonical_charts_with_budgets(
     CanonicalComparison {
         mismatches: mismatches.into_inner(),
         verified_maximum_errors,
+        unverified_domains: {
+            let mut domains = dropped_domains.to_vec();
+            domains.sort();
+            domains.dedup();
+            domains
+        },
     }
 }
 
@@ -535,7 +538,6 @@ fn compare_notes(
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut BTreeMap<String, f64>,
     mismatches: &mut Mismatches<'_>,
-    ignored: &impl Fn(&str) -> bool,
 ) {
     let left = expected.notes().notes();
     let right = actual.notes().notes();
@@ -550,107 +552,103 @@ fn compare_notes(
         let field = |name: &str| format!("notes[{index}].{name}");
         let lg = left.gameplay();
         let rg = right.gameplay();
-        if !ignored("gameplay") {
-            if left.document_order() != right.document_order() {
-                mismatch(
-                    mismatches,
-                    "entity",
-                    field("documentOrder"),
-                    left.document_order().to_string(),
-                    right.document_order().to_string(),
-                );
-            }
-            if lg.kind() != rg.kind()
-                || lg.side() != rg.side()
-                || lg.judgment_enabled() != rg.judgment_enabled()
-                || lg.judge_shape() != rg.judge_shape()
-                || lg.sound_policy() != rg.sound_policy()
-                || lg.score_policy() != rg.score_policy()
-            {
-                mismatch(
-                    mismatches,
-                    "gameplay",
-                    field("discrete"),
-                    format!("{:?}", lg),
-                    format!("{:?}", rg),
-                );
-            }
-            let left_line = expected
-                .lines()
-                .line(lg.line().value())
-                .map(CanonicalLine::document_order);
-            let right_line = actual
-                .lines()
-                .line(rg.line().value())
-                .map(CanonicalLine::document_order);
-            if left_line != right_line {
-                mismatch(
-                    mismatches,
-                    "gameplay",
-                    field("line"),
-                    format!("{left_line:?}"),
-                    format!("{right_line:?}"),
-                );
-            }
-            compare_time(
-                "gameplay",
-                "gameplay.note_time",
-                field("time"),
-                lg.time().chart_time_seconds(),
-                rg.time().chart_time_seconds(),
-                budgets,
-                verified_maximum_errors,
+        if left.document_order() != right.document_order() {
+            mismatch(
                 mismatches,
+                "entity",
+                field("documentOrder"),
+                left.document_order().to_string(),
+                right.document_order().to_string(),
             );
-            compare_optional_time(
+        }
+        if lg.kind() != rg.kind()
+            || lg.side() != rg.side()
+            || lg.judgment_enabled() != rg.judgment_enabled()
+            || lg.judge_shape() != rg.judge_shape()
+            || lg.sound_policy() != rg.sound_policy()
+            || lg.score_policy() != rg.score_policy()
+        {
+            mismatch(
+                mismatches,
                 "gameplay",
-                "gameplay.hold_time",
-                field("endTime"),
-                lg.end_time().map(|time| time.chart_time_seconds()),
-                rg.end_time().map(|time| time.chart_time_seconds()),
+                field("discrete"),
+                format!("{:?}", lg),
+                format!("{:?}", rg),
+            );
+        }
+        let left_line = expected
+            .lines()
+            .line(lg.line().value())
+            .map(CanonicalLine::document_order);
+        let right_line = actual
+            .lines()
+            .line(rg.line().value())
+            .map(CanonicalLine::document_order);
+        if left_line != right_line {
+            mismatch(
+                mismatches,
+                "gameplay",
+                field("line"),
+                format!("{left_line:?}"),
+                format!("{right_line:?}"),
+            );
+        }
+        compare_time(
+            "gameplay",
+            "gameplay.note_time",
+            field("time"),
+            lg.time().chart_time_seconds(),
+            rg.time().chart_time_seconds(),
+            budgets,
+            verified_maximum_errors,
+            mismatches,
+        );
+        compare_optional_time(
+            "gameplay",
+            "gameplay.hold_time",
+            field("endTime"),
+            lg.end_time().map(|time| time.chart_time_seconds()),
+            rg.end_time().map(|time| time.chart_time_seconds()),
+            budgets,
+            verified_maximum_errors,
+            mismatches,
+        );
+        let lp = left.presentation();
+        let rp = right.presentation();
+        for (name, lv, rv) in [
+            ("positionX", lp.position_x(), rp.position_x()),
+            ("scrollFactor", lp.scroll_factor(), rp.scroll_factor()),
+            ("xOffset", lp.x_offset(), rp.x_offset()),
+            ("yOffset", lp.y_offset(), rp.y_offset()),
+            ("alpha", lp.alpha(), rp.alpha()),
+            ("scaleX", lp.scale_x(), rp.scale_x()),
+            ("scaleY", lp.scale_y(), rp.scale_y()),
+            ("rotation", lp.rotation(), rp.rotation()),
+        ] {
+            compare_float(
+                "presentation",
+                "presentation.value",
+                field(name),
+                lv,
+                rv,
                 budgets,
                 verified_maximum_errors,
                 mismatches,
             );
         }
-        if !ignored("presentation") {
-            let lp = left.presentation();
-            let rp = right.presentation();
-            for (name, lv, rv) in [
-                ("positionX", lp.position_x(), rp.position_x()),
-                ("scrollFactor", lp.scroll_factor(), rp.scroll_factor()),
-                ("xOffset", lp.x_offset(), rp.x_offset()),
-                ("yOffset", lp.y_offset(), rp.y_offset()),
-                ("alpha", lp.alpha(), rp.alpha()),
-                ("scaleX", lp.scale_x(), rp.scale_x()),
-                ("scaleY", lp.scale_y(), rp.scale_y()),
-                ("rotation", lp.rotation(), rp.rotation()),
-            ] {
-                compare_float(
-                    "presentation",
-                    "presentation.value",
-                    field(name),
-                    lv,
-                    rv,
-                    budgets,
-                    verified_maximum_errors,
-                    mismatches,
-                );
-            }
-            if lp.color() != rp.color()
-                || lp.texture() != rp.texture()
-                || lp.render_enabled() != rp.render_enabled()
-                || lp.visible_from() != rp.visible_from()
-                || lp.visible_until() != rp.visible_until()
-            {
-                mismatch(
-                    mismatches,
-                    "presentation",
-                    field("discrete"),
-                    format!("{:?}", lp),
-                    format!("{:?}", rp),
-                );
-            }
+        if lp.color() != rp.color()
+            || lp.texture() != rp.texture()
+            || lp.render_enabled() != rp.render_enabled()
+            || lp.visible_from() != rp.visible_from()
+            || lp.visible_until() != rp.visible_until()
+        {
+            mismatch(
+                mismatches,
+                "presentation",
+                field("discrete"),
+                format!("{:?}", lp),
+                format!("{:?}", rp),
+            );
         }
     }
 }
@@ -1158,11 +1156,15 @@ mod tests {
 
     /// A chart holding `notes` on one Line, with everything else minimal.
     fn chart_with_notes(notes: Vec<CanonicalNote>) -> CanonicalChart {
+        chart_with_time_map(notes, time_map())
+    }
+
+    fn chart_with_time_map(notes: Vec<CanonicalNote>, time_map: ChartTimeMap) -> CanonicalChart {
         CanonicalChart::new(
             CanonicalSourceVersion::new("5.0.0").unwrap(),
             CanonicalProfile::Chart,
             [],
-            time_map(),
+            time_map,
             CanonicalMetadata::new(
                 None,
                 Default::default(),
@@ -1264,6 +1266,47 @@ mod tests {
             .map(ComparisonMismatch::field)
             .collect();
         assert_eq!(counts, ["note.count"]);
+    }
+
+    #[test]
+    fn a_timing_drop_cannot_authorize_losing_tempo_segments() {
+        let actual = chart_with_notes(vec![tap_note()]);
+        let expected = chart_with_time_map(
+            vec![tap_note()],
+            ChartTimeMap::new([
+                TempoPoint {
+                    beat: Beat::zero(),
+                    bpm: 120.0,
+                },
+                TempoPoint {
+                    beat: Beat::new(1, 1).unwrap(),
+                    bpm: 90.0,
+                },
+            ])
+            .unwrap(),
+        );
+        let comparison = compare_canonical_charts_with_budgets(
+            &expected,
+            &actual,
+            &BTreeMap::new(),
+            &["timing".to_owned()],
+        );
+
+        assert!(!comparison.is_equivalent());
+        assert_eq!(comparison.mismatches()[0].field(), "tempo.segment_count");
+    }
+
+    #[test]
+    fn a_filtered_domain_is_unverified_instead_of_equivalent() {
+        let comparison = compare_canonical_charts_with_budgets(
+            &chart_with_notes(vec![tap_note()]),
+            &chart_with_notes(vec![tap_note()]),
+            &BTreeMap::new(),
+            &["metadata".to_owned()],
+        );
+
+        assert!(!comparison.is_equivalent());
+        assert_eq!(comparison.unverified_domains(), ["metadata"]);
     }
 
     #[test]

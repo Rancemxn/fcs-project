@@ -2247,7 +2247,7 @@ fn finish_export(
         )
         .with_entries(entries));
     }
-    if !comparison.is_equivalent() {
+    if !comparison.mismatches().is_empty() {
         for (index, mismatch) in comparison.mismatches().iter().enumerate() {
             let category = if mismatch.error().is_some()
                 && comparison_budgets.contains_key(mismatch.metric())
@@ -2300,28 +2300,57 @@ fn finish_export(
         )
         .with_entries(entries));
     }
-    entries.push(
-        ConversionEntry::new(
-            "roundtrip/equivalent",
-            "conversion.capability-negotiated",
-            ConversionDomain::Profile,
-            ConversionSeverity::Info,
-            SemanticStatus::Equivalent,
-            ConversionPhase::ReparseCompare,
-            None,
-            None,
-            None,
-            Some("canonical".into()),
-            None,
-            None,
-            None,
-            None,
-            None,
-            "same-profile target reparse is canonically equivalent",
-            [],
-        )
-        .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
-    );
+    if comparison.unverified_domains().is_empty() {
+        entries.push(
+            ConversionEntry::new(
+                "roundtrip/equivalent",
+                "conversion.capability-negotiated",
+                ConversionDomain::Profile,
+                ConversionSeverity::Info,
+                SemanticStatus::Equivalent,
+                ConversionPhase::ReparseCompare,
+                None,
+                None,
+                None,
+                Some("canonical".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                "same-profile target reparse is canonically equivalent",
+                [],
+            )
+            .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+        );
+    } else {
+        for (index, domain) in comparison.unverified_domains().iter().enumerate() {
+            entries.push(
+                ConversionEntry::new(
+                    format!("roundtrip/unverified/{index:06}"),
+                    "conversion.capability-negotiated",
+                    conversion_domain_from_str(domain),
+                    ConversionSeverity::Warning,
+                    SemanticStatus::Dropped,
+                    ConversionPhase::ReparseCompare,
+                    None,
+                    None,
+                    None,
+                    Some("canonical".into()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    format!(
+                        "same-profile target reparse did not verify {domain} canonical semantics because the domain was authorized for drop"
+                    ),
+                    [],
+                )
+                .map_err(|error| ExportError::new("conversion.report", error.to_string()))?,
+            );
+        }
+    }
     for (index, (metric, declared_maximum)) in comparison_budgets.iter().enumerate() {
         let verified_maximum = comparison
             .verified_maximum_error(metric)
@@ -3020,7 +3049,20 @@ mod tests {
         .unwrap();
         assert!(outcome.negotiation().drops(CapabilityDomain::Metadata));
         assert_eq!(outcome.report().status(), ConversionStatus::Approximate);
-        assert_eq!(outcome.report().summary().drop_count(), 1);
+        assert!(!outcome.comparison().is_equivalent());
+        assert_eq!(outcome.comparison().unverified_domains(), ["metadata"]);
+        assert!(outcome.report().entries().iter().any(|entry| {
+            entry.id() == "roundtrip/unverified/000000"
+                && entry.semantic_status() == SemanticStatus::Dropped
+        }));
+        assert!(
+            !outcome
+                .report()
+                .entries()
+                .iter()
+                .any(|entry| entry.id() == "roundtrip/equivalent")
+        );
+        assert_eq!(outcome.report().summary().drop_count(), 2);
         let recorded = outcome.report().drop_authorization().unwrap();
         assert_eq!(recorded.target_domains(), ["metadata"]);
         assert_eq!(recorded.reason(), "remove target-inexpressible metadata");
