@@ -1080,7 +1080,7 @@ impl CapabilitySet {
                 for value in ["position", "rotation", "alpha", "scroll-speed"] {
                     add("track.target", value);
                 }
-                for value in ["linear", "point"] {
+                for value in ["linear", "point", "step"] {
                     add("track.interpolation", value);
                 }
                 add("track.blend", "replace");
