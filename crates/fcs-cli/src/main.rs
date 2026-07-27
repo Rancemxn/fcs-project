@@ -328,7 +328,13 @@ fn cmd_inspect(path: &Path, json: bool, render: bool) -> ExitCode {
     let core = load_chart(&bytes).ok();
     let render_summary = if render {
         match load_render(&bytes) {
-            Ok(decoded) => Some(render_summary(&decoded)),
+            Ok(decoded) => match render_summary(&decoded) {
+                Ok(summary) => Some(summary),
+                Err(category) => {
+                    eprintln!("error: render evaluation failed: {category}");
+                    return ExitCategory::InputInvalid.code();
+                }
+            },
             Err(category) => {
                 eprintln!("error: render load failed: {category}");
                 return ExitCategory::InputInvalid.code();
@@ -380,14 +386,14 @@ fn cmd_inspect(path: &Path, json: bool, render: bool) -> ExitCode {
     ExitCategory::Success.code()
 }
 
-fn render_summary(decoded: &DecodedRenderChart) -> serde_json::Value {
-    let draw = evaluate_semantic_draw_list(decoded);
-    serde_json::json!({
+fn render_summary(decoded: &DecodedRenderChart) -> Result<serde_json::Value, &'static str> {
+    let draw = evaluate_semantic_draw_list(decoded)?;
+    Ok(serde_json::json!({
         "layerCount": decoded.layers.len(),
         "nodeCount": decoded.nodes.len(),
         "drawOps": draw.len(),
         "viewport": [decoded.viewport_width, decoded.viewport_height],
-    })
+    }))
 }
 
 fn cmd_convert(
