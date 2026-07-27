@@ -29,6 +29,15 @@ struct LexerState {
     max_literal_bytes: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DelimiterError {
+    Mismatched(SourceSpan),
+    Unclosed {
+        expected: Punctuation,
+        span: SourceSpan,
+    },
+}
+
 pub(super) fn lex(source: &str, limits: ParseLimits) -> Result<Vec<SpannedToken>, Vec<Diagnostic>> {
     lex_with_header_policy(source, limits, false)
 }
@@ -70,6 +79,7 @@ fn lex_with_header_policy(
     }
     let (has_bom, tokens) = tokens.expect("a complete lexer produces tokens when it has no errors");
     let header_start = usize::from(has_bom) * '\u{feff}'.len_utf8();
+    // Keep document-level recovery for unfinished blocks; expression groups must fail before recursion.
     if require_header_at_start
         && matches!(tokens.first(), Some((Token::Header(_), span)) if span.start != header_start)
     {
@@ -143,6 +153,21 @@ fn lex_with_header_policy(
             observed,
             span,
         )]);
+    }
+    if require_header_at_start
+        && let Some(error) = delimiter_balance(&tokens)
+        && !matches!(
+            error,
+            DelimiterError::Unclosed {
+                expected: Punctuation::RightBrace,
+                ..
+            }
+        )
+    {
+        let span = match error {
+            DelimiterError::Mismatched(span) | DelimiterError::Unclosed { span, .. } => span,
+        };
+        return Err(vec![syntax(DiagnosticCode::SYNTAX_INVALID_TOKEN, span)]);
     }
     Ok(tokens)
 }
@@ -755,6 +780,45 @@ fn nesting_limit(tokens: &[SpannedToken], maximum: usize) -> Option<(SourceSpan,
     None
 }
 
+fn delimiter_balance(tokens: &[SpannedToken]) -> Option<DelimiterError> {
+    let mut expected_closers = Vec::new();
+    for (token, span) in tokens {
+        let expected = match token {
+            Token::Punctuation(Punctuation::LeftParenthesis) => Some(Punctuation::RightParenthesis),
+            Token::Punctuation(Punctuation::LeftBracket) => Some(Punctuation::RightBracket),
+            Token::Punctuation(Punctuation::LeftBrace) => Some(Punctuation::RightBrace),
+            Token::Punctuation(
+                actual @ (Punctuation::RightParenthesis
+                | Punctuation::RightBracket
+                | Punctuation::RightBrace),
+            ) => {
+                let matches = expected_closers
+                    .pop()
+                    .map(|(expected, _)| {
+                        expected == *actual
+                            || (expected == Punctuation::RightBracket
+                                && *actual == Punctuation::RightParenthesis)
+                    })
+                    .unwrap_or(false);
+                if !matches {
+                    return Some(DelimiterError::Mismatched(source_span(*span)));
+                }
+                None
+            }
+            _ => None,
+        };
+        if let Some(expected) = expected {
+            expected_closers.push((expected, source_span(*span)));
+        }
+    }
+    expected_closers
+        .last()
+        .map(|(expected, span)| DelimiterError::Unclosed {
+            expected: *expected,
+            span: *span,
+        })
+}
+
 fn preserve_custom<'source>(
     error: Rich<'source, char, ChumskySpan>,
     fallback: &'static str,
@@ -1243,6 +1307,20 @@ mod tests {
                 "{source}"
             );
         }
+    }
+
+    #[test]
+    fn unbalanced_delimiters_are_rejected_at_the_lexer_boundary() {
+        for (source, expected_span) in [
+            ("[", SourceSpan::new(0, 1)),
+            ("([)", SourceSpan::new(0, 1)),
+            ("[}", SourceSpan::new(1, 2)),
+        ] {
+            let diagnostics = lex_document(source, ParseLimits::default()).unwrap_err();
+            assert_eq!(diagnostics[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
+            assert_eq!(diagnostics[0].primary_span(), expected_span, "{source}");
+        }
+        assert!(lex_document("[0s, 2s)", ParseLimits::default()).is_ok());
     }
 
     #[test]
