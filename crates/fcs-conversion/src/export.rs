@@ -148,7 +148,9 @@ fn require_pgr_chart_shape(
             || presentation.visible_until().is_some()
             || presentation.scroll_factor() < 0.0;
         if (gameplay_unsupported && !negotiation.drops(CapabilityDomain::Gameplay))
-            || (presentation_unsupported && !negotiation.drops(CapabilityDomain::Presentation))
+            || (presentation_unsupported
+                && !negotiation.drops(CapabilityDomain::Presentation)
+                && !negotiation.approximates(CapabilityDomain::Presentation))
         {
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
@@ -589,6 +591,17 @@ impl NegotiationPlan {
     }
 }
 
+// ponytail: fixed 1e-3 grid; add adaptive segments when tighter budgets need it.
+const LINEAR_SEGMENT_QUANTUM: f64 = 0.001;
+
+fn baked_presentation_value(value: f64, negotiation: &NegotiationPlan) -> f64 {
+    if negotiation.approximates(CapabilityDomain::Presentation) {
+        (value / LINEAR_SEGMENT_QUANTUM).round() * LINEAR_SEGMENT_QUANTUM
+    } else {
+        value
+    }
+}
+
 impl ExportError {
     pub fn new(category: &'static str, message: impl Into<String>) -> Self {
         Self {
@@ -741,7 +754,7 @@ pub fn export_pgr_with_options(
             let position_x = if negotiation.drops(CapabilityDomain::Presentation) {
                 0.0
             } else {
-                note.presentation().position_x() / 108.0
+                baked_presentation_value(note.presentation().position_x(), &negotiation) / 108.0
             };
             let floor_position = pgr_floor_position(speed, start_seconds)?;
             let note_type = match note.kind() {
@@ -758,7 +771,7 @@ pub fn export_pgr_with_options(
                 "speed": if negotiation.drops(CapabilityDomain::Presentation) {
                     1.0
                 } else {
-                    note.presentation().scroll_factor()
+                    baked_presentation_value(note.presentation().scroll_factor(), &negotiation)
                 },
                 "floorPosition": floor_position
             });
@@ -1162,6 +1175,19 @@ pub fn negotiate_export_with_options(
         )
         .with_entries(entries));
     }
+    if plan
+        .entries
+        .iter()
+        .any(|entry| entry.action == NegotiationAction::Bake)
+        && (options.approximation.algorithm_id() != "linear-segment"
+            || options.approximation.algorithm_version() != "1.0.0")
+    {
+        return Err(ExportError::new(
+            "conversion.approximation-not-authorized",
+            "the exporter only implements linear-segment@1.0.0 baking",
+        )
+        .with_entries(entries));
+    }
     if options.policy == ConversionPolicy::Strict
         && plan.entries.iter().any(|entry| {
             !matches!(
@@ -1384,7 +1410,7 @@ pub fn export_rpe_json_with_options(
             let raw_speed = if presentation_dropped {
                 4.5
             } else {
-                note.presentation().scroll_factor() * 4.5
+                baked_presentation_value(note.presentation().scroll_factor(), &negotiation) * 4.5
             };
             let mut payload = json!({
                 "type": note_type,
@@ -1393,7 +1419,7 @@ pub fn export_rpe_json_with_options(
                 "positionX": if presentation_dropped {
                     0.0
                 } else {
-                    note.presentation().position_x()
+                    baked_presentation_value(note.presentation().position_x(), &negotiation)
                 },
                 "speed": raw_speed,
                 "above": above,
@@ -1570,7 +1596,7 @@ pub fn export_pec_line_with_options(
         let x = if presentation_dropped {
             0.0
         } else {
-            note.presentation().position_x() * 16.0 / 15.0
+            baked_presentation_value(note.presentation().position_x(), &negotiation) * 16.0 / 15.0
         };
         let x = finite_decimal(x, "PEC Note X")?;
         let side = match note.gameplay().side() {
@@ -1613,7 +1639,7 @@ pub fn export_pec_line_with_options(
             if presentation_dropped {
                 1.0
             } else {
-                note.presentation().scroll_factor()
+                baked_presentation_value(note.presentation().scroll_factor(), &negotiation)
             },
             "PEC Note scroll factor",
         )?;
@@ -1621,7 +1647,7 @@ pub fn export_pec_line_with_options(
             if presentation_dropped {
                 1.0
             } else {
-                note.presentation().scale_x()
+                baked_presentation_value(note.presentation().scale_x(), &negotiation)
             },
             "PEC Note scale",
         )?;
@@ -2051,7 +2077,9 @@ fn require_rpe_chart_shape(
             || !presentation.render_enabled()
             || presentation.visible_until().is_some();
         if (gameplay_unsupported && !negotiation.drops(CapabilityDomain::Gameplay))
-            || (presentation_unsupported && !negotiation.drops(CapabilityDomain::Presentation))
+            || (presentation_unsupported
+                && !negotiation.drops(CapabilityDomain::Presentation)
+                && !negotiation.approximates(CapabilityDomain::Presentation))
         {
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
@@ -2112,7 +2140,9 @@ fn require_pec_chart_shape(
             || presentation.visible_from().is_some()
             || presentation.visible_until().is_some();
         if (gameplay_unsupported && !negotiation.drops(CapabilityDomain::Gameplay))
-            || (presentation_unsupported && !negotiation.drops(CapabilityDomain::Presentation))
+            || (presentation_unsupported
+                && !negotiation.drops(CapabilityDomain::Presentation)
+                && !negotiation.approximates(CapabilityDomain::Presentation))
         {
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
@@ -2472,8 +2502,9 @@ mod tests {
     use super::*;
     use crate::RpeSpeedMode;
     use fcs_model::{
-        CanonicalChart, CanonicalMetadata, CanonicalObject, CanonicalResourceBundle,
-        CanonicalSourceVersion, CanonicalValue, DistributionMetadata, OriginState, ProvenanceGraph,
+        CanonicalChart, CanonicalMetadata, CanonicalNote, CanonicalNotePresentation,
+        CanonicalNoteSet, CanonicalObject, CanonicalResourceBundle, CanonicalSourceVersion,
+        CanonicalValue, DistributionMetadata, OriginState, ProvenanceGraph,
         RestrictedProvenanceFact,
     };
     use std::fs;
@@ -2499,6 +2530,63 @@ mod tests {
             .compilation()
             .chart()
             .clone()
+    }
+
+    fn with_first_note_position(chart: &CanonicalChart, position_x: f64) -> CanonicalChart {
+        let notes = chart
+            .notes()
+            .notes()
+            .iter()
+            .enumerate()
+            .map(|(index, note)| {
+                let presentation = note.presentation();
+                let presentation = CanonicalNotePresentation::new(
+                    if index == 0 {
+                        position_x
+                    } else {
+                        presentation.position_x()
+                    },
+                    presentation.scroll_factor(),
+                    presentation.x_offset(),
+                    presentation.y_offset(),
+                    presentation.alpha(),
+                    presentation.scale_x(),
+                    presentation.scale_y(),
+                    presentation.rotation(),
+                    presentation.color(),
+                    presentation.texture().map(str::to_owned),
+                    presentation.render_enabled(),
+                    presentation.visible_from(),
+                    presentation.visible_until(),
+                )
+                .unwrap();
+                CanonicalNote::new(
+                    note.id().clone(),
+                    note.kind(),
+                    note.document_order(),
+                    note.gameplay().clone(),
+                    presentation,
+                )
+                .unwrap()
+            })
+            .collect();
+        let notes = CanonicalNoteSet::new(notes).unwrap();
+        let mut changed = CanonicalChart::new(
+            chart.source_version().clone(),
+            chart.profile(),
+            chart.features().iter().copied(),
+            chart.time_map().clone(),
+            chart.metadata().clone(),
+            chart.lines().clone(),
+            notes,
+            chart.tracks().clone(),
+            chart.scroll().clone(),
+            chart.required_extensions().iter().cloned(),
+        );
+        if let Some(descriptors) = chart.descriptors() {
+            changed = changed.with_descriptors(descriptors.clone());
+        }
+        changed
     }
 
     fn rpe_chart() -> CanonicalChart {
@@ -2927,7 +3015,10 @@ mod tests {
 
     #[test]
     fn successful_approximation_reports_verified_maximum_and_segment_count() {
-        let chart = pgr_chart("pgr-feature.pgr.json", PgrProfile::PhiraV3);
+        let chart = with_first_note_position(
+            &pgr_chart("pgr-feature.pgr.json", PgrProfile::PhiraV3),
+            0.1234,
+        );
         let profile = profile_reference(PgrProfile::PhiraV3.id(), PgrProfile::PhiraV3.version());
         let descriptor = descriptor_with_domain(
             CapabilitySet::pgr_v3(),
@@ -2947,6 +3038,15 @@ mod tests {
             "1.0.0",
         )
         .unwrap();
+        let exact = export_pgr_v3_with_options(
+            &chart,
+            &profile_options(
+                CapabilitySet::pgr_v3(),
+                PgrProfile::PhiraV3.id(),
+                PgrProfile::PhiraV3.version(),
+            ),
+        )
+        .unwrap();
 
         let outcome = export_pgr_v3_with_options(
             &chart,
@@ -2959,13 +3059,13 @@ mod tests {
                 .negotiation()
                 .approximates(CapabilityDomain::Presentation)
         );
+        assert_ne!(outcome.bytes(), exact.bytes());
         assert_eq!(outcome.report().status(), ConversionStatus::Approximate);
-        assert_eq!(
-            outcome
-                .comparison()
-                .verified_maximum_error("presentation.value"),
-            Some(0.0)
-        );
+        let verified = outcome
+            .comparison()
+            .verified_maximum_error("presentation.value")
+            .unwrap();
+        assert!(verified > 0.0 && verified <= 0.001);
         let verification = outcome
             .report()
             .entries()
@@ -2979,10 +3079,49 @@ mod tests {
         );
         assert_eq!(
             verification.target_value(),
-            Some(&CanonicalValue::Float(0.0))
+            Some(&CanonicalValue::Float(verified))
         );
         assert!(verification.message().contains("target segments"));
         assert!(verification.message().contains("linear-segment@1.0.0"));
+    }
+
+    #[test]
+    fn approximation_error_over_budget_is_reclassified_after_reparse() {
+        let chart = with_first_note_position(
+            &pgr_chart("pgr-feature.pgr.json", PgrProfile::PhiraV3),
+            0.1234,
+        );
+        let profile = profile_reference(PgrProfile::PhiraV3.id(), PgrProfile::PhiraV3.version());
+        let descriptor = descriptor_with_domain(
+            CapabilitySet::pgr_v3(),
+            &profile,
+            CapabilityDomain::Presentation,
+            false,
+            true,
+            false,
+            None,
+            None,
+        );
+        let authorization = ApproximationAuthorization::new(
+            ["presentation".into()],
+            [("presentation.value".into(), 0.0001)],
+            1024,
+            "linear-segment",
+            "1.0.0",
+        )
+        .unwrap();
+
+        let error = export_pgr_v3_with_options(
+            &chart,
+            &ExportOptions::semantic(descriptor).with_approximation(authorization),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.category(), "conversion.approximation-budget-exceeded");
+        assert!(error.entries().iter().any(|entry| {
+            entry.category() == "conversion.approximation-budget-exceeded"
+                && entry.id().starts_with("roundtrip/")
+        }));
     }
 
     #[test]
