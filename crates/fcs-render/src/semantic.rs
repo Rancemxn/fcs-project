@@ -18,15 +18,28 @@ pub struct DrawOp {
 
 /// Evaluate a deterministic draw-list for the loaded Render scene.
 ///
-/// Drawable nodes are sorted by (layer index, node z, node document order, node id).
+/// Drawable nodes follow the loader-validated layer and hierarchical storage order.
 /// Group/ClipGroup containers are omitted from the draw list.
 pub fn evaluate_semantic_draw_list(
     chart: &DecodedRenderChart,
 ) -> Result<Vec<DrawOp>, &'static str> {
     let mut ops = Vec::new();
-    for (layer_index, _layer) in chart.layers.iter().enumerate() {
-        for node in &chart.nodes {
-            if node.layer_index as usize != layer_index || !node.kind.is_drawable() {
+    for (layer_index, layer) in chart.layers.iter().enumerate() {
+        let roots = if layer.root_count == 0 {
+            &chart.nodes[0..0]
+        } else {
+            let first = layer.first_root as usize;
+            let end = first
+                .checked_add(layer.root_count as usize)
+                .ok_or("render.invalid-graph")?;
+            chart.nodes.get(first..end).ok_or("render.invalid-graph")?
+        };
+        let descendants = chart
+            .nodes
+            .iter()
+            .filter(|node| node.parent.is_some() && node.layer_index as usize == layer_index);
+        for node in roots.iter().chain(descendants) {
+            if !node.kind.is_drawable() {
                 continue;
             }
             let fill_rgba = match node.fill_paint {
@@ -43,7 +56,7 @@ pub fn evaluate_semantic_draw_list(
             ops.push(DrawOp {
                 node_id: node.id,
                 kind: node.kind,
-                layer_index: layer_index as u32,
+                layer_index: node.layer_index,
                 z_order: node.z_order,
                 document_order: node.document_order,
                 fill_rgba,
@@ -51,20 +64,6 @@ pub fn evaluate_semantic_draw_list(
             });
         }
     }
-    ops.sort_by(|left, right| {
-        (
-            left.layer_index,
-            left.z_order,
-            left.document_order,
-            left.node_id,
-        )
-            .cmp(&(
-                right.layer_index,
-                right.z_order,
-                right.document_order,
-                right.node_id,
-            ))
-    });
     Ok(ops)
 }
 

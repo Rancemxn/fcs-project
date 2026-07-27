@@ -90,4 +90,42 @@ mod tests {
         let pixels = rasterize_solid_rgba8(&render, 2, 2).expect("solid raster");
         assert_eq!(pixels, vec![255u8; 16]);
     }
+
+    #[test]
+    fn group_children_stay_before_later_root_siblings() {
+        let core = write_nonempty_execution();
+        let png = encode_test_png();
+        let webp = encode_test_webp();
+        let font = build_test_font();
+        let assets = RenderAssets {
+            png: &png,
+            webp: &webp,
+            font: &font,
+            malformed: b"not-an-image",
+        };
+        let mut render = load_render(&write_nonempty_render(&core, assets)).expect("render load");
+
+        let path_index = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::Path)
+            .expect("fixture has a path child");
+        let image_index = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::Image)
+            .expect("fixture has an image sibling subtree");
+        render.nodes[path_index].z_order = 10;
+
+        let draw = evaluate_semantic_draw_list(&render).expect("semantic draw list");
+        let path_position = draw
+            .iter()
+            .position(|op| op.node_id == render.nodes[path_index].id)
+            .expect("path draw op");
+        let image_position = draw
+            .iter()
+            .position(|op| op.node_id == render.nodes[image_index].id)
+            .expect("image draw op");
+        assert!(path_position < image_position);
+    }
 }
