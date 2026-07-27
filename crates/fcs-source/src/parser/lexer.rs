@@ -144,6 +144,9 @@ fn lex_with_header_policy(
             span,
         )]);
     }
+    if let Some(span) = delimiter_balance(&tokens) {
+        return Err(vec![syntax(DiagnosticCode::SYNTAX_INVALID_TOKEN, span)]);
+    }
     Ok(tokens)
 }
 
@@ -755,6 +758,32 @@ fn nesting_limit(tokens: &[SpannedToken], maximum: usize) -> Option<(SourceSpan,
     None
 }
 
+fn delimiter_balance(tokens: &[SpannedToken]) -> Option<SourceSpan> {
+    let mut expected_closers = Vec::new();
+    for (token, span) in tokens {
+        let expected = match token {
+            Token::Punctuation(Punctuation::LeftParenthesis) => Some(Punctuation::RightParenthesis),
+            Token::Punctuation(Punctuation::LeftBracket) => Some(Punctuation::RightBracket),
+            Token::Punctuation(Punctuation::LeftBrace) => Some(Punctuation::RightBrace),
+            Token::Punctuation(
+                actual @ (Punctuation::RightParenthesis
+                | Punctuation::RightBracket
+                | Punctuation::RightBrace),
+            ) => {
+                if expected_closers.pop().map(|(expected, _)| expected) != Some(*actual) {
+                    return Some(source_span(*span));
+                }
+                None
+            }
+            _ => None,
+        };
+        if let Some(expected) = expected {
+            expected_closers.push((expected, source_span(*span)));
+        }
+    }
+    expected_closers.last().map(|(_, span)| *span)
+}
+
 fn preserve_custom<'source>(
     error: Rich<'source, char, ChumskySpan>,
     fallback: &'static str,
@@ -1242,6 +1271,19 @@ mod tests {
                 SourceSpan::new(0, source.len()),
                 "{source}"
             );
+        }
+    }
+
+    #[test]
+    fn unbalanced_delimiters_are_rejected_at_the_lexer_boundary() {
+        for (source, expected_span) in [
+            ("[", SourceSpan::new(0, 1)),
+            ("([)", SourceSpan::new(2, 3)),
+            ("[}", SourceSpan::new(1, 2)),
+        ] {
+            let diagnostics = lex(source, ParseLimits::default()).unwrap_err();
+            assert_eq!(diagnostics[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
+            assert_eq!(diagnostics[0].primary_span(), expected_span, "{source}");
         }
     }
 

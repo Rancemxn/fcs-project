@@ -92,6 +92,23 @@ fn byte_entry_decodes_once_and_preserves_utf8_error_spans() {
 }
 
 #[test]
+fn deeply_unclosed_document_delimiters_fail_before_recursive_descent() {
+    let source = format!(
+        "#fcs 5.0.0\nformat {{ profile: fragment; }}\ncollections {{\n    notes {{\n        tap {{\n            gameplay.time: 0beat;\n            gameplay.side: above;\n            {}\n        }}\n    }}\n}}\n",
+        "[".repeat(102),
+    );
+    let output = parse_document_bytes(source.as_bytes());
+
+    assert!(output.output().is_none());
+    assert_eq!(output.diagnostics().len(), 1);
+    assert_eq!(
+        output.diagnostics()[0].code(),
+        DiagnosticCode::SYNTAX_INVALID_TOKEN
+    );
+    assert_spans_are_bounded(&output, source.as_bytes(), true);
+}
+
+#[test]
 fn every_parser_limit_has_a_bounded_failure() {
     let cases = [
         (
