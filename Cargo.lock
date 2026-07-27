@@ -332,6 +332,7 @@ name = "fcs-conversion"
 version = "0.2.0"
 dependencies = [
  "fcs-model",
+ "fcs-runtime",
  "fcs-source",
  "num-bigint",
  "num-rational",
