@@ -31,7 +31,7 @@
 | `num-traits` | 0.2.19 | `7ec3d41d39b28190ec1d42db38021107b3951f3a` | I6.2a numeric zero/sign/conversion traits；不定义 FCS rounding or finite policy |
 | `num_enum` | 0.7.6 | `f11d81c6cb644489f8a0fc24f9eea9a53d66f92e` | I7/I9 closed wire enum checked conversion；不生成 catch-all 语义 |
 | `proptest` | 1.11.0 | `7f1367f9a4dc8440c47b93166a38ed064f63ea8c` | parser/runtime/codec property 与 shrinking |
-| `ryu` | 1.0.23 | `f0b52bb194befe6fd242154f2182fafd43a819b8` | I8 finite f64 shortest-roundtrip decimal 候选；FCS canonical policy 再归一化 |
+| `ryu` | 1.0.23 | `f0b52bb194befe6fd242154f2182fafd43a819b8` | I8 PEC target finite f64 decimal emission；target profile numeric policy remains project-owned |
 | `serde` | 1.0.228 | `a866b336f14aa57a07f0d0be9f8762746e64ecb4` | typed manifest/report/import data boundary |
 | `serde_json` | 1.0.150 | `a1ae73ac6a6940a4a57c673aebaa13ed4dfe3e8c` | conformance、I6 JSON source 和 I10 JSON output；lossless order/duplicate handling由 owning parser 固定 |
 | `sha2` | 0.11.0 | `ffe093984c004769747e998f77da8ff7c0e7a765` | canonical ID、resource、FCBC 和 manifest SHA-256 |
@@ -65,9 +65,13 @@ toolchain 和 full gate 为实际兼容性证据。
 `astro-float` 在 I4.8、`proptest` 在 I4.9 进入 `fcs-runtime` dev graph；两者都不进入 production
 dependency tree。I5.3 复用 `fcs-model` 已激活的 `sha2` 0.11.0 计算 exact resource bytes digest，并将
 `tempfile` 3.27.0 仅加入 `fcs-source` dev graph，以隔离 workspace/symlink/非普通文件测试；resolver
-production graph 不依赖 `tempfile`。`bitflags`、`clap`、`num_enum`、`ryu`、`thiserror`、`ttf-parser` 和
-`zip` 仍是精确版本的 workspace catalog，分别到 owning stage 才写入 crate manifest 和 lockfile；catalog
-entry 本身不能被描述为已实现能力。
+production graph 不依赖 `tempfile`。`clap` 已由 I10 CLI 激活到 `fcs-cli`，`ryu` 已由 I8 转换
+激活到 `fcs-conversion`，`ttf-parser` 已由 I9 Render 激活到 `fcs-render`；`bitflags`、`num_enum`、
+`thiserror` 和 `zip` 仍是精确版本的 workspace catalog，分别到 owning stage 才写入 crate manifest
+和 lockfile；catalog entry 本身不能被描述为已实现能力。
+
+`ryu` 1.0.23 的当前 production 用途是 PEC target 的 finite decimal emission；它不定义 PEC
+语义、不替代 FCS canonical formatter，也不改变 target profile 的数值规则。
 
 I6.1 将 `serde` 1.0.228、`serde_json` 1.0.150、既有 `sha2` 0.11.0 与 `fcs-model` 激活到
 `fcs-conversion` 产品 graph。`serde_json` 只增加 `raw_value` feature，用于让上游 parser 验证 JSON
