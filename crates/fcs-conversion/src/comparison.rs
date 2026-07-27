@@ -767,6 +767,18 @@ fn compare_notes(
                 format!("{:?}", rp),
             );
         }
+        compare_optional_source_beat(
+            field("visibleFrom"),
+            lp.visible_from(),
+            rp.visible_from(),
+            mismatches,
+        );
+        compare_optional_source_beat(
+            field("visibleUntil"),
+            lp.visible_until(),
+            rp.visible_until(),
+            mismatches,
+        );
     }
 }
 
@@ -1321,6 +1333,22 @@ fn compare_source_beat(
             format!("{field}.sourceBeat"),
             format!("{expected:?}"),
             format!("{actual:?}"),
+        );
+    }
+}
+
+fn compare_optional_source_beat(
+    field: String,
+    expected: Option<CanonicalTime>,
+    actual: Option<CanonicalTime>,
+    mismatches: &mut Mismatches<'_>,
+) {
+    if let (Some(expected), Some(actual)) = (expected, actual) {
+        compare_source_beat(
+            field,
+            expected.source_beat(),
+            actual.source_beat(),
+            mismatches,
         );
     }
 }
