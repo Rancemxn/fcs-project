@@ -180,12 +180,12 @@ impl ChartTimeMap {
                         continue;
                     }
                     Ordering::Greater => {
-                        let delta_beats = point.beat.as_f64() - previous.beat.as_f64();
-                        let delta_seconds = (delta_beats * 60.0) / previous.bpm;
-                        let chart_time_seconds = previous.chart_time_seconds + delta_seconds;
-                        if !chart_time_seconds.is_finite() {
-                            return Err(TempoError::NonFiniteChartTime);
-                        }
+                        let chart_time_seconds = advance_chart_time(
+                            previous.chart_time_seconds,
+                            previous.beat,
+                            point.beat,
+                            previous.bpm,
+                        )?;
                         segments.push(Segment {
                             beat: point.beat,
                             chart_time_seconds,
@@ -208,13 +208,15 @@ impl ChartTimeMap {
     pub fn chart_time(&self, beat: Beat) -> Result<CanonicalTime, TempoError> {
         let first = self.segments.first().ok_or(TempoError::EmptyTempoMap)?;
         let (chart_time_seconds, source_beat) = if beat < first.beat {
-            ((beat.as_f64() * 60.0) / first.bpm, beat)
+            (
+                advance_chart_time(0.0, Beat::zero(), beat, first.bpm)?,
+                beat,
+            )
         } else {
             let index = self.segment_for_beat(beat);
             let segment = self.segments[index];
-            let delta_beats = beat.as_f64() - segment.beat.as_f64();
             (
-                segment.chart_time_seconds + (delta_beats * 60.0) / segment.bpm,
+                advance_chart_time(segment.chart_time_seconds, segment.beat, beat, segment.bpm)?,
                 beat,
             )
         };
@@ -272,6 +274,72 @@ fn finite_time(value: f64) -> Result<(), TempoError> {
         .is_finite()
         .then_some(())
         .ok_or(TempoError::NonFiniteChartTime)
+}
+
+/// Advances a chart time using the exact rational beat delta.
+///
+/// The compensated path mirrors FCBC section 10 so a writer-produced tempo
+/// point remains within the loader's two-ULP reference tolerance. The scaled
+/// fallback keeps finite results representable when an intermediate product
+/// overflows or underflows despite the final quotient being finite.
+fn advance_chart_time(
+    chart_time: f64,
+    start: Beat,
+    end: Beat,
+    bpm: f64,
+) -> Result<f64, TempoError> {
+    let delta_numerator = end.numerator as i128 * start.denominator as i128
+        - start.numerator as i128 * end.denominator as i128;
+    let delta_denominator = start.denominator as i128 * end.denominator as i128;
+    let (numerator, numerator_error) = split_integer(delta_numerator);
+    let (denominator, denominator_error) = split_integer(delta_denominator);
+    let (top, top_error) = two_product(numerator, 60.0);
+    let top_error = top_error + numerator_error * 60.0;
+    let (bottom, bottom_error) = two_product(denominator, bpm);
+
+    let (quotient, correction) = if top.is_finite() && bottom.is_finite() && bottom != 0.0 {
+        let quotient = top / bottom;
+        let (product, product_error) = two_product(quotient, bottom);
+        let residual = ((top - product) - product_error) + top_error
+            - quotient * (bottom_error + denominator_error * bpm);
+        let correction = residual / bottom;
+        (
+            quotient,
+            if correction.is_finite() {
+                correction
+            } else {
+                0.0
+            },
+        )
+    } else {
+        (
+            (delta_numerator as f64 / delta_denominator as f64) * 60.0 / bpm,
+            0.0,
+        )
+    };
+    let (seconds, seconds_error) = two_sum(chart_time, quotient);
+    let chart_time_seconds = seconds + (seconds_error + correction);
+    chart_time_seconds
+        .is_finite()
+        .then_some(chart_time_seconds)
+        .ok_or(TempoError::NonFiniteChartTime)
+}
+
+fn two_sum(a: f64, b: f64) -> (f64, f64) {
+    let sum = a + b;
+    let b_virtual = sum - a;
+    let a_virtual = sum - b_virtual;
+    (sum, (a - a_virtual) + (b - b_virtual))
+}
+
+fn two_product(a: f64, b: f64) -> (f64, f64) {
+    let product = a * b;
+    (product, a.mul_add(b, -product))
+}
+
+fn split_integer(value: i128) -> (f64, f64) {
+    let high = value as f64;
+    (high, (value - high as i128) as f64)
 }
 
 const fn gcd(mut a: u128, mut b: u128) -> u128 {
@@ -345,6 +413,17 @@ mod tests {
         );
         assert_eq!(map.beat_at_time(1.0).unwrap(), 2.0);
         assert_eq!(map.beat_at_time(2.5).unwrap(), 6.0);
+    }
+
+    #[test]
+    fn non_dyadic_tempo_deltas_use_exact_rational_beats() {
+        let map = map(&[(0, 1, 960.0), (8001, 10, 60.0), (8003, 10, 120.0)]);
+        let segments: Vec<_> = map.segments().collect();
+        assert_eq!(segments[1].1, (8001.0 * 60.0) / (10.0 * 960.0));
+        assert_eq!(
+            segments[2].1,
+            segments[1].1 + (20.0 * 60.0) / (100.0 * 60.0)
+        );
     }
 
     #[test]

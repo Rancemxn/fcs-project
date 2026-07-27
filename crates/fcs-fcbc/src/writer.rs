@@ -761,6 +761,33 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
     }
 
     #[test]
+    fn a_non_dyadic_tempo_map_round_trips_through_product_load() {
+        let bytes = compile(
+            r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 960bpm; 800.1beat -> 60bpm; 800.3beat -> 120bpm; }
+lines { line main {} }
+collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
+"#,
+        );
+        let decoded = crate::load_chart(&bytes).expect("non-dyadic tempo map must load");
+        let beats: Vec<(i64, i64)> = decoded
+            .tempo_points
+            .iter()
+            .map(|point| (point.beat_numerator, point.beat_denominator))
+            .collect();
+        assert_eq!(beats, vec![(0, 1), (8001, 10), (8003, 10)]);
+        assert_eq!(
+            decoded.tempo_points[1].chart_time,
+            (8001.0 * 60.0) / (10.0 * 960.0)
+        );
+        assert_eq!(
+            decoded.tempo_points[2].chart_time,
+            decoded.tempo_points[1].chart_time + (20.0 * 60.0) / (100.0 * 60.0)
+        );
+    }
+
+    #[test]
     fn a_flick_is_written_as_the_section_12_kind() {
         let bytes = compile(
             r#"#fcs 5.0.0
