@@ -8,8 +8,9 @@ use std::collections::BTreeMap;
 
 use fcs_model::{
     CanonicalChart, CanonicalLine, CanonicalScrollLine, CanonicalTrack, CanonicalTrackPiece,
-    CanonicalTrackValue,
+    CanonicalTrackTarget, CanonicalTrackValue,
 };
+use fcs_runtime::evaluate_line_scroll;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComparisonMismatch {
@@ -878,6 +879,7 @@ fn compare_scroll(
         right.len(),
         mismatches,
     );
+    let test_times = scroll_distance_test_times(expected, actual);
     for (index, (left, right)) in left.iter().zip(right.iter()).enumerate() {
         if left.allow_reverse_scroll() != right.allow_reverse_scroll() {
             mismatch(
@@ -948,7 +950,112 @@ fn compare_scroll(
                 mismatches,
             );
         }
+        compare_scroll_distance(
+            expected,
+            actual,
+            left,
+            right,
+            index,
+            &test_times,
+            budgets,
+            verified_maximum_errors,
+            mismatches,
+        );
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compare_scroll_distance(
+    expected: &CanonicalChart,
+    actual: &CanonicalChart,
+    expected_line: &CanonicalScrollLine,
+    actual_line: &CanonicalScrollLine,
+    line_index: usize,
+    test_times: &[f64],
+    budgets: &BTreeMap<String, f64>,
+    verified_maximum_errors: &mut BTreeMap<String, f64>,
+    mismatches: &mut Mismatches<'_>,
+) {
+    for &chart_time in test_times {
+        let expected_floor = evaluate_line_scroll(
+            expected.lines(),
+            expected.scroll(),
+            expected.tracks(),
+            expected_line.line_id(),
+            chart_time,
+        )
+        .map(|scroll| scroll.effective_floor());
+        let actual_floor = evaluate_line_scroll(
+            actual.lines(),
+            actual.scroll(),
+            actual.tracks(),
+            actual_line.line_id(),
+            chart_time,
+        )
+        .map(|scroll| scroll.effective_floor());
+        let field = format!("scroll[{line_index}].distance@chartTime={chart_time}");
+        match (expected_floor, actual_floor) {
+            (Ok(expected), Ok(actual)) => compare_float(
+                "scroll",
+                "scroll.distance",
+                field,
+                expected,
+                actual,
+                budgets,
+                verified_maximum_errors,
+                mismatches,
+            ),
+            (expected, actual) => mismatch(
+                mismatches,
+                "scroll",
+                field,
+                format!("{expected:?}"),
+                format!("{actual:?}"),
+            ),
+        }
+    }
+}
+
+fn scroll_distance_test_times(expected: &CanonicalChart, actual: &CanonicalChart) -> Vec<f64> {
+    let mut times = vec![0.0];
+    for chart in [expected, actual] {
+        for line in chart.scroll().lines() {
+            times.push(line.integration_origin());
+            times.extend(
+                line.coordinate()
+                    .points()
+                    .iter()
+                    .map(|point| point.chart_time()),
+            );
+        }
+        for track in chart
+            .tracks()
+            .tracks()
+            .iter()
+            .filter(|track| track.target() == CanonicalTrackTarget::ScrollSpeed)
+        {
+            for piece in track.pieces() {
+                match piece {
+                    CanonicalTrackPiece::Segment(segment) => {
+                        times.push(segment.start().chart_time_seconds());
+                        times.push(segment.end().chart_time_seconds());
+                    }
+                    CanonicalTrackPiece::Point(point) => {
+                        times.push(point.time().chart_time_seconds());
+                    }
+                }
+            }
+        }
+    }
+    times.sort_by(f64::total_cmp);
+    times.dedup_by(|left, right| *left == *right);
+    if let Some(last) = times.last().copied() {
+        let after_last = last + 1.0;
+        if after_last.is_finite() && after_last > last {
+            times.push(after_last);
+        }
+    }
+    times
 }
 
 fn ordered_lines(chart: &CanonicalChart) -> Vec<&CanonicalLine> {
@@ -1111,10 +1218,11 @@ fn mismatch(
 mod tests {
     use super::*;
     use fcs_model::{
-        Beat, CanonicalColor, CanonicalJudgeShape, CanonicalLineBase, CanonicalLineGraph,
-        CanonicalLineInherit, CanonicalMetadata, CanonicalNote, CanonicalNoteGameplay,
-        CanonicalNoteKind, CanonicalNotePresentation, CanonicalNoteScorePolicy, CanonicalNoteSet,
-        CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalProfile, CanonicalScrollSet,
+        Beat, CanonicalChartScrollTempoPoint, CanonicalColor, CanonicalJudgeShape,
+        CanonicalLineBase, CanonicalLineGraph, CanonicalLineInherit, CanonicalMetadata,
+        CanonicalNote, CanonicalNoteGameplay, CanonicalNoteKind, CanonicalNotePresentation,
+        CanonicalNoteScorePolicy, CanonicalNoteSet, CanonicalNoteSide, CanonicalNoteSoundPolicy,
+        CanonicalProfile, CanonicalScrollCoordinate, CanonicalScrollLine, CanonicalScrollSet,
         CanonicalScrollTempo, CanonicalSourceVersion, CanonicalTextualId, CanonicalTrackSet,
         ChartTimeMap, EntityKind, StableId, StableIdRegistry, TempoPoint,
     };
@@ -1190,11 +1298,57 @@ mod tests {
         )
     }
 
+    fn chart_with_scroll(coordinate: CanonicalScrollCoordinate) -> CanonicalChart {
+        let (line_id, _) = ids();
+        CanonicalChart::new(
+            CanonicalSourceVersion::new("5.0.0").unwrap(),
+            CanonicalProfile::Chart,
+            [],
+            time_map(),
+            CanonicalMetadata::new(
+                None,
+                Default::default(),
+                Vec::new(),
+                Default::default(),
+                None,
+                None,
+            ),
+            CanonicalLineGraph::new([CanonicalLine::new(
+                line_id.clone(),
+                None,
+                0,
+                CanonicalLineBase::default(),
+                CanonicalLineInherit::default(),
+                CanonicalScrollTempo::Global,
+            )
+            .unwrap()])
+            .unwrap(),
+            CanonicalNoteSet::new(Vec::new()).unwrap(),
+            CanonicalTrackSet::new(Vec::new()).unwrap(),
+            CanonicalScrollSet::new(vec![
+                CanonicalScrollLine::new(line_id, coordinate, 1.0, false, 120.0, 0.0, 0.0).unwrap(),
+            ])
+            .unwrap(),
+            [],
+        )
+    }
+
     fn time_map() -> ChartTimeMap {
         ChartTimeMap::new([TempoPoint {
             beat: Beat::zero(),
             bpm: 120.0,
         }])
+        .unwrap()
+    }
+
+    fn scroll_coordinate(
+        points: impl IntoIterator<Item = (f64, f64)>,
+    ) -> CanonicalScrollCoordinate {
+        CanonicalScrollCoordinate::new(
+            points.into_iter().map(|(chart_time, bpm)| {
+                CanonicalChartScrollTempoPoint::new(chart_time, bpm).unwrap()
+            }),
+        )
         .unwrap()
     }
 
@@ -1266,6 +1420,27 @@ mod tests {
             .map(ComparisonMismatch::field)
             .collect();
         assert_eq!(counts, ["note.count"]);
+    }
+
+    #[test]
+    fn same_scroll_speed_with_different_integrated_distance_is_not_equivalent() {
+        let expected = chart_with_scroll(scroll_coordinate([(0.0, 120.0), (1.0, 240.0)]));
+        let actual = chart_with_scroll(scroll_coordinate([(0.0, 120.0), (1.0, 120.0)]));
+        assert_eq!(
+            expected.scroll().lines()[0].speed(),
+            actual.scroll().lines()[0].speed()
+        );
+
+        let comparison = compare_canonical_charts(&expected, &actual);
+
+        assert!(!comparison.is_equivalent());
+        assert!(
+            comparison
+                .mismatches()
+                .iter()
+                .any(|mismatch| mismatch.metric() == "scroll.distance")
+        );
+        assert!(compare_canonical_charts(&expected, &expected).is_equivalent());
     }
 
     #[test]
