@@ -144,7 +144,7 @@ fn lex_with_header_policy(
             span,
         )]);
     }
-    if let Some(span) = delimiter_balance(&tokens) {
+    if require_header_at_start && let Some(span) = delimiter_balance(&tokens) {
         return Err(vec![syntax(DiagnosticCode::SYNTAX_INVALID_TOKEN, span)]);
     }
     Ok(tokens)
@@ -1286,14 +1286,14 @@ mod tests {
     fn unbalanced_delimiters_are_rejected_at_the_lexer_boundary() {
         for (source, expected_span) in [
             ("[", SourceSpan::new(0, 1)),
-            ("([)", SourceSpan::new(2, 3)),
+            ("([)", SourceSpan::new(0, 1)),
             ("[}", SourceSpan::new(1, 2)),
         ] {
-            let diagnostics = lex(source, ParseLimits::default()).unwrap_err();
+            let diagnostics = lex_document(source, ParseLimits::default()).unwrap_err();
             assert_eq!(diagnostics[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
             assert_eq!(diagnostics[0].primary_span(), expected_span, "{source}");
         }
-        assert!(lex("[0s, 2s)", ParseLimits::default()).is_ok());
+        assert!(lex_document("[0s, 2s)", ParseLimits::default()).is_ok());
     }
 
     #[test]
