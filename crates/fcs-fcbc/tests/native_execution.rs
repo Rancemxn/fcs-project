@@ -8,6 +8,11 @@
 //! evidence: the loader revalidates the section 10 tempo consistency against
 //! the Core mapping on every native container used here.
 
+#[path = "../../fcs-source/tests/support/fcbc_reference_evaluator.rs"]
+mod fcbc_reference_evaluator;
+#[path = "../../fcs-source/tests/support/fcbc_reference_loader.rs"]
+mod fcbc_reference_loader;
+
 use fcs_fcbc::{
     DistanceClassification, EvaluationEnvironment, RuntimeValue, ValueType, load_chart,
     query_descriptor, query_distance, query_scroll_coordinate, write_from_compilation,
@@ -118,6 +123,44 @@ collections {
     assert_eq!(head.floor_position, 2.0);
     assert_eq!(tail.floor_position, 4.0);
     assert_eq!(tail.floor_position - head.floor_position, 2.0);
+
+    // Run the same compilation-derived bytes through the independent test oracle.
+    let reference = fcbc_reference_loader::load(&bytes).expect("independent native FCBC load");
+    let reference_line = reference.lines.first().expect("independent main Line");
+    let reference_hold = reference.notes.first().expect("independent Hold note");
+    assert_eq!(
+        fcbc_reference_evaluator::query_descriptor(
+            &reference,
+            reference_hold.property_descriptors[4],
+            1.0,
+            fcbc_reference_evaluator::EvaluationEnvironment::at_time(1.0),
+        )
+        .expect("independent Hold alpha query")
+        .value,
+        fcbc_reference_loader::RuntimeValue::Scalar {
+            ty: fcbc_reference_loader::ValueType::Float,
+            value: 0.25,
+        }
+    );
+    assert_eq!(
+        fcbc_reference_evaluator::query_scroll_coordinate(
+            &reference,
+            reference_line.scroll_tempo_descriptor,
+            reference_hold.time,
+        )
+        .expect("independent Hold-head scroll coordinate"),
+        2.0
+    );
+    assert_eq!(
+        fcbc_reference_evaluator::query_distance(
+            &reference,
+            reference_line.distance_descriptor,
+            reference_hold.end_time,
+        )
+        .expect("independent Hold tail distance")
+        .floor_position,
+        4.0
+    );
 }
 
 #[test]
