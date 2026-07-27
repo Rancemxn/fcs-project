@@ -980,6 +980,7 @@ impl CapabilitySet {
             .with_features(features)
             .expect("static compatibility capability features")
         };
+        let line_motion = self.format == "rpe" || self.format == "pec";
         CapabilityDescriptor::new(
             self.format,
             self.version,
@@ -997,7 +998,7 @@ impl CapabilitySet {
                 ),
                 exact(
                     CapabilityDomain::Motion,
-                    self.tracks,
+                    self.tracks || line_motion,
                     self.features(CapabilityDomain::Motion),
                 ),
                 exact(
@@ -1076,16 +1077,27 @@ impl CapabilitySet {
                 }
                 add("note.hold-geometry", "canonical");
             }
-            CapabilityDomain::Motion if self.tracks => {
-                for value in ["position", "rotation", "alpha", "scroll-speed"] {
-                    add("track.target", value);
+            CapabilityDomain::Motion => {
+                if self.format == "rpe" {
+                    add("line.parent", "linked");
+                    add("line.inherit", "rpe-compatible");
                 }
-                for value in ["linear", "point", "step"] {
-                    add("track.interpolation", value);
+                if self.format != "rpe" {
+                    add("line.parent", "none");
+                    add("line.inherit", "default");
                 }
-                add("track.blend", "replace");
-                for value in ["base", "hold-before", "hold-after", "error"] {
-                    add("track.fill", value);
+                add("line.transform", "default");
+                if self.tracks {
+                    for value in ["position", "rotation", "alpha", "scroll-speed"] {
+                        add("track.target", value);
+                    }
+                    for value in ["linear", "point", "step"] {
+                        add("track.interpolation", value);
+                    }
+                    add("track.blend", "replace");
+                    for value in ["base", "hold-before", "hold-after", "error"] {
+                        add("track.fill", value);
+                    }
                 }
             }
             CapabilityDomain::Scroll if self.time => {
@@ -1095,6 +1107,8 @@ impl CapabilitySet {
             }
             CapabilityDomain::Presentation if self.notes => {
                 add("note.presentation", "default");
+                add("note.position-x", "canonical");
+                add("note.scroll-factor", "canonical");
             }
             CapabilityDomain::Resource if self.resources => {
                 add("resource.bytes", "raw");
@@ -1181,6 +1195,45 @@ fn required_capability_features(
                 add("track.blend", canonical_track_blend(track.blend()));
                 add("track.fill", canonical_track_fill(track.fill()));
             }
+            for line in chart.lines().lines() {
+                if line.parent().is_some() {
+                    add("line.parent", "linked");
+                }
+                if line.inherit() != &CanonicalLineInherit::default() {
+                    let inherit = line.inherit();
+                    add(
+                        "line.inherit",
+                        if inherit.position()
+                            && inherit.scale()
+                            && inherit.alpha()
+                            && inherit.scroll()
+                        {
+                            "rpe-compatible"
+                        } else {
+                            "custom"
+                        },
+                    );
+                }
+                let base = line.base();
+                if base.position().x() != 0.0
+                    || base.position().y() != 0.0
+                    || base.rotation() != 0.0
+                    || base.scale().x() != 1.0
+                    || base.scale().y() != 1.0
+                    || base.alpha() != 1.0
+                    || base.transform_origin().x() != 0.0
+                    || base.transform_origin().y() != 0.0
+                    || base.texture_anchor().x() != 0.5
+                    || base.texture_anchor().y() != 0.5
+                    || (base.floor_scale() != 1.0 && base.floor_scale() != 120.0)
+                    || base.integration_origin() != 0.0
+                    || base.initial_floor_position() != 0.0
+                    || base.allow_reverse_scroll()
+                    || base.z_order() != 0
+                {
+                    add("line.transform", "custom");
+                }
+            }
         }
         CapabilityDomain::Scroll => {
             if !chart.scroll().lines().is_empty() {
@@ -1207,6 +1260,12 @@ fn required_capability_features(
         CapabilityDomain::Presentation if !chart.notes().notes().is_empty() => {
             for note in chart.notes().notes() {
                 add("note.presentation", note_presentation_mode(note));
+                if note.presentation().position_x() != 0.0 {
+                    add("note.position-x", "canonical");
+                }
+                if note.presentation().scroll_factor() != 1.0 {
+                    add("note.scroll-factor", "canonical");
+                }
             }
         }
         CapabilityDomain::Resource if !chart.metadata().resources().is_empty() => {
@@ -1354,11 +1413,16 @@ pub fn negotiate_export_with_options(
     let mut plan = Vec::new();
     for domain in CapabilityDomain::ALL {
         let descriptor = options.capabilities.domain(domain);
+        let required_features = required_capability_features(chart, domain);
         let needed = match domain {
             CapabilityDomain::Timing => true,
             CapabilityDomain::Gameplay => !chart.notes().notes().is_empty(),
-            CapabilityDomain::Motion => !chart.tracks().tracks().is_empty(),
-            CapabilityDomain::Scroll => !chart.scroll().lines().is_empty(),
+            CapabilityDomain::Motion => {
+                !chart.tracks().tracks().is_empty() || !required_features.is_empty()
+            }
+            CapabilityDomain::Scroll => {
+                !chart.scroll().lines().is_empty() || !required_features.is_empty()
+            }
             CapabilityDomain::Presentation => !chart.notes().notes().is_empty(),
             CapabilityDomain::Resource => {
                 !chart.metadata().resources().is_empty()
@@ -1390,9 +1454,10 @@ pub fn negotiate_export_with_options(
         }
         let missing_features = descriptor
             .map(|descriptor| {
-                required_capability_features(chart, domain)
-                    .into_iter()
+                required_features
+                    .iter()
                     .filter(|feature| !descriptor.supports(feature.axis(), feature.value()))
+                    .cloned()
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -1404,26 +1469,23 @@ pub fn negotiate_export_with_options(
             })
             .map_or(0, |_| approximation_segment_count(chart, domain));
         let action = match descriptor {
-            _ if limit_exceeded.is_some() || !missing_features.is_empty() => {
-                NegotiationAction::Unsupported
-            }
-            Some(descriptor) if descriptor.exact() => NegotiationAction::Direct,
-            Some(descriptor) if descriptor.equivalent() => NegotiationAction::Equivalent,
+            _ if limit_exceeded.is_some() => NegotiationAction::Unsupported,
             Some(descriptor)
                 if descriptor.approximation() && options.approximation.allows(domain.as_str()) =>
             {
                 NegotiationAction::Bake
             }
-            Some(descriptor) if descriptor.preserve() => NegotiationAction::Preserve,
             Some(descriptor) if descriptor.drop() && options.drop.allows(domain.as_str()) => {
                 NegotiationAction::Drop
             }
+            _ if !missing_features.is_empty() => NegotiationAction::Unsupported,
+            Some(descriptor) if descriptor.exact() => NegotiationAction::Direct,
+            Some(descriptor) if descriptor.equivalent() => NegotiationAction::Equivalent,
+            Some(descriptor) if descriptor.preserve() => NegotiationAction::Preserve,
             _ => NegotiationAction::Unsupported,
         };
         let category = match action {
-            NegotiationAction::Unsupported
-                if limit_exceeded.is_some() || !missing_features.is_empty() =>
-            {
+            NegotiationAction::Unsupported if limit_exceeded.is_some() => {
                 "conversion.capability-mismatch"
             }
             NegotiationAction::Unsupported
@@ -1587,12 +1649,17 @@ fn capability_limit_failure(
     chart: &CanonicalChart,
     domain: CapabilityDomain,
 ) -> Option<String> {
-    let count = capability_entity_count(chart, domain) as f64;
-    if descriptor
-        .limit("entity.count")
-        .is_some_and(|limit| count > limit)
-    {
-        return Some("entity.count".into());
+    for limit in descriptor.limits() {
+        let count = match limit.name() {
+            "entity.count" => Some(capability_entity_count(chart, domain)),
+            "event.count" => Some(capability_event_count(chart, domain)),
+            "resource.count" => Some(chart.metadata().resources().len()),
+            "byte.count" => None,
+            _ => return Some(format!("unsupported:{}", limit.name())),
+        };
+        if count.is_some_and(|count| (count as f64) > limit.maximum()) {
+            return Some(limit.name().to_owned());
+        }
     }
     if descriptor
         .max_entities()
@@ -1601,6 +1668,32 @@ fn capability_limit_failure(
         return Some("max_entities".into());
     }
     None
+}
+
+fn capability_event_count(chart: &CanonicalChart, domain: CapabilityDomain) -> usize {
+    match domain {
+        CapabilityDomain::Timing => chart.time_map().segments().count(),
+        CapabilityDomain::Gameplay | CapabilityDomain::Presentation => chart.notes().notes().len(),
+        CapabilityDomain::Motion => chart
+            .tracks()
+            .tracks()
+            .iter()
+            .map(|track| track.pieces().len())
+            .sum(),
+        CapabilityDomain::Scroll => chart
+            .scroll()
+            .lines()
+            .iter()
+            .map(|line| line.coordinate().points().len())
+            .sum(),
+        CapabilityDomain::Resource | CapabilityDomain::Package => {
+            chart.metadata().resources().len()
+        }
+        CapabilityDomain::Metadata => capability_entity_count(chart, domain),
+        CapabilityDomain::Numeric | CapabilityDomain::Limits => 0,
+        CapabilityDomain::Entity => capability_entity_count(chart, domain),
+        CapabilityDomain::Expression => capability_entity_count(chart, domain),
+    }
 }
 
 fn approximation_segment_count(chart: &CanonicalChart, domain: CapabilityDomain) -> usize {
@@ -1648,7 +1741,7 @@ fn negotiation_message(
                 .join(", ")
         ),
         NegotiationAction::Unsupported if limit_failure.is_some() => format!(
-            "{} target exceeds declared capability limit {}",
+            "{} target cannot satisfy declared capability limit {}",
             domain,
             limit_failure.unwrap_or_default()
         ),
@@ -2551,18 +2644,52 @@ fn finish_export(
     bytes: Vec<u8>,
 ) -> Result<ExportOutcome, ExportError> {
     for descriptor in options.capabilities.domains() {
-        if descriptor
+        let limit_name = if descriptor
             .max_bytes()
             .is_some_and(|limit| bytes.len() > limit)
-            || descriptor
-                .limit("byte.count")
-                .is_some_and(|limit| bytes.len() as f64 > limit)
         {
+            Some("max_bytes".to_owned())
+        } else if descriptor
+            .limit("byte.count")
+            .is_some_and(|limit| bytes.len() as f64 > limit)
+        {
+            Some("byte.count".to_owned())
+        } else {
+            None
+        };
+        if let Some(limit_name) = limit_name {
+            entries.push(
+                ConversionEntry::new(
+                    format!("capability/{}/limit", descriptor.domain()),
+                    "conversion.capability-mismatch",
+                    conversion_domain(descriptor.domain()),
+                    ConversionSeverity::Error,
+                    SemanticStatus::Unsupported,
+                    ConversionPhase::Export,
+                    None,
+                    None,
+                    None,
+                    Some(limit_name.clone()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    format!(
+                        "target bytes exceed the {} domain byte limit {}",
+                        descriptor.domain(),
+                        limit_name
+                    ),
+                    [],
+                )
+                .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
+            );
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
                 format!(
-                    "target bytes exceed the {} domain byte limit",
-                    descriptor.domain()
+                    "target bytes exceed the {} domain byte limit {}",
+                    descriptor.domain(),
+                    limit_name
                 ),
             )
             .with_entries(entries));
@@ -3448,6 +3575,157 @@ mod tests {
     }
 
     #[test]
+    fn authorized_approximation_can_cover_a_missing_feature() {
+        let chart = pgr_chart("pgr-feature.pgr.json", PgrProfile::PhiraV3);
+        let profile = profile_reference(PgrProfile::PhiraV3.id(), PgrProfile::PhiraV3.version());
+        let base = CapabilitySet::pgr_v3().descriptor(Some(profile));
+        let domains = base
+            .domains()
+            .iter()
+            .map(|descriptor| {
+                if descriptor.domain() != CapabilityDomain::Motion {
+                    return descriptor.clone();
+                }
+                CapabilityDomainDescriptor::new(
+                    descriptor.domain(),
+                    false,
+                    false,
+                    true,
+                    false,
+                    false,
+                    descriptor.max_entities(),
+                    descriptor.max_bytes(),
+                )
+                .with_features(
+                    descriptor
+                        .features()
+                        .iter()
+                        .filter(|feature| {
+                            !(feature.axis() == "track.interpolation" && feature.value() == "step")
+                        })
+                        .cloned(),
+                )
+                .unwrap()
+                .with_limits(descriptor.limits().iter().cloned())
+                .unwrap()
+            })
+            .collect();
+        let descriptor = CapabilityDescriptor::new(
+            base.format(),
+            base.version(),
+            base.profile().map(str::to_owned),
+            domains,
+        )
+        .unwrap();
+        let authorization = ApproximationAuthorization::new(
+            ["motion".into()],
+            [("motion.track_value".into(), 0.001)],
+            1024,
+            "linear-segment",
+            "1.0.0",
+        )
+        .unwrap();
+
+        let (plan, entries) = negotiate_export_with_options(
+            &chart,
+            &ExportOptions::semantic(descriptor).with_approximation(authorization),
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.action_for(CapabilityDomain::Motion),
+            Some(NegotiationAction::Bake)
+        );
+        assert!(entries.iter().any(|entry| {
+            entry.category() == "conversion.capability-negotiated"
+                && entry.domain() == ConversionDomain::Motion
+        }));
+    }
+
+    #[test]
+    fn line_motion_is_negotiated_for_authorized_drop_without_tracks() {
+        let chart = rpe_chart();
+        let profile = profile_reference(
+            RpeProfile::PhiraLegacySpeed.id(),
+            RpeProfile::PhiraLegacySpeed.version(),
+        );
+        let descriptor = descriptor_with_domain(
+            CapabilitySet::rpe_json(),
+            &profile,
+            CapabilityDomain::Motion,
+            false,
+            false,
+            true,
+            None,
+            None,
+        );
+        let authorization = DropAuthorization::new(
+            ["motion".into()],
+            "explicitly discard target-inexpressible line motion",
+        )
+        .unwrap();
+
+        let (plan, _) = negotiate_export_with_options(
+            &chart,
+            &ExportOptions::semantic(descriptor).with_drop(authorization),
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.action_for(CapabilityDomain::Motion),
+            Some(NegotiationAction::Drop)
+        );
+    }
+
+    #[test]
+    fn typed_event_limit_is_enforced_during_capability_negotiation() {
+        let chart = pgr_chart("pgr-feature.pgr.json", PgrProfile::PhiraV3);
+        let profile = profile_reference(PgrProfile::PhiraV3.id(), PgrProfile::PhiraV3.version());
+        let base = CapabilitySet::pgr_v3().descriptor(Some(profile.clone()));
+        let domains = base
+            .domains()
+            .iter()
+            .map(|descriptor| {
+                if descriptor.domain() != CapabilityDomain::Gameplay {
+                    return descriptor.clone();
+                }
+                CapabilityDomainDescriptor::new(
+                    descriptor.domain(),
+                    descriptor.exact(),
+                    descriptor.equivalent(),
+                    descriptor.approximation(),
+                    descriptor.preserve(),
+                    descriptor.drop(),
+                    descriptor.max_entities(),
+                    descriptor.max_bytes(),
+                )
+                .with_features(descriptor.features().iter().cloned())
+                .unwrap()
+                .with_limits([CapabilityLimit::new("event.count", 0.0).unwrap()])
+                .unwrap()
+            })
+            .collect();
+        let descriptor = CapabilityDescriptor::new(
+            base.format(),
+            base.version(),
+            base.profile().map(str::to_owned),
+            domains,
+        )
+        .unwrap();
+
+        let error = negotiate_export_with_options(
+            &chart,
+            &ExportOptions::semantic(descriptor).with_target_profile(profile),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.category(), "conversion.capability-mismatch");
+        assert!(error.entries().iter().any(|entry| {
+            entry.field_key() == Some("event.count") && entry.message().contains("event.count")
+        }));
+    }
+
+    #[test]
     fn approximation_and_drop_need_independent_typed_authorization() {
         let chart = pgr_chart("pgr-feature.pgr.json", PgrProfile::PhiraV3);
         let profile = profile_reference(PecProfile::Phira.id(), PecProfile::Phira.version());
@@ -3793,6 +4071,56 @@ mod tests {
             export_rpe_json_with_options(&chart, &ExportOptions::semantic(descriptor)).unwrap_err();
         assert_eq!(error.category(), "conversion.capability-mismatch");
         assert!(error.message().contains("byte limit"));
+    }
+
+    #[test]
+    fn typed_byte_limit_is_reported_after_target_write() {
+        let chart = rpe_chart();
+        let profile = profile_reference(
+            RpeProfile::PhiraLegacySpeed.id(),
+            RpeProfile::PhiraLegacySpeed.version(),
+        );
+        let base = CapabilitySet::rpe_json().descriptor(Some(profile.clone()));
+        let domains = base
+            .domains()
+            .iter()
+            .map(|descriptor| {
+                if descriptor.domain() != CapabilityDomain::Limits {
+                    return descriptor.clone();
+                }
+                CapabilityDomainDescriptor::new(
+                    descriptor.domain(),
+                    descriptor.exact(),
+                    descriptor.equivalent(),
+                    descriptor.approximation(),
+                    descriptor.preserve(),
+                    descriptor.drop(),
+                    descriptor.max_entities(),
+                    descriptor.max_bytes(),
+                )
+                .with_features(descriptor.features().iter().cloned())
+                .unwrap()
+                .with_limits([CapabilityLimit::new("byte.count", 1.0).unwrap()])
+                .unwrap()
+            })
+            .collect();
+        let descriptor = CapabilityDescriptor::new(
+            base.format(),
+            base.version(),
+            base.profile().map(str::to_owned),
+            domains,
+        )
+        .unwrap();
+        let error = export_rpe_json_with_options(
+            &chart,
+            &ExportOptions::semantic(descriptor).with_target_profile(profile),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.category(), "conversion.capability-mismatch");
+        assert!(error.entries().iter().any(|entry| {
+            entry.field_key() == Some("byte.count") && entry.message().contains("byte.count")
+        }));
     }
 
     #[test]
