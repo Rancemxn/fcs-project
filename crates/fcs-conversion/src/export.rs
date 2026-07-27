@@ -3069,8 +3069,8 @@ mod tests {
             .iter()
             .map(|descriptor| {
                 if descriptor.domain() == target {
-                    let features = descriptor.features().iter().cloned().collect::<Vec<_>>();
-                    let limits = descriptor.limits().iter().cloned().collect::<Vec<_>>();
+                    let features = descriptor.features().to_vec();
+                    let limits = descriptor.limits().to_vec();
                     CapabilityDomainDescriptor::new(
                         target,
                         exact,
