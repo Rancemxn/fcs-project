@@ -27,7 +27,7 @@ mod rpe_canonical;
 
 pub use capability::{
     ApproximationAuthorization, CapabilityDescriptor, CapabilityDomain, CapabilityDomainDescriptor,
-    CapabilityError, DropAuthorization,
+    CapabilityError, CapabilityFeature, CapabilityLimit, DropAuthorization,
 };
 pub use comparison::{
     CanonicalComparison, ComparisonMismatch, compare_canonical_charts,
