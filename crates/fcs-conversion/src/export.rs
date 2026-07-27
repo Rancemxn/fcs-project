@@ -10,10 +10,11 @@ use std::fmt;
 use fcs_model::{
     CanonicalChart, CanonicalColor, CanonicalCompilation, CanonicalJudgeShape, CanonicalLine,
     CanonicalLineInherit, CanonicalNoteKind, CanonicalNoteScorePolicy, CanonicalNoteSide,
-    CanonicalNoteSoundPolicy, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
-    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackTarget, CanonicalTrackValue,
-    CanonicalValue, ConversionDomain, ConversionEntry, ConversionPhase, ConversionPolicy,
-    ConversionReport, ConversionSeverity, ConversionStatus, RepairMode, SemanticStatus,
+    CanonicalNoteSoundPolicy, CanonicalResourceBundle, CanonicalTrack, CanonicalTrackBlend,
+    CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackTarget,
+    CanonicalTrackValue, CanonicalValue, ConversionDomain, ConversionEntry, ConversionPhase,
+    ConversionPolicy, ConversionReport, ConversionSeverity, ConversionStatus, RepairMode,
+    SemanticStatus,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -23,9 +24,10 @@ use crate::{
     CapabilityDomainDescriptor, DecimalLimits, DropAuthorization, ExactDecimal, PecLimits,
     PecProfile, PecProfileBinding, PgrLimits, PgrProfile, PgrProfileBinding, RpeLimits, RpeProfile,
     RpeProfileBinding, RpeVersionEra, SourceArtifact, SourceFormat,
-    compare_canonical_charts_with_budgets, interpret_pec, interpret_pgr, interpret_rpe_semantics,
-    lower_pec_to_canonical, lower_pgr_to_canonical, lower_rpe_to_canonical, parse_json_document,
-    parse_pec_document, parse_pgr_document, parse_rpe_document,
+    compare_canonical_charts_with_resources_with_budgets, interpret_pec, interpret_pgr,
+    interpret_rpe_semantics, lower_pec_to_canonical, lower_pgr_to_canonical,
+    lower_rpe_to_canonical, parse_json_document, parse_pec_document, parse_pgr_document,
+    parse_rpe_document,
 };
 
 /// Stable formatter / exporter diagnostic category.
@@ -694,13 +696,25 @@ pub fn export_pgr_compilation_with_options(
     options: &ExportOptions,
 ) -> Result<ExportOutcome, ExportError> {
     validate_compilation_resource_closure(compilation)?;
-    let outcome = export_pgr_with_options(compilation.chart(), options)?;
+    let outcome = export_pgr_with_resource_context(
+        compilation.chart(),
+        Some(compilation.resources()),
+        options,
+    )?;
     record_compilation_roundtrip_context(outcome, compilation, options)
 }
 
 /// Export PGR v1 or v3 according to the explicit target profile.
 pub fn export_pgr_with_options(
     chart: &CanonicalChart,
+    options: &ExportOptions,
+) -> Result<ExportOutcome, ExportError> {
+    export_pgr_with_resource_context(chart, None, options)
+}
+
+fn export_pgr_with_resource_context(
+    chart: &CanonicalChart,
+    expected_resources: Option<&CanonicalResourceBundle>,
     options: &ExportOptions,
 ) -> Result<ExportOutcome, ExportError> {
     let profile = selected_pgr_profile(options)?;
@@ -835,6 +849,8 @@ pub fn export_pgr_with_options(
         "pgr",
         chart,
         reparsed.compilation().chart(),
+        expected_resources,
+        reparsed.compilation().resources(),
         options,
         negotiation,
         entries,
@@ -1342,6 +1358,14 @@ pub fn export_rpe_json_with_options(
     chart: &CanonicalChart,
     options: &ExportOptions,
 ) -> Result<ExportOutcome, ExportError> {
+    export_rpe_json_with_resource_context(chart, None, options)
+}
+
+fn export_rpe_json_with_resource_context(
+    chart: &CanonicalChart,
+    expected_resources: Option<&CanonicalResourceBundle>,
+    options: &ExportOptions,
+) -> Result<ExportOutcome, ExportError> {
     let (profile, binding, rpe_version) = selected_rpe_binding(options)?;
     let (negotiation, entries) = negotiate_export_with_options(chart, options)?;
     require_rpe_chart_shape(chart, &negotiation)?;
@@ -1512,6 +1536,8 @@ pub fn export_rpe_json_with_options(
         "rpe",
         chart,
         reparsed.compilation().chart(),
+        expected_resources,
+        reparsed.compilation().resources(),
         options,
         negotiation,
         entries,
@@ -1525,7 +1551,11 @@ pub fn export_rpe_compilation_with_options(
     options: &ExportOptions,
 ) -> Result<ExportOutcome, ExportError> {
     validate_compilation_resource_closure(compilation)?;
-    let outcome = export_rpe_json_with_options(compilation.chart(), options)?;
+    let outcome = export_rpe_json_with_resource_context(
+        compilation.chart(),
+        Some(compilation.resources()),
+        options,
+    )?;
     record_compilation_roundtrip_context(outcome, compilation, options)
 }
 
@@ -1541,6 +1571,14 @@ pub fn export_pec_line(chart: &CanonicalChart) -> Result<Vec<u8>, ExportError> {
 
 pub fn export_pec_line_with_options(
     chart: &CanonicalChart,
+    options: &ExportOptions,
+) -> Result<ExportOutcome, ExportError> {
+    export_pec_line_with_resource_context(chart, None, options)
+}
+
+fn export_pec_line_with_resource_context(
+    chart: &CanonicalChart,
+    expected_resources: Option<&CanonicalResourceBundle>,
     options: &ExportOptions,
 ) -> Result<ExportOutcome, ExportError> {
     let profile = selected_pec_profile(options)?;
@@ -1668,6 +1706,8 @@ pub fn export_pec_line_with_options(
         "pec",
         chart,
         reparsed.compilation().chart(),
+        expected_resources,
+        reparsed.compilation().resources(),
         options,
         negotiation,
         entries,
@@ -1681,7 +1721,11 @@ pub fn export_pec_compilation_with_options(
     options: &ExportOptions,
 ) -> Result<ExportOutcome, ExportError> {
     validate_compilation_resource_closure(compilation)?;
-    let outcome = export_pec_line_with_options(compilation.chart(), options)?;
+    let outcome = export_pec_line_with_resource_context(
+        compilation.chart(),
+        Some(compilation.resources()),
+        options,
+    )?;
     record_compilation_roundtrip_context(outcome, compilation, options)
 }
 
@@ -2161,6 +2205,8 @@ fn finish_export(
     format: &str,
     expected: &CanonicalChart,
     actual: &CanonicalChart,
+    expected_resources: Option<&CanonicalResourceBundle>,
+    actual_resources: &CanonicalResourceBundle,
     options: &ExportOptions,
     negotiation: NegotiationPlan,
     mut entries: Vec<ConversionEntry>,
@@ -2228,9 +2274,11 @@ fn finish_export(
         .filter(|entry| entry.action() == NegotiationAction::Drop)
         .map(|entry| entry.domain().as_str().to_owned())
         .collect::<Vec<_>>();
-    let comparison = compare_canonical_charts_with_budgets(
+    let comparison = compare_canonical_charts_with_resources_with_budgets(
         expected,
         actual,
+        expected_resources,
+        Some(actual_resources),
         &comparison_budgets,
         &dropped_domains,
     );
