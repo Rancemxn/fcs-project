@@ -3014,7 +3014,7 @@ fn lower_hex(bytes: impl AsRef<[u8]>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::RpeSpeedMode;
+    use crate::{CapabilityLimit, RpeSpeedMode};
     use fcs_model::{
         CanonicalChart, CanonicalMetadata, CanonicalNote, CanonicalNotePresentation,
         CanonicalNoteSet, CanonicalObject, CanonicalResourceBundle, CanonicalSourceVersion,
