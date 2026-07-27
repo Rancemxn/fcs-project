@@ -1958,7 +1958,7 @@ lines {
     }
 
     #[test]
-    fn write_from_compilation_evaluates_all_native_alpha_easings() {
+    fn write_from_compilation_preserves_all_native_alpha_easing_ids() {
         for easing in EasingId::ALL {
             let workspace = tempdir().unwrap();
             let source = format!(
@@ -2000,6 +2000,7 @@ lines {{
             )
             .expect("alpha easing Track evaluation")
             .value;
+            // The shared product runtime proves serialized ID preservation, not independent math.
             assert_eq!(
                 actual,
                 crate::RuntimeValue::Scalar {
