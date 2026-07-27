@@ -7,8 +7,8 @@
 use std::collections::BTreeMap;
 
 use fcs_model::{
-    CanonicalChart, CanonicalLine, CanonicalScrollLine, CanonicalTrack, CanonicalTrackPiece,
-    CanonicalTrackTarget, CanonicalTrackValue,
+    Beat, CanonicalChart, CanonicalLine, CanonicalScrollLine, CanonicalTime, CanonicalTrack,
+    CanonicalTrackPiece, CanonicalTrackTarget, CanonicalTrackValue,
 };
 use fcs_runtime::{evaluate_line_scroll, evaluate_line_transform};
 
@@ -714,8 +714,8 @@ fn compare_notes(
             "gameplay",
             "gameplay.note_time",
             field("time"),
-            lg.time().chart_time_seconds(),
-            rg.time().chart_time_seconds(),
+            lg.time(),
+            rg.time(),
             budgets,
             verified_maximum_errors,
             mismatches,
@@ -724,8 +724,8 @@ fn compare_notes(
             "gameplay",
             "gameplay.hold_time",
             field("endTime"),
-            lg.end_time().map(|time| time.chart_time_seconds()),
-            rg.end_time().map(|time| time.chart_time_seconds()),
+            lg.end_time(),
+            rg.end_time(),
             budgets,
             verified_maximum_errors,
             mismatches,
@@ -839,22 +839,22 @@ fn compare_track_piece(
     let field = |name: &str| format!("tracks[{track}].pieces[{piece}].{name}");
     match (left, right) {
         (CanonicalTrackPiece::Segment(left), CanonicalTrackPiece::Segment(right)) => {
-            compare_float(
+            compare_time(
                 "motion",
                 "motion.track_time",
                 field("start"),
-                left.start().chart_time_seconds(),
-                right.start().chart_time_seconds(),
+                left.start(),
+                right.start(),
                 budgets,
                 verified_maximum_errors,
                 mismatches,
             );
-            compare_float(
+            compare_time(
                 "motion",
                 "motion.track_time",
                 field("end"),
-                left.end().chart_time_seconds(),
-                right.end().chart_time_seconds(),
+                left.end(),
+                right.end(),
                 budgets,
                 verified_maximum_errors,
                 mismatches,
@@ -888,12 +888,12 @@ fn compare_track_piece(
             }
         }
         (CanonicalTrackPiece::Point(left), CanonicalTrackPiece::Point(right)) => {
-            compare_float(
+            compare_time(
                 "motion",
                 "motion.track_time",
                 field("time"),
-                left.time().chart_time_seconds(),
-                right.time().chart_time_seconds(),
+                left.time(),
+                right.time(),
                 budgets,
                 verified_maximum_errors,
                 mismatches,
@@ -1250,8 +1250,8 @@ fn compare_time(
     domain: &str,
     metric: &str,
     field: String,
-    expected: f64,
-    actual: f64,
+    expected: CanonicalTime,
+    actual: CanonicalTime,
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut BTreeMap<String, f64>,
     mismatches: &mut Mismatches<'_>,
@@ -1259,11 +1259,17 @@ fn compare_time(
     compare_float(
         domain,
         metric,
-        field,
-        expected,
-        actual,
+        field.clone(),
+        expected.chart_time_seconds(),
+        actual.chart_time_seconds(),
         budgets,
         verified_maximum_errors,
+        mismatches,
+    );
+    compare_source_beat(
+        field,
+        expected.source_beat(),
+        actual.source_beat(),
         mismatches,
     );
 }
@@ -1273,14 +1279,14 @@ fn compare_optional_time(
     domain: &str,
     metric: &str,
     field: String,
-    expected: Option<f64>,
-    actual: Option<f64>,
+    expected: Option<CanonicalTime>,
+    actual: Option<CanonicalTime>,
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut BTreeMap<String, f64>,
     mismatches: &mut Mismatches<'_>,
 ) {
     match (expected, actual) {
-        (Some(expected), Some(actual)) => compare_float(
+        (Some(expected), Some(actual)) => compare_time(
             domain,
             metric,
             field,
@@ -1298,6 +1304,24 @@ fn compare_optional_time(
             format!("{expected:?}"),
             format!("{actual:?}"),
         ),
+    }
+}
+
+fn compare_source_beat(
+    field: String,
+    expected: Option<Beat>,
+    actual: Option<Beat>,
+    mismatches: &mut Mismatches<'_>,
+) {
+    if expected != actual {
+        metric_mismatch(
+            mismatches,
+            "timing",
+            "timing.source_beat",
+            format!("{field}.sourceBeat"),
+            format!("{expected:?}"),
+            format!("{actual:?}"),
+        );
     }
 }
 
@@ -1386,8 +1410,9 @@ mod tests {
         CanonicalNote, CanonicalNoteGameplay, CanonicalNoteKind, CanonicalNotePresentation,
         CanonicalNoteScorePolicy, CanonicalNoteSet, CanonicalNoteSide, CanonicalNoteSoundPolicy,
         CanonicalProfile, CanonicalScrollCoordinate, CanonicalScrollLine, CanonicalScrollSet,
-        CanonicalScrollTempo, CanonicalSourceVersion, CanonicalTextualId, CanonicalTrackSet,
-        CanonicalVec2, ChartTimeMap, EntityKind, StableId, StableIdRegistry, TempoPoint,
+        CanonicalScrollTempo, CanonicalSourceVersion, CanonicalTextualId, CanonicalTime,
+        CanonicalTrackSet, CanonicalVec2, ChartTimeMap, EntityKind, StableId, StableIdRegistry,
+        TempoPoint,
     };
 
     fn record(sink: &mut Mismatches<'_>, domain: &str) {
@@ -1625,12 +1650,12 @@ mod tests {
         (line, note)
     }
 
-    fn tap_note() -> CanonicalNote {
+    fn tap_note_with_time(time: CanonicalTime) -> CanonicalNote {
         let (line, note) = ids();
         let gameplay = CanonicalNoteGameplay::new(
             CanonicalNoteKind::Tap,
             line,
-            time_map().chart_time(Beat::zero()).unwrap(),
+            time,
             None,
             CanonicalNoteSide::Above,
             true,
@@ -1656,6 +1681,10 @@ mod tests {
         )
         .unwrap();
         CanonicalNote::new(note, CanonicalNoteKind::Tap, 0, gameplay, presentation).unwrap()
+    }
+
+    fn tap_note() -> CanonicalNote {
+        tap_note_with_time(time_map().chart_time(Beat::zero()).unwrap())
     }
 
     #[test]
@@ -1696,6 +1725,29 @@ mod tests {
                 .iter()
                 .any(|mismatch| mismatch.metric() == "scroll.distance")
         );
+        assert!(compare_canonical_charts(&expected, &expected).is_equivalent());
+    }
+
+    #[test]
+    fn source_beat_provenance_is_compared_even_when_chart_time_is_equal() {
+        let expected = chart_with_notes(vec![tap_note()]);
+        let actual = chart_with_notes(vec![tap_note_with_time(
+            CanonicalTime::from_chart_time_seconds(0.0).unwrap(),
+        )]);
+        assert_eq!(
+            expected.notes().notes()[0].gameplay().time(),
+            actual.notes().notes()[0].gameplay().time()
+        );
+
+        let comparison = compare_canonical_charts(&expected, &actual);
+
+        assert!(!comparison.is_equivalent());
+        assert!(comparison.mismatches().iter().any(|mismatch| {
+            mismatch.domain() == "timing"
+                && mismatch.metric() == "timing.source_beat"
+                && mismatch.field() == "notes[0].time.sourceBeat"
+                && mismatch.error().is_none()
+        }));
         assert!(compare_canonical_charts(&expected, &expected).is_equivalent());
     }
 
