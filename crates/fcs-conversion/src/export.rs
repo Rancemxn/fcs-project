@@ -2957,6 +2957,9 @@ fn finish_export(
         let verified_maximum = comparison
             .verified_maximum_error(metric)
             .expect("unverified approximation metrics fail before report construction");
+        let verified_sample_count = comparison
+            .verified_sample_count(metric)
+            .expect("unverified approximation metrics fail before report construction");
         let metric_domain = metric
             .split_once('.')
             .map_or(metric.as_str(), |(domain, _)| domain);
@@ -2970,7 +2973,7 @@ fn finish_export(
             *declared_maximum,
             verified_maximum,
             "same-profile-canonical-reparse",
-            forced_boundaries.len() as u64,
+            verified_sample_count,
             verified_output_segments as u64,
             forced_boundaries.iter().copied(),
             source_descriptor_hash.clone(),
@@ -4022,7 +4025,14 @@ mod tests {
             .comparison()
             .verified_maximum_error("presentation.value")
             .unwrap();
+        let verified_sample_count = chart.notes().notes().len() as u64 * 8;
         assert!(verified > 0.0 && verified <= 0.001);
+        assert_eq!(
+            outcome
+                .comparison()
+                .verified_sample_count("presentation.value"),
+            Some(verified_sample_count)
+        );
         let verification = outcome
             .report()
             .entries()
@@ -4047,15 +4057,8 @@ mod tests {
             metric.verification_method(),
             "same-profile-canonical-reparse"
         );
-        assert_eq!(
-            metric.sample_count(),
-            chart.notes().notes().len() as u64 * 8
-        );
+        assert_eq!(metric.sample_count(), verified_sample_count);
         assert!(metric.segment_count() > 0);
-        assert_eq!(
-            metric.sample_count(),
-            metric.forced_boundaries().len() as u64
-        );
         assert!(
             metric
                 .forced_boundaries()
