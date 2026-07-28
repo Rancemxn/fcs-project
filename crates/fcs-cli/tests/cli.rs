@@ -7,6 +7,18 @@ fn bin() -> Command {
 }
 
 #[test]
+fn version_reports_workspace_version() {
+    let output = bin().arg("--version").output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    assert_eq!(output.stdout, b"fcs 5.0.0\n");
+}
+
+#[test]
 fn check_accepts_minimal_valid_source() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let source = root.join("docs/conformance/fcs5/source/valid/minimal-chart.fcs");
