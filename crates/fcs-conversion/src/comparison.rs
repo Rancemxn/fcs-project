@@ -1806,6 +1806,28 @@ mod tests {
         )
     }
 
+    fn chart_with_lines(lines: Vec<CanonicalLine>) -> CanonicalChart {
+        CanonicalChart::new(
+            CanonicalSourceVersion::new("5.0.0").unwrap(),
+            CanonicalProfile::Chart,
+            [],
+            time_map(),
+            CanonicalMetadata::new(
+                None,
+                Default::default(),
+                Vec::new(),
+                Default::default(),
+                None,
+                None,
+            ),
+            CanonicalLineGraph::new(lines).unwrap(),
+            CanonicalNoteSet::new(Vec::new()).unwrap(),
+            CanonicalTrackSet::new(Vec::new()).unwrap(),
+            CanonicalScrollSet::new(Vec::new()).unwrap(),
+            [],
+        )
+    }
+
     fn line_base(position: (f64, f64)) -> CanonicalLineBase {
         CanonicalLineBase::new(
             CanonicalVec2::new(position.0, position.1).unwrap(),
@@ -1989,6 +2011,53 @@ mod tests {
                 && mismatch.field().contains("worldTransform")
         }));
         assert!(compare_canonical_charts(&expected, &expected).is_equivalent());
+    }
+
+    #[test]
+    fn missing_line_is_reported_by_stable_identity_without_misaligning_later_lines() {
+        let mut registry = StableIdRegistry::new();
+        let mut id = |name| {
+            registry
+                .insert(
+                    EntityKind::Line,
+                    CanonicalTextualId::explicit(name).unwrap(),
+                )
+                .unwrap()
+        };
+        let a = id("a");
+        let b = id("b");
+        let c = id("c");
+        let make = |id: StableId, order, x| {
+            CanonicalLine::new(
+                id,
+                None,
+                order,
+                line_base((x, 0.0)),
+                CanonicalLineInherit::default(),
+                CanonicalScrollTempo::Global,
+            )
+            .unwrap()
+        };
+        let expected = chart_with_lines(vec![
+            make(a.clone(), 0, 0.0),
+            make(b.clone(), 1, 1.0),
+            make(c.clone(), 2, 2.0),
+        ]);
+        let actual = chart_with_lines(vec![make(a, 0, 0.0), make(c, 2, 2.0)]);
+
+        let comparison = compare_canonical_charts(&expected, &actual);
+
+        assert!(comparison.mismatches().iter().any(|mismatch| {
+            mismatch.field() == format!("lines[{}]", b.value())
+                && mismatch.expected() == "present"
+                && mismatch.actual() == "missing"
+        }));
+        assert!(
+            !comparison
+                .mismatches()
+                .iter()
+                .any(|mismatch| mismatch.field() == "lines[1].documentOrder")
+        );
     }
 
     #[test]
