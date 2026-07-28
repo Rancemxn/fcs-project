@@ -1970,20 +1970,28 @@ fn export_rpe_json_with_resource_context(
             }
             notes.push(payload);
         }
-        let father = line
-            .parent()
-            .and_then(|parent| {
-                ordered_lines
-                    .iter()
-                    .position(|candidate| candidate.id().value() == parent.value())
-            })
-            .map_or(-1, |index| index as i64);
+        let motion_dropped = negotiation.drops(CapabilityDomain::Motion);
+        let father = if motion_dropped {
+            -1
+        } else {
+            line.parent()
+                .and_then(|parent| {
+                    ordered_lines
+                        .iter()
+                        .position(|candidate| candidate.id().value() == parent.value())
+                })
+                .map_or(-1, |index| index as i64)
+        };
         judge_lines.push(json!({
             "bpmfactor": 1,
             "eventLayers": [],
             "notes": notes,
             "father": father,
-            "rotateWithFather": line.inherit().rotation()
+            "rotateWithFather": if motion_dropped {
+                false
+            } else {
+                line.inherit().rotation()
+            }
         }));
     }
     if judge_lines.is_empty() {
@@ -3273,6 +3281,48 @@ mod tests {
         .unwrap()
     }
 
+    fn rpe_motion_scroll_drop_descriptor(profile: &str) -> CapabilityDescriptor {
+        let base = CapabilitySet::rpe_json().descriptor(Some(profile.into()));
+        let domains = base
+            .domains()
+            .iter()
+            .map(|descriptor| {
+                if matches!(
+                    descriptor.domain(),
+                    CapabilityDomain::Motion | CapabilityDomain::Scroll
+                ) {
+                    CapabilityDomainDescriptor::new(
+                        descriptor.domain(),
+                        false,
+                        false,
+                        false,
+                        false,
+                        true,
+                        descriptor.max_entities(),
+                        descriptor.max_bytes(),
+                    )
+                    .with_features(if descriptor.domain() == CapabilityDomain::Scroll {
+                        Vec::new()
+                    } else {
+                        descriptor.features().to_vec()
+                    })
+                    .unwrap()
+                    .with_limits(descriptor.limits().iter().cloned())
+                    .unwrap()
+                } else {
+                    descriptor.clone()
+                }
+            })
+            .collect();
+        CapabilityDescriptor::new(
+            base.format(),
+            base.version(),
+            base.profile().map(str::to_owned),
+            domains,
+        )
+        .unwrap()
+    }
+
     fn with_source_version(chart: &CanonicalChart, version: &str) -> CanonicalChart {
         let mut changed = CanonicalChart::new(
             CanonicalSourceVersion::new(version).unwrap(),
@@ -3697,19 +3747,10 @@ mod tests {
             RpeProfile::PhiraLegacySpeed.id(),
             RpeProfile::PhiraLegacySpeed.version(),
         );
-        let descriptor = descriptor_with_domain(
-            CapabilitySet::rpe_json(),
-            &profile,
-            CapabilityDomain::Motion,
-            false,
-            false,
-            true,
-            None,
-            None,
-        );
+        let descriptor = rpe_motion_scroll_drop_descriptor(&profile);
         let authorization = DropAuthorization::new(
-            ["motion".into()],
-            "explicitly discard target-inexpressible line motion",
+            ["motion".into(), "scroll".into()],
+            "explicitly discard target-inexpressible line motion and scroll",
         )
         .unwrap();
 
@@ -3723,6 +3764,36 @@ mod tests {
             plan.action_for(CapabilityDomain::Motion),
             Some(NegotiationAction::Drop)
         );
+    }
+
+    #[test]
+    fn authorized_motion_drop_neutralizes_rpe_parent_and_inherit_before_write() {
+        let chart = rpe_chart();
+        assert!(chart.lines().lines().any(|line| line.parent().is_some()));
+        assert!(chart.lines().lines().any(|line| line.inherit().rotation()));
+        let profile = profile_reference(
+            RpeProfile::PhiraLegacySpeed.id(),
+            RpeProfile::PhiraLegacySpeed.version(),
+        );
+        let descriptor = rpe_motion_scroll_drop_descriptor(&profile);
+        let authorization = DropAuthorization::new(
+            ["motion".into(), "scroll".into()],
+            "explicitly discard target-inexpressible line motion and scroll",
+        )
+        .unwrap();
+        let outcome = export_rpe_json_with_options(
+            &chart,
+            &ExportOptions::semantic(descriptor).with_drop(authorization),
+        )
+        .unwrap();
+
+        assert!(outcome.negotiation().drops(CapabilityDomain::Motion));
+        assert!(outcome.negotiation().drops(CapabilityDomain::Scroll));
+        let target: Value = serde_json::from_slice(outcome.bytes()).unwrap();
+        let lines = target["judgeLineList"].as_array().unwrap();
+        assert!(lines.iter().all(|line| {
+            line["father"] == json!(-1) && line["rotateWithFather"] == json!(false)
+        }));
     }
 
     #[test]
