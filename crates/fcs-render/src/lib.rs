@@ -141,8 +141,10 @@ mod tests {
 
     use super::*;
     use crate::assets::PNG_PIXELS;
-    use crate::loader::PaintData;
-    use fcs_fcbc::{DescriptorKind, RuntimeValue, write_nonempty_execution};
+    use crate::loader::{GeometryData, PaintData};
+    use fcs_fcbc::{
+        DescriptorKind, PropertyDescriptor, RuntimeValue, ValueType, write_nonempty_execution,
+    };
     use image::{ColorType, ImageEncoder, codecs::png::PngEncoder};
 
     fn render_fixture() -> Vec<u8> {
@@ -159,6 +161,54 @@ mod tests {
                 malformed: b"not-an-image",
             },
         )
+    }
+
+    fn set_descriptor_constant(
+        render: &mut DecodedRenderChart,
+        descriptor: u32,
+        value: RuntimeValue,
+    ) {
+        let constant = render.core.constants.len() as u32;
+        render.core.constants.push(value);
+        render.core.descriptors[descriptor as usize].kind = DescriptorKind::Constant(constant);
+    }
+
+    fn add_descriptor_constant(render: &mut DecodedRenderChart, value: RuntimeValue) -> u32 {
+        let constant = render.core.constants.len() as u32;
+        let descriptor = render.core.descriptors.len() as u32;
+        let domain = render.core.descriptors[2].domain;
+        render.core.constants.push(value.clone());
+        render.core.descriptors.push(PropertyDescriptor {
+            property_type: value.value_type(),
+            domain,
+            kind: DescriptorKind::Constant(constant),
+        });
+        descriptor
+    }
+
+    fn set_full_viewport_rect(render: &mut DecodedRenderChart) {
+        set_descriptor_constant(
+            render,
+            2,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [-6.0, -6.0],
+            },
+        );
+        let size = add_descriptor_constant(
+            render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [12.0, 12.0],
+            },
+        );
+        for geometry in &mut render.geometries {
+            if let GeometryData::Rect { origin, size: rect_size } = &mut geometry.data {
+                if *origin == 2 {
+                    *rect_size = size;
+                }
+            }
+        }
     }
 
     fn u32_at(bytes: &[u8], offset: usize) -> u32 {
@@ -253,7 +303,8 @@ mod tests {
             malformed: b"not-an-image",
         };
         let bytes = write_nonempty_render(&core, assets);
-        let render = load_render(&bytes).expect("product render load");
+        let mut render = load_render(&bytes).expect("product render load");
+        set_full_viewport_rect(&mut render);
         let color_descriptor = render
             .paints
             .iter()
@@ -278,6 +329,53 @@ mod tests {
         assert_eq!(rect.fill_rgba, Some([1.0, 1.0, 1.0, 1.0]));
         let pixels = rasterize_solid_rgba8(&render, 2, 2).expect("solid raster");
         assert_eq!(pixels, vec![255u8; 16]);
+    }
+
+    #[test]
+    fn solid_rect_uses_bounds_output_color_space_and_even_quantization() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        set_full_viewport_rect(&mut render);
+        let color_descriptor = render
+            .paints
+            .iter()
+            .find_map(|paint| match paint.data {
+                PaintData::Solid { color } => Some(color),
+                _ => None,
+            })
+            .expect("fixture has a Solid paint");
+        set_descriptor_constant(
+            &mut render,
+            color_descriptor,
+            RuntimeValue::Color([0.5, 0.5, 0.5, 1.0]),
+        );
+
+        let rect = evaluate_semantic_draw_list(&render)
+            .expect("semantic draw list")
+            .into_iter()
+            .find(|op| op.kind == NodeKind::Rect)
+            .expect("fixture has a Rect draw op");
+        assert_eq!(rect.bounds, [-6.0, -6.0, 6.0, 6.0]);
+        assert_eq!(
+            rasterize_solid_rgba8(&render, 1, 1).expect("linear raster"),
+            vec![128, 128, 128, 255]
+        );
+
+        render.viewport_color_space = 2;
+        assert_eq!(
+            rasterize_solid_rgba8(&render, 1, 1).expect("sRGB raster"),
+            vec![188, 188, 188, 255]
+        );
+
+        render.viewport_color_space = 1;
+        set_descriptor_constant(
+            &mut render,
+            color_descriptor,
+            RuntimeValue::Color([0.5 / 255.0, 0.5 / 255.0, 0.5 / 255.0, 1.0]),
+        );
+        assert_eq!(
+            rasterize_solid_rgba8(&render, 1, 1).expect("tie raster"),
+            vec![0, 0, 0, 255]
+        );
     }
 
     #[test]
