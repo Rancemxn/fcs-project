@@ -172,7 +172,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "fcs-conversion"
-version = "0.2.0"
+version = "5.0.0"
 dependencies = [
  "fcs-model",
  "fcs-runtime",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "fcs-fcbc"
-version = "0.2.0"
+version = "5.0.0"
 dependencies = [
  "crc",
  "fcs-model",
@@ -199,14 +199,14 @@ dependencies = [
 
 [[package]]
 name = "fcs-model"
-version = "0.2.0"
+version = "5.0.0"
 dependencies = [
  "sha2",
 ]
 
 [[package]]
 name = "fcs-render"
-version = "0.2.0"
+version = "5.0.0"
 dependencies = [
  "fcs-fcbc",
  "image",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "fcs-runtime"
-version = "0.2.0"
+version = "5.0.0"
 dependencies = [
  "fcs-model",
  "nalgebra",
@@ -224,7 +224,7 @@ dependencies = [
 
 [[package]]
 name = "fcs-source"
-version = "0.2.0"
+version = "5.0.0"
 dependencies = [
  "chumsky",
  "fcs-model",
