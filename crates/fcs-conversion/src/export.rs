@@ -10,15 +10,16 @@ use std::fmt;
 use fcs_model::{
     CanonicalChart, CanonicalColor, CanonicalCompilation, CanonicalJudgeShape, CanonicalLine,
     CanonicalLineInherit, CanonicalNoteKind, CanonicalNoteScorePolicy, CanonicalNoteSide,
-    CanonicalNoteSoundPolicy, CanonicalResourceBundle, CanonicalTrack, CanonicalTrackBlend,
-    CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackTarget,
-    CanonicalTrackValue, CanonicalValue, ConversionDomain, ConversionEntry, ConversionPhase,
-    ConversionPolicy, ConversionReport, ConversionSeverity, ConversionStatus, ErrorMetric,
-    RepairMode, SemanticStatus,
+    CanonicalNoteSoundPolicy, CanonicalResourceBundle, CanonicalTextualId, CanonicalTrack,
+    CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece,
+    CanonicalTrackTarget, CanonicalTrackValue, CanonicalValue, ConversionDomain, ConversionEntry,
+    ConversionPhase, ConversionPolicy, ConversionReport, ConversionSeverity, ConversionStatus,
+    EntityKind, ErrorMetric, ExpansionPath, RepairMode, SemanticStatus, StableId, StableIdRegistry,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::comparison::EntityAlignment;
 use crate::{
     ApproximationAuthorization, ArtifactRole, CapabilityDescriptor, CapabilityDomain,
     CapabilityDomainDescriptor, CapabilityFeature, DecimalLimits, DropAuthorization, ExactDecimal,
@@ -735,7 +736,20 @@ fn export_pgr_with_resource_context(
     let mut lines = Vec::new();
     let mut ordered_lines: Vec<_> = chart.lines().lines().collect();
     ordered_lines.sort_by_key(|line| line.document_order());
-    for line in ordered_lines {
+    let mut target_ids = StableIdRegistry::new();
+    let mut line_alignment = Vec::with_capacity(ordered_lines.len());
+    let mut note_alignment = Vec::with_capacity(chart.notes().notes().len());
+    let mut note_order = 0u64;
+    for (line_index, line) in ordered_lines.into_iter().enumerate() {
+        line_alignment.push((
+            line.id().clone(),
+            generated_target_id(
+                &mut target_ids,
+                EntityKind::Line,
+                "pgrLines",
+                line_index as u64,
+            )?,
+        ));
         let line_id = line.id().value();
         let tracks = pgr_line_tracks(chart, line_id, &negotiation)?;
         let speed = tracks.speed.ok_or_else(|| {
@@ -749,6 +763,8 @@ fn export_pgr_with_resource_context(
         })?;
         let mut notes_above = Vec::new();
         let mut notes_below = Vec::new();
+        let mut note_ids_above = Vec::new();
+        let mut note_ids_below = Vec::new();
         let mut notes: Vec<_> = chart
             .notes()
             .notes()
@@ -790,9 +806,22 @@ fn export_pgr_with_resource_context(
                 "floorPosition": floor_position
             });
             match note.gameplay().side() {
-                CanonicalNoteSide::Above => notes_above.push(payload),
-                CanonicalNoteSide::Below => notes_below.push(payload),
+                CanonicalNoteSide::Above => {
+                    notes_above.push(payload);
+                    note_ids_above.push(note.id().clone());
+                }
+                CanonicalNoteSide::Below => {
+                    notes_below.push(payload);
+                    note_ids_below.push(note.id().clone());
+                }
             }
+        }
+        for note_id in note_ids_above.into_iter().chain(note_ids_below) {
+            note_alignment.push((
+                note_id,
+                generated_target_id(&mut target_ids, EntityKind::Note, "pgrNotes", note_order)?,
+            ));
+            note_order = note_order.saturating_add(1);
         }
         let (move_events, rotate_events, alpha_events) =
             if negotiation.drops(CapabilityDomain::Motion) {
@@ -845,12 +874,14 @@ fn export_pgr_with_resource_context(
         .map_err(|error| ExportError::new(error.category(), error.to_string()))?;
     let reparsed = lower_pgr_to_canonical(&semantic, &artifact)
         .map_err(|error| ExportError::new(error.category(), error.to_string()))?;
+    let alignment = entity_alignment(line_alignment, note_alignment)?;
     finish_export(
         "pgr",
         chart,
         reparsed.compilation().chart(),
         expected_resources,
         reparsed.compilation().resources(),
+        &alignment,
         options,
         negotiation,
         entries,
@@ -1864,7 +1895,20 @@ fn export_rpe_json_with_resource_context(
     let mut ordered_lines: Vec<_> = chart.lines().lines().collect();
     ordered_lines.sort_by_key(|line| line.document_order());
     let mut judge_lines = Vec::new();
-    for line in &ordered_lines {
+    let mut target_ids = StableIdRegistry::new();
+    let mut line_alignment = Vec::with_capacity(ordered_lines.len());
+    let mut note_alignment = Vec::with_capacity(chart.notes().notes().len());
+    let mut target_note_order = 0u64;
+    for (line_index, line) in ordered_lines.iter().copied().enumerate() {
+        line_alignment.push((
+            line.id().clone(),
+            generated_target_id(
+                &mut target_ids,
+                EntityKind::Line,
+                "rpeLines",
+                line_index as u64,
+            )?,
+        ));
         let line_id = line.id().value();
         let mut line_notes: Vec<_> = chart
             .notes()
@@ -1969,6 +2013,16 @@ fn export_rpe_json_with_resource_context(
                 }
             }
             notes.push(payload);
+            note_alignment.push((
+                note.id().clone(),
+                generated_target_id(
+                    &mut target_ids,
+                    EntityKind::Note,
+                    "rpeNotes",
+                    target_note_order,
+                )?,
+            ));
+            target_note_order = target_note_order.saturating_add(1);
         }
         let motion_dropped = negotiation.drops(CapabilityDomain::Motion);
         let father = if motion_dropped {
@@ -2017,12 +2071,14 @@ fn export_rpe_json_with_resource_context(
         .map_err(|error| ExportError::new(error.category(), error.to_string()))?;
     let reparsed = lower_rpe_to_canonical(&semantic, &artifact)
         .map_err(|error| ExportError::new(error.category(), error.to_string()))?;
+    let alignment = entity_alignment(line_alignment, note_alignment)?;
     finish_export(
         "rpe",
         chart,
         reparsed.compilation().chart(),
         expected_resources,
         reparsed.compilation().resources(),
+        &alignment,
         options,
         negotiation,
         entries,
@@ -2093,12 +2149,35 @@ fn export_pec_line_with_resource_context(
     }
     let mut ordered_lines: Vec<_> = chart.lines().lines().collect();
     ordered_lines.sort_by_key(|line| line.document_order());
+    let mut target_ids = StableIdRegistry::new();
+    let mut line_alignment = Vec::with_capacity(ordered_lines.len());
+    for (line_index, line) in ordered_lines.iter().copied().enumerate() {
+        line_alignment.push((
+            line.id().clone(),
+            generated_target_id(
+                &mut target_ids,
+                EntityKind::Line,
+                "pecLines",
+                line_index as u64,
+            )?,
+        ));
+    }
     if ordered_lines.len() > 1 {
         lines.push_str(&format!("cp {} 0 1024 700\n", ordered_lines.len() - 1));
     }
     let mut notes: Vec<_> = chart.notes().notes().iter().collect();
     notes.sort_by_key(|note| note.document_order());
-    for note in notes {
+    let mut note_alignment = Vec::with_capacity(notes.len());
+    for (target_note_order, note) in notes.into_iter().enumerate() {
+        note_alignment.push((
+            note.id().clone(),
+            generated_target_id(
+                &mut target_ids,
+                EntityKind::Note,
+                "pecNotes",
+                target_note_order as u64,
+            )?,
+        ));
         let line_index = ordered_lines
             .iter()
             .position(|line| line.id().value() == note.gameplay().line().value())
@@ -2187,12 +2266,14 @@ fn export_pec_line_with_resource_context(
         .map_err(|error| ExportError::new(error.category(), error.to_string()))?;
     let reparsed = lower_pec_to_canonical(&semantic, &artifact)
         .map_err(|error| ExportError::new(error.category(), error.to_string()))?;
+    let alignment = entity_alignment(line_alignment, note_alignment)?;
     finish_export(
         "pec",
         chart,
         reparsed.compilation().chart(),
         expected_resources,
         reparsed.compilation().resources(),
+        &alignment,
         options,
         negotiation,
         entries,
@@ -2219,6 +2300,31 @@ fn seconds_to_rpe_beat(beats: f64) -> [i64; 3] {
     let whole = beats.floor() as i64;
     let numerator = ((beats - whole as f64) * DENOMINATOR as f64).round() as i64;
     [whole, numerator, DENOMINATOR]
+}
+
+fn generated_target_id(
+    registry: &mut StableIdRegistry,
+    kind: EntityKind,
+    collection: &str,
+    order: u64,
+) -> Result<StableId, ExportError> {
+    let path = ExpansionPath::new(collection, order)
+        .map_err(|error| ExportError::new("conversion.internal", error.to_string()))?;
+    registry
+        .insert(kind, CanonicalTextualId::generated(kind, &path, order))
+        .map_err(|error| ExportError::new("conversion.internal", error.to_string()))
+}
+
+fn entity_alignment(
+    lines: Vec<(StableId, StableId)>,
+    notes: Vec<(StableId, StableId)>,
+) -> Result<EntityAlignment, ExportError> {
+    EntityAlignment::new(lines, notes).ok_or_else(|| {
+        ExportError::new(
+            "conversion.internal",
+            "target entity provenance mapping is duplicate or ambiguous",
+        )
+    })
 }
 
 fn finite_decimal(value: f64, field: &str) -> Result<String, ExportError> {
@@ -2692,6 +2798,7 @@ fn finish_export(
     actual: &CanonicalChart,
     expected_resources: Option<&CanonicalResourceBundle>,
     actual_resources: &CanonicalResourceBundle,
+    alignment: &EntityAlignment,
     options: &ExportOptions,
     negotiation: NegotiationPlan,
     mut entries: Vec<ConversionEntry>,
@@ -2803,6 +2910,7 @@ fn finish_export(
         Some(actual_resources),
         &comparison_budgets,
         &dropped_domains,
+        Some(alignment),
     );
     let unverified_metrics = comparison_budgets
         .keys()

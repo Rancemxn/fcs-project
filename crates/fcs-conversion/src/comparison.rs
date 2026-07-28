@@ -1,17 +1,84 @@
 //! Canonical semantic comparison for target reparses.
 //!
-//! External importers generate format-specific stable IDs, so comparison aligns
-//! Lines by canonical document order and Notes by canonical sort order rather
-//! than comparing raw IDs or source array positions.
+//! Public comparison uses canonical stable IDs. Target exporters additionally
+//! provide the stable IDs their emitted entities will receive on reparse.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use fcs_model::{
     Beat, CanonicalChart, CanonicalCompilation, CanonicalContentSha256, CanonicalLine,
     CanonicalResourceBundle, CanonicalScrollLine, CanonicalTime, CanonicalTrack,
-    CanonicalTrackPiece, CanonicalTrackTarget, CanonicalTrackValue,
+    CanonicalTrackPiece, CanonicalTrackTarget, CanonicalTrackValue, EntityKind, StableId,
 };
 use fcs_runtime::{evaluate_line_scroll, evaluate_line_transform};
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct EntityAlignment {
+    lines: BTreeMap<u64, (StableId, StableId)>,
+    notes: BTreeMap<u64, (StableId, StableId)>,
+}
+
+impl EntityAlignment {
+    pub(crate) fn new(
+        lines: impl IntoIterator<Item = (StableId, StableId)>,
+        notes: impl IntoIterator<Item = (StableId, StableId)>,
+    ) -> Option<Self> {
+        Some(Self {
+            lines: Self::unique_map(EntityKind::Line, lines)?,
+            notes: Self::unique_map(EntityKind::Note, notes)?,
+        })
+    }
+
+    fn unique_map(
+        kind: EntityKind,
+        pairs: impl IntoIterator<Item = (StableId, StableId)>,
+    ) -> Option<BTreeMap<u64, (StableId, StableId)>> {
+        let mut mapped = BTreeMap::new();
+        let mut targets = BTreeSet::new();
+        for (source, target) in pairs {
+            if source.namespace() != kind
+                || target.namespace() != kind
+                || mapped.contains_key(&source.value())
+                || !targets.insert(target.value())
+            {
+                return None;
+            }
+            mapped.insert(source.value(), (source, target));
+        }
+        Some(mapped)
+    }
+
+    fn line_target<'a>(&'a self, expected: &StableId) -> Option<&'a StableId> {
+        Self::target(&self.lines, expected)
+    }
+
+    fn note_target<'a>(&'a self, expected: &StableId) -> Option<&'a StableId> {
+        Self::target(&self.notes, expected)
+    }
+
+    fn target<'a>(
+        mappings: &'a BTreeMap<u64, (StableId, StableId)>,
+        expected: &StableId,
+    ) -> Option<&'a StableId> {
+        mappings
+            .get(&expected.value())
+            .and_then(|(source, target)| (source == expected).then_some(target))
+    }
+}
+
+fn aligned_line_id<'a>(
+    alignment: Option<&'a EntityAlignment>,
+    expected: &'a StableId,
+) -> Option<&'a StableId> {
+    alignment.map_or(Some(expected), |alignment| alignment.line_target(expected))
+}
+
+fn aligned_note_id<'a>(
+    alignment: Option<&'a EntityAlignment>,
+    expected: &'a StableId,
+) -> Option<&'a StableId> {
+    alignment.map_or(Some(expected), |alignment| alignment.note_target(expected))
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComparisonMismatch {
@@ -152,6 +219,7 @@ pub fn compare_canonical_compilations_with_budgets(
         Some(actual.resources()),
         budgets,
         dropped_domains,
+        None,
     )
 }
 
@@ -170,6 +238,7 @@ pub fn compare_canonical_charts_with_budgets(
         None,
         budgets,
         dropped_domains,
+        None,
     )
 }
 
@@ -180,6 +249,7 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
     actual_resources: Option<&CanonicalResourceBundle>,
     budgets: &BTreeMap<String, f64>,
     dropped_domains: &[String],
+    alignment: Option<&EntityAlignment>,
 ) -> CanonicalComparison {
     let mut mismatches = Mismatches::new(dropped_domains);
     let mut verified_maximum_errors = VerifiedMetricObservations::default();
@@ -238,6 +308,7 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
         budgets,
         &mut verified_maximum_errors,
         &mut mismatches,
+        alignment,
     );
     compare_notes(
         expected,
@@ -245,6 +316,7 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
         budgets,
         &mut verified_maximum_errors,
         &mut mismatches,
+        alignment,
     );
     compare_tracks(
         expected,
@@ -252,6 +324,7 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
         budgets,
         &mut verified_maximum_errors,
         &mut mismatches,
+        alignment,
     );
     compare_scroll(
         expected,
@@ -259,6 +332,7 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
         budgets,
         &mut verified_maximum_errors,
         &mut mismatches,
+        alignment,
     );
     if expected.descriptors() != actual.descriptors() {
         mismatch(
@@ -557,12 +631,43 @@ fn compare_lines(
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
+    alignment: Option<&EntityAlignment>,
 ) {
     let left = ordered_lines(expected);
     let right = ordered_lines(actual);
+    let right_by_id: BTreeMap<_, _> = right
+        .iter()
+        .map(|line| (line.id().value(), *line))
+        .collect();
+    let mut matched = BTreeSet::new();
     let test_times = line_transform_test_times(expected, actual);
     compare_len("motion", "line.count", left.len(), right.len(), mismatches);
-    for (index, (left, right)) in left.iter().zip(right.iter()).enumerate() {
+    for (index, left) in left.iter().enumerate() {
+        let Some(target_id) = aligned_line_id(alignment, left.id()) else {
+            structural_mismatch(
+                mismatches,
+                "entity",
+                format!("lines[{}]", left.id().value()),
+                "present",
+                "missing",
+            );
+            continue;
+        };
+        let Some(right) = right_by_id
+            .get(&target_id.value())
+            .copied()
+            .filter(|line| line.id() == target_id)
+        else {
+            structural_mismatch(
+                mismatches,
+                "entity",
+                format!("lines[{}]", left.id().value()),
+                "present",
+                "missing",
+            );
+            continue;
+        };
+        matched.insert(right.id().value());
         let field = |name: &str| format!("lines[{index}].{name}");
         if left.document_order() != right.document_order() {
             mismatch(
@@ -573,14 +678,8 @@ fn compare_lines(
                 right.document_order().to_string(),
             );
         }
-        let left_parent = left
-            .parent()
-            .and_then(|id| expected.lines().line(id.value()))
-            .map(CanonicalLine::document_order);
-        let right_parent = right
-            .parent()
-            .and_then(|id| actual.lines().line(id.value()))
-            .map(CanonicalLine::document_order);
+        let left_parent = left.parent().and_then(|id| aligned_line_id(alignment, id));
+        let right_parent = right.parent();
         if left_parent != right_parent {
             mismatch(
                 mismatches,
@@ -680,6 +779,17 @@ fn compare_lines(
             verified_maximum_errors,
             mismatches,
         );
+    }
+    for line in right {
+        if !matched.contains(&line.id().value()) {
+            structural_mismatch(
+                mismatches,
+                "entity",
+                format!("lines[{}]", line.id().value()),
+                "missing",
+                "present",
+            );
+        }
     }
 }
 
@@ -793,9 +903,12 @@ fn compare_notes(
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
+    alignment: Option<&EntityAlignment>,
 ) {
     let left = expected.notes().notes();
     let right = actual.notes().notes();
+    let right_by_id: BTreeMap<_, _> = right.iter().map(|note| (note.id().value(), note)).collect();
+    let mut matched = BTreeSet::new();
     compare_len(
         "gameplay",
         "note.count",
@@ -803,7 +916,32 @@ fn compare_notes(
         right.len(),
         mismatches,
     );
-    for (index, (left, right)) in left.iter().zip(right.iter()).enumerate() {
+    for (index, left) in left.iter().enumerate() {
+        let Some(target_id) = aligned_note_id(alignment, left.id()) else {
+            structural_mismatch(
+                mismatches,
+                "gameplay",
+                format!("notes[{}]", left.id().value()),
+                "present",
+                "missing",
+            );
+            continue;
+        };
+        let Some(right) = right_by_id
+            .get(&target_id.value())
+            .copied()
+            .filter(|note| note.id() == target_id)
+        else {
+            structural_mismatch(
+                mismatches,
+                "gameplay",
+                format!("notes[{}]", left.id().value()),
+                "present",
+                "missing",
+            );
+            continue;
+        };
+        matched.insert(right.id().value());
         let field = |name: &str| format!("notes[{index}].{name}");
         let lg = left.gameplay();
         let rg = right.gameplay();
@@ -831,14 +969,8 @@ fn compare_notes(
                 format!("{:?}", rg),
             );
         }
-        let left_line = expected
-            .lines()
-            .line(lg.line().value())
-            .map(CanonicalLine::document_order);
-        let right_line = actual
-            .lines()
-            .line(rg.line().value())
-            .map(CanonicalLine::document_order);
+        let left_line = aligned_line_id(alignment, lg.line());
+        let right_line = Some(rg.line());
         if left_line != right_line {
             mismatch(
                 mismatches,
@@ -918,6 +1050,17 @@ fn compare_notes(
             mismatches,
         );
     }
+    for note in right {
+        if !matched.contains(&note.id().value()) {
+            structural_mismatch(
+                mismatches,
+                "gameplay",
+                format!("notes[{}]", note.id().value()),
+                "missing",
+                "present",
+            );
+        }
+    }
 }
 
 fn compare_tracks(
@@ -926,21 +1069,44 @@ fn compare_tracks(
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
+    alignment: Option<&EntityAlignment>,
 ) {
     let left = ordered_tracks(expected);
     let right = ordered_tracks(actual);
+    let right_by_id: BTreeMap<_, _> = right
+        .iter()
+        .map(|track| ((track.owner().value(), track.name()), *track))
+        .collect();
+    let mut matched = BTreeSet::new();
     compare_len("motion", "track.count", left.len(), right.len(), mismatches);
-    for (index, (left, right)) in left.iter().zip(right.iter()).enumerate() {
-        let left_owner = expected
-            .lines()
-            .line(left.owner().value())
-            .map(CanonicalLine::document_order);
-        let right_owner = actual
-            .lines()
-            .line(right.owner().value())
-            .map(CanonicalLine::document_order);
-        if left_owner != right_owner
-            || left.name() != right.name()
+    for (index, left) in left.iter().enumerate() {
+        let field_key = format!("{}/{}", left.owner().value(), left.name());
+        let Some(target_owner) = aligned_line_id(alignment, left.owner()) else {
+            structural_mismatch(
+                mismatches,
+                "motion",
+                format!("tracks[{field_key}]"),
+                "present",
+                "missing",
+            );
+            continue;
+        };
+        let Some(right) = right_by_id
+            .get(&(target_owner.value(), left.name()))
+            .copied()
+            .filter(|track| track.owner() == target_owner)
+        else {
+            structural_mismatch(
+                mismatches,
+                "motion",
+                format!("tracks[{field_key}]"),
+                "present",
+                "missing",
+            );
+            continue;
+        };
+        matched.insert((right.owner().value(), right.name().to_owned()));
+        if target_owner != right.owner()
             || left.target() != right.target()
             || left.blend() != right.blend()
             || left.priority() != right.priority()
@@ -972,6 +1138,17 @@ fn compare_tracks(
                 budgets,
                 verified_maximum_errors,
                 mismatches,
+            );
+        }
+    }
+    for track in right {
+        if !matched.contains(&(track.owner().value(), track.name().to_owned())) {
+            structural_mismatch(
+                mismatches,
+                "motion",
+                format!("tracks[{}/{}]", track.owner().value(), track.name()),
+                "missing",
+                "present",
             );
         }
     }
@@ -1135,9 +1312,15 @@ fn compare_scroll(
     budgets: &BTreeMap<String, f64>,
     verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
+    alignment: Option<&EntityAlignment>,
 ) {
     let left = ordered_scroll(expected);
     let right = ordered_scroll(actual);
+    let right_by_id: BTreeMap<_, _> = right
+        .iter()
+        .map(|line| (line.line_id().value(), *line))
+        .collect();
+    let mut matched = BTreeSet::new();
     compare_len(
         "scroll",
         "scroll.line_count",
@@ -1146,7 +1329,32 @@ fn compare_scroll(
         mismatches,
     );
     let test_times = scroll_distance_test_times(expected, actual);
-    for (index, (left, right)) in left.iter().zip(right.iter()).enumerate() {
+    for (index, left) in left.iter().enumerate() {
+        let Some(target_id) = aligned_line_id(alignment, left.line_id()) else {
+            structural_mismatch(
+                mismatches,
+                "scroll",
+                format!("scroll[{}]", left.line_id().value()),
+                "present",
+                "missing",
+            );
+            continue;
+        };
+        let Some(right) = right_by_id
+            .get(&target_id.value())
+            .copied()
+            .filter(|line| line.line_id() == target_id)
+        else {
+            structural_mismatch(
+                mismatches,
+                "scroll",
+                format!("scroll[{}]", left.line_id().value()),
+                "present",
+                "missing",
+            );
+            continue;
+        };
+        matched.insert(right.line_id().value());
         if left.allow_reverse_scroll() != right.allow_reverse_scroll() {
             mismatch(
                 mismatches,
@@ -1227,6 +1435,17 @@ fn compare_scroll(
             verified_maximum_errors,
             mismatches,
         );
+    }
+    for line in right {
+        if !matched.contains(&line.line_id().value()) {
+            structural_mismatch(
+                mismatches,
+                "scroll",
+                format!("scroll[{}]", line.line_id().value()),
+                "missing",
+                "present",
+            );
+        }
     }
 }
 
@@ -1539,6 +1758,18 @@ fn compare_len(
             None,
         ));
     }
+}
+
+fn structural_mismatch(
+    mismatches: &mut Mismatches<'_>,
+    domain: impl Into<String>,
+    field: impl Into<String>,
+    expected: impl Into<String>,
+    actual: impl Into<String>,
+) {
+    mismatches.push_structural(ComparisonMismatch::new(
+        domain, "discrete", field, expected, actual, None,
+    ));
 }
 
 fn mismatch(
@@ -1935,7 +2166,8 @@ mod tests {
             .iter()
             .map(ComparisonMismatch::field)
             .collect();
-        assert_eq!(counts, ["note.count"]);
+        assert!(counts.contains(&"note.count"));
+        assert!(counts.iter().any(|field| field.starts_with("notes[")));
     }
 
     #[test]
