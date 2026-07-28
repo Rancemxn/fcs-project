@@ -3705,19 +3705,44 @@ mod tests {
             RpeProfile::PhiraLegacySpeed.id(),
             RpeProfile::PhiraLegacySpeed.version(),
         );
-        let descriptor = descriptor_with_domain(
-            CapabilitySet::rpe_json(),
-            &profile,
-            CapabilityDomain::Motion,
-            false,
-            false,
-            true,
-            None,
-            None,
-        );
+        let base = CapabilitySet::rpe_json().descriptor(Some(profile.clone()));
+        let domains = base
+            .domains()
+            .iter()
+            .map(|descriptor| {
+                if matches!(
+                    descriptor.domain(),
+                    CapabilityDomain::Motion | CapabilityDomain::Scroll
+                ) {
+                    CapabilityDomainDescriptor::new(
+                        descriptor.domain(),
+                        false,
+                        false,
+                        false,
+                        false,
+                        true,
+                        descriptor.max_entities(),
+                        descriptor.max_bytes(),
+                    )
+                    .with_features(descriptor.features().iter().cloned())
+                    .unwrap()
+                    .with_limits(descriptor.limits().iter().cloned())
+                    .unwrap()
+                } else {
+                    descriptor.clone()
+                }
+            })
+            .collect();
+        let descriptor = CapabilityDescriptor::new(
+            base.format(),
+            base.version(),
+            base.profile().map(str::to_owned),
+            domains,
+        )
+        .unwrap();
         let authorization = DropAuthorization::new(
-            ["motion".into()],
-            "explicitly discard target-inexpressible line motion",
+            ["motion".into(), "scroll".into()],
+            "explicitly discard target-inexpressible line motion and scroll",
         )
         .unwrap();
 
