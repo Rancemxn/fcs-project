@@ -74,7 +74,7 @@ pub use render::{
 pub use report::{
     ApproximationAuthorization, ConversionDomain, ConversionEntry, ConversionPhase,
     ConversionPolicy, ConversionReport, ConversionReportSummary, ConversionSeverity,
-    ConversionStatus, DropAuthorization, RepairMode, RepairRecord, ReportError,
+    ConversionStatus, DropAuthorization, ErrorMetric, RepairMode, RepairRecord, ReportError,
 };
 pub use scroll::{
     CanonicalScrollCoordinate, CanonicalScrollLine, CanonicalScrollSet,

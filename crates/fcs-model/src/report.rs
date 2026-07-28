@@ -433,6 +433,136 @@ impl ConversionPhase {
     }
 }
 
+/// Conversion §7.3 machine-readable approximation evidence.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ErrorMetric {
+    domain: ConversionDomain,
+    metric: String,
+    declared_maximum: f64,
+    verified_maximum: f64,
+    verification_method: String,
+    sample_count: u64,
+    segment_count: u64,
+    forced_boundaries: Vec<f64>,
+    source_descriptor_hash: String,
+}
+
+impl ErrorMetric {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        domain: ConversionDomain,
+        metric: impl Into<String>,
+        declared_maximum: f64,
+        verified_maximum: f64,
+        verification_method: impl Into<String>,
+        sample_count: u64,
+        segment_count: u64,
+        forced_boundaries: impl IntoIterator<Item = f64>,
+        source_descriptor_hash: impl Into<String>,
+    ) -> Result<Self, ReportError> {
+        let metric = metric.into();
+        let verification_method = verification_method.into();
+        let source_descriptor_hash = source_descriptor_hash.into();
+        let forced_boundaries = forced_boundaries.into_iter().collect::<Vec<_>>();
+        if metric.trim().is_empty()
+            || !metric.is_ascii()
+            || metric.chars().any(|character| character.is_ascii_control())
+        {
+            return Err(ReportError::InvalidErrorMetric(
+                "metric must be non-empty ASCII without control characters".into(),
+            ));
+        }
+        if verification_method.trim().is_empty()
+            || !verification_method.is_ascii()
+            || verification_method
+                .chars()
+                .any(|character| character.is_ascii_control())
+        {
+            return Err(ReportError::InvalidErrorMetric(
+                "verification method must be non-empty ASCII without control characters".into(),
+            ));
+        }
+        if !declared_maximum.is_finite()
+            || declared_maximum < 0.0
+            || !verified_maximum.is_finite()
+            || verified_maximum < 0.0
+            || verified_maximum > declared_maximum
+        {
+            return Err(ReportError::InvalidErrorMetric(
+                "maximums must be finite, non-negative, and verified must not exceed declared"
+                    .into(),
+            ));
+        }
+        if forced_boundaries
+            .iter()
+            .any(|boundary| !boundary.is_finite())
+            || forced_boundaries
+                .windows(2)
+                .any(|pair| !(pair[0] < pair[1]))
+        {
+            return Err(ReportError::InvalidErrorMetric(
+                "forced boundaries must be finite and strictly increasing".into(),
+            ));
+        }
+        if source_descriptor_hash.len() != 64
+            || source_descriptor_hash
+                .bytes()
+                .any(|byte| !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase())
+        {
+            return Err(ReportError::InvalidErrorMetric(
+                "source descriptor hash must be 64 lowercase hex digits".into(),
+            ));
+        }
+        Ok(Self {
+            domain,
+            metric,
+            declared_maximum,
+            verified_maximum,
+            verification_method,
+            sample_count,
+            segment_count,
+            forced_boundaries,
+            source_descriptor_hash,
+        })
+    }
+
+    pub const fn domain(&self) -> ConversionDomain {
+        self.domain
+    }
+
+    pub fn metric(&self) -> &str {
+        &self.metric
+    }
+
+    pub const fn declared_maximum(&self) -> f64 {
+        self.declared_maximum
+    }
+
+    pub const fn verified_maximum(&self) -> f64 {
+        self.verified_maximum
+    }
+
+    pub fn verification_method(&self) -> &str {
+        &self.verification_method
+    }
+
+    pub const fn sample_count(&self) -> u64 {
+        self.sample_count
+    }
+
+    pub const fn segment_count(&self) -> u64 {
+        self.segment_count
+    }
+
+    pub fn forced_boundaries(&self) -> &[f64] {
+        &self.forced_boundaries
+    }
+
+    pub fn source_descriptor_hash(&self) -> &str {
+        &self.source_descriptor_hash
+    }
+}
+
 /// One deterministic conversion entry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConversionEntry {
@@ -452,6 +582,7 @@ pub struct ConversionEntry {
     canonical_value: Option<CanonicalValue>,
     target_value: Option<CanonicalValue>,
     message: String,
+    error_metric: Option<ErrorMetric>,
     dependencies: Vec<String>,
 }
 
@@ -504,6 +635,7 @@ impl ConversionEntry {
             canonical_value,
             target_value,
             message: message.into(),
+            error_metric: None,
             dependencies: dependencies.into_iter().collect(),
         })
     }
@@ -570,6 +702,15 @@ impl ConversionEntry {
 
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    pub fn error_metric(&self) -> Option<&ErrorMetric> {
+        self.error_metric.as_ref()
+    }
+
+    pub fn with_error_metric(mut self, error_metric: ErrorMetric) -> Self {
+        self.error_metric = Some(error_metric);
+        self
     }
 
     pub fn dependencies(&self) -> &[String] {
@@ -949,6 +1090,7 @@ pub enum ReportError {
     RepairNotAuthorized { rule_id: String },
     InvalidAuthorization(String),
     InvalidOutputHash(String),
+    InvalidErrorMetric(String),
 }
 
 impl fmt::Display for ReportError {
@@ -976,6 +1118,9 @@ impl fmt::Display for ReportError {
                     formatter,
                     "output hash must be 64 lowercase hex digits: {hash}"
                 )
+            }
+            Self::InvalidErrorMetric(message) => {
+                write!(formatter, "invalid error metric: {message}")
             }
         }
     }
@@ -1020,6 +1165,92 @@ mod tests {
             [],
         )
         .unwrap()
+    }
+
+    fn error_metric() -> ErrorMetric {
+        ErrorMetric::new(
+            ConversionDomain::Motion,
+            "motion.track_value",
+            0.01,
+            0.005,
+            "same-profile-canonical-reparse",
+            3,
+            2,
+            [0.0, 1.0, 2.0],
+            "a".repeat(64),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn error_metric_exposes_typed_evidence_and_entry_attachment() {
+        let metric = error_metric();
+        assert_eq!(metric.domain(), ConversionDomain::Motion);
+        assert_eq!(metric.metric(), "motion.track_value");
+        assert_eq!(metric.declared_maximum(), 0.01);
+        assert_eq!(metric.verified_maximum(), 0.005);
+        assert_eq!(
+            metric.verification_method(),
+            "same-profile-canonical-reparse"
+        );
+        assert_eq!(metric.sample_count(), 3);
+        assert_eq!(metric.segment_count(), 2);
+        assert_eq!(metric.forced_boundaries(), &[0.0, 1.0, 2.0]);
+        assert!(
+            metric
+                .source_descriptor_hash()
+                .chars()
+                .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase())
+        );
+
+        let attached = entry(
+            "metric-entry",
+            ConversionPhase::ReparseCompare,
+            None,
+            Some("motion.track_value"),
+            None,
+            SemanticStatus::Approximated,
+        )
+        .with_error_metric(metric.clone());
+        assert_eq!(attached.error_metric(), Some(&metric));
+    }
+
+    #[test]
+    fn error_metric_rejects_invalid_values_and_boundaries() {
+        let valid = |declared, verified, boundaries, hash| {
+            ErrorMetric::new(
+                ConversionDomain::Timing,
+                "timing.chart_time",
+                declared,
+                verified,
+                "reparse",
+                1,
+                1,
+                boundaries,
+                hash,
+            )
+        };
+
+        assert!(matches!(
+            valid(f64::NAN, 0.0, vec![0.0], "a".repeat(64)),
+            Err(ReportError::InvalidErrorMetric(_))
+        ));
+        assert!(matches!(
+            valid(1.0, 2.0, vec![0.0], "a".repeat(64)),
+            Err(ReportError::InvalidErrorMetric(_))
+        ));
+        assert!(matches!(
+            valid(1.0, 0.5, vec![1.0, 0.0], "a".repeat(64)),
+            Err(ReportError::InvalidErrorMetric(_))
+        ));
+        assert!(matches!(
+            valid(1.0, 0.5, vec![0.0, f64::INFINITY], "a".repeat(64)),
+            Err(ReportError::InvalidErrorMetric(_))
+        ));
+        assert!(matches!(
+            valid(1.0, 0.5, vec![0.0], "A".repeat(64)),
+            Err(ReportError::InvalidErrorMetric(_))
+        ));
     }
 
     #[test]
