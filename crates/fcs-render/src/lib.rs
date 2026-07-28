@@ -338,6 +338,7 @@ mod tests {
     fn solid_rect_uses_bounds_output_color_space_and_even_quantization() {
         let mut render = load_render(&render_fixture()).expect("render load");
         set_full_viewport_rect(&mut render);
+        render.viewport_color_space = 1;
         let color_descriptor = render
             .paints
             .iter()
