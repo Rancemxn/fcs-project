@@ -4,10 +4,11 @@
 //! Lines by canonical document order and Notes by canonical sort order rather
 //! than comparing raw IDs or source array positions.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use fcs_model::{
-    Beat, CanonicalChart, CanonicalLine, CanonicalScrollLine, CanonicalTime, CanonicalTrack,
+    Beat, CanonicalChart, CanonicalCompilation, CanonicalContentSha256, CanonicalLine,
+    CanonicalResourceBundle, CanonicalScrollLine, CanonicalTime, CanonicalTrack,
     CanonicalTrackPiece, CanonicalTrackTarget, CanonicalTrackValue,
 };
 use fcs_runtime::{evaluate_line_scroll, evaluate_line_transform};
@@ -105,11 +106,54 @@ pub fn compare_canonical_charts(
     compare_canonical_charts_with_budgets(expected, actual, &BTreeMap::new(), &[])
 }
 
+/// Compare canonical charts and their exact opaque resource payloads.
+pub fn compare_canonical_compilations(
+    expected: &CanonicalCompilation,
+    actual: &CanonicalCompilation,
+) -> CanonicalComparison {
+    compare_canonical_compilations_with_budgets(expected, actual, &BTreeMap::new(), &[])
+}
+
+/// Compare canonical products with explicit metric budgets and dropped domains.
+pub fn compare_canonical_compilations_with_budgets(
+    expected: &CanonicalCompilation,
+    actual: &CanonicalCompilation,
+    budgets: &BTreeMap<String, f64>,
+    dropped_domains: &[String],
+) -> CanonicalComparison {
+    compare_canonical_charts_with_resources_with_budgets(
+        expected.chart(),
+        actual.chart(),
+        Some(expected.resources()),
+        Some(actual.resources()),
+        budgets,
+        dropped_domains,
+    )
+}
+
 /// Compare canonical fields with explicit metric budgets and explicitly dropped
 /// domains. A missing budget remains exact; no implicit epsilon is used.
 pub fn compare_canonical_charts_with_budgets(
     expected: &CanonicalChart,
     actual: &CanonicalChart,
+    budgets: &BTreeMap<String, f64>,
+    dropped_domains: &[String],
+) -> CanonicalComparison {
+    compare_canonical_charts_with_resources_with_budgets(
+        expected,
+        actual,
+        None,
+        None,
+        budgets,
+        dropped_domains,
+    )
+}
+
+pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
+    expected: &CanonicalChart,
+    actual: &CanonicalChart,
+    expected_resources: Option<&CanonicalResourceBundle>,
+    actual_resources: Option<&CanonicalResourceBundle>,
     budgets: &BTreeMap<String, f64>,
     dropped_domains: &[String],
 ) -> CanonicalComparison {
@@ -158,6 +202,9 @@ pub fn compare_canonical_charts_with_budgets(
             format!("{:?}", expected.metadata().resources()),
             format!("{:?}", actual.metadata().resources()),
         );
+    }
+    if let (Some(expected), Some(actual)) = (expected_resources, actual_resources) {
+        compare_resource_bundles(expected, actual, &mut mismatches);
     }
     // These four routines each report more than one domain, so they always run
     // and the sink drops only the domains that were actually authorized.
@@ -222,6 +269,68 @@ pub fn compare_canonical_charts_with_budgets(
             domains
         },
     }
+}
+
+fn compare_resource_bundles(
+    expected: &CanonicalResourceBundle,
+    actual: &CanonicalResourceBundle,
+    mismatches: &mut Mismatches<'_>,
+) {
+    if expected.len() != actual.len() {
+        mismatch(
+            mismatches,
+            "resource",
+            "resource.bundle.count",
+            expected.len().to_string(),
+            actual.len().to_string(),
+        );
+    }
+
+    let ids: BTreeSet<_> = expected
+        .resources()
+        .keys()
+        .chain(actual.resources().keys())
+        .collect();
+    for id in ids {
+        match (expected.get(id), actual.get(id)) {
+            (Some(expected), Some(actual)) => {
+                if expected.content_sha256() != actual.content_sha256() {
+                    metric_mismatch(
+                        mismatches,
+                        "resource",
+                        "resource.raw_byte_hash",
+                        format!("resources[{id}].rawByteHash"),
+                        format_content_sha256(expected.content_sha256()),
+                        format_content_sha256(actual.content_sha256()),
+                    );
+                }
+            }
+            (Some(_), None) => mismatch(
+                mismatches,
+                "resource",
+                format!("resources[{id}]"),
+                "present",
+                "missing",
+            ),
+            (None, Some(_)) => mismatch(
+                mismatches,
+                "resource",
+                format!("resources[{id}]"),
+                "missing",
+                "present",
+            ),
+            (None, None) => unreachable!("resource ID came from one of the bundles"),
+        }
+    }
+}
+
+fn format_content_sha256(digest: CanonicalContentSha256) -> String {
+    let mut output = String::with_capacity(64);
+    for byte in digest.as_bytes() {
+        use std::fmt::Write as _;
+        write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    output
 }
 
 /// The single sink every canonical mismatch is recorded through.
@@ -1433,13 +1542,15 @@ fn metric_mismatch(
 mod tests {
     use super::*;
     use fcs_model::{
-        Beat, CanonicalChartScrollTempoPoint, CanonicalColor, CanonicalJudgeShape,
-        CanonicalLineBase, CanonicalLineGraph, CanonicalLineInherit, CanonicalMetadata,
-        CanonicalNote, CanonicalNoteGameplay, CanonicalNoteKind, CanonicalNotePresentation,
-        CanonicalNoteScorePolicy, CanonicalNoteSet, CanonicalNoteSide, CanonicalNoteSoundPolicy,
-        CanonicalProfile, CanonicalScrollCoordinate, CanonicalScrollLine, CanonicalScrollSet,
-        CanonicalScrollTempo, CanonicalSourceVersion, CanonicalTextualId, CanonicalTime,
-        CanonicalTrackSet, CanonicalVec2, ChartTimeMap, EntityKind, StableId, StableIdRegistry,
+        Beat, CanonicalBundledResource, CanonicalChartScrollTempoPoint, CanonicalColor,
+        CanonicalCompilation, CanonicalJudgeShape, CanonicalLineBase, CanonicalLineGraph,
+        CanonicalLineInherit, CanonicalMetadata, CanonicalNote, CanonicalNoteGameplay,
+        CanonicalNoteKind, CanonicalNotePresentation, CanonicalNoteScorePolicy, CanonicalNoteSet,
+        CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalProfile,
+        CanonicalResource, CanonicalResourceBundle, CanonicalResourceKind,
+        CanonicalScrollCoordinate, CanonicalScrollLine, CanonicalScrollSet, CanonicalScrollTempo,
+        CanonicalSourceVersion, CanonicalTextualId, CanonicalTime, CanonicalTrackSet,
+        CanonicalVec2, ChartTimeMap, DistributionMetadata, EntityKind, StableId, StableIdRegistry,
         TempoPoint,
     };
 
@@ -1511,6 +1622,50 @@ mod tests {
             CanonicalTrackSet::new(Vec::new()).unwrap(),
             CanonicalScrollSet::new(Vec::new()).unwrap(),
             [],
+        )
+    }
+
+    fn chart_with_resource(resource: CanonicalResource) -> CanonicalChart {
+        let mut resources = BTreeMap::new();
+        resources.insert(resource.id().to_owned(), resource);
+        let (line_id, _) = ids();
+        CanonicalChart::new(
+            CanonicalSourceVersion::new("5.0.0").unwrap(),
+            CanonicalProfile::Chart,
+            [],
+            time_map(),
+            CanonicalMetadata::new(None, Default::default(), Vec::new(), resources, None, None),
+            CanonicalLineGraph::new([CanonicalLine::new(
+                line_id,
+                None,
+                0,
+                CanonicalLineBase::default(),
+                CanonicalLineInherit::default(),
+                CanonicalScrollTempo::Global,
+            )
+            .unwrap()])
+            .unwrap(),
+            CanonicalNoteSet::new(Vec::new()).unwrap(),
+            CanonicalTrackSet::new(Vec::new()).unwrap(),
+            CanonicalScrollSet::new(Vec::new()).unwrap(),
+            [],
+        )
+    }
+
+    fn compilation_with_resource(bytes: &[u8]) -> CanonicalCompilation {
+        let resource = CanonicalResource::new(
+            "asset",
+            CanonicalResourceKind::Binary,
+            "application/octet-stream",
+            None,
+            CanonicalObject::new(Vec::new()).unwrap(),
+        );
+        let bundled = CanonicalBundledResource::new(resource.clone(), bytes.to_vec()).unwrap();
+        let resources = CanonicalResourceBundle::new(vec![bundled]).unwrap();
+        CanonicalCompilation::new(
+            chart_with_resource(resource),
+            resources,
+            DistributionMetadata::empty(),
         )
     }
 
@@ -1754,6 +1909,22 @@ mod tests {
                 .any(|mismatch| mismatch.metric() == "scroll.distance")
         );
         assert!(compare_canonical_charts(&expected, &expected).is_equivalent());
+    }
+
+    #[test]
+    fn raw_resource_bytes_are_compared_even_without_declared_hash() {
+        let expected = compilation_with_resource(b"expected");
+        let actual = compilation_with_resource(b"actual");
+
+        let comparison = compare_canonical_compilations(&expected, &actual);
+
+        assert!(!comparison.is_equivalent());
+        assert!(comparison.mismatches().iter().any(|mismatch| {
+            mismatch.domain() == "resource"
+                && mismatch.metric() == "resource.raw_byte_hash"
+                && mismatch.field() == "resources[asset].rawByteHash"
+        }));
+        assert!(compare_canonical_compilations(&expected, &expected).is_equivalent());
     }
 
     #[test]
