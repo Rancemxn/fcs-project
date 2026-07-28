@@ -23,9 +23,13 @@ pub use writer::{
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use super::*;
+    use crate::assets::PNG_PIXELS;
     use crate::loader::PaintData;
     use fcs_fcbc::{RuntimeValue, write_nonempty_execution};
+    use image::{ColorType, ImageEncoder, codecs::png::PngEncoder};
 
     #[test]
     fn product_render_write_load_eval_and_raster() {
@@ -145,5 +149,39 @@ mod tests {
             .expect("root draw op");
         assert!(path_position < image_position);
         assert!(path_position < root_position);
+    }
+
+    #[test]
+    fn png_16_bit_channels_are_normalized_before_8_bit_compatibility_conversion() {
+        let mut bytes = Vec::new();
+        let pixels = [0x0100_u16, 0x8000, 0xffff, 0xffff, 0, 0, 0, 0x8000];
+        let raw = pixels
+            .into_iter()
+            .flat_map(u16::to_ne_bytes)
+            .collect::<Vec<_>>();
+        PngEncoder::new(Cursor::new(&mut bytes))
+            .write_image(&raw, 2, 1, ColorType::Rgba16.into())
+            .expect("fixed 16-bit PNG encoding");
+
+        let decoded = decode_image("image/png", "linear-srgb", "straight", &bytes)
+            .expect("16-bit PNG decode");
+        assert_eq!(decoded.rgba8, vec![1, 128, 255, 255, 0, 0, 0, 128]);
+        assert_eq!(
+            decoded.linear_premultiplied[0][0],
+            f64::from(0x0100_u16) / 65_535.0
+        );
+        assert_ne!(
+            decoded.linear_premultiplied[0][0],
+            f64::from(decoded.rgba8[0]) / 255.0
+        );
+        assert_eq!(
+            decoded.linear_premultiplied[1][3],
+            f64::from(0x8000_u16) / 65_535.0
+        );
+
+        let eight_bit = decode_image("image/png", "linear-srgb", "straight", &encode_test_png())
+            .expect("8-bit PNG decode");
+        assert_eq!(eight_bit.rgba8, PNG_PIXELS);
+        assert_eq!(eight_bit.linear_premultiplied[0], [1.0, 0.0, 0.0, 1.0]);
     }
 }
