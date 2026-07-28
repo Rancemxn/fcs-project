@@ -207,10 +207,9 @@ mod tests {
                 origin,
                 size: rect_size,
             } = &mut geometry.data
+                && *origin == 2
             {
-                if *origin == 2 {
-                    *rect_size = size;
-                }
+                *rect_size = size;
             }
         }
     }
