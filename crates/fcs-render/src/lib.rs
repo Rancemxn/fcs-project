@@ -142,7 +142,7 @@ mod tests {
     use super::*;
     use crate::assets::PNG_PIXELS;
     use crate::loader::PaintData;
-    use fcs_fcbc::{RuntimeValue, write_nonempty_execution};
+    use fcs_fcbc::{DescriptorKind, RuntimeValue, write_nonempty_execution};
     use image::{ColorType, ImageEncoder, codecs::png::PngEncoder};
 
     fn render_fixture() -> Vec<u8> {
@@ -278,6 +278,28 @@ mod tests {
         assert_eq!(rect.fill_rgba, Some([1.0, 1.0, 1.0, 1.0]));
         let pixels = rasterize_solid_rgba8(&render, 2, 2).expect("solid raster");
         assert_eq!(pixels, vec![255u8; 16]);
+    }
+
+    #[test]
+    fn solid_descriptor_execution_failure_uses_render_category() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        let color_descriptor = render
+            .paints
+            .iter()
+            .find_map(|paint| match paint.data {
+                PaintData::Solid { color } => Some(color),
+                _ => None,
+            })
+            .expect("fixture has a Solid paint");
+        // The bytes have already passed loader validation. Replace only the payload
+        // to force the evaluator error path at the Render ownership boundary.
+        render.core.descriptors[color_descriptor as usize].kind =
+            DescriptorKind::Constant(u32::MAX);
+
+        assert_eq!(
+            evaluate_semantic_draw_list(&render).expect_err("descriptor must fail"),
+            "render.invalid-descriptor"
+        );
     }
 
     #[test]
