@@ -203,7 +203,11 @@ mod tests {
             },
         );
         for geometry in &mut render.geometries {
-            if let GeometryData::Rect { origin, size: rect_size } = &mut geometry.data {
+            if let GeometryData::Rect {
+                origin,
+                size: rect_size,
+            } = &mut geometry.data
+            {
                 if *origin == 2 {
                     *rect_size = size;
                 }

@@ -131,8 +131,7 @@ pub fn rasterize_solid_rgba8_with_limits(
                     let device_x = f64::from(px) + (f64::from(sx) + 0.5) / 8.0;
                     let device_y = f64::from(py) + (f64::from(sy) + 0.5) / 8.0;
                     let logical_x = (device_x / f64::from(width) - 0.5) * chart.viewport_width;
-                    let logical_y =
-                        (0.5 - device_y / f64::from(height)) * chart.viewport_height;
+                    let logical_y = (0.5 - device_y / f64::from(height)) * chart.viewport_height;
                     if bounds[2] > bounds[0]
                         && bounds[3] > bounds[1]
                         && logical_x >= bounds[0]
