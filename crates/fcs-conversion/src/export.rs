@@ -3724,7 +3724,11 @@ mod tests {
                         descriptor.max_entities(),
                         descriptor.max_bytes(),
                     )
-                    .with_features(descriptor.features().iter().cloned())
+                    .with_features(if descriptor.domain() == CapabilityDomain::Scroll {
+                        Vec::new()
+                    } else {
+                        descriptor.features().to_vec()
+                    })
                     .unwrap()
                     .with_limits(descriptor.limits().iter().cloned())
                     .unwrap()
@@ -3789,6 +3793,7 @@ mod tests {
         .unwrap();
 
         assert!(outcome.negotiation().drops(CapabilityDomain::Motion));
+        assert!(outcome.negotiation().drops(CapabilityDomain::Scroll));
         let target: Value = serde_json::from_slice(outcome.bytes()).unwrap();
         let lines = target["judgeLineList"].as_array().unwrap();
         assert!(lines.iter().all(|line| {
