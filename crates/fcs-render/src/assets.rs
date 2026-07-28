@@ -112,15 +112,40 @@ pub fn decode_image(
     limits.max_alloc = Some(64 * 1024 * 1024);
     reader.limits(limits);
     let image = reader.decode().map_err(|_| AssetError::DecodeFailed)?;
-    let rgba = image.to_rgba8();
-    let mut linear_premultiplied = Vec::with_capacity(rgba.len() / 4);
-    for pixel in rgba.as_raw().chunks_exact(4) {
-        let encoded_alpha = f64::from(pixel[3]) / 255.0;
-        let encoded = [
-            f64::from(pixel[0]) / 255.0,
-            f64::from(pixel[1]) / 255.0,
-            f64::from(pixel[2]) / 255.0,
-        ];
+    let encoded_pixels = match image.color() {
+        ColorType::L16 | ColorType::Rgb16 | ColorType::La16 | ColorType::Rgba16 => {
+            let rgba = image.to_rgba16();
+            rgba.as_raw()
+                .chunks_exact(4)
+                .map(|pixel| {
+                    [
+                        f64::from(pixel[0]) / 65_535.0,
+                        f64::from(pixel[1]) / 65_535.0,
+                        f64::from(pixel[2]) / 65_535.0,
+                        f64::from(pixel[3]) / 65_535.0,
+                    ]
+                })
+                .collect::<Vec<_>>()
+        }
+        _ => {
+            let rgba = image.to_rgba8();
+            rgba.as_raw()
+                .chunks_exact(4)
+                .map(|pixel| {
+                    [
+                        f64::from(pixel[0]) / 255.0,
+                        f64::from(pixel[1]) / 255.0,
+                        f64::from(pixel[2]) / 255.0,
+                        f64::from(pixel[3]) / 255.0,
+                    ]
+                })
+                .collect::<Vec<_>>()
+        }
+    };
+    let mut linear_premultiplied = Vec::with_capacity(encoded_pixels.len());
+    for encoded in encoded_pixels {
+        let encoded_alpha = encoded[3];
+        let encoded = [encoded[0], encoded[1], encoded[2]];
         let straight_encoded = if alpha == "straight" {
             encoded
         } else if encoded_alpha == 0.0 {
@@ -149,10 +174,11 @@ pub fn decode_image(
             encoded_alpha,
         ]);
     }
+    let rgba8 = image.to_rgba8().into_raw();
     Ok(DecodedImage {
-        width: rgba.width(),
-        height: rgba.height(),
-        rgba8: rgba.into_raw(),
+        width: image.width(),
+        height: image.height(),
+        rgba8,
         linear_premultiplied,
     })
 }
