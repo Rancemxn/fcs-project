@@ -1970,20 +1970,28 @@ fn export_rpe_json_with_resource_context(
             }
             notes.push(payload);
         }
-        let father = line
-            .parent()
-            .and_then(|parent| {
-                ordered_lines
-                    .iter()
-                    .position(|candidate| candidate.id().value() == parent.value())
-            })
-            .map_or(-1, |index| index as i64);
+        let motion_dropped = negotiation.drops(CapabilityDomain::Motion);
+        let father = if motion_dropped {
+            -1
+        } else {
+            line.parent()
+                .and_then(|parent| {
+                    ordered_lines
+                        .iter()
+                        .position(|candidate| candidate.id().value() == parent.value())
+                })
+                .map_or(-1, |index| index as i64)
+        };
         judge_lines.push(json!({
             "bpmfactor": 1,
             "eventLayers": [],
             "notes": notes,
             "father": father,
-            "rotateWithFather": line.inherit().rotation()
+            "rotateWithFather": if motion_dropped {
+                false
+            } else {
+                line.inherit().rotation()
+            }
         }));
     }
     if judge_lines.is_empty() {
@@ -3723,6 +3731,44 @@ mod tests {
             plan.action_for(CapabilityDomain::Motion),
             Some(NegotiationAction::Drop)
         );
+    }
+
+    #[test]
+    fn authorized_motion_drop_neutralizes_rpe_parent_and_inherit_before_write() {
+        let chart = rpe_chart();
+        assert!(chart.lines().lines().any(|line| line.parent().is_some()));
+        assert!(chart.lines().lines().any(|line| line.inherit().rotation()));
+        let profile = profile_reference(
+            RpeProfile::PhiraLegacySpeed.id(),
+            RpeProfile::PhiraLegacySpeed.version(),
+        );
+        let descriptor = descriptor_with_domain(
+            CapabilitySet::rpe_json(),
+            &profile,
+            CapabilityDomain::Motion,
+            false,
+            false,
+            true,
+            None,
+            None,
+        );
+        let authorization = DropAuthorization::new(
+            ["motion".into()],
+            "explicitly discard target-inexpressible line motion",
+        )
+        .unwrap();
+        let outcome = export_rpe_json_with_options(
+            &chart,
+            &ExportOptions::semantic(descriptor).with_drop(authorization),
+        )
+        .unwrap();
+
+        assert!(outcome.negotiation().drops(CapabilityDomain::Motion));
+        let target: Value = serde_json::from_slice(outcome.bytes()).unwrap();
+        let lines = target["judgeLineList"].as_array().unwrap();
+        assert!(lines.iter().all(|line| {
+            line["father"] == json!(-1) && line["rotateWithFather"] == json!(false)
+        }));
     }
 
     #[test]
