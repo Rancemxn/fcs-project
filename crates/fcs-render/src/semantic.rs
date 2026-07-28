@@ -148,7 +148,8 @@ fn paint_rgba(
         // are evaluated at time 0.0.
         PaintData::Solid { color } => {
             let evaluation =
-                query_descriptor(&chart.core, color, 0.0, EvaluationEnvironment::at_time(0.0))?;
+                query_descriptor(&chart.core, color, 0.0, EvaluationEnvironment::at_time(0.0))
+                    .map_err(|_| "render.invalid-descriptor")?;
             match evaluation.value {
                 RuntimeValue::Color(rgba) => Ok(Some(rgba)),
                 _ => Err("render.invalid-descriptor"),
