@@ -357,7 +357,8 @@ fn native_resource_data_trailing_byte_rejects() {
     let checksum =
         section_crc32_iso_hdlc(&trailing[payload_start..payload_start + extended_length as usize]);
     trailing[resource_entry + 32..resource_entry + 36].copy_from_slice(&checksum.to_le_bytes());
-    trailing[48..56].copy_from_slice(&(trailing.len() as u64).to_le_bytes());
+    let file_length = trailing.len() as u64;
+    trailing[48..56].copy_from_slice(&file_length.to_le_bytes());
 
     assert_eq!(
         load_chart(&trailing).unwrap_err(),
