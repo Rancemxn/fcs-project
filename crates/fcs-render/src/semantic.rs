@@ -224,7 +224,7 @@ fn geometry_bounds(
     geometry_ref: Option<u32>,
 ) -> Result<[f64; 4], &'static str> {
     let Some(index) = geometry_ref else {
-        return Err("render.invalid-reference");
+        return Ok([0.0, 0.0, 0.0, 0.0]);
     };
     let Some(geometry) = chart.geometries.get(index as usize) else {
         return Err("render.invalid-reference");
