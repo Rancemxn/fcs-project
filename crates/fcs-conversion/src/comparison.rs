@@ -67,10 +67,30 @@ impl ComparisonMismatch {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Default)]
+struct VerifiedMetricObservations {
+    maximum_errors: BTreeMap<String, f64>,
+    sample_counts: BTreeMap<String, u64>,
+}
+
+impl VerifiedMetricObservations {
+    fn observe(&mut self, metric: &str, error: f64) {
+        self.maximum_errors
+            .entry(metric.to_owned())
+            .and_modify(|maximum| *maximum = maximum.max(error))
+            .or_insert(error);
+        self.sample_counts
+            .entry(metric.to_owned())
+            .and_modify(|count| *count += 1)
+            .or_insert(1);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalComparison {
     mismatches: Vec<ComparisonMismatch>,
     verified_maximum_errors: BTreeMap<String, f64>,
+    verified_sample_counts: BTreeMap<String, u64>,
     unverified_domains: Vec<String>,
 }
 
@@ -91,6 +111,10 @@ impl CanonicalComparison {
 
     pub fn verified_maximum_error(&self, metric: &str) -> Option<f64> {
         self.verified_maximum_errors.get(metric).copied()
+    }
+
+    pub fn verified_sample_count(&self, metric: &str) -> Option<u64> {
+        self.verified_sample_counts.get(metric).copied()
     }
 
     pub fn unverified_domains(&self) -> &[String] {
@@ -158,7 +182,7 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
     dropped_domains: &[String],
 ) -> CanonicalComparison {
     let mut mismatches = Mismatches::new(dropped_domains);
-    let mut verified_maximum_errors = BTreeMap::new();
+    let mut verified_maximum_errors = VerifiedMetricObservations::default();
 
     if expected.source_version() != actual.source_version() {
         mismatch(
@@ -259,9 +283,14 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
         );
     }
 
+    let VerifiedMetricObservations {
+        maximum_errors,
+        sample_counts,
+    } = verified_maximum_errors;
     CanonicalComparison {
         mismatches: mismatches.into_inner(),
-        verified_maximum_errors,
+        verified_maximum_errors: maximum_errors,
+        verified_sample_counts: sample_counts,
         unverified_domains: {
             let mut domains = dropped_domains.to_vec();
             domains.sort();
@@ -392,7 +421,7 @@ fn compare_time_map(
     expected: &CanonicalChart,
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
-    verified_maximum_errors: &mut BTreeMap<String, f64>,
+    verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
 ) {
     let left: Vec<_> = expected.time_map().segments().collect();
@@ -486,7 +515,7 @@ fn compare_sync(
     expected: &CanonicalChart,
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
-    verified_maximum_errors: &mut BTreeMap<String, f64>,
+    verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
 ) {
     match (expected.metadata().sync(), actual.metadata().sync()) {
@@ -526,7 +555,7 @@ fn compare_lines(
     expected: &CanonicalChart,
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
-    verified_maximum_errors: &mut BTreeMap<String, f64>,
+    verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
 ) {
     let left = ordered_lines(expected);
@@ -663,7 +692,7 @@ fn compare_world_transform(
     line_index: usize,
     test_times: &[f64],
     budgets: &BTreeMap<String, f64>,
-    verified_maximum_errors: &mut BTreeMap<String, f64>,
+    verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
 ) {
     for &chart_time in test_times {
@@ -762,7 +791,7 @@ fn compare_notes(
     expected: &CanonicalChart,
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
-    verified_maximum_errors: &mut BTreeMap<String, f64>,
+    verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
 ) {
     let left = expected.notes().notes();
@@ -895,7 +924,7 @@ fn compare_tracks(
     expected: &CanonicalChart,
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
-    verified_maximum_errors: &mut BTreeMap<String, f64>,
+    verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
 ) {
     let left = ordered_tracks(expected);
@@ -954,7 +983,7 @@ fn compare_track_piece(
     left: &CanonicalTrackPiece,
     right: &CanonicalTrackPiece,
     budgets: &BTreeMap<String, f64>,
-    verified_maximum_errors: &mut BTreeMap<String, f64>,
+    verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
 ) {
     let field = |name: &str| format!("tracks[{track}].pieces[{piece}].{name}");
@@ -1052,7 +1081,7 @@ fn compare_track_value(
     left: CanonicalTrackValue,
     right: CanonicalTrackValue,
     budgets: &BTreeMap<String, f64>,
-    verified_maximum_errors: &mut BTreeMap<String, f64>,
+    verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
 ) {
     match (left, right) {
@@ -1104,7 +1133,7 @@ fn compare_scroll(
     expected: &CanonicalChart,
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
-    verified_maximum_errors: &mut BTreeMap<String, f64>,
+    verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
 ) {
     let left = ordered_scroll(expected);
@@ -1210,7 +1239,7 @@ fn compare_scroll_distance(
     line_index: usize,
     test_times: &[f64],
     budgets: &BTreeMap<String, f64>,
-    verified_maximum_errors: &mut BTreeMap<String, f64>,
+    verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
 ) {
     for &chart_time in test_times {
@@ -1374,7 +1403,7 @@ fn compare_time(
     expected: CanonicalTime,
     actual: CanonicalTime,
     budgets: &BTreeMap<String, f64>,
-    verified_maximum_errors: &mut BTreeMap<String, f64>,
+    verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
 ) {
     compare_float(
@@ -1403,7 +1432,7 @@ fn compare_optional_time(
     expected: Option<CanonicalTime>,
     actual: Option<CanonicalTime>,
     budgets: &BTreeMap<String, f64>,
-    verified_maximum_errors: &mut BTreeMap<String, f64>,
+    verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
 ) {
     match (expected, actual) {
@@ -1470,16 +1499,13 @@ fn compare_float(
     expected: f64,
     actual: f64,
     budgets: &BTreeMap<String, f64>,
-    verified_maximum_errors: &mut BTreeMap<String, f64>,
+    verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
 ) {
     let exact = expected.to_bits() == actual.to_bits();
     let error = (expected - actual).abs();
     if let Some(budget) = budgets.get(metric) {
-        verified_maximum_errors
-            .entry(metric.to_owned())
-            .and_modify(|maximum| *maximum = maximum.max(error))
-            .or_insert(error);
+        verified_maximum_errors.observe(metric, error);
         if error <= *budget {
             return;
         }
