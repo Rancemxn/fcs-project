@@ -8,9 +8,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 use image::{
-    ColorType, ImageEncoder, ImageFormat, ImageReader, Limits,
+    ColorType, ImageEncoder, ImageError, ImageFormat, ImageReader, Limits,
     codecs::{png::PngEncoder, webp::WebPEncoder},
 };
+
+use crate::RenderLimits;
 
 const FONT_CHECKSUM_MAGIC: u32 = 0xb1b0_afba;
 
@@ -25,6 +27,7 @@ pub const WEBP_PIXELS: [u8; 16] = [
 pub enum AssetError {
     CapabilityMissing,
     DecodeFailed,
+    LimitExceeded,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -87,13 +90,32 @@ pub fn decode_image(
     alpha: &str,
     bytes: &[u8],
 ) -> Result<DecodedImage, AssetError> {
+    decode_image_with_limits(
+        media_type,
+        color_space,
+        alpha,
+        bytes,
+        &RenderLimits::default(),
+    )
+}
+
+pub fn decode_image_with_limits(
+    media_type: &str,
+    color_space: &str,
+    alpha: &str,
+    bytes: &[u8],
+    render_limits: &RenderLimits,
+) -> Result<DecodedImage, AssetError> {
+    if bytes.len() as u64 > render_limits.max_single_resource_bytes {
+        return Err(AssetError::LimitExceeded);
+    }
     let format = match media_type {
         "image/png" => {
-            check_png(bytes, color_space)?;
+            check_png(bytes, color_space, render_limits.max_image_metadata_chunks)?;
             ImageFormat::Png
         }
         "image/webp" => {
-            check_webp(bytes)?;
+            check_webp(bytes, render_limits.max_image_metadata_chunks)?;
             ImageFormat::WebP
         }
         _ => return Err(AssetError::CapabilityMissing),
@@ -107,11 +129,18 @@ pub fn decode_image(
     let mut reader = ImageReader::new(Cursor::new(bytes));
     reader.set_format(format);
     let mut limits = Limits::default();
-    limits.max_image_width = Some(8192);
-    limits.max_image_height = Some(8192);
-    limits.max_alloc = Some(64 * 1024 * 1024);
+    limits.max_image_width = Some(render_limits.max_image_width);
+    limits.max_image_height = Some(render_limits.max_image_height);
+    limits.max_alloc = Some(render_limits.max_image_decoded_bytes);
     reader.limits(limits);
-    let image = reader.decode().map_err(|_| AssetError::DecodeFailed)?;
+    let image = reader.decode().map_err(asset_decode_error)?;
+    let output_bytes = u64::from(image.width())
+        .checked_mul(u64::from(image.height()))
+        .and_then(|pixels| pixels.checked_mul(36))
+        .ok_or(AssetError::LimitExceeded)?;
+    if output_bytes > render_limits.max_image_decoded_bytes {
+        return Err(AssetError::LimitExceeded);
+    }
     let encoded_pixels = match image.color() {
         ColorType::L16 | ColorType::Rgb16 | ColorType::La16 | ColorType::Rgba16 => {
             let rgba = image.to_rgba16();
@@ -183,6 +212,13 @@ pub fn decode_image(
     })
 }
 
+fn asset_decode_error(error: ImageError) -> AssetError {
+    match error {
+        ImageError::Limits(_) => AssetError::LimitExceeded,
+        _ => AssetError::DecodeFailed,
+    }
+}
+
 fn srgb_to_linear(value: f64) -> f64 {
     if value == 0.0 || value == 1.0 {
         return value;
@@ -194,7 +230,7 @@ fn srgb_to_linear(value: f64) -> f64 {
     }
 }
 
-fn check_png(bytes: &[u8], color_space: &str) -> Result<(), AssetError> {
+fn check_png(bytes: &[u8], color_space: &str, max_chunks: usize) -> Result<(), AssetError> {
     if bytes.get(..8) != Some(b"\x89PNG\r\n\x1a\n") {
         return Err(AssetError::DecodeFailed);
     }
@@ -202,7 +238,12 @@ fn check_png(bytes: &[u8], color_space: &str) -> Result<(), AssetError> {
     let mut first = true;
     let mut saw_iend = false;
     let mut seen = BTreeSet::new();
+    let mut chunk_count = 0usize;
     while position < bytes.len() {
+        chunk_count += 1;
+        if chunk_count > max_chunks {
+            return Err(AssetError::LimitExceeded);
+        }
         let header_end = position.checked_add(8).ok_or(AssetError::DecodeFailed)?;
         if header_end > bytes.len() {
             return Err(AssetError::DecodeFailed);
@@ -298,7 +339,7 @@ fn validate_ihdr(data: &[u8]) -> Result<(), AssetError> {
     Ok(())
 }
 
-fn check_webp(bytes: &[u8]) -> Result<(), AssetError> {
+fn check_webp(bytes: &[u8], max_chunks: usize) -> Result<(), AssetError> {
     if bytes.len() < 20 || bytes.get(..4) != Some(b"RIFF") || bytes.get(8..12) != Some(b"WEBP") {
         return Err(AssetError::DecodeFailed);
     }
@@ -309,7 +350,12 @@ fn check_webp(bytes: &[u8]) -> Result<(), AssetError> {
     let mut position = 12usize;
     let mut saw_lossless = false;
     let mut saw_extended = false;
+    let mut chunk_count = 0usize;
     while position < bytes.len() {
+        chunk_count += 1;
+        if chunk_count > max_chunks {
+            return Err(AssetError::LimitExceeded);
+        }
         let header_end = position.checked_add(8).ok_or(AssetError::DecodeFailed)?;
         if header_end > bytes.len() {
             return Err(AssetError::DecodeFailed);
@@ -402,6 +448,16 @@ pub fn build_test_font() -> Vec<u8> {
 }
 
 pub fn decode_font(bytes: &[u8]) -> Result<TestFont, AssetError> {
+    decode_font_with_limits(bytes, &RenderLimits::default())
+}
+
+pub fn decode_font_with_limits(
+    bytes: &[u8],
+    limits: &RenderLimits,
+) -> Result<TestFont, AssetError> {
+    if bytes.len() as u64 > limits.max_single_resource_bytes {
+        return Err(AssetError::LimitExceeded);
+    }
     if bytes.len() < 12 || be_u32(bytes, 0)? != 0x0001_0000 {
         return Err(AssetError::CapabilityMissing);
     }
@@ -409,6 +465,9 @@ pub fn decode_font(bytes: &[u8]) -> Result<TestFont, AssetError> {
         return Err(AssetError::DecodeFailed);
     }
     let count = usize::from(be_u16(bytes, 4)?);
+    if count > limits.max_font_tables {
+        return Err(AssetError::LimitExceeded);
+    }
     if count != 7 || 12 + count * 16 > bytes.len() {
         return Err(AssetError::CapabilityMissing);
     }
@@ -469,6 +528,9 @@ pub fn decode_font(bytes: &[u8]) -> Result<TestFont, AssetError> {
         return Err(AssetError::DecodeFailed);
     }
     let glyph_count = usize::from(be_u16(maxp, 4)?);
+    if glyph_count > limits.max_font_glyphs {
+        return Err(AssetError::LimitExceeded);
+    }
     if glyph_count != 2 {
         return Err(AssetError::DecodeFailed);
     }
@@ -481,8 +543,8 @@ pub fn decode_font(bytes: &[u8]) -> Result<TestFont, AssetError> {
     }
     let (advances, left_side_bearings) = parse_hmtx(tables[b"hmtx"], glyph_count)?;
     let offsets = parse_loca(tables[b"loca"], glyph_count)?;
-    let glyphs = parse_glyphs(tables[b"glyf"], &offsets)?;
-    let cmap = parse_cmap(tables[b"cmap"])?;
+    let glyphs = parse_glyphs(tables[b"glyf"], &offsets, limits)?;
+    let cmap = parse_cmap(tables[b"cmap"], limits)?;
     if cmap.get(&u32::from('A')) != Some(&1) {
         return Err(AssetError::DecodeFailed);
     }
@@ -496,7 +558,19 @@ pub fn decode_font(bytes: &[u8]) -> Result<TestFont, AssetError> {
 }
 
 pub fn shape_simple_ltr(font: &TestFont, text: &str) -> Result<Vec<ShapedGlyph>, AssetError> {
-    let mut glyphs = Vec::new();
+    shape_simple_ltr_with_limits(font, text, &RenderLimits::default())
+}
+
+pub fn shape_simple_ltr_with_limits(
+    font: &TestFont,
+    text: &str,
+    limits: &RenderLimits,
+) -> Result<Vec<ShapedGlyph>, AssetError> {
+    let count = text.chars().count();
+    if count > limits.max_shaped_glyphs {
+        return Err(AssetError::LimitExceeded);
+    }
+    let mut glyphs = Vec::with_capacity(count);
     for scalar in text.chars() {
         if scalar == '\0'
             || scalar.is_control()
@@ -652,11 +726,16 @@ fn parse_loca(bytes: &[u8], glyph_count: usize) -> Result<Vec<usize>, AssetError
     Ok(offsets)
 }
 
-fn parse_glyphs(bytes: &[u8], offsets: &[usize]) -> Result<Vec<GlyphOutline>, AssetError> {
+fn parse_glyphs(
+    bytes: &[u8],
+    offsets: &[usize],
+    limits: &RenderLimits,
+) -> Result<Vec<GlyphOutline>, AssetError> {
     if offsets.last().copied() != Some(bytes.len()) {
         return Err(AssetError::DecodeFailed);
     }
     let mut glyphs = Vec::with_capacity(offsets.len() - 1);
+    let mut glyph_work = 0usize;
     for range in offsets.windows(2) {
         if range[0] == range[1] {
             glyphs.push(GlyphOutline {
@@ -664,12 +743,20 @@ fn parse_glyphs(bytes: &[u8], offsets: &[usize]) -> Result<Vec<GlyphOutline>, As
             });
             continue;
         }
-        glyphs.push(parse_simple_glyph(&bytes[range[0]..range[1]])?);
+        glyphs.push(parse_simple_glyph(
+            &bytes[range[0]..range[1]],
+            limits,
+            &mut glyph_work,
+        )?);
     }
     Ok(glyphs)
 }
 
-fn parse_simple_glyph(bytes: &[u8]) -> Result<GlyphOutline, AssetError> {
+fn parse_simple_glyph(
+    bytes: &[u8],
+    limits: &RenderLimits,
+    glyph_work: &mut usize,
+) -> Result<GlyphOutline, AssetError> {
     if bytes.len() < 14 {
         return Err(AssetError::DecodeFailed);
     }
@@ -682,6 +769,9 @@ fn parse_simple_glyph(bytes: &[u8]) -> Result<GlyphOutline, AssetError> {
         });
     }
     let contour_count = contour_count as usize;
+    if contour_count > limits.max_font_contours_per_glyph {
+        return Err(AssetError::LimitExceeded);
+    }
     let mut position = 10usize;
     let mut ends = Vec::with_capacity(contour_count);
     for _ in 0..contour_count {
@@ -692,6 +782,13 @@ fn parse_simple_glyph(bytes: &[u8]) -> Result<GlyphOutline, AssetError> {
         return Err(AssetError::DecodeFailed);
     }
     let point_count = ends.last().copied().ok_or(AssetError::DecodeFailed)? + 1;
+    if point_count > limits.max_font_points_per_glyph {
+        return Err(AssetError::LimitExceeded);
+    }
+    *glyph_work = glyph_work
+        .checked_add(point_count)
+        .filter(|work| *work <= limits.max_font_glyph_work)
+        .ok_or(AssetError::LimitExceeded)?;
     let instruction_length = usize::from(be_u16(bytes, position)?);
     position = position
         .checked_add(2 + instruction_length)
@@ -769,7 +866,7 @@ fn decode_coordinates(
     Ok((values, position))
 }
 
-fn parse_cmap(bytes: &[u8]) -> Result<BTreeMap<u32, u16>, AssetError> {
+fn parse_cmap(bytes: &[u8], limits: &RenderLimits) -> Result<BTreeMap<u32, u16>, AssetError> {
     if bytes.len() < 12 || be_u16(bytes, 0)? != 0 {
         return Err(AssetError::DecodeFailed);
     }
@@ -798,18 +895,25 @@ fn parse_cmap(bytes: &[u8]) -> Result<BTreeMap<u32, u16>, AssetError> {
         .copied()
         .ok_or(AssetError::CapabilityMissing)?;
     match format {
-        4 => parse_cmap4(bytes, offset),
+        4 => parse_cmap4(bytes, offset, limits),
         12 => Err(AssetError::CapabilityMissing),
         _ => unreachable!(),
     }
 }
 
-fn parse_cmap4(bytes: &[u8], offset: usize) -> Result<BTreeMap<u32, u16>, AssetError> {
+fn parse_cmap4(
+    bytes: &[u8],
+    offset: usize,
+    limits: &RenderLimits,
+) -> Result<BTreeMap<u32, u16>, AssetError> {
     let length = usize::from(be_u16(bytes, offset + 2)?);
     let table = bytes
         .get(offset..offset + length)
         .ok_or(AssetError::DecodeFailed)?;
     let segment_count = usize::from(be_u16(table, 6)?) / 2;
+    if segment_count > limits.max_font_cmap_segments {
+        return Err(AssetError::LimitExceeded);
+    }
     if segment_count == 0 || 16 + segment_count * 8 > table.len() {
         return Err(AssetError::DecodeFailed);
     }
@@ -818,6 +922,7 @@ fn parse_cmap4(bytes: &[u8], offset: usize) -> Result<BTreeMap<u32, u16>, AssetE
     let deltas = start_codes + segment_count * 2;
     let ranges = deltas + segment_count * 2;
     let mut cmap = BTreeMap::new();
+    let mut mapping_count = 0usize;
     for segment in 0..segment_count {
         let end = be_u16(table, end_codes + segment * 2)?;
         let start = be_u16(table, start_codes + segment * 2)?;
@@ -826,6 +931,10 @@ fn parse_cmap4(bytes: &[u8], offset: usize) -> Result<BTreeMap<u32, u16>, AssetE
         if start > end {
             return Err(AssetError::DecodeFailed);
         }
+        mapping_count = mapping_count
+            .checked_add(usize::from(end - start) + 1)
+            .filter(|count| *count <= limits.max_font_cmap_mappings)
+            .ok_or(AssetError::LimitExceeded)?;
         for code in start..=end {
             if code == 0xffff {
                 continue;

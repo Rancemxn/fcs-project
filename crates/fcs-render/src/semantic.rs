@@ -2,7 +2,10 @@
 
 use fcs_fcbc::{EvaluationEnvironment, RuntimeValue, query_descriptor};
 
-use crate::loader::{DecodedRenderChart, GeometryData, NodeKind, PaintData, PaintRecord};
+use crate::{
+    RenderLimits,
+    loader::{DecodedRenderChart, GeometryData, NodeKind, PaintData, PaintRecord},
+};
 
 /// One drawable operation after semantic attachment/visibility filtering.
 #[derive(Clone, Debug, PartialEq)]
@@ -98,7 +101,20 @@ pub fn rasterize_solid_rgba8(
     width: u32,
     height: u32,
 ) -> Result<Vec<u8>, &'static str> {
-    if width == 0 || height == 0 || width > 4096 || height > 4096 {
+    rasterize_solid_rgba8_with_limits(chart, width, height, &RenderLimits::default())
+}
+
+pub fn rasterize_solid_rgba8_with_limits(
+    chart: &DecodedRenderChart,
+    width: u32,
+    height: u32,
+    limits: &RenderLimits,
+) -> Result<Vec<u8>, &'static str> {
+    if width == 0
+        || height == 0
+        || width > limits.max_raster_dimension
+        || height > limits.max_raster_dimension
+    {
         return Err("render.limit-exceeded");
     }
     let ops = evaluate_semantic_draw_list(chart)?;

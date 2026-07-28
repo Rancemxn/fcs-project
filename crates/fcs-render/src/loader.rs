@@ -8,10 +8,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fcs_fcbc::{DecodedChart, DescriptorKind, ExpressionNode, PropertyDescriptor, ValueType};
 
-use crate::assets::{AssetError, DecodedImage, TestFont, decode_font, decode_image};
+use crate::{
+    RenderLimits,
+    assets::{
+        AssetError, DecodedImage, TestFont, decode_font_with_limits, decode_image_with_limits,
+    },
+};
 
 pub const NULL_INDEX: u32 = u32::MAX;
-const MAX_TABLE_ITEMS: usize = 4096;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DecodedRenderChart {
@@ -401,16 +405,28 @@ impl<'a> Cursor<'a> {
 }
 
 pub fn load_render(bytes: &[u8]) -> Result<DecodedRenderChart, &'static str> {
+    load_render_with_limits(bytes, &RenderLimits::default())
+}
+
+pub fn load_render_with_limits(
+    bytes: &[u8],
+    limits: &RenderLimits,
+) -> Result<DecodedRenderChart, &'static str> {
     let core = fcs_fcbc::load_chart(bytes)?;
     let sections = section_map(bytes)?;
     let resources = parse_resources(
         section_payload(bytes, &sections, 6)?,
         section_payload(bytes, &sections, 20)?,
         &core.strings,
+        limits,
     )?;
-    let mut decoded =
-        parse_render_section(section_payload(bytes, &sections, 14)?, core, resources)?;
-    validate_render(&mut decoded)?;
+    let mut decoded = parse_render_section(
+        section_payload(bytes, &sections, 14)?,
+        core,
+        resources,
+        limits,
+    )?;
+    validate_render(&mut decoded, limits)?;
     Ok(decoded)
 }
 
@@ -461,11 +477,13 @@ fn parse_resources(
     bytes: &[u8],
     data: &[u8],
     strings: &[String],
+    limits: &RenderLimits,
 ) -> Result<Vec<ResourceRecord>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
-    let count = limited_count(cursor.u32()?)?;
+    let count = limited_count(cursor.u32()?, limits.max_resources)?;
     let mut resources = Vec::with_capacity(count);
     let mut previous = None;
+    let mut total_resource_bytes = 0u64;
     for _ in 0..count {
         let mut record = take_record(&mut cursor, "fcbc.invalid-record")?;
         let id = record.u64()?;
@@ -487,12 +505,24 @@ fn parse_resources(
         }
         let data_offset = record.u64()?;
         let data_length = record.u64()?;
-        let hash = parse_counted_bytes(&mut record)?;
-        if hash.len() != 32 {
+        if consume_counted_bytes(&mut record)? != 32 {
             return Err("fcbc.invalid-record");
         }
-        let metadata = parse_value(&mut record, strings.len())?;
+        let metadata = parse_value(
+            &mut record,
+            strings.len(),
+            limits.max_descriptor_values,
+            limits.max_descriptor_value_depth,
+            1,
+        )?;
         record.finish()?;
+        if data_length > limits.max_single_resource_bytes {
+            return Err("render.limit-exceeded");
+        }
+        total_resource_bytes = total_resource_bytes
+            .checked_add(data_length)
+            .filter(|total| *total <= limits.max_total_resource_bytes)
+            .ok_or("render.limit-exceeded")?;
         let start = usize::try_from(data_offset).map_err(|_| "fcbc.resource-out-of-bounds")?;
         let length = usize::try_from(data_length).map_err(|_| "fcbc.resource-out-of-bounds")?;
         let end = start
@@ -516,14 +546,23 @@ fn parse_resources(
     Ok(resources)
 }
 
-fn parse_counted_bytes(cursor: &mut Cursor<'_>) -> Result<Vec<u8>, &'static str> {
+fn consume_counted_bytes(cursor: &mut Cursor<'_>) -> Result<usize, &'static str> {
     let length = usize::try_from(cursor.u32()?).map_err(|_| cursor.error)?;
-    let bytes = cursor.take(length)?.to_vec();
+    cursor.take(length)?;
     cursor.zeroes((4 - length % 4) % 4)?;
-    Ok(bytes)
+    Ok(length)
 }
 
-fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedValue, &'static str> {
+fn parse_value(
+    cursor: &mut Cursor<'_>,
+    string_count: usize,
+    max_items: usize,
+    max_depth: usize,
+    depth: usize,
+) -> Result<ParsedValue, &'static str> {
+    if depth > max_depth {
+        return Err("render.limit-exceeded");
+    }
     let tag = cursor.u8()?;
     if cursor.u8()? != 0 || cursor.u16()? != 0 {
         return Err(cursor.error);
@@ -594,10 +633,11 @@ fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedVal
             if element_tag == 0 {
                 return Err(cursor.error);
             }
-            let count = limited_count(payload.u32()?)?;
+            let count = limited_count(payload.u32()?, max_items)?;
             let mut values = Vec::with_capacity(count);
             for _ in 0..count {
-                let value = parse_value(&mut payload, string_count)?;
+                let value =
+                    parse_value(&mut payload, string_count, max_items, max_depth, depth + 1)?;
                 if value_tag(&value) != element_tag {
                     return Err(cursor.error);
                 }
@@ -606,7 +646,7 @@ fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedVal
             ParsedValue::Array(element_tag, values)
         }
         14 => {
-            let count = limited_count(payload.u32()?)?;
+            let count = limited_count(payload.u32()?, max_items)?;
             let mut fields = Vec::with_capacity(count);
             let mut keys = BTreeSet::new();
             for _ in 0..count {
@@ -617,7 +657,10 @@ fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedVal
                 if !keys.insert(key) {
                     return Err(cursor.error);
                 }
-                fields.push((key, parse_value(&mut payload, string_count)?));
+                fields.push((
+                    key,
+                    parse_value(&mut payload, string_count, max_items, max_depth, depth + 1)?,
+                ));
             }
             ParsedValue::Object(fields)
         }
@@ -682,6 +725,7 @@ fn parse_render_section(
     bytes: &[u8],
     core: DecodedChart,
     resources: Vec<ResourceRecord>,
+    limits: &RenderLimits,
 ) -> Result<DecodedRenderChart, &'static str> {
     if bytes.len() < 8 {
         return Err("render.invalid-section");
@@ -711,14 +755,14 @@ fn parse_render_section(
     {
         return Err("render.invalid-section");
     }
-    let layer_count = limited_count(cursor.u32()?)?;
-    let node_count = limited_count(cursor.u32()?)?;
-    let geometry_count = limited_count(cursor.u32()?)?;
-    let path_count = limited_count(cursor.u32()?)?;
-    let paint_count = limited_count(cursor.u32()?)?;
-    let stroke_count = limited_count(cursor.u32()?)?;
-    let clip_count = limited_count(cursor.u32()?)?;
-    let glyph_count = limited_count(cursor.u32()?)?;
+    let layer_count = limited_count(cursor.u32()?, limits.max_layers)?;
+    let node_count = limited_count(cursor.u32()?, limits.max_nodes)?;
+    let geometry_count = limited_count(cursor.u32()?, limits.max_geometries)?;
+    let path_count = limited_count(cursor.u32()?, limits.max_paths)?;
+    let paint_count = limited_count(cursor.u32()?, limits.max_paints)?;
+    let stroke_count = limited_count(cursor.u32()?, limits.max_strokes)?;
+    let clip_count = limited_count(cursor.u32()?, limits.max_clips)?;
+    let glyph_count = limited_count(cursor.u32()?, limits.max_glyph_runs)?;
 
     let mut layers = Vec::with_capacity(layer_count);
     for _ in 0..layer_count {
@@ -726,23 +770,23 @@ fn parse_render_section(
     }
     let mut nodes = Vec::with_capacity(node_count);
     for _ in 0..node_count {
-        nodes.push(parse_node(&mut cursor, core.strings.len())?);
+        nodes.push(parse_node(&mut cursor, core.strings.len(), limits)?);
     }
     let mut geometries = Vec::with_capacity(geometry_count);
     for _ in 0..geometry_count {
-        geometries.push(parse_geometry(&mut cursor, &core.strings)?);
+        geometries.push(parse_geometry(&mut cursor, &core.strings, limits)?);
     }
     let mut paths = Vec::with_capacity(path_count);
     for _ in 0..path_count {
-        paths.push(parse_path(&mut cursor)?);
+        paths.push(parse_path(&mut cursor, limits)?);
     }
     let mut paints = Vec::with_capacity(paint_count);
     for _ in 0..paint_count {
-        paints.push(parse_paint(&mut cursor)?);
+        paints.push(parse_paint(&mut cursor, limits)?);
     }
     let mut strokes = Vec::with_capacity(stroke_count);
     for _ in 0..stroke_count {
-        strokes.push(parse_stroke(&mut cursor)?);
+        strokes.push(parse_stroke(&mut cursor, limits)?);
     }
     let mut clips = Vec::with_capacity(clip_count);
     for _ in 0..clip_count {
@@ -750,7 +794,7 @@ fn parse_render_section(
     }
     let mut glyph_runs = Vec::with_capacity(glyph_count);
     for _ in 0..glyph_count {
-        glyph_runs.push(parse_glyph_run(&mut cursor)?);
+        glyph_runs.push(parse_glyph_run(&mut cursor, limits)?);
     }
     cursor.finish()?;
     outer.finish()?;
@@ -796,7 +840,11 @@ fn parse_layer(cursor: &mut Cursor<'_>) -> Result<LayerRecord, &'static str> {
     Ok(layer)
 }
 
-fn parse_node(cursor: &mut Cursor<'_>, string_count: usize) -> Result<NodeRecord, &'static str> {
+fn parse_node(
+    cursor: &mut Cursor<'_>,
+    string_count: usize,
+    limits: &RenderLimits,
+) -> Result<NodeRecord, &'static str> {
     let mut record = take_record(cursor, "render.invalid-record")?;
     let id = record.u64()?;
     let kind = NodeKind::from_u16(record.u16()?)?;
@@ -840,7 +888,13 @@ fn parse_node(cursor: &mut Cursor<'_>, string_count: usize) -> Result<NodeRecord
     };
     if record.u16()? != 0
         || !matches!(
-            parse_value(&mut record, string_count)?,
+            parse_value(
+                &mut record,
+                string_count,
+                limits.max_descriptor_values,
+                limits.max_descriptor_value_depth,
+                1,
+            )?,
             ParsedValue::Object(_)
         )
     {
@@ -853,6 +907,7 @@ fn parse_node(cursor: &mut Cursor<'_>, string_count: usize) -> Result<NodeRecord
 fn parse_geometry(
     cursor: &mut Cursor<'_>,
     strings: &[String],
+    limits: &RenderLimits,
 ) -> Result<GeometryRecord, &'static str> {
     let mut record = take_record(cursor, "render.invalid-record")?;
     let id = record.u64()?;
@@ -860,15 +915,30 @@ fn parse_geometry(
     if !kind.is_drawable() || record.u16()? != 0 {
         return Err("render.invalid-geometry");
     }
-    let fields = named_object(parse_value(&mut record, strings.len())?, strings)?;
+    let max_value_items = if matches!(kind, NodeKind::Polyline | NodeKind::Polygon) {
+        limits.max_descriptor_values.min(limits.max_points)
+    } else {
+        limits.max_descriptor_values
+    };
+    let fields = named_object(
+        parse_value(
+            &mut record,
+            strings.len(),
+            max_value_items,
+            limits.max_descriptor_value_depth,
+            1,
+        )?,
+        strings,
+    )?;
     record.finish()?;
-    let data = geometry_data(kind, fields)?;
+    let data = geometry_data(kind, fields, limits)?;
     Ok(GeometryRecord { id, kind, data })
 }
 
 fn geometry_data(
     kind: NodeKind,
     fields: Vec<(String, ParsedValue)>,
+    limits: &RenderLimits,
 ) -> Result<GeometryData, &'static str> {
     let names: Vec<_> = fields.iter().map(|(name, _)| name.as_str()).collect();
     let value = |index: usize| &fields[index].1;
@@ -915,13 +985,13 @@ fn geometry_data(
             end: expect_u32(value(1))?,
         }),
         NodeKind::Polyline if names == ["pointDescriptors"] => {
-            let points = expect_u32_array(value(0))?;
+            let points = expect_u32_array_limited(value(0), limits.max_points)?;
             (points.len() >= 2)
                 .then_some(GeometryData::Polyline { points })
                 .ok_or("render.invalid-geometry")
         }
         NodeKind::Polygon if names == ["pointDescriptors"] => {
-            let points = expect_u32_array(value(0))?;
+            let points = expect_u32_array_limited(value(0), limits.max_points)?;
             (points.len() >= 3)
                 .then_some(GeometryData::Polygon { points })
                 .ok_or("render.invalid-geometry")
@@ -1011,6 +1081,19 @@ fn expect_u32_array(value: &ParsedValue) -> Result<Vec<u32>, &'static str> {
     values.iter().map(expect_u32).collect()
 }
 
+fn expect_u32_array_limited(
+    value: &ParsedValue,
+    max_items: usize,
+) -> Result<Vec<u32>, &'static str> {
+    let ParsedValue::Array(2, values) = value else {
+        return Err("render.invalid-geometry");
+    };
+    if values.len() > max_items {
+        return Err("render.limit-exceeded");
+    }
+    values.iter().map(expect_u32).collect()
+}
+
 fn expect_array4(value: &ParsedValue) -> Result<[u32; 4], &'static str> {
     expect_u32_array(value)?
         .try_into()
@@ -1028,7 +1111,7 @@ fn expect_enum(
         .ok_or("render.invalid-geometry")
 }
 
-fn parse_path(cursor: &mut Cursor<'_>) -> Result<PathRecord, &'static str> {
+fn parse_path(cursor: &mut Cursor<'_>, limits: &RenderLimits) -> Result<PathRecord, &'static str> {
     let mut record = take_record(cursor, "render.invalid-record")?;
     let id = record.u64()?;
     if record.u16()? != 0 {
@@ -1038,7 +1121,7 @@ fn parse_path(cursor: &mut Cursor<'_>) -> Result<PathRecord, &'static str> {
     if !matches!(fill_rule, 1 | 2) {
         return Err("render.invalid-geometry");
     }
-    let count = limited_count(record.u32()?)?;
+    let count = limited_count(record.u32()?, limits.max_path_commands)?;
     let mut commands = Vec::with_capacity(count);
     let mut open = false;
     let mut closed = false;
@@ -1114,7 +1197,10 @@ fn parse_path_command(cursor: &mut Cursor<'_>) -> Result<PathCommand, &'static s
     Ok(command)
 }
 
-fn parse_paint(cursor: &mut Cursor<'_>) -> Result<PaintRecord, &'static str> {
+fn parse_paint(
+    cursor: &mut Cursor<'_>,
+    limits: &RenderLimits,
+) -> Result<PaintRecord, &'static str> {
     let mut record = take_record(cursor, "render.invalid-record")?;
     let id = record.u64()?;
     let kind = record.u16()?;
@@ -1129,7 +1215,7 @@ fn parse_paint(cursor: &mut Cursor<'_>) -> Result<PaintRecord, &'static str> {
             start: record.u32()?,
             end: record.u32()?,
             spread: parse_spread(&mut record)?,
-            stops: parse_stops(&mut record)?,
+            stops: parse_stops(&mut record, limits.max_gradient_stops)?,
         },
         3 => PaintData::RadialGradient {
             start_center: record.u32()?,
@@ -1137,7 +1223,7 @@ fn parse_paint(cursor: &mut Cursor<'_>) -> Result<PaintRecord, &'static str> {
             end_center: record.u32()?,
             end_radius: record.u32()?,
             spread: parse_spread(&mut record)?,
-            stops: parse_stops(&mut record)?,
+            stops: parse_stops(&mut record, limits.max_gradient_stops)?,
         },
         4 => {
             let resource_id = record.u64()?;
@@ -1177,8 +1263,11 @@ fn parse_spread(record: &mut Cursor<'_>) -> Result<u16, &'static str> {
     Ok(spread)
 }
 
-fn parse_stops(record: &mut Cursor<'_>) -> Result<Vec<GradientStop>, &'static str> {
-    let count = limited_count(record.u32()?)?;
+fn parse_stops(
+    record: &mut Cursor<'_>,
+    max_stops: usize,
+) -> Result<Vec<GradientStop>, &'static str> {
+    let count = limited_count(record.u32()?, max_stops)?;
     if count < 2 {
         return Err("render.invalid-paint");
     }
@@ -1202,7 +1291,10 @@ fn parse_stops(record: &mut Cursor<'_>) -> Result<Vec<GradientStop>, &'static st
     Ok(stops)
 }
 
-fn parse_stroke(cursor: &mut Cursor<'_>) -> Result<StrokeRecord, &'static str> {
+fn parse_stroke(
+    cursor: &mut Cursor<'_>,
+    limits: &RenderLimits,
+) -> Result<StrokeRecord, &'static str> {
     let mut record = take_record(cursor, "render.invalid-record")?;
     let id = record.u64()?;
     if record.u16()? != 0 || record.u16()? != 0 {
@@ -1214,7 +1306,7 @@ fn parse_stroke(cursor: &mut Cursor<'_>) -> Result<StrokeRecord, &'static str> {
     let join = record.u16()?;
     let miter_limit = record.semantic_f64("render.invalid-stroke")?;
     let dash_offset_descriptor = record.u32()?;
-    let count = limited_count(record.u32()?)?;
+    let count = limited_count(record.u32()?, limits.max_stroke_dashes)?;
     if !(1..=3).contains(&cap)
         || !(1..=3).contains(&join)
         || miter_limit < 1.0
@@ -1268,7 +1360,10 @@ fn parse_clip(cursor: &mut Cursor<'_>) -> Result<ClipRecord, &'static str> {
     })
 }
 
-fn parse_glyph_run(cursor: &mut Cursor<'_>) -> Result<GlyphRunRecord, &'static str> {
+fn parse_glyph_run(
+    cursor: &mut Cursor<'_>,
+    limits: &RenderLimits,
+) -> Result<GlyphRunRecord, &'static str> {
     let mut record = take_record(cursor, "render.invalid-record")?;
     let id = record.u64()?;
     let font_resource_id = record.u64()?;
@@ -1278,7 +1373,7 @@ fn parse_glyph_run(cursor: &mut Cursor<'_>) -> Result<GlyphRunRecord, &'static s
     }
     let size_descriptor = record.u32()?;
     let run_offset = [record.f64()?, record.f64()?];
-    let count = limited_count(record.u32()?)?;
+    let count = limited_count(record.u32()?, limits.max_glyphs_per_run)?;
     if record.u32()? != 0 {
         return Err("render.invalid-record");
     }
@@ -1311,12 +1406,15 @@ fn optional_index(value: u32) -> Option<u32> {
     (value != NULL_INDEX).then_some(value)
 }
 
-fn validate_render(chart: &mut DecodedRenderChart) -> Result<(), &'static str> {
+fn validate_render(
+    chart: &mut DecodedRenderChart,
+    limits: &RenderLimits,
+) -> Result<(), &'static str> {
     validate_ids_and_table_order(chart)?;
-    validate_node_graph(chart)?;
+    validate_node_graph(chart, limits)?;
     let owners = validate_ownership(chart)?;
     validate_descriptor_roots(chart, &owners)?;
-    validate_and_decode_resources(chart)?;
+    validate_and_decode_resources(chart, limits)?;
     Ok(())
 }
 
@@ -1376,7 +1474,10 @@ fn validate_ids_and_table_order(chart: &DecodedRenderChart) -> Result<(), &'stat
     Ok(())
 }
 
-fn validate_node_graph(chart: &DecodedRenderChart) -> Result<(), &'static str> {
+fn validate_node_graph(
+    chart: &DecodedRenderChart,
+    limits: &RenderLimits,
+) -> Result<(), &'static str> {
     let root_total = chart
         .layers
         .iter()
@@ -1469,6 +1570,7 @@ fn validate_node_graph(chart: &DecodedRenderChart) -> Result<(), &'static str> {
             return Err("render.invalid-composite");
         }
     }
+    validate_node_depths(chart, limits)?;
 
     let mut collections: BTreeMap<(u32, Option<u32>), Vec<u32>> = BTreeMap::new();
     for node in &chart.nodes {
@@ -1495,6 +1597,29 @@ fn validate_node_graph(chart: &DecodedRenderChart) -> Result<(), &'static str> {
             return Err("render.invalid-graph");
         }
         previous = Some(key);
+    }
+    Ok(())
+}
+
+fn validate_node_depths(
+    chart: &DecodedRenderChart,
+    limits: &RenderLimits,
+) -> Result<(), &'static str> {
+    let mut depths = Vec::with_capacity(chart.nodes.len());
+    for node in &chart.nodes {
+        let (mut group_depth, mut clip_depth) = match node.parent {
+            Some(parent) => *depths.get(parent as usize).ok_or("render.invalid-graph")?,
+            None => (0usize, 0usize),
+        };
+        match node.kind {
+            NodeKind::Group => group_depth = group_depth.saturating_add(1),
+            NodeKind::ClipGroup => clip_depth = clip_depth.saturating_add(1),
+            _ => {}
+        }
+        if group_depth > limits.max_group_depth || clip_depth > limits.max_clip_depth {
+            return Err("render.limit-exceeded");
+        }
+        depths.push((group_depth, clip_depth));
     }
     Ok(())
 }
@@ -2020,7 +2145,10 @@ fn expression_environment(
     Ok(result)
 }
 
-fn validate_and_decode_resources(chart: &mut DecodedRenderChart) -> Result<(), &'static str> {
+fn validate_and_decode_resources(
+    chart: &mut DecodedRenderChart,
+    limits: &RenderLimits,
+) -> Result<(), &'static str> {
     let image_ids: BTreeSet<_> = chart
         .geometries
         .iter()
@@ -2043,11 +2171,12 @@ fn validate_and_decode_resources(chart: &mut DecodedRenderChart) -> Result<(), &
             return Err("render.resource-type-mismatch");
         }
         let metadata = image_metadata(resource, &chart.core.strings)?;
-        let decoded = decode_image(
+        let decoded = decode_image_with_limits(
             &resource.media_type,
             &metadata.0,
             &metadata.1,
             &resource.data,
+            limits,
         )
         .map_err(asset_error)?;
         chart.decoded_images.insert(id, decoded);
@@ -2070,7 +2199,7 @@ fn validate_and_decode_resources(chart: &mut DecodedRenderChart) -> Result<(), &
             return Err("render.resource-capability-missing");
         }
         validate_font_metadata(resource, &chart.core.strings)?;
-        let font = decode_font(&resource.data).map_err(asset_error)?;
+        let font = decode_font_with_limits(&resource.data, limits).map_err(asset_error)?;
         chart.decoded_fonts.insert(id, font);
     }
     for run in &chart.glyph_runs {
@@ -2174,12 +2303,13 @@ fn asset_error(error: AssetError) -> &'static str {
     match error {
         AssetError::CapabilityMissing => "render.resource-capability-missing",
         AssetError::DecodeFailed => "render.resource-decode-failed",
+        AssetError::LimitExceeded => "render.limit-exceeded",
     }
 }
 
-fn limited_count(value: u32) -> Result<usize, &'static str> {
+fn limited_count(value: u32, maximum: usize) -> Result<usize, &'static str> {
     let value = value as usize;
-    (value <= MAX_TABLE_ITEMS)
+    (value <= maximum)
         .then_some(value)
         .ok_or("render.limit-exceeded")
 }
