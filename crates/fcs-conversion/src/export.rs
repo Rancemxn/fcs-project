@@ -13,8 +13,8 @@ use fcs_model::{
     CanonicalNoteSoundPolicy, CanonicalResourceBundle, CanonicalTrack, CanonicalTrackBlend,
     CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackTarget,
     CanonicalTrackValue, CanonicalValue, ConversionDomain, ConversionEntry, ConversionPhase,
-    ConversionPolicy, ConversionReport, ConversionSeverity, ConversionStatus, RepairMode,
-    SemanticStatus,
+    ConversionPolicy, ConversionReport, ConversionSeverity, ConversionStatus, ErrorMetric,
+    RepairMode, SemanticStatus,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -2951,6 +2951,8 @@ fn finish_export(
             );
         }
     }
+    let forced_boundaries = approximation_forced_boundaries(expected, actual);
+    let source_descriptor_hash = source_descriptor_hash(expected);
     for (index, (metric, declared_maximum)) in comparison_budgets.iter().enumerate() {
         let verified_maximum = comparison
             .verified_maximum_error(metric)
@@ -2962,6 +2964,18 @@ fn finish_export(
             .into_iter()
             .find(|domain| domain.as_str() == metric_domain)
             .map_or(0, |domain| approximation_segment_count(actual, domain));
+        let error_metric = ErrorMetric::new(
+            conversion_domain_from_str(metric_domain),
+            metric.clone(),
+            *declared_maximum,
+            verified_maximum,
+            "same-profile-canonical-reparse",
+            forced_boundaries.len() as u64,
+            verified_output_segments as u64,
+            forced_boundaries.iter().copied(),
+            source_descriptor_hash.clone(),
+        )
+        .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?;
         entries.push(
             ConversionEntry::new(
                 format!("approximation/verified/{index:06}"),
@@ -2986,7 +3000,8 @@ fn finish_export(
                 ),
                 [],
             )
-            .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
+            .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?
+            .with_error_metric(error_metric),
         );
     }
     let output_hash = lower_hex(Sha256::digest(&bytes));
@@ -3065,6 +3080,52 @@ fn lower_hex(bytes: impl AsRef<[u8]>) -> String {
         write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
     }
     output
+}
+
+fn approximation_forced_boundaries(expected: &CanonicalChart, actual: &CanonicalChart) -> Vec<f64> {
+    let mut boundaries = vec![0.0];
+    for chart in [expected, actual] {
+        boundaries.extend(chart.time_map().segments().map(|segment| segment.1));
+        for note in chart.notes().notes() {
+            boundaries.push(note.gameplay().time().chart_time_seconds());
+            if let Some(end_time) = note.gameplay().end_time() {
+                boundaries.push(end_time.chart_time_seconds());
+            }
+        }
+        for track in chart.tracks().tracks() {
+            for piece in track.pieces() {
+                match piece {
+                    CanonicalTrackPiece::Segment(segment) => {
+                        boundaries.push(segment.start().chart_time_seconds());
+                        boundaries.push(segment.end().chart_time_seconds());
+                    }
+                    CanonicalTrackPiece::Point(point) => {
+                        boundaries.push(point.time().chart_time_seconds());
+                    }
+                }
+            }
+        }
+        for line in chart.scroll().lines() {
+            boundaries.push(line.integration_origin());
+            boundaries.extend(
+                line.coordinate()
+                    .points()
+                    .iter()
+                    .map(|point| point.chart_time()),
+            );
+        }
+    }
+    boundaries.sort_by(f64::total_cmp);
+    boundaries.dedup_by(|left, right| *left == *right);
+    boundaries
+}
+
+fn source_descriptor_hash(chart: &CanonicalChart) -> String {
+    let material = chart.descriptors().map_or_else(
+        || "fcs-source-descriptor:none:v1".to_owned(),
+        |table| format!("{table:?}"),
+    );
+    lower_hex(Sha256::digest(material.as_bytes()))
 }
 
 #[cfg(test)]
@@ -3976,6 +4037,34 @@ mod tests {
         assert_eq!(
             verification.target_value(),
             Some(&CanonicalValue::Float(verified))
+        );
+        let metric = verification.error_metric().unwrap();
+        assert_eq!(metric.domain(), ConversionDomain::Presentation);
+        assert_eq!(metric.metric(), "presentation.value");
+        assert_eq!(metric.declared_maximum(), 0.001);
+        assert_eq!(metric.verified_maximum(), verified);
+        assert_eq!(
+            metric.verification_method(),
+            "same-profile-canonical-reparse"
+        );
+        assert!(metric.sample_count() > 0);
+        assert!(metric.segment_count() > 0);
+        assert_eq!(
+            metric.sample_count(),
+            metric.forced_boundaries().len() as u64
+        );
+        assert!(
+            metric
+                .forced_boundaries()
+                .windows(2)
+                .all(|pair| pair[0] < pair[1])
+        );
+        assert_eq!(metric.source_descriptor_hash().len(), 64);
+        assert!(
+            metric
+                .source_descriptor_hash()
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
         );
         assert!(verification.message().contains("target segments"));
         assert!(verification.message().contains("linear-segment@1.0.0"));
