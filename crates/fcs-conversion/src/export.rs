@@ -3281,6 +3281,48 @@ mod tests {
         .unwrap()
     }
 
+    fn rpe_motion_scroll_drop_descriptor(profile: &str) -> CapabilityDescriptor {
+        let base = CapabilitySet::rpe_json().descriptor(Some(profile.into()));
+        let domains = base
+            .domains()
+            .iter()
+            .map(|descriptor| {
+                if matches!(
+                    descriptor.domain(),
+                    CapabilityDomain::Motion | CapabilityDomain::Scroll
+                ) {
+                    CapabilityDomainDescriptor::new(
+                        descriptor.domain(),
+                        false,
+                        false,
+                        false,
+                        false,
+                        true,
+                        descriptor.max_entities(),
+                        descriptor.max_bytes(),
+                    )
+                    .with_features(if descriptor.domain() == CapabilityDomain::Scroll {
+                        Vec::new()
+                    } else {
+                        descriptor.features().to_vec()
+                    })
+                    .unwrap()
+                    .with_limits(descriptor.limits().iter().cloned())
+                    .unwrap()
+                } else {
+                    descriptor.clone()
+                }
+            })
+            .collect();
+        CapabilityDescriptor::new(
+            base.format(),
+            base.version(),
+            base.profile().map(str::to_owned),
+            domains,
+        )
+        .unwrap()
+    }
+
     fn with_source_version(chart: &CanonicalChart, version: &str) -> CanonicalChart {
         let mut changed = CanonicalChart::new(
             CanonicalSourceVersion::new(version).unwrap(),
@@ -3705,45 +3747,7 @@ mod tests {
             RpeProfile::PhiraLegacySpeed.id(),
             RpeProfile::PhiraLegacySpeed.version(),
         );
-        let base = CapabilitySet::rpe_json().descriptor(Some(profile.clone()));
-        let domains = base
-            .domains()
-            .iter()
-            .map(|descriptor| {
-                if matches!(
-                    descriptor.domain(),
-                    CapabilityDomain::Motion | CapabilityDomain::Scroll
-                ) {
-                    CapabilityDomainDescriptor::new(
-                        descriptor.domain(),
-                        false,
-                        false,
-                        false,
-                        false,
-                        true,
-                        descriptor.max_entities(),
-                        descriptor.max_bytes(),
-                    )
-                    .with_features(if descriptor.domain() == CapabilityDomain::Scroll {
-                        Vec::new()
-                    } else {
-                        descriptor.features().to_vec()
-                    })
-                    .unwrap()
-                    .with_limits(descriptor.limits().iter().cloned())
-                    .unwrap()
-                } else {
-                    descriptor.clone()
-                }
-            })
-            .collect();
-        let descriptor = CapabilityDescriptor::new(
-            base.format(),
-            base.version(),
-            base.profile().map(str::to_owned),
-            domains,
-        )
-        .unwrap();
+        let descriptor = rpe_motion_scroll_drop_descriptor(&profile);
         let authorization = DropAuthorization::new(
             ["motion".into(), "scroll".into()],
             "explicitly discard target-inexpressible line motion and scroll",
@@ -3771,19 +3775,10 @@ mod tests {
             RpeProfile::PhiraLegacySpeed.id(),
             RpeProfile::PhiraLegacySpeed.version(),
         );
-        let descriptor = descriptor_with_domain(
-            CapabilitySet::rpe_json(),
-            &profile,
-            CapabilityDomain::Motion,
-            false,
-            false,
-            true,
-            None,
-            None,
-        );
+        let descriptor = rpe_motion_scroll_drop_descriptor(&profile);
         let authorization = DropAuthorization::new(
-            ["motion".into()],
-            "explicitly discard target-inexpressible line motion",
+            ["motion".into(), "scroll".into()],
+            "explicitly discard target-inexpressible line motion and scroll",
         )
         .unwrap();
         let outcome = export_rpe_json_with_options(
