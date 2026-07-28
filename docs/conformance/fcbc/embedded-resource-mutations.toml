@@ -23,7 +23,7 @@ replace_hex = "1c00000000000000"
 
 [[mutation.patch]]
 offset = 360
-replace_hex = "5d2da4cc"
+replace_hex = "37683480"
 
 [[mutation.patch]]
 offset = 844
