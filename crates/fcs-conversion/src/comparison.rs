@@ -517,14 +517,12 @@ fn compare_time_map(
                 format!("{:?}", right.0),
             );
         }
-        compare_float(
+        compare_exact_float(
             "timing",
             "timing.chart_time",
             format!("tempo[{index}].chartTime"),
             left.1,
             right.1,
-            budgets,
-            verified_maximum_errors,
             mismatches,
         );
         compare_float(
@@ -986,8 +984,6 @@ fn compare_notes(
             field("time"),
             lg.time(),
             rg.time(),
-            budgets,
-            verified_maximum_errors,
             mismatches,
         );
         compare_optional_time(
@@ -996,8 +992,6 @@ fn compare_notes(
             field("endTime"),
             lg.end_time(),
             rg.end_time(),
-            budgets,
-            verified_maximum_errors,
             mismatches,
         );
         let lp = left.presentation();
@@ -1172,8 +1166,6 @@ fn compare_track_piece(
                 field("start"),
                 left.start(),
                 right.start(),
-                budgets,
-                verified_maximum_errors,
                 mismatches,
             );
             compare_time(
@@ -1182,8 +1174,6 @@ fn compare_track_piece(
                 field("end"),
                 left.end(),
                 right.end(),
-                budgets,
-                verified_maximum_errors,
                 mismatches,
             );
             compare_track_value(
@@ -1221,8 +1211,6 @@ fn compare_track_piece(
                 field("time"),
                 left.time(),
                 right.time(),
-                budgets,
-                verified_maximum_errors,
                 mismatches,
             );
             compare_track_value(
@@ -1403,14 +1391,12 @@ fn compare_scroll(
             .zip(right.coordinate().points())
             .enumerate()
         {
-            compare_float(
+            compare_exact_float(
                 "scroll",
                 "scroll.chart_time",
                 format!("scroll[{index}].tempo[{point_index}].chartTime"),
                 lp.chart_time(),
                 rp.chart_time(),
-                budgets,
-                verified_maximum_errors,
                 mismatches,
             );
             compare_float(
@@ -1614,25 +1600,20 @@ fn ordered_tracks(chart: &CanonicalChart) -> Vec<&CanonicalTrack> {
     tracks
 }
 
-#[allow(clippy::too_many_arguments)]
 fn compare_time(
     domain: &str,
     metric: &str,
     field: String,
     expected: CanonicalTime,
     actual: CanonicalTime,
-    budgets: &BTreeMap<String, f64>,
-    verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
 ) {
-    compare_float(
+    compare_exact_float(
         domain,
         metric,
         field.clone(),
         expected.chart_time_seconds(),
         actual.chart_time_seconds(),
-        budgets,
-        verified_maximum_errors,
         mismatches,
     );
     compare_source_beat(
@@ -1643,28 +1624,18 @@ fn compare_time(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
 fn compare_optional_time(
     domain: &str,
     metric: &str,
     field: String,
     expected: Option<CanonicalTime>,
     actual: Option<CanonicalTime>,
-    budgets: &BTreeMap<String, f64>,
-    verified_maximum_errors: &mut VerifiedMetricObservations,
     mismatches: &mut Mismatches<'_>,
 ) {
     match (expected, actual) {
-        (Some(expected), Some(actual)) => compare_time(
-            domain,
-            metric,
-            field,
-            expected,
-            actual,
-            budgets,
-            verified_maximum_errors,
-            mismatches,
-        ),
+        (Some(expected), Some(actual)) => {
+            compare_time(domain, metric, field, expected, actual, mismatches)
+        }
         (None, None) => {}
         (expected, actual) => mismatch(
             mismatches,
@@ -1707,6 +1678,26 @@ fn compare_optional_source_beat(
             actual.source_beat(),
             mismatches,
         );
+    }
+}
+
+fn compare_exact_float(
+    domain: &str,
+    metric: &str,
+    field: String,
+    expected: f64,
+    actual: f64,
+    mismatches: &mut Mismatches<'_>,
+) {
+    if expected.to_bits() != actual.to_bits() {
+        mismatches.push(ComparisonMismatch::new(
+            domain,
+            metric,
+            field,
+            expected.to_string(),
+            actual.to_string(),
+            Some((expected - actual).abs()),
+        ));
     }
 }
 
@@ -2228,6 +2219,32 @@ mod tests {
                 && mismatch.error().is_none()
         }));
         assert!(compare_canonical_charts(&expected, &expected).is_equivalent());
+    }
+
+    #[test]
+    fn note_time_budget_cannot_relax_a_forced_note_boundary() {
+        let expected = chart_with_notes(vec![tap_note_with_time(
+            CanonicalTime::from_chart_time_seconds(1.0).unwrap(),
+        )]);
+        let actual = chart_with_notes(vec![tap_note_with_time(
+            CanonicalTime::from_chart_time_seconds(1.25).unwrap(),
+        )]);
+        let metric = "gameplay.note_time";
+        let comparison = compare_canonical_charts_with_budgets(
+            &expected,
+            &actual,
+            &BTreeMap::from([(metric.to_owned(), 0.5)]),
+            &[],
+        );
+
+        assert!(!comparison.is_equivalent());
+        assert!(comparison.mismatches().iter().any(|mismatch| {
+            mismatch.domain() == "gameplay"
+                && mismatch.metric() == metric
+                && mismatch.field() == "notes[0].time"
+        }));
+        assert_eq!(comparison.verified_maximum_error(metric), None);
+        assert_eq!(comparison.verified_sample_count(metric), None);
     }
 
     #[test]
