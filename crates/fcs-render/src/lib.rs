@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn png_16_bit_channels_are_normalized_before_8_bit_compatibility_conversion() {
         let mut bytes = Vec::new();
-        let pixels = [0x0101_u16, 0x8000, 0xffff, 0xffff, 0, 0, 0, 0x8000];
+        let pixels = [0x0100_u16, 0x8000, 0xffff, 0xffff, 0, 0, 0, 0x8000];
         let raw = pixels
             .into_iter()
             .flat_map(u16::to_ne_bytes)
@@ -168,7 +168,7 @@ mod tests {
         assert_eq!(decoded.rgba8, vec![1, 128, 255, 255, 0, 0, 0, 128]);
         assert_eq!(
             decoded.linear_premultiplied[0][0],
-            f64::from(0x0101_u16) / 65_535.0
+            f64::from(0x0100_u16) / 65_535.0
         );
         assert_ne!(
             decoded.linear_premultiplied[0][0],
