@@ -18,54 +18,75 @@ pub struct DrawOp {
 
 /// Evaluate a deterministic draw-list for the loaded Render scene.
 ///
-/// Drawable nodes are sorted by (layer index, node z, node document order, node id).
+/// Drawable nodes follow the loader-validated layer and hierarchical storage order.
 /// Group/ClipGroup containers are omitted from the draw list.
 pub fn evaluate_semantic_draw_list(
     chart: &DecodedRenderChart,
 ) -> Result<Vec<DrawOp>, &'static str> {
     let mut ops = Vec::new();
-    for (layer_index, _layer) in chart.layers.iter().enumerate() {
-        for node in &chart.nodes {
-            if node.layer_index as usize != layer_index || !node.kind.is_drawable() {
-                continue;
-            }
-            let fill_rgba = match node.fill_paint {
-                Some(index) => paint_rgba(
-                    chart,
-                    chart
-                        .paints
-                        .get(index as usize)
-                        .ok_or("render.invalid-reference")?,
-                )?,
-                None => None,
-            };
-            let bounds = geometry_bounds(chart, node.geometry_ref);
-            ops.push(DrawOp {
-                node_id: node.id,
-                kind: node.kind,
-                layer_index: layer_index as u32,
-                z_order: node.z_order,
-                document_order: node.document_order,
-                fill_rgba,
-                bounds,
-            });
+    let mut children = vec![Vec::new(); chart.nodes.len()];
+    for (index, node) in chart.nodes.iter().enumerate() {
+        if let Some(parent) = node.parent {
+            children
+                .get_mut(parent as usize)
+                .ok_or("render.invalid-graph")?
+                .push(index);
         }
     }
-    ops.sort_by(|left, right| {
-        (
-            left.layer_index,
-            left.z_order,
-            left.document_order,
-            left.node_id,
-        )
-            .cmp(&(
-                right.layer_index,
-                right.z_order,
-                right.document_order,
-                right.node_id,
-            ))
-    });
+
+    for layer in &chart.layers {
+        let (first, roots) = if layer.root_count == 0 {
+            (0, &chart.nodes[0..0])
+        } else {
+            let first = layer.first_root as usize;
+            let end = first
+                .checked_add(layer.root_count as usize)
+                .ok_or("render.invalid-graph")?;
+            (
+                first,
+                chart.nodes.get(first..end).ok_or("render.invalid-graph")?,
+            )
+        };
+        for offset in 0..roots.len() {
+            emit_draw_subtree(chart, &children, first + offset, &mut ops)?;
+        }
+    }
     Ok(ops)
+}
+
+fn emit_draw_subtree(
+    chart: &DecodedRenderChart,
+    children: &[Vec<usize>],
+    node_index: usize,
+    ops: &mut Vec<DrawOp>,
+) -> Result<(), &'static str> {
+    let node = chart.nodes.get(node_index).ok_or("render.invalid-graph")?;
+    if node.kind.is_drawable() {
+        let fill_rgba = match node.fill_paint {
+            Some(index) => paint_rgba(
+                chart,
+                chart
+                    .paints
+                    .get(index as usize)
+                    .ok_or("render.invalid-reference")?,
+            )?,
+            None => None,
+        };
+        let bounds = geometry_bounds(chart, node.geometry_ref);
+        ops.push(DrawOp {
+            node_id: node.id,
+            kind: node.kind,
+            layer_index: node.layer_index,
+            z_order: node.z_order,
+            document_order: node.document_order,
+            fill_rgba,
+            bounds,
+        });
+    }
+    for child_index in children.get(node_index).ok_or("render.invalid-graph")? {
+        emit_draw_subtree(chart, children, *child_index, ops)?;
+    }
+    Ok(())
 }
 
 /// Rasterize a solid-fill rectangle scene to tightly packed RGBA8 bytes.
