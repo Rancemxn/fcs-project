@@ -29,9 +29,11 @@ pub use capability::{
     ApproximationAuthorization, CapabilityDescriptor, CapabilityDomain, CapabilityDomainDescriptor,
     CapabilityError, CapabilityFeature, CapabilityLimit, DropAuthorization,
 };
+pub(crate) use comparison::compare_canonical_charts_with_resources_with_budgets;
 pub use comparison::{
     CanonicalComparison, ComparisonMismatch, compare_canonical_charts,
-    compare_canonical_charts_with_budgets,
+    compare_canonical_charts_with_budgets, compare_canonical_compilations,
+    compare_canonical_compilations_with_budgets,
 };
 pub use exact::{DecimalLimits, ExactDecimal, ExactNumberError, ExactRational};
 pub use export::{
