@@ -496,9 +496,12 @@ impl ErrorMetric {
         if forced_boundaries
             .iter()
             .any(|boundary| !boundary.is_finite())
-            || forced_boundaries
-                .windows(2)
-                .any(|pair| !(pair[0] < pair[1]))
+            || forced_boundaries.windows(2).any(|pair| {
+                !matches!(
+                    pair[0].partial_cmp(&pair[1]),
+                    Some(std::cmp::Ordering::Less)
+                )
+            })
         {
             return Err(ReportError::InvalidErrorMetric(
                 "forced boundaries must be finite and strictly increasing".into(),
