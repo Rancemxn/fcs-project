@@ -142,4 +142,32 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn embedded_resource_mutations_reject_via_product_core_load() {
+        let base_dir = suite_base();
+        let manifest: MutationManifest = toml::from_str(
+            &fs::read_to_string(base_dir.join("embedded-resource-mutations.toml")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest.schema_version, 2);
+        let base_bytes = decode_hex_file(&base_dir.join(&manifest.base));
+        assert_eq!(manifest.mutation.len(), 2);
+        for mutation in &manifest.mutation {
+            let bytes = apply_patches(&base_bytes, &mutation.patch);
+            let category = match load_chart(&bytes) {
+                Ok(_) => panic!(
+                    "mutation {} unexpectedly loaded via load_chart",
+                    mutation.id
+                ),
+                Err(category) => category,
+            };
+            assert_eq!(
+                category,
+                mutation.diagnostic.as_str(),
+                "mutation {} diagnostic mismatch",
+                mutation.id
+            );
+        }
+    }
 }

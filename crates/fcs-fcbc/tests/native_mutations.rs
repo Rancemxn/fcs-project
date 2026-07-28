@@ -332,3 +332,36 @@ fn core_mutations_reject_with_the_content_categories() {
         assert_eq!(error, category, "{id} diagnostic mismatch");
     }
 }
+
+#[test]
+fn native_resource_data_trailing_byte_rejects() {
+    let base = native_bytes();
+    let container = load_container(&base).expect("pristine native bytes must frame");
+    let resource = container
+        .sections
+        .iter()
+        .find(|section| section.section_type == RESOURCE_DATA)
+        .expect("ResourceData section");
+    assert_eq!(
+        container.sections.last().unwrap().section_type,
+        RESOURCE_DATA
+    );
+
+    let mut trailing = base;
+    trailing.push(0xA5);
+    let resource_entry = entry_offset(&container, RESOURCE_DATA);
+    let extended_length = resource.length + 1;
+    trailing[resource_entry + 24..resource_entry + 32]
+        .copy_from_slice(&extended_length.to_le_bytes());
+    let payload_start = resource.offset as usize;
+    let checksum =
+        section_crc32_iso_hdlc(&trailing[payload_start..payload_start + extended_length as usize]);
+    trailing[resource_entry + 32..resource_entry + 36].copy_from_slice(&checksum.to_le_bytes());
+    let file_length = trailing.len() as u64;
+    trailing[48..56].copy_from_slice(&file_length.to_le_bytes());
+
+    assert_eq!(
+        load_chart(&trailing).unwrap_err(),
+        "fcbc.invalid-resource-data"
+    );
+}
