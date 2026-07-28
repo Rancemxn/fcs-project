@@ -27,7 +27,7 @@ mod rpe_canonical;
 
 pub use capability::{
     ApproximationAuthorization, CapabilityDescriptor, CapabilityDomain, CapabilityDomainDescriptor,
-    CapabilityError, DropAuthorization,
+    CapabilityError, CapabilityFeature, CapabilityLimit, DropAuthorization,
 };
 pub(crate) use comparison::compare_canonical_charts_with_resources_with_budgets;
 pub use comparison::{
