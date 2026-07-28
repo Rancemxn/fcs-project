@@ -4047,7 +4047,10 @@ mod tests {
             metric.verification_method(),
             "same-profile-canonical-reparse"
         );
-        assert!(metric.sample_count() > 0);
+        assert_eq!(
+            metric.sample_count(),
+            chart.notes().notes().len() as u64 * 8
+        );
         assert!(metric.segment_count() > 0);
         assert_eq!(
             metric.sample_count(),
