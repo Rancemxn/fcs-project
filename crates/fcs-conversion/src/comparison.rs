@@ -2231,6 +2231,32 @@ mod tests {
     }
 
     #[test]
+    fn note_time_budget_cannot_relax_a_forced_note_boundary() {
+        let expected = chart_with_notes(vec![tap_note_with_time(
+            CanonicalTime::from_chart_time_seconds(1.0).unwrap(),
+        )]);
+        let actual = chart_with_notes(vec![tap_note_with_time(
+            CanonicalTime::from_chart_time_seconds(1.25).unwrap(),
+        )]);
+        let metric = "gameplay.note_time";
+        let comparison = compare_canonical_charts_with_budgets(
+            &expected,
+            &actual,
+            &BTreeMap::from([(metric.to_owned(), 0.5)]),
+            &[],
+        );
+
+        assert!(!comparison.is_equivalent());
+        assert!(comparison.mismatches().iter().any(|mismatch| {
+            mismatch.domain() == "gameplay"
+                && mismatch.metric() == metric
+                && mismatch.field() == "notes[0].time"
+        }));
+        assert_eq!(comparison.verified_maximum_error(metric), None);
+        assert_eq!(comparison.verified_sample_count(metric), None);
+    }
+
+    #[test]
     fn world_transform_comparison_catches_parent_identity_hidden_by_document_order() {
         let expected = chart_with_parent("parent-a");
         let actual = chart_with_parent("parent-b");
