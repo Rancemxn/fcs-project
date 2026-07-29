@@ -4611,10 +4611,8 @@ mod tests {
     #[test]
     fn strict_profile_choice_is_not_repair() {
         let chart = pec_chart();
-        let descriptor = CapabilitySet::pec_line().descriptor(Some(profile_reference(
-            PecProfile::Phira.id(),
-            PecProfile::Phira.version(),
-        )));
+        let profile = profile_reference(PecProfile::Phira.id(), PecProfile::Phira.version());
+        let descriptor = CapabilitySet::pec_line().descriptor(Some(profile.clone()));
         let options = ExportOptions::strict(descriptor)
             .with_repair_mode(RepairMode::new(true, std::iter::empty()));
         let error = negotiate_export_with_options(&chart, &options).unwrap_err();
@@ -4624,6 +4622,32 @@ mod tests {
             .with_target_profile("  ");
         let error = negotiate_export_with_options(&chart, &options).unwrap_err();
         assert_eq!(error.category(), "conversion.target-profile-required");
+
+        let options = ExportOptions::strict(CapabilitySet::pec_line().descriptor(Some(profile)))
+            .with_target_profile(profile_reference(
+                PecProfile::Phira.id(),
+                PecProfile::Phira.version(),
+            ));
+        let outcome = export_pec_line_with_options(&chart, &options).unwrap();
+        assert!(outcome.comparison().is_equivalent());
+        assert_eq!(outcome.report().status(), ConversionStatus::Equivalent);
+
+        let chart = pgr_chart("pgr-feature.pgr.json", PgrProfile::PhiraV3);
+        let profile = profile_reference(PecProfile::Phira.id(), PecProfile::Phira.version());
+        let authorization = DropAuthorization::new(
+            ["motion.track".into()],
+            "explicit strict-loss test authorization",
+        )
+        .unwrap();
+        let options = ExportOptions::strict(loss_descriptor(&profile, false, true))
+            .with_target_profile(profile)
+            .with_drop(authorization);
+        let error = negotiate_export_with_options(&chart, &options).unwrap_err();
+        assert_eq!(error.category(), "conversion.capability-mismatch");
+        assert!(error.message().contains("strict export cannot preserve"));
+        assert!(error.entries().iter().any(|entry| {
+            entry.id() == "capability/motion" && entry.semantic_status() == SemanticStatus::Dropped
+        }));
     }
 
     #[test]
