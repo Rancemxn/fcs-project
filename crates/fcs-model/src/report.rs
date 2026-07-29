@@ -196,11 +196,11 @@ impl ApproximationAuthorization {
     }
 }
 
-/// Conversion §6.3 drop authority retained at report top level.
+/// Conversion §6.3 drop authority using `domain.entity[.field]` selectors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DropAuthorization {
     enabled: bool,
-    target_domains: Vec<String>,
+    target_selectors: Vec<String>,
     reason: String,
 }
 
@@ -208,30 +208,32 @@ impl DropAuthorization {
     pub fn disabled() -> Self {
         Self {
             enabled: false,
-            target_domains: Vec::new(),
+            target_selectors: Vec::new(),
             reason: String::new(),
         }
     }
 
     pub fn new(
-        target_domains: impl IntoIterator<Item = String>,
+        target_selectors: impl IntoIterator<Item = String>,
         reason: impl Into<String>,
     ) -> Result<Self, ReportError> {
-        let mut target_domains: Vec<_> = target_domains.into_iter().collect();
-        target_domains.sort();
-        target_domains.dedup();
+        let mut target_selectors: Vec<_> = target_selectors.into_iter().collect();
+        target_selectors.sort();
+        target_selectors.dedup();
         let reason = reason.into();
-        if target_domains.is_empty()
-            || target_domains.iter().any(|domain| domain.trim().is_empty())
+        if target_selectors.is_empty()
+            || target_selectors
+                .iter()
+                .any(|selector| !Self::valid_selector(selector))
             || reason.trim().is_empty()
         {
             return Err(ReportError::InvalidAuthorization(
-                "drop authorization requires target domains and a reason".into(),
+                "drop authorization requires domain.entity[.field] selectors and a reason".into(),
             ));
         }
         Ok(Self {
             enabled: true,
-            target_domains,
+            target_selectors,
             reason,
         })
     }
@@ -240,21 +242,57 @@ impl DropAuthorization {
         self.enabled
     }
 
+    pub fn target_selectors(&self) -> &[String] {
+        &self.target_selectors
+    }
+
+    /// Compatibility accessor; values are stable selectors, not bare domains.
     pub fn target_domains(&self) -> &[String] {
-        &self.target_domains
+        self.target_selectors()
     }
 
     pub fn reason(&self) -> &str {
         &self.reason
     }
 
-    pub fn allows(&self, domain: &str) -> bool {
+    pub fn allows_domain(&self, domain: &str) -> bool {
         self.enabled
-            && self.target_domains.iter().any(|allowed| {
-                domain == allowed
-                    || domain
-                        .strip_prefix(allowed)
-                        .is_some_and(|suffix| suffix.starts_with('.'))
+            && self
+                .target_selectors
+                .iter()
+                .any(|selector| selector.split('.').next() == Some(domain))
+    }
+
+    pub fn allows_selector(&self, path: &str) -> bool {
+        self.enabled
+            && self
+                .target_selectors
+                .iter()
+                .any(|selector| Self::selector_matches(selector, path))
+    }
+
+    pub fn allows(&self, domain: &str) -> bool {
+        self.allows_domain(domain)
+    }
+
+    pub fn selector_matches(selector: &str, path: &str) -> bool {
+        let selector = selector.split('.').collect::<Vec<_>>();
+        let path = path.split('.').collect::<Vec<_>>();
+        selector.len() <= path.len()
+            && selector
+                .iter()
+                .zip(path)
+                .all(|(selector, path)| *selector == path)
+    }
+
+    fn valid_selector(selector: &str) -> bool {
+        let parts = selector.split('.').collect::<Vec<_>>();
+        (2..=3).contains(&parts.len())
+            && parts.iter().all(|part| {
+                !part.is_empty()
+                    && part
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
             })
     }
 }
@@ -1481,7 +1519,8 @@ mod tests {
             "1.0.0",
         )
         .unwrap();
-        let drop = DropAuthorization::new(["metadata".into()], "target has no metadata").unwrap();
+        let drop =
+            DropAuthorization::new(["metadata.chart".into()], "target has no metadata").unwrap();
         let report = ConversionReport::new_with_authorizations(
             "op-authorizations",
             ConversionPolicy::Semantic,
@@ -1505,8 +1544,35 @@ mod tests {
         assert_eq!(approximation.algorithm_version(), "1.0.0");
         let drop = report.drop_authorization().unwrap();
         assert!(drop.enabled());
-        assert_eq!(drop.target_domains(), ["metadata"]);
+        assert_eq!(drop.target_selectors(), ["metadata.chart"]);
         assert_eq!(drop.reason(), "target has no metadata");
+    }
+
+    #[test]
+    fn drop_authorization_is_selector_granular_and_deterministic() {
+        let authorization = DropAuthorization::new(
+            [
+                "presentation.note.positionX".into(),
+                "gameplay.note.time".into(),
+                "gameplay.note.time".into(),
+            ],
+            "explicit field loss",
+        )
+        .unwrap();
+
+        assert_eq!(
+            authorization.target_selectors(),
+            ["gameplay.note.time", "presentation.note.positionX"]
+        );
+        assert!(authorization.allows_domain("gameplay"));
+        assert!(!authorization.allows_domain("metadata"));
+        assert!(authorization.allows_selector("gameplay.note.time"));
+        assert!(!authorization.allows_selector("gameplay.note.discrete"));
+
+        let entity_wide =
+            DropAuthorization::new(["gameplay.note".into()], "explicit note loss").unwrap();
+        assert!(entity_wide.allows_selector("gameplay.note.time"));
+        assert!(entity_wide.allows_selector("gameplay.note.discrete"));
     }
 
     #[test]
@@ -1522,7 +1588,7 @@ mod tests {
             Err(ReportError::InvalidAuthorization(_))
         ));
         assert!(matches!(
-            DropAuthorization::new(["metadata".into()], "  "),
+            DropAuthorization::new(["metadata.chart".into()], "  "),
             Err(ReportError::InvalidAuthorization(_))
         ));
         assert!(matches!(
@@ -1580,6 +1646,18 @@ mod tests {
         ));
         assert!(matches!(
             DropAuthorization::new(["  ".into()], "explicit loss"),
+            Err(ReportError::InvalidAuthorization(_))
+        ));
+        assert!(matches!(
+            DropAuthorization::new(["metadata".into()], "explicit loss"),
+            Err(ReportError::InvalidAuthorization(_))
+        ));
+        assert!(matches!(
+            DropAuthorization::new(["metadata.*".into()], "explicit loss"),
+            Err(ReportError::InvalidAuthorization(_))
+        ));
+        assert!(matches!(
+            DropAuthorization::new(["metadata.chart/meta".into()], "explicit loss"),
             Err(ReportError::InvalidAuthorization(_))
         ));
     }

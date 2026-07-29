@@ -1540,7 +1540,9 @@ pub fn negotiate_export_with_options(
             {
                 NegotiationAction::Bake
             }
-            Some(descriptor) if descriptor.drop() && options.drop.allows(domain.as_str()) => {
+            Some(descriptor)
+                if descriptor.drop() && options.drop.allows_domain(domain.as_str()) =>
+            {
                 NegotiationAction::Drop
             }
             _ if !missing_features.is_empty() => NegotiationAction::Unsupported,
@@ -3580,11 +3582,17 @@ fn finish_export(
         .with_entries(entries));
     }
     let comparison_budgets = negotiated_comparison_budgets(options, &negotiation);
-    let dropped_domains = negotiation
-        .entries()
+    let dropped_selectors = options
+        .drop
+        .target_selectors()
         .iter()
-        .filter(|entry| entry.action() == NegotiationAction::Drop)
-        .map(|entry| entry.domain().as_str().to_owned())
+        .filter(|selector| {
+            negotiation.entries().iter().any(|entry| {
+                entry.action() == NegotiationAction::Drop
+                    && selector.split('.').next() == Some(entry.domain().as_str())
+            })
+        })
+        .cloned()
         .collect::<Vec<_>>();
     let comparison = compare_canonical_charts_with_resources_with_budgets(
         expected,
@@ -3592,7 +3600,7 @@ fn finish_export(
         expected_resources,
         Some(actual_resources),
         &comparison_budgets,
-        &dropped_domains,
+        &dropped_selectors,
         Some(alignment),
     );
     let unverified_metrics = comparison_budgets
@@ -3691,7 +3699,7 @@ fn finish_export(
         )
         .with_entries(entries));
     }
-    if comparison.unverified_domains().is_empty() {
+    if comparison.unverified_selectors().is_empty() {
         entries.push(
             ConversionEntry::new(
                 "roundtrip/equivalent",
@@ -3715,7 +3723,8 @@ fn finish_export(
             .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
         );
     } else {
-        for (index, domain) in comparison.unverified_domains().iter().enumerate() {
+        for (index, selector) in comparison.unverified_selectors().iter().enumerate() {
+            let domain = selector.split('.').next().unwrap_or(selector);
             entries.push(
                 ConversionEntry::new(
                     format!("roundtrip/unverified/{index:06}"),
@@ -3727,14 +3736,14 @@ fn finish_export(
                     None,
                     None,
                     None,
-                    Some("canonical".into()),
+                    Some(selector.clone()),
                     None,
                     None,
                     None,
                     None,
                     None,
                     format!(
-                        "same-profile target reparse did not verify {domain} canonical semantics because the domain was authorized for drop"
+                        "same-profile target reparse did not verify {selector} canonical semantics because the selector was authorized for drop"
                     ),
                     [],
                 )
@@ -4817,7 +4826,7 @@ mod tests {
         );
         let descriptor = rpe_motion_scroll_drop_descriptor(&profile);
         let authorization = DropAuthorization::new(
-            ["motion".into(), "scroll".into()],
+            ["motion.line".into(), "scroll.line".into()],
             "explicitly discard target-inexpressible line motion and scroll",
         )
         .unwrap();
@@ -4845,7 +4854,7 @@ mod tests {
         );
         let descriptor = rpe_motion_scroll_drop_descriptor(&profile);
         let authorization = DropAuthorization::new(
-            ["motion".into(), "scroll".into()],
+            ["motion.line".into(), "scroll.line".into()],
             "explicitly discard target-inexpressible line motion and scroll",
         )
         .unwrap();
@@ -4939,12 +4948,19 @@ mod tests {
         let error = negotiate_export_with_options(&chart, &drop).unwrap_err();
         assert_eq!(error.category(), "conversion.drop-not-authorized");
         let authorization =
-            DropAuthorization::new(["motion".into()], "explicit target loss").unwrap();
-        assert_eq!(authorization.target_domains(), ["motion"]);
+            DropAuthorization::new(["motion.track".into()], "explicit target loss").unwrap();
+        assert_eq!(authorization.target_selectors(), ["motion.track"]);
         assert_eq!(authorization.reason(), "explicit target loss");
         let (plan, _) =
             negotiate_export_with_options(&chart, &drop.with_drop(authorization)).unwrap();
-        assert_eq!(plan.action(), NegotiationAction::Drop);
+        assert_eq!(
+            plan.action_for(CapabilityDomain::Motion),
+            Some(NegotiationAction::Drop)
+        );
+        assert_ne!(
+            plan.action_for(CapabilityDomain::Gameplay),
+            Some(NegotiationAction::Drop)
+        );
     }
 
     #[test]
@@ -5173,9 +5189,11 @@ mod tests {
             None,
             None,
         );
-        let authorization =
-            DropAuthorization::new(["metadata".into()], "remove target-inexpressible metadata")
-                .unwrap();
+        let authorization = DropAuthorization::new(
+            ["metadata.chart.meta".into()],
+            "remove target-inexpressible metadata",
+        )
+        .unwrap();
         let outcome = export_rpe_json_with_options(
             &chart,
             &ExportOptions::semantic(descriptor).with_drop(authorization),
@@ -5184,10 +5202,14 @@ mod tests {
         assert!(outcome.negotiation().drops(CapabilityDomain::Metadata));
         assert_eq!(outcome.report().status(), ConversionStatus::Approximate);
         assert!(!outcome.comparison().is_equivalent());
-        assert_eq!(outcome.comparison().unverified_domains(), ["metadata"]);
+        assert_eq!(
+            outcome.comparison().unverified_selectors(),
+            ["metadata.chart.meta"]
+        );
         assert!(outcome.report().entries().iter().any(|entry| {
             entry.id() == "roundtrip/unverified/000000"
                 && entry.semantic_status() == SemanticStatus::Dropped
+                && entry.field_key() == Some("metadata.chart.meta")
         }));
         assert!(
             !outcome
@@ -5198,7 +5220,7 @@ mod tests {
         );
         assert_eq!(outcome.report().summary().drop_count(), 2);
         let recorded = outcome.report().drop_authorization().unwrap();
-        assert_eq!(recorded.target_domains(), ["metadata"]);
+        assert_eq!(recorded.target_selectors(), ["metadata.chart.meta"]);
         assert_eq!(recorded.reason(), "remove target-inexpressible metadata");
     }
 
@@ -5212,8 +5234,11 @@ mod tests {
             "1.0.0",
         )
         .unwrap();
-        let drop =
-            DropAuthorization::new(["metadata".into()], "explicit target loss boundary").unwrap();
+        let drop = DropAuthorization::new(
+            ["metadata.chart.meta".into()],
+            "explicit target loss boundary",
+        )
+        .unwrap();
         let options = profile_options(
             CapabilitySet::rpe_json(),
             RpeProfile::PhiraLegacySpeed.id(),
@@ -5232,7 +5257,7 @@ mod tests {
         assert_eq!(approximation.algorithm_id(), "linear-segment");
         assert_eq!(approximation.algorithm_version(), "1.0.0");
         let drop = outcome.report().drop_authorization().unwrap();
-        assert_eq!(drop.target_domains(), ["metadata"]);
+        assert_eq!(drop.target_selectors(), ["metadata.chart.meta"]);
         assert_eq!(drop.reason(), "explicit target loss boundary");
     }
 
@@ -5244,7 +5269,10 @@ mod tests {
             RpeProfile::PhiraLegacySpeed.id(),
             RpeProfile::PhiraLegacySpeed.version(),
         )
-        .with_drop(DropAuthorization::new(["entity".into()], "not negotiated").unwrap());
+        .with_drop(
+            DropAuthorization::new(["entity.chart.sourceVersion".into()], "not negotiated")
+                .unwrap(),
+        );
         let error = export_rpe_json_with_options(&chart, &options).unwrap_err();
         assert_eq!(error.category(), "conversion.roundtrip-mismatch");
     }
