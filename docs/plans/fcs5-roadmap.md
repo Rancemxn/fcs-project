@@ -746,4 +746,6 @@ git diff --check
   post-write same-profile canonical comparison rejects the attempted target bytes; broader Conversion and I10
   closure remains open.
   Bounded child #423 replaces retained whole-aggregate canonical mismatch Debug payloads with fixed lowercase
-  SHA-256 fingerprints; #325, #294, #324, #296, and I10 remain open.
+  SHA-256 fingerprints; #325, #294, #295, #296, and I10 remain open.
+  Bounded child #426 derives the strict target-profile inventory from the checked-in registry and executes
+  same-binding export/reparse coverage for every entry; broader #294 and I10 closure remain open.

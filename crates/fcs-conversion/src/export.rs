@@ -4007,7 +4007,7 @@ fn source_descriptor_hash(chart: &CanonicalChart) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CapabilityLimit, RpeSpeedMode};
+    use crate::{CapabilityLimit, RpeSpeedMode, SelectionDirection, load_profile_registry};
     use fcs_model::{
         CanonicalChart, CanonicalMetadata, CanonicalNote, CanonicalNotePresentation,
         CanonicalNoteSet, CanonicalObject, CanonicalResourceBundle, CanonicalSourceVersion,
@@ -4730,6 +4730,82 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
                     .is_some_and(|events| !events.is_empty())
             );
         }
+    }
+
+    #[test]
+    fn every_registry_target_profile_has_export_reparse_evidence() {
+        let registry =
+            load_profile_registry(root().join("docs/conformance/conversion/profile-registry.toml"))
+                .unwrap();
+        let expected = registry
+            .profiles()
+            .iter()
+            .filter(|profile| {
+                profile.strict_eligible() && profile.supports_direction(SelectionDirection::Target)
+            })
+            .map(|profile| profile.as_ref_key())
+            .collect::<BTreeSet<_>>();
+        let mut covered = BTreeSet::new();
+
+        for (profile, fixture, capabilities, expected_version) in [
+            (
+                PgrProfile::PhiraV1,
+                "pgr-minimal.pgr.json",
+                CapabilitySet::pgr_v1(),
+                1,
+            ),
+            (
+                PgrProfile::PhiraV3,
+                "pgr-feature.pgr.json",
+                CapabilitySet::pgr_v3(),
+                3,
+            ),
+        ] {
+            let chart = pgr_chart(fixture, profile);
+            let options = profile_options(capabilities, profile.id(), profile.version());
+            let outcome = export_pgr_with_options(&chart, &options).unwrap();
+            assert!(outcome.comparison().is_equivalent());
+            let target: Value = serde_json::from_slice(outcome.bytes()).unwrap();
+            assert_eq!(target["formatVersion"], expected_version);
+            covered.insert(profile_reference(profile.id(), profile.version()));
+        }
+
+        let chart = rpe_chart();
+        for (binding, expected_version) in [
+            (
+                RpeProfileBinding::community_divide(RpeSpeedMode::LegacyDerivative),
+                150,
+            ),
+            (
+                RpeProfileBinding::docs_example_multiply(RpeSpeedMode::ModernEased),
+                150,
+            ),
+            (RpeProfileBinding::phira_legacy_speed(), 150),
+            (
+                RpeProfileBinding::phira_rpe170_speed(Some(RpeVersionEra::AtLeast170)),
+                170,
+            ),
+        ] {
+            let profile = binding.profile();
+            let options = ExportOptions::semantic(
+                CapabilitySet::rpe_json()
+                    .descriptor(Some(profile_reference(profile.id(), profile.version()))),
+            )
+            .with_rpe_profile_binding(binding);
+            let outcome = export_rpe_json_with_options(&chart, &options).unwrap();
+            assert!(outcome.comparison().is_equivalent());
+            let target: Value = serde_json::from_slice(outcome.bytes()).unwrap();
+            assert_eq!(target["META"]["RPEVersion"], expected_version);
+            covered.insert(profile_reference(profile.id(), profile.version()));
+        }
+
+        let profile = PecProfile::Phira;
+        let options = profile_options(CapabilitySet::pec_line(), profile.id(), profile.version());
+        let outcome = export_pec_line_with_options(&pec_chart(), &options).unwrap();
+        assert!(outcome.comparison().is_equivalent());
+        covered.insert(profile_reference(profile.id(), profile.version()));
+
+        assert_eq!(covered, expected);
     }
 
     #[test]
