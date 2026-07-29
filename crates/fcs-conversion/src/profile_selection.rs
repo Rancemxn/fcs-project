@@ -156,6 +156,14 @@ impl RegisteredProfile {
         self.strict_eligible
     }
 
+    pub fn supports_direction(&self, direction: SelectionDirection) -> bool {
+        let direction = match direction {
+            SelectionDirection::Source => "source",
+            SelectionDirection::Target => "target",
+        };
+        self.directions.iter().any(|value| value == direction)
+    }
+
     pub fn path(&self) -> &str {
         &self.path
     }
@@ -502,7 +510,7 @@ fn validate_candidates(
             SelectionDirection::Source => "source",
             SelectionDirection::Target => "target",
         };
-        if !registered.directions.iter().any(|value| value == direction) {
+        if !registered.supports_direction(request.direction) {
             return Err(SelectionError::new(
                 PROFILE_PARAMETER_INVALID,
                 candidate.display(),
