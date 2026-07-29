@@ -611,7 +611,9 @@ distance、canonical assembly 或整体 I6 完成。固定 `serde` 1.0.228、
 
 - **I8.1 Canonical FCS formatter**：cataloged `ryu` 只生成 finite binary64 的 shortest-roundtrip
   decimal 候选，再由 FCS 固定唯一 whitespace、exponent、signed-zero、literal 和 unit policy；
-  parse-format-parse semantic idempotence，不能让 crate 输出本身成为规范。
+  parse-format-parse semantic idempotence，不能让 crate 输出本身成为规范。Bounded child #409
+  owns parser-backed finite numeric rewriting and semantic-idempotence evidence; full AST
+  reserialization and the remaining formatter policy are still open.
 - **I8.2 CapabilitySet**：每个目标版本声明 time/Note/Track/graph/expression/resource/limit 能力。
 - **I8.3 Negotiation**：direct/equivalent/bake/preserve/drop/unsupported 在写目标前完成并入 report。
 - **I8.4 Boundary-preserving bake**：先固定 tempo/Note/Hold/event，再优化 continuous segment；量化
