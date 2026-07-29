@@ -240,7 +240,10 @@ pub fn lower_pec_to_canonical(
             }
             let pieces = property_events
                 .iter()
-                .map(|event| pec_event_piece(event, &time_map, profile, line_index))
+                .enumerate()
+                .map(|(piece_order, event)| {
+                    pec_event_piece(event, &time_map, profile, line_index, piece_order as u64)
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             tracks.push(pec_track(owner, property, pieces, line_index)?);
         }
@@ -436,6 +439,7 @@ fn pec_event_piece(
     time_map: &fcs_model::ChartTimeMap,
     profile: crate::pec::PecProfile,
     line_index: usize,
+    piece_order: u64,
 ) -> Result<CanonicalTrackPiece, PecError> {
     let path = format!("line[{line_index}].event[{}]", event.source_order());
     let start = canonical_event_time(event.start_time(), time_map, &path)?;
@@ -451,7 +455,7 @@ fn pec_event_piece(
                 "zero-duration PEC event has distinct endpoints",
             ));
         }
-        return CanonicalTrackPoint::new(start, start_value, event.source_order())
+        return CanonicalTrackPoint::new(start, start_value, piece_order)
             .map(CanonicalTrackPiece::Point)
             .map_err(|error| canonical_error("chart.tracks", error));
     }
@@ -461,7 +465,7 @@ fn pec_event_piece(
         start_value,
         end_value,
         interpolation,
-        event.source_order(),
+        piece_order,
     )
     .map(CanonicalTrackPiece::Segment)
     .map_err(|error| canonical_error("chart.tracks", error))
@@ -745,7 +749,7 @@ mod tests {
             CanonicalTrackPiece::Point(point) => point.document_order(),
             CanonicalTrackPiece::Segment(segment) => segment.document_order(),
         };
-        assert_eq!(order, 1);
+        assert_eq!(order, 0);
     }
 
     #[test]
