@@ -745,3 +745,5 @@ git diff --check
   Bounded child #421 returns a deterministic `failed` ConversionReport with no successful output hash when
   post-write same-profile canonical comparison rejects the attempted target bytes; broader Conversion and I10
   closure remains open.
+  Bounded child #423 replaces retained whole-aggregate canonical mismatch Debug payloads with fixed lowercase
+  SHA-256 fingerprints; #325, #294, #324, #296, and I10 remain open.

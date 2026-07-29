@@ -3,7 +3,10 @@
 //! Public comparison uses canonical stable IDs. Target exporters additionally
 //! provide the stable IDs their emitted entities will receive on reparse.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Debug,
+};
 
 use fcs_model::{
     Beat, CanonicalChart, CanonicalCompilation, CanonicalContentSha256, CanonicalLine,
@@ -12,6 +15,7 @@ use fcs_model::{
     StableId,
 };
 use fcs_runtime::{evaluate_line_scroll, evaluate_line_transform};
+use sha2::{Digest, Sha256};
 
 /// Fixed implementation ceiling for owned mismatch/report entries.
 ///
@@ -343,8 +347,8 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
             &mut mismatches,
             "resource",
             "metadata.resources",
-            format!("{:?}", expected.metadata().resources()),
-            format!("{:?}", actual.metadata().resources()),
+            aggregate_fingerprint(expected.metadata().resources()),
+            aggregate_fingerprint(actual.metadata().resources()),
         );
     }
     if let (Some(expected), Some(actual)) = (expected_resources, actual_resources) {
@@ -389,12 +393,8 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
             &mut mismatches,
             "expression",
             "descriptor.structure",
-            "equal",
-            format!(
-                "expected={:?} actual={:?}",
-                expected.descriptors(),
-                actual.descriptors()
-            ),
+            aggregate_fingerprint(expected.descriptors()),
+            aggregate_fingerprint(actual.descriptors()),
         );
     }
     if expected.required_extensions() != actual.required_extensions() {
@@ -402,8 +402,8 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
             &mut mismatches,
             "expression",
             "required_extensions",
-            format!("{:?}", expected.required_extensions()),
-            format!("{:?}", actual.required_extensions()),
+            aggregate_fingerprint(expected.required_extensions()),
+            aggregate_fingerprint(actual.required_extensions()),
         );
     }
 
@@ -482,6 +482,17 @@ fn compare_resource_bundles(
 fn format_content_sha256(digest: CanonicalContentSha256) -> String {
     let mut output = String::with_capacity(64);
     for byte in digest.as_bytes() {
+        use std::fmt::Write as _;
+        write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    output
+}
+
+fn aggregate_fingerprint(value: impl Debug) -> String {
+    let digest = Sha256::digest(format!("{value:?}"));
+    let mut output = String::with_capacity(71);
+    output.push_str("sha256:");
+    for byte in digest {
         use std::fmt::Write as _;
         write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
     }
@@ -606,8 +617,8 @@ fn compare_metadata(
             mismatches,
             "metadata",
             "meta",
-            format!("{:?}", left.meta()),
-            format!("{:?}", right.meta()),
+            aggregate_fingerprint(left.meta()),
+            aggregate_fingerprint(right.meta()),
         );
     }
     if left.contributors() != right.contributors() {
@@ -615,8 +626,8 @@ fn compare_metadata(
             mismatches,
             "metadata",
             "contributors",
-            format!("{:?}", left.contributors()),
-            format!("{:?}", right.contributors()),
+            aggregate_fingerprint(left.contributors()),
+            aggregate_fingerprint(right.contributors()),
         );
     }
     if left.credits() != right.credits() {
@@ -624,8 +635,8 @@ fn compare_metadata(
             mismatches,
             "metadata",
             "credits",
-            format!("{:?}", left.credits()),
-            format!("{:?}", right.credits()),
+            aggregate_fingerprint(left.credits()),
+            aggregate_fingerprint(right.credits()),
         );
     }
     if left.artwork() != right.artwork() {
@@ -633,8 +644,8 @@ fn compare_metadata(
             mismatches,
             "metadata",
             "artwork",
-            format!("{:?}", left.artwork()),
-            format!("{:?}", right.artwork()),
+            aggregate_fingerprint(left.artwork()),
+            aggregate_fingerprint(right.artwork()),
         );
     }
 }
@@ -663,8 +674,8 @@ fn compare_sync(
                     mismatches,
                     "resource",
                     "sync.primaryAudio",
-                    format!("{:?}", left.primary_audio()),
-                    format!("{:?}", right.primary_audio()),
+                    aggregate_fingerprint(left.primary_audio()),
+                    aggregate_fingerprint(right.primary_audio()),
                 );
             }
             if left.preview() != right.preview() {
@@ -672,8 +683,8 @@ fn compare_sync(
                     mismatches,
                     "metadata",
                     "sync.preview",
-                    format!("{:?}", left.preview()),
-                    format!("{:?}", right.preview()),
+                    aggregate_fingerprint(left.preview()),
+                    aggregate_fingerprint(right.preview()),
                 );
             }
         }
@@ -682,8 +693,8 @@ fn compare_sync(
             mismatches,
             "timing",
             "sync",
-            format!("{left:?}"),
-            format!("{right:?}"),
+            aggregate_fingerprint(left),
+            aggregate_fingerprint(right),
         ),
     }
 }
@@ -1213,8 +1224,8 @@ fn compare_tracks(
                 mismatches,
                 "motion",
                 format!("tracks[{index}].header"),
-                format!("{:?}", left),
-                format!("{:?}", right),
+                aggregate_fingerprint(left),
+                aggregate_fingerprint(right),
             );
         }
         compare_len(
@@ -1341,8 +1352,8 @@ fn compare_track_piece(
             mismatches,
             "motion",
             field("kind"),
-            format!("{:?}", left),
-            format!("{:?}", right),
+            aggregate_fingerprint(left),
+            aggregate_fingerprint(right),
         ),
     }
 }
@@ -1922,8 +1933,9 @@ mod tests {
         CanonicalObject, CanonicalPreview, CanonicalProfile, CanonicalResource,
         CanonicalResourceBundle, CanonicalResourceKind, CanonicalScrollCoordinate,
         CanonicalScrollLine, CanonicalScrollSet, CanonicalScrollTempo, CanonicalSourceVersion,
-        CanonicalSync, CanonicalTextualId, CanonicalTime, CanonicalTrackSet, CanonicalVec2,
-        ChartTimeMap, DistributionMetadata, EntityKind, StableId, StableIdRegistry, TempoPoint,
+        CanonicalSync, CanonicalTextualId, CanonicalTime, CanonicalTrackSet, CanonicalValue,
+        CanonicalVec2, ChartTimeMap, DistributionMetadata, EntityKind, StableId, StableIdRegistry,
+        TempoPoint,
     };
 
     fn record(sink: &mut Mismatches<'_>, domain: &str, field: &str) {
@@ -2008,6 +2020,32 @@ mod tests {
                 chart.metadata().resources().clone(),
                 chart.metadata().artwork().cloned(),
                 Some(sync),
+            ),
+            chart.lines().clone(),
+            chart.notes().clone(),
+            chart.tracks().clone(),
+            chart.scroll().clone(),
+            chart.required_extensions().iter().cloned(),
+        )
+    }
+
+    fn chart_with_meta(value: &str) -> CanonicalChart {
+        let chart = chart_with_notes(Vec::new());
+        CanonicalChart::new(
+            chart.source_version().clone(),
+            chart.profile(),
+            chart.features().iter().copied(),
+            chart.time_map().clone(),
+            CanonicalMetadata::new(
+                Some(BTreeMap::from([(
+                    "private".to_owned(),
+                    CanonicalValue::String(value.to_owned()),
+                )])),
+                chart.metadata().contributors().clone(),
+                chart.metadata().credits().to_vec(),
+                chart.metadata().resources().clone(),
+                chart.metadata().artwork().cloned(),
+                chart.metadata().sync().cloned(),
             ),
             chart.lines().clone(),
             chart.notes().clone(),
@@ -2444,6 +2482,39 @@ mod tests {
                 .any(|mismatch| mismatch.metric() == "scroll.distance")
         );
         assert!(compare_canonical_charts(&expected, &expected).is_equivalent());
+    }
+
+    #[test]
+    fn aggregate_mismatch_values_are_fixed_sha256_fingerprints() {
+        const SECRET: &str = "secret-marker-that-must-not-enter-a-conversion-report-0123456789-abcdefghijklmnopqrstuvwxyz";
+        let expected = chart_with_meta(&format!("{SECRET}-expected"));
+        let actual = chart_with_meta(&format!("{SECRET}-actual"));
+
+        let comparison = compare_canonical_charts(&expected, &actual);
+        let mismatch = comparison
+            .mismatches()
+            .iter()
+            .find(|mismatch| mismatch.field() == "meta")
+            .unwrap();
+
+        for (fingerprint, raw) in [
+            (
+                mismatch.expected(),
+                format!("{:?}", expected.metadata().meta()),
+            ),
+            (mismatch.actual(), format!("{:?}", actual.metadata().meta())),
+        ] {
+            assert!(!fingerprint.contains(SECRET));
+            assert!(!fingerprint.contains("private"));
+            assert_ne!(fingerprint, raw);
+            let hex = fingerprint.strip_prefix("sha256:").unwrap();
+            assert_eq!(hex.len(), 64);
+            assert!(
+                hex.bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            );
+        }
+        assert_ne!(mismatch.expected(), mismatch.actual());
     }
 
     #[test]
