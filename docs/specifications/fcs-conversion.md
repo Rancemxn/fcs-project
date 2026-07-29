@@ -1081,6 +1081,7 @@ conversion.profile-version-unsupported
 conversion.profile-hash-mismatch
 conversion.profile-not-applicable
 conversion.profile-parameter-invalid
+conversion.profile-registry-integrity
 conversion.ambiguous-source-semantics
 conversion.target-profile-required
 conversion.capability-mismatch
@@ -1093,6 +1094,7 @@ conversion.resource-missing
 conversion.package-escape
 conversion.roundtrip-mismatch
 conversion.report-limit
+conversion.internal
 ```
 
 实现可以返回更细 subcategory，但不得把 profile ambiguity 报成 syntax error、把 Repair 报成 mapped，
