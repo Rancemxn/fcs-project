@@ -3745,6 +3745,28 @@ mod tests {
         )
     }
 
+    fn rpe_parent_chart_without_tracks() -> CanonicalChart {
+        let bytes = br#"{
+            "META": {"RPEVersion": 150, "offset": 0},
+            "BPMList": [{"startTime": [0, 0, 1], "bpm": 120}],
+            "judgeLineList": [
+                {"eventLayers": [null], "notes": [], "father": -1},
+                {"eventLayers": [null], "notes": [], "father": 0, "rotateWithFather": true}
+            ]
+        }"#;
+        let artifact =
+            SourceArtifact::new("parent-only.rpe.json", ArtifactRole::Chart, bytes).unwrap();
+        let parsed = parse_json_document(SourceFormat::Rpe, &artifact).unwrap();
+        let source = parse_rpe_document(&parsed, RpeLimits::default()).unwrap();
+        let semantic =
+            interpret_rpe_semantics(&source, &RpeProfileBinding::phira_legacy_speed()).unwrap();
+        lower_rpe_to_canonical(&semantic, &artifact)
+            .unwrap()
+            .compilation()
+            .chart()
+            .clone()
+    }
+
     fn rpe_extreme_chart() -> CanonicalChart {
         rpe_chart_from_fixture(
             "rpe-extreme.rpe.json",
@@ -4453,7 +4475,7 @@ mod tests {
 
     #[test]
     fn line_motion_is_negotiated_for_authorized_drop_without_tracks() {
-        let chart = rpe_chart();
+        let chart = rpe_parent_chart_without_tracks();
         let profile = profile_reference(
             RpeProfile::PhiraLegacySpeed.id(),
             RpeProfile::PhiraLegacySpeed.version(),
@@ -4479,7 +4501,7 @@ mod tests {
 
     #[test]
     fn authorized_motion_drop_neutralizes_rpe_parent_and_inherit_before_write() {
-        let chart = rpe_chart();
+        let chart = rpe_parent_chart_without_tracks();
         assert!(chart.lines().lines().any(|line| line.parent().is_some()));
         assert!(chart.lines().lines().any(|line| line.inherit().rotation()));
         let profile = profile_reference(
