@@ -2307,12 +2307,6 @@ fn pec_position_value(
     };
     let x = (value.x() / 1920.0 + 0.5) * 2048.0;
     let y = (value.y() / 1080.0 + 0.5) * 1400.0;
-    if !(0.0..=2048.0).contains(&x) || !(0.0..=1400.0).contains(&y) {
-        return Err(ExportError::new(
-            "conversion.capability-mismatch",
-            format!("{field} lies outside the PEC canvas"),
-        ));
-    }
     Ok((finite_decimal(x, field)?, finite_decimal(y, field)?))
 }
 
