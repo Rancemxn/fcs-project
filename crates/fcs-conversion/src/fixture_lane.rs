@@ -742,4 +742,25 @@ mod tests {
         assert_eq!(target.floor_scale_px, "120");
         assert_eq!(target.policy, "semantic");
     }
+
+    #[test]
+    fn public_manifest_declares_export_targets_for_each_product_format() {
+        let manifest = load_fixture_manifest(&public_fixture_root().join("manifest.toml")).unwrap();
+        let export_targets: Vec<_> = manifest
+            .fixtures
+            .iter()
+            .filter(|fixture| fixture.export_reparse.is_some())
+            .collect();
+
+        assert_eq!(export_targets.len(), 3);
+        assert!(export_targets.iter().any(|fixture| {
+            fixture.id == "pgr-feature" && fixture.format == FixtureFormat::Pgr
+        }));
+        assert!(export_targets.iter().any(|fixture| {
+            fixture.id == "rpe-extreme" && fixture.format == FixtureFormat::Rpe
+        }));
+        assert!(export_targets.iter().any(|fixture| {
+            fixture.id == "pec-feature" && fixture.format == FixtureFormat::Pec
+        }));
+    }
 }
