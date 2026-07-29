@@ -2306,8 +2306,8 @@ fn pec_position_value(
         ));
     };
     Ok((
-        pec_canvas_coordinate(value.x(), 1920.0, 2048.0, field)?,
-        pec_canvas_coordinate(value.y(), 1080.0, 1400.0, field)?,
+        pec_canvas_coordinate(value.x(), 1920.0, 2048.0, field, crate::line_x_canvas_2048)?,
+        pec_canvas_coordinate(value.y(), 1080.0, 1400.0, field, crate::line_y_canvas_1400)?,
     ))
 }
 
@@ -2316,6 +2316,7 @@ fn pec_canvas_coordinate(
     canonical_extent: f64,
     source_extent: f64,
     field: &str,
+    transform: fn(&crate::ExactRational) -> Result<crate::ExactRational, crate::PecError>,
 ) -> Result<String, ExportError> {
     if !value.is_finite() {
         return Err(ExportError::new(
@@ -2326,11 +2327,17 @@ fn pec_canvas_coordinate(
     let source = (value / canonical_extent + 0.5) * source_extent;
     for precision in 0..=30 {
         let candidate = format!("{source:.precision$}");
-        let Ok(candidate_value) = candidate.parse::<f64>() else {
+        let Ok(candidate) = crate::ExactDecimal::parse(&candidate, DecimalLimits::default()) else {
             continue;
         };
-        if (candidate_value / source_extent - 0.5) * canonical_extent == value {
-            return Ok(candidate);
+        let Ok(candidate_value) = transform(candidate.exact()) else {
+            continue;
+        };
+        let Ok(candidate_value) = candidate_value.to_f64() else {
+            continue;
+        };
+        if candidate_value == value {
+            return Ok(candidate.raw().to_owned());
         }
     }
     Err(ExportError::new(
