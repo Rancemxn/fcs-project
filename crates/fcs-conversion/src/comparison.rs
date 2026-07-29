@@ -2496,6 +2496,10 @@ mod tests {
             .iter()
             .find(|mismatch| mismatch.field() == "meta")
             .unwrap();
+        assert_eq!(
+            mismatch.expected(),
+            aggregate_fingerprint(expected.metadata().meta())
+        );
 
         for (fingerprint, raw) in [
             (
