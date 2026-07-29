@@ -12,11 +12,12 @@ use fcs_model::{CanonicalCompilation, ConversionReport, ConversionStatus};
 use serde::Deserialize;
 
 use crate::{
-    ArtifactRole, DecimalLimits, ExactDecimal, PecLimits, PecProfile, PecProfileBinding, PgrLimits,
-    PgrProfile, PgrProfileBinding, RpeLimits, RpeProfileBinding, RpeSpeedMode, SourceArtifact,
-    SourceFormat, interpret_pec, interpret_pgr, interpret_rpe_semantics, lower_pec_to_canonical,
-    lower_pgr_to_canonical, lower_rpe_to_canonical, parse_json_document, parse_pec_document,
-    parse_pgr_document, parse_rpe_document,
+    ArtifactRole, CapabilitySet, DecimalLimits, ExactDecimal, ExportOptions, PecLimits, PecProfile,
+    PecProfileBinding, PgrLimits, PgrProfile, PgrProfileBinding, RpeLimits, RpeProfileBinding,
+    RpeSpeedMode, SourceArtifact, SourceFormat, export_pgr_v3_with_options, interpret_pec,
+    interpret_pgr, interpret_rpe_semantics, lower_pec_to_canonical, lower_pgr_to_canonical,
+    lower_rpe_to_canonical, parse_json_document, parse_pec_document, parse_pgr_document,
+    parse_rpe_document,
 };
 
 /// Environment variable that enables the private copyright fixture root.
@@ -72,6 +73,17 @@ impl FixtureFormat {
     }
 }
 
+/// Explicit target metadata for a fixture that exercises product export and
+/// same-profile target reparse.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct FixtureExportReparse {
+    parser_dialect: String,
+    target_profile: String,
+    target_profile_version: String,
+    floor_scale_px: String,
+    policy: String,
+}
+
 /// One fixture entry from a public or copyright manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct FixtureEntry {
@@ -89,6 +101,8 @@ pub struct FixtureEntry {
     pub producer_evidence: String,
     pub runtime_evidence: String,
     pub policy: String,
+    #[serde(default)]
+    export_reparse: Option<FixtureExportReparse>,
 }
 
 /// Fixture index for one lane.
@@ -148,6 +162,7 @@ pub enum FixtureLaneError {
     Manifest(String),
     Expectation(String),
     Import { fixture_id: String, message: String },
+    Export { fixture_id: String, message: String },
     Mismatch { fixture_id: String, message: String },
 }
 
@@ -161,6 +176,10 @@ impl fmt::Display for FixtureLaneError {
                 fixture_id,
                 message,
             } => write!(formatter, "import fixture {fixture_id}: {message}"),
+            Self::Export {
+                fixture_id,
+                message,
+            } => write!(formatter, "export fixture {fixture_id}: {message}"),
             Self::Mismatch {
                 fixture_id,
                 message,
@@ -231,6 +250,14 @@ pub fn load_fixture_manifest(path: &Path) -> Result<FixtureManifest, FixtureLane
                 fixture.id, fixture.lane, manifest.lane
             )));
         }
+        if let Some(export) = &fixture.export_reparse
+            && export.policy != "semantic"
+        {
+            return Err(FixtureLaneError::Manifest(format!(
+                "fixture {} has unsupported export policy {}",
+                fixture.id, export.policy
+            )));
+        }
     }
     Ok(manifest)
 }
@@ -260,11 +287,15 @@ pub fn run_import_fixture(
             message: error.to_string(),
         })?;
 
-    match fixture.format {
+    let products = match fixture.format {
         FixtureFormat::Pgr => run_pgr(fixture, &artifact),
         FixtureFormat::Rpe => run_rpe(fixture, &artifact),
         FixtureFormat::Pec => run_pec(fixture, &artifact),
+    }?;
+    if fixture.export_reparse.is_some() {
+        run_export_reparse(fixture, &products)?;
     }
+    Ok(products)
 }
 
 /// Observe products for comparison against an expectation.
@@ -523,6 +554,54 @@ fn run_pec(
     })
 }
 
+fn run_export_reparse(
+    fixture: &FixtureEntry,
+    products: &FixtureImportProducts,
+) -> Result<(), FixtureLaneError> {
+    let Some(target) = fixture.export_reparse.as_ref() else {
+        return Ok(());
+    };
+    if target.parser_dialect != "pgr.json.v3"
+        || target.target_profile != "pgr.phira.v3"
+        || target.target_profile_version != "1.0.0"
+    {
+        return Err(FixtureLaneError::Export {
+            fixture_id: fixture.id.clone(),
+            message: format!(
+                "unsupported export/reparse target {}/{}/{}",
+                target.parser_dialect, target.target_profile, target.target_profile_version
+            ),
+        });
+    }
+    let floor_scale = ExactDecimal::parse(&target.floor_scale_px, DecimalLimits::default())
+        .map_err(|error| FixtureLaneError::Export {
+            fixture_id: fixture.id.clone(),
+            message: error.to_string(),
+        })?;
+    let target_profile = format!(
+        "{}@{}",
+        target.target_profile, target.target_profile_version
+    );
+    let options = ExportOptions::semantic(CapabilitySet::pgr_v3().descriptor(Some(target_profile)))
+        .with_floor_scale_px(floor_scale);
+    let outcome =
+        export_pgr_v3_with_options(products.compilation.chart(), &options).map_err(|error| {
+            FixtureLaneError::Export {
+                fixture_id: fixture.id.clone(),
+                message: error.to_string(),
+            }
+        })?;
+    if !outcome.comparison().is_equivalent()
+        || outcome.report().status() != ConversionStatus::Equivalent
+    {
+        return Err(FixtureLaneError::Export {
+            fixture_id: fixture.id.clone(),
+            message: "product export/reparse did not produce an equivalent canonical result".into(),
+        });
+    }
+    Ok(())
+}
+
 fn parse_pgr_profile(id: &str) -> Result<PgrProfile, FixtureLaneError> {
     match id {
         "pgr.phira.v1" => Ok(PgrProfile::PhiraV1),
@@ -650,5 +729,17 @@ mod tests {
             assert_eq!(expected.id, fixture.id);
             assert!(!expected.required_provenance_keys.is_empty());
         }
+        let export_targets: Vec<_> = manifest
+            .fixtures
+            .iter()
+            .filter_map(|fixture| fixture.export_reparse.as_ref())
+            .collect();
+        assert_eq!(export_targets.len(), 1);
+        let target = export_targets[0];
+        assert_eq!(target.parser_dialect, "pgr.json.v3");
+        assert_eq!(target.target_profile, "pgr.phira.v3");
+        assert_eq!(target.target_profile_version, "1.0.0");
+        assert_eq!(target.floor_scale_px, "120");
+        assert_eq!(target.policy, "semantic");
     }
 }

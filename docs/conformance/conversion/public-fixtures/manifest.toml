@@ -33,6 +33,13 @@ producer_evidence = "synthetic-public-feature"
 runtime_evidence = "none"
 policy = "strict"
 
+[fixture.export_reparse]
+parser_dialect = "pgr.json.v3"
+target_profile = "pgr.phira.v3"
+target_profile_version = "1.0.0"
+floor_scale_px = "120"
+policy = "semantic"
+
 [[fixture]]
 id = "rpe-minimal"
 lane = "public"
