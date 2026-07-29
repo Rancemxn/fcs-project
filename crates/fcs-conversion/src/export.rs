@@ -1013,7 +1013,7 @@ impl CapabilitySet {
             version: "line-command",
             time: true,
             notes: true,
-            tracks: false,
+            tracks: true,
             expressions: false,
             resources: false,
         }
@@ -1143,7 +1143,16 @@ impl CapabilitySet {
                     add("line.inherit", "default");
                 }
                 add("line.transform", "default");
-                if self.tracks {
+                if self.format == "pec" {
+                    for value in ["position", "rotation", "alpha", "scroll-speed"] {
+                        add("track.target", value);
+                    }
+                    for value in ["linear", "point", "easing"] {
+                        add("track.interpolation", value);
+                    }
+                    add("track.blend", "replace");
+                    add("track.fill", "base");
+                } else if self.tracks {
                     for value in ["position", "rotation", "alpha", "scroll-speed"] {
                         add("track.target", value);
                     }
@@ -2131,6 +2140,279 @@ pub fn export_pec_line_with_options(
     export_pec_line_with_resource_context(chart, None, options)
 }
 
+fn pec_track_events(
+    chart: &CanonicalChart,
+    owner: &StableId,
+    line_index: usize,
+    profile: PecProfile,
+    negotiation: &NegotiationPlan,
+) -> Result<Vec<(u64, String)>, ExportError> {
+    if negotiation.drops(CapabilityDomain::Motion) {
+        return Ok(Vec::new());
+    }
+    let mut events = Vec::new();
+    for track in chart
+        .tracks()
+        .tracks()
+        .iter()
+        .filter(|track| track.owner() == owner)
+    {
+        let property = match (track.name(), track.target()) {
+            ("pec.position", CanonicalTrackTarget::Position) => "position",
+            ("pec.rotation", CanonicalTrackTarget::Rotation) => "rotation",
+            ("pec.alpha", CanonicalTrackTarget::Alpha) => "alpha",
+            ("pec.speed", CanonicalTrackTarget::ScrollSpeed) => "speed",
+            _ => {
+                return Err(ExportError::new(
+                    "conversion.capability-mismatch",
+                    format!("Track {} is not representable by PEC", track.name()),
+                ));
+            }
+        };
+        if track.blend() != CanonicalTrackBlend::Replace
+            || track.priority() != 0
+            || track.fill() != CanonicalTrackFill::Base
+            || track.extrapolate_before() != CanonicalTrackFill::Base
+            || track.extrapolate_after() != CanonicalTrackFill::Base
+        {
+            return Err(ExportError::new(
+                "conversion.capability-mismatch",
+                format!(
+                    "Track {} has unsupported PEC blend/fill behavior",
+                    track.name()
+                ),
+            ));
+        }
+        for piece in track.pieces() {
+            events.push(pec_track_event(
+                chart, property, line_index, profile, piece,
+            )?);
+        }
+    }
+    events.sort_by_key(|(order, _)| *order);
+    Ok(events)
+}
+
+fn pec_track_event(
+    chart: &CanonicalChart,
+    property: &str,
+    line_index: usize,
+    profile: PecProfile,
+    piece: &CanonicalTrackPiece,
+) -> Result<(u64, String), ExportError> {
+    let (order, start, end, start_value, end_value, interpolation) = match piece {
+        CanonicalTrackPiece::Segment(segment) => (
+            segment.document_order(),
+            segment.start(),
+            segment.end(),
+            segment.start_value(),
+            segment.end_value(),
+            Some(segment.interpolation()),
+        ),
+        CanonicalTrackPiece::Point(point) => (
+            point.document_order(),
+            point.time(),
+            point.time(),
+            point.value(),
+            point.value(),
+            None,
+        ),
+    };
+    let start_beat = pec_beat(chart, start, "PEC event start beat")?;
+    let end_beat = pec_beat(chart, end, "PEC event end beat")?;
+    let line = line_index.to_string();
+    let output = match (property, interpolation) {
+        ("position", None) => {
+            let value = pec_position_value(start_value, "PEC position point")?;
+            format!("cp {line} {start_beat} {} {}\n", value.0, value.1)
+        }
+        ("rotation", None) => {
+            let value = pec_rotation_value(start_value, "PEC rotation point")?;
+            format!("cd {line} {start_beat} {value}\n")
+        }
+        ("alpha", None) => {
+            let value = pec_alpha_value(start_value, "PEC alpha point")?;
+            format!("ca {line} {start_beat} {value}\n")
+        }
+        ("speed", None) => {
+            let value = pec_speed_value(start_value, profile, "PEC speed point")?;
+            format!("cv {line} {start_beat} {value}\n")
+        }
+        ("position", Some(interpolation)) => {
+            let _ = pec_position_value(start_value, "PEC position segment")?;
+            let end = pec_position_value(end_value, "PEC position segment")?;
+            let easing = pec_easing_id(interpolation, "PEC position easing")?;
+            format!(
+                "cm {line} {start_beat} {end_beat} {} {} {easing}\n",
+                end.0, end.1
+            )
+        }
+        ("rotation", Some(interpolation)) => {
+            let value = pec_rotation_value(end_value, "PEC rotation segment")?;
+            let easing = pec_easing_id(interpolation, "PEC rotation easing")?;
+            let _ = pec_rotation_value(start_value, "PEC rotation segment")?;
+            format!("cr {line} {start_beat} {end_beat} {value} {easing}\n")
+        }
+        ("alpha", Some(interpolation)) => {
+            if interpolation != &CanonicalTrackInterpolation::Linear {
+                return Err(ExportError::new(
+                    "conversion.capability-mismatch",
+                    "PEC cf alpha segments require linear interpolation",
+                ));
+            }
+            let value = pec_alpha_value(end_value, "PEC alpha segment")?;
+            let _ = pec_alpha_value(start_value, "PEC alpha segment")?;
+            format!("cf {line} {start_beat} {end_beat} {value}\n")
+        }
+        ("speed", Some(_)) => {
+            return Err(ExportError::new(
+                "conversion.capability-mismatch",
+                "PEC cv represents point speed events only",
+            ));
+        }
+        _ => {
+            return Err(ExportError::new(
+                "conversion.capability-mismatch",
+                "PEC event property is not representable",
+            ));
+        }
+    };
+    Ok((order, output))
+}
+
+fn pec_beat(
+    chart: &CanonicalChart,
+    time: fcs_model::CanonicalTime,
+    field: &str,
+) -> Result<String, ExportError> {
+    let beat = time
+        .source_beat()
+        .map_or_else(
+            || chart.time_map().beat_at_time(time.chart_time_seconds()),
+            |beat| Ok(beat.as_f64()),
+        )
+        .map_err(|error| ExportError::new("conversion.capability-mismatch", error.to_string()))?;
+    finite_decimal(beat, field)
+}
+
+fn pec_position_value(
+    value: CanonicalTrackValue,
+    field: &str,
+) -> Result<(String, String), ExportError> {
+    let CanonicalTrackValue::Vec2Length(value) = value else {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!("{field} has the wrong canonical value type"),
+        ));
+    };
+    Ok((
+        pec_canvas_coordinate(value.x(), 1920.0, 2048.0, field, crate::line_x_canvas_2048)?,
+        pec_canvas_coordinate(value.y(), 1080.0, 1400.0, field, crate::line_y_canvas_1400)?,
+    ))
+}
+
+fn pec_canvas_coordinate(
+    value: f64,
+    canonical_extent: f64,
+    source_extent: f64,
+    field: &str,
+    transform: fn(&crate::ExactRational) -> Result<crate::ExactRational, crate::PecError>,
+) -> Result<String, ExportError> {
+    if !value.is_finite() {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!("{field} must be finite"),
+        ));
+    }
+    let source = (value / canonical_extent + 0.5) * source_extent;
+    for precision in 0..=30 {
+        let candidate = format!("{source:.precision$}");
+        let Ok(candidate) = crate::ExactDecimal::parse(&candidate, DecimalLimits::default()) else {
+            continue;
+        };
+        let Ok(candidate_value) = transform(candidate.exact()) else {
+            continue;
+        };
+        let Ok(candidate_value) = candidate_value.to_f64() else {
+            continue;
+        };
+        if candidate_value == value {
+            return Ok(candidate.raw().to_owned());
+        }
+    }
+    Err(ExportError::new(
+        "conversion.capability-mismatch",
+        format!("{field} cannot be serialized without changing its canonical value"),
+    ))
+}
+
+fn pec_rotation_value(value: CanonicalTrackValue, field: &str) -> Result<String, ExportError> {
+    let CanonicalTrackValue::Angle(value) = value else {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!("{field} has the wrong canonical value type"),
+        ));
+    };
+    finite_decimal(-value * 180.0 / std::f64::consts::PI, field)
+}
+
+fn pec_alpha_value(value: CanonicalTrackValue, field: &str) -> Result<String, ExportError> {
+    let CanonicalTrackValue::Float(value) = value else {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!("{field} has the wrong canonical value type"),
+        ));
+    };
+    if !(0.0..=1.0).contains(&value) {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!("{field} lies outside the PEC alpha range"),
+        ));
+    }
+    finite_decimal(value * 255.0, field)
+}
+
+fn pec_speed_value(
+    value: CanonicalTrackValue,
+    profile: PecProfile,
+    field: &str,
+) -> Result<String, ExportError> {
+    let CanonicalTrackValue::Float(value) = value else {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!("{field} has the wrong canonical value type"),
+        ));
+    };
+    let raw = match profile.cv_scale() {
+        crate::PecCvScale::Div585 => value * 5.85,
+        crate::PecCvScale::Div7 | crate::PecCvScale::RpeHeight900 => value * 7.0,
+    };
+    finite_decimal(raw, field)
+}
+
+fn pec_easing_id(
+    interpolation: &CanonicalTrackInterpolation,
+    field: &str,
+) -> Result<i64, ExportError> {
+    match interpolation {
+        CanonicalTrackInterpolation::Linear => Ok(1),
+        CanonicalTrackInterpolation::Easing(name) => {
+            crate::rpe::rpe_easing_id(name).ok_or_else(|| {
+                ExportError::new(
+                    "conversion.capability-mismatch",
+                    format!("{field} uses an easing outside the fixed Phira table"),
+                )
+            })
+        }
+        CanonicalTrackInterpolation::Step | CanonicalTrackInterpolation::CubicBezier(_) => {
+            Err(ExportError::new(
+                "conversion.capability-mismatch",
+                format!("{field} uses an unsupported PEC interpolation"),
+            ))
+        }
+    }
+}
+
 fn export_pec_line_with_resource_context(
     chart: &CanonicalChart,
     expected_resources: Option<&CanonicalResourceBundle>,
@@ -2175,9 +2457,9 @@ fn export_pec_line_with_resource_context(
                 line_index as u64,
             )?,
         ));
-    }
-    if ordered_lines.len() > 1 {
-        lines.push_str(&format!("cp {} 0 1024 700\n", ordered_lines.len() - 1));
+        for (_, event) in pec_track_events(chart, line.id(), line_index, profile, &negotiation)? {
+            lines.push_str(&event);
+        }
     }
     let mut notes: Vec<_> = chart.notes().notes().iter().collect();
     notes.sort_by_key(|note| note.document_order());
@@ -3123,12 +3405,7 @@ fn require_pec_chart_shape(
     negotiation: &NegotiationPlan,
 ) -> Result<(), ExportError> {
     require_external_payload_losses(chart, negotiation, "PEC")?;
-    if !chart.tracks().tracks().is_empty() && !negotiation.drops(CapabilityDomain::Motion) {
-        return Err(ExportError::new(
-            "conversion.capability-mismatch",
-            "PEC writer cannot represent canonical Tracks",
-        ));
-    }
+    let profile = selected_pec_profile(options)?;
     let floor_scale = options.floor_scale_px.to_f64().map_err(|error| {
         ExportError::new("conversion.profile-parameter-invalid", error.to_string())
     })?;
@@ -3147,6 +3424,23 @@ fn require_pec_chart_shape(
                     "Line {} has fields outside the PEC writer subset",
                     line.document_order()
                 ),
+            ));
+        }
+        pec_track_events(chart, line.id(), index, profile, negotiation)?;
+        let has_note = chart
+            .notes()
+            .notes()
+            .iter()
+            .any(|note| note.gameplay().line().value() == line.id().value());
+        let has_track = chart
+            .tracks()
+            .tracks()
+            .iter()
+            .any(|track| track.owner().value() == line.id().value());
+        if index > 0 && !has_note && (!has_track || negotiation.drops(CapabilityDomain::Motion)) {
+            return Err(ExportError::new(
+                "conversion.capability-mismatch",
+                format!("PEC cannot encode empty line {index} without a line command"),
             ));
         }
     }
@@ -3787,12 +4081,28 @@ mod tests {
     }
 
     fn pec_chart() -> CanonicalChart {
-        let name = "pec-minimal.pec";
+        pec_chart_from_fixture("pec-minimal.pec")
+    }
+
+    fn pec_chart_from_fixture(name: &str) -> CanonicalChart {
         let bytes = fs::read(root().join(format!(
             "docs/conformance/conversion/public-fixtures/sources/{name}"
         )))
         .unwrap();
         let artifact = SourceArtifact::new(name, ArtifactRole::Chart, bytes).unwrap();
+        let source = parse_pec_document(&artifact, PecLimits::default()).unwrap();
+        let floor = ExactDecimal::parse("120", DecimalLimits::default()).unwrap();
+        let binding = PecProfileBinding::new(PecProfile::Phira, floor).unwrap();
+        let semantic = interpret_pec(&source, &binding).unwrap();
+        lower_pec_to_canonical(&semantic, &artifact)
+            .unwrap()
+            .compilation()
+            .chart()
+            .clone()
+    }
+
+    fn reparse_pec_chart(bytes: Vec<u8>) -> CanonicalChart {
+        let artifact = SourceArtifact::new("mutated.pec", ArtifactRole::Chart, bytes).unwrap();
         let source = parse_pec_document(&artifact, PecLimits::default()).unwrap();
         let floor = ExactDecimal::parse("120", DecimalLimits::default()).unwrap();
         let binding = PecProfileBinding::new(PecProfile::Phira, floor).unwrap();
@@ -4122,6 +4432,31 @@ mod tests {
                 .unwrap()
                 .comparison()
                 .is_equivalent()
+        );
+    }
+
+    #[test]
+    fn pec_feature_motion_roundtrip_and_mutation_are_observable() {
+        let chart = pec_chart_from_fixture("pec-feature.pec");
+        let options = profile_options(
+            CapabilitySet::pec_line(),
+            PecProfile::Phira.id(),
+            PecProfile::Phira.version(),
+        );
+        let outcome = export_pec_line_with_options(&chart, &options).unwrap();
+        assert!(outcome.comparison().is_equivalent());
+        let target = String::from_utf8(outcome.bytes().to_vec()).unwrap();
+        assert!(target.contains("cp 0"));
+        assert!(target.contains("cd 0"));
+        let mutated = target.replacen("1024", "1100", 1).into_bytes();
+        let actual = reparse_pec_chart(mutated);
+        let comparison = crate::comparison::compare_canonical_charts(&chart, &actual);
+        assert!(!comparison.is_equivalent());
+        assert!(
+            comparison
+                .mismatches()
+                .iter()
+                .any(|mismatch| mismatch.domain() == "motion")
         );
     }
 
