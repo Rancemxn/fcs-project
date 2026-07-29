@@ -512,7 +512,7 @@ mod tests {
 
     #[test]
     fn keeps_balanced_extension_preserve_and_render_payload_tokens() {
-        let source = "#fcs 5.0.0\nformat { profile: fragment; }\nrender profile 1.0.0 { layer opaque { value: \"{ raw }\"; } }\nextensions { extension(\"org.test\", 1.0.0) optional { \"raw\": \"1e2\", }; }\npreserve { payload: extension(\"org.test\", 1.0.0) { \"raw\": \"1e2\", }; }";
+        let source = "#fcs 5.0.0\nformat { profile: fragment; }\nrender profile 1.0.0 { layer opaque { value: \"{ raw }\"; } }\nextensions { extension(\"org.test\", 1.0.0) optional { \"raw\": \"1e2\", } }\npreserve { payload: extension(\"org.test\", 1.0.0) { \"raw\": \"1e2\", }; }";
         let formatted = canonicalize_source_layout(source)
             .into_result()
             .expect("opaque envelopes should format");
