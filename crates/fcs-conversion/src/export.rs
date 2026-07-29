@@ -19,7 +19,7 @@ use fcs_model::{
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::comparison::EntityAlignment;
+use crate::comparison::{EntityAlignment, MAX_REPORT_ENTRIES};
 use crate::{
     ApproximationAuthorization, ArtifactRole, CapabilityDescriptor, CapabilityDomain,
     CapabilityDomainDescriptor, CapabilityFeature, DecimalLimits, DropAuthorization, ExactDecimal,
@@ -615,6 +615,8 @@ impl ExportError {
     }
 
     fn with_entries(mut self, entries: Vec<ConversionEntry>) -> Self {
+        let mut entries = entries;
+        entries.truncate(MAX_REPORT_ENTRIES);
         self.entries = entries;
         self
     }
@@ -639,6 +641,30 @@ impl fmt::Display for ExportError {
 }
 
 impl std::error::Error for ExportError {}
+
+fn report_limit_error(observed: usize, entries: Vec<ConversionEntry>) -> ExportError {
+    ExportError::new(
+        "conversion.report-limit",
+        format!(
+            "conversion report entry limit exceeded: maximum {MAX_REPORT_ENTRIES}, observed {observed}"
+        ),
+    )
+    .with_entries(entries)
+}
+
+fn push_report_entry(
+    entries: &mut Vec<ConversionEntry>,
+    entry: ConversionEntry,
+) -> Result<(), ExportError> {
+    if entries.len() >= MAX_REPORT_ENTRIES {
+        let observed = entries.len().saturating_add(1);
+        let mut retained = std::mem::take(entries);
+        retained.truncate(MAX_REPORT_ENTRIES);
+        return Err(report_limit_error(observed, retained));
+    }
+    entries.push(entry);
+    Ok(())
+}
 
 /// Validate FCS source and apply the fixed text policy: LF line endings, no
 /// trailing horizontal whitespace, no trailing blank lines, one final LF.
@@ -1590,7 +1616,8 @@ pub fn negotiate_export_with_options(
             category,
             status,
         });
-        entries.push(
+        push_report_entry(
+            &mut entries,
             ConversionEntry::new(
                 format!("capability/{}", domain.as_str()),
                 category,
@@ -1633,7 +1660,7 @@ pub fn negotiate_export_with_options(
                 [],
             )
             .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
-        );
+        )?;
     }
     let plan = NegotiationPlan { entries: plan };
     if plan.has_unsupported() {
@@ -2694,7 +2721,8 @@ fn record_compilation_roundtrip_context(
         return Ok(outcome);
     }
     let mut entries = outcome.report.entries().to_vec();
-    entries.push(
+    push_report_entry(
+        &mut entries,
         ConversionEntry::new(
             "roundtrip/stale-source-representation",
             "conversion.tool-rewrite",
@@ -2717,7 +2745,7 @@ fn record_compilation_roundtrip_context(
             [],
         )
         .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
-    );
+    )?;
     let operation_id = outcome.report.operation_id().to_owned();
     let conversion_policy = outcome.report.conversion_policy();
     let repair_mode = outcome.report.repair_mode().clone();
@@ -3512,7 +3540,8 @@ fn finish_export(
             None
         };
         if let Some(limit_name) = limit_name {
-            entries.push(
+            push_report_entry(
+                &mut entries,
                 ConversionEntry::new(
                     format!("capability/{}/limit", descriptor.domain()),
                     "conversion.capability-mismatch",
@@ -3537,7 +3566,7 @@ fn finish_export(
                     [],
                 )
                 .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
-            );
+            )?;
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
                 format!(
@@ -3555,7 +3584,8 @@ fn finish_export(
         .map(|domain| approximation_segment_count(actual, domain))
         .fold(0usize, usize::saturating_add);
     if approximation_output_segments > options.approximation.maximum_segments() {
-        entries.push(
+        push_report_entry(
+            &mut entries,
             ConversionEntry::new(
                 "approximation/segment-budget",
                 "conversion.approximation-budget-exceeded",
@@ -3579,7 +3609,7 @@ fn finish_export(
                 [],
             )
             .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
-        );
+        )?;
         return Err(ExportError::new(
             "conversion.approximation-budget-exceeded",
             format!(
@@ -3611,6 +3641,12 @@ fn finish_export(
         &dropped_selectors,
         Some(alignment),
     );
+    let observed_report_entries = entries
+        .len()
+        .saturating_add(comparison.observed_mismatch_count());
+    if comparison.report_limit_exceeded() || observed_report_entries > MAX_REPORT_ENTRIES {
+        return Err(report_limit_error(observed_report_entries, entries));
+    }
     let unverified_metrics = comparison_budgets
         .keys()
         .filter(|metric| comparison.verified_maximum_error(metric).is_none())
@@ -3618,7 +3654,8 @@ fn finish_export(
         .collect::<Vec<_>>();
     if !unverified_metrics.is_empty() {
         for (index, metric) in unverified_metrics.iter().enumerate() {
-            entries.push(
+            push_report_entry(
+                &mut entries,
                 ConversionEntry::new(
                     format!("approximation/unverified/{index:06}"),
                     "conversion.approximation-budget-exceeded",
@@ -3643,7 +3680,7 @@ fn finish_export(
                     [],
                 )
                 .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
-            );
+            )?;
         }
         return Err(ExportError::new(
             "conversion.approximation-budget-exceeded",
@@ -3663,7 +3700,8 @@ fn finish_export(
             } else {
                 "conversion.roundtrip-mismatch"
             };
-            entries.push(
+            push_report_entry(
+                &mut entries,
                 ConversionEntry::new(
                     format!("roundtrip/{index:06}"),
                     category,
@@ -3689,7 +3727,7 @@ fn finish_export(
                     [],
                 )
                 .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
-            );
+            )?;
         }
         let category = if comparison.mismatches().iter().any(|mismatch| {
             mismatch.error().is_some() && comparison_budgets.contains_key(mismatch.metric())
@@ -3710,7 +3748,8 @@ fn finish_export(
     if !comparison.unverified_selectors().is_empty() {
         for (index, selector) in comparison.unverified_selectors().iter().enumerate() {
             let domain = selector.split('.').next().unwrap_or(selector);
-            entries.push(
+            push_report_entry(
+                &mut entries,
                 ConversionEntry::new(
                     format!("roundtrip/unverified/{index:06}"),
                     "conversion.drop-applied",
@@ -3733,7 +3772,7 @@ fn finish_export(
                     [],
                 )
                 .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
-            );
+            )?;
         }
     }
     let forced_boundaries = approximation_forced_boundaries(expected, actual);
@@ -3764,7 +3803,8 @@ fn finish_export(
             source_descriptor_hash.clone(),
         )
         .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?;
-        entries.push(
+        push_report_entry(
+            &mut entries,
             ConversionEntry::new(
                 format!("approximation/verified/{index:06}"),
                 "conversion.approximation-verified",
@@ -3790,7 +3830,7 @@ fn finish_export(
             )
             .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?
             .with_error_metric(error_metric),
-        );
+        )?;
     }
     let output_hash = lower_hex(Sha256::digest(&bytes));
     let mut status_signals = vec![ConversionStatus::Equivalent];
@@ -4110,6 +4150,33 @@ mod tests {
 
     fn profile_options(set: CapabilitySet, id: &str, version: &str) -> ExportOptions {
         ExportOptions::semantic(set.descriptor(Some(profile_reference(id, version))))
+    }
+
+    fn filler_report_entries(count: usize) -> Vec<ConversionEntry> {
+        (0..count)
+            .map(|index| {
+                ConversionEntry::new(
+                    format!("filler/{index:04}"),
+                    "conversion.tool-rewrite",
+                    ConversionDomain::Profile,
+                    ConversionSeverity::Info,
+                    SemanticStatus::Equivalent,
+                    ConversionPhase::Export,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "bounded test entry",
+                    [],
+                )
+                .unwrap()
+            })
+            .collect()
     }
 
     fn loss_descriptor(profile: &str, approximation: bool, drop: bool) -> CapabilityDescriptor {
@@ -5440,6 +5507,49 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         assert!(error.entries().iter().any(|entry| {
             entry.field_key() == Some("byte.count") && entry.message().contains("byte.count")
         }));
+    }
+
+    #[test]
+    fn report_limit_rejects_export_before_target_output() {
+        let expected = rpe_chart();
+        let actual = with_source_version(&expected, "5.0.1");
+        let options = profile_options(
+            CapabilitySet::rpe_json(),
+            RpeProfile::PhiraLegacySpeed.id(),
+            RpeProfile::PhiraLegacySpeed.version(),
+        );
+        let (negotiation, _) = negotiate_export_with_options(&expected, &options).unwrap();
+        let alignment = EntityAlignment::new(
+            expected
+                .lines()
+                .lines()
+                .map(|line| (line.id().clone(), line.id().clone())),
+            expected
+                .notes()
+                .notes()
+                .iter()
+                .map(|note| (note.id().clone(), note.id().clone())),
+        )
+        .unwrap();
+        let resources = CanonicalResourceBundle::new(Vec::new()).unwrap();
+        let error = finish_export(
+            "rpe",
+            &expected,
+            &actual,
+            None,
+            &resources,
+            &alignment,
+            &options,
+            negotiation,
+            filler_report_entries(MAX_REPORT_ENTRIES),
+            b"target bytes must not escape".to_vec(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.category(), "conversion.report-limit");
+        assert!(error.message().contains("maximum 1024"));
+        assert!(error.message().contains("observed 1025"));
+        assert!(error.entries().len() <= MAX_REPORT_ENTRIES);
     }
 
     #[test]

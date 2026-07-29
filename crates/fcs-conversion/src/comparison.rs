@@ -13,6 +13,12 @@ use fcs_model::{
 };
 use fcs_runtime::{evaluate_line_scroll, evaluate_line_transform};
 
+/// Fixed implementation ceiling for owned mismatch/report entries.
+///
+/// This safety limit is not configurable and does not change comparison
+/// semantics while the observed mismatch count stays within the ceiling.
+pub(crate) const MAX_REPORT_ENTRIES: usize = 1024;
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct EntityAlignment {
     lines: BTreeMap<u64, (StableId, StableId)>,
@@ -183,6 +189,7 @@ impl VerifiedMetricObservations {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalComparison {
     mismatches: Vec<ComparisonMismatch>,
+    observed_mismatch_count: usize,
     verified_maximum_errors: BTreeMap<String, f64>,
     verified_sample_counts: BTreeMap<String, u64>,
     unverified_selectors: Vec<String>,
@@ -195,6 +202,14 @@ impl CanonicalComparison {
 
     pub fn mismatches(&self) -> &[ComparisonMismatch] {
         &self.mismatches
+    }
+
+    pub(crate) const fn observed_mismatch_count(&self) -> usize {
+        self.observed_mismatch_count
+    }
+
+    pub(crate) const fn report_limit_exceeded(&self) -> bool {
+        self.observed_mismatch_count > MAX_REPORT_ENTRIES
     }
 
     /// Maximum absolute error observed for every budgeted metric that was
@@ -389,12 +404,14 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
         );
     }
 
+    let (mismatch_items, observed_mismatch_count) = mismatches.into_parts();
     let VerifiedMetricObservations {
         maximum_errors,
         sample_counts,
     } = verified_maximum_errors;
     CanonicalComparison {
-        mismatches: mismatches.into_inner(),
+        mismatches: mismatch_items,
+        observed_mismatch_count,
         verified_maximum_errors: maximum_errors,
         verified_sample_counts: sample_counts,
         unverified_selectors: {
@@ -475,6 +492,7 @@ fn format_content_sha256(digest: CanonicalContentSha256) -> String {
 struct Mismatches<'a> {
     dropped_selectors: &'a [String],
     items: Vec<ComparisonMismatch>,
+    observed_count: usize,
 }
 
 impl<'a> Mismatches<'a> {
@@ -482,6 +500,7 @@ impl<'a> Mismatches<'a> {
         Self {
             dropped_selectors,
             items: Vec::new(),
+            observed_count: 0,
         }
     }
 
@@ -493,7 +512,7 @@ impl<'a> Mismatches<'a> {
         {
             return;
         }
-        self.items.push(mismatch);
+        self.record(mismatch);
     }
 
     /// Record a structural existence fact, which no authorization can drop.
@@ -505,9 +524,21 @@ impl<'a> Mismatches<'a> {
     /// into a no-op for that domain. The mismatch keeps its own domain so the
     /// report still names the domain that lost the entities.
     fn push_structural(&mut self, mismatch: ComparisonMismatch) {
-        self.items.push(mismatch);
+        self.record(mismatch);
     }
 
+    fn record(&mut self, mismatch: ComparisonMismatch) {
+        self.observed_count = self.observed_count.saturating_add(1);
+        if self.items.len() < MAX_REPORT_ENTRIES {
+            self.items.push(mismatch);
+        }
+    }
+
+    fn into_parts(self) -> (Vec<ComparisonMismatch>, usize) {
+        (self.items, self.observed_count)
+    }
+
+    #[cfg(test)]
     fn into_inner(self) -> Vec<ComparisonMismatch> {
         self.items
     }
@@ -2587,5 +2618,27 @@ mod tests {
         record(&mut sink, "motion", "lines[0].parent");
         record(&mut sink, "entity", "lines[0].documentOrder");
         assert_eq!(sink.into_inner().len(), 2);
+    }
+
+    #[test]
+    fn mismatch_sink_bounds_owned_items_at_report_limit() {
+        let dropped = Vec::new();
+        let mut sink = Mismatches::new(&dropped);
+        for index in 0..=MAX_REPORT_ENTRIES {
+            sink.push(ComparisonMismatch::new(
+                "metadata",
+                "discrete",
+                format!("field[{index}]"),
+                "expected",
+                "actual",
+                None,
+            ));
+        }
+
+        let (items, observed) = sink.into_parts();
+        assert_eq!(items.len(), MAX_REPORT_ENTRIES);
+        assert_eq!(observed, MAX_REPORT_ENTRIES + 1);
+        assert_eq!(items[0].field(), "field[0]");
+        assert_eq!(items[MAX_REPORT_ENTRIES - 1].field(), "field[1023]");
     }
 }
