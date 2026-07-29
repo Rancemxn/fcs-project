@@ -622,7 +622,9 @@ distance、canonical assembly 或整体 I6 完成。固定 `serde` 1.0.228、
 - **I8.6 RPE exporter**：BPMList/bpmfactor、event layer、father/inherit、easing/Bezier 和 extension。
 - **I8.7 PEC exporter**：bp/tick/offset、command ordering、cv 和 integer limits。
 - **I8.8 Target reparse**：每次 export 重新 import 目标并做 canonical comparison；超过报告误差则
-  failed，不能只信 writer。
+  failed，不能只信 writer。Bounded child #411 adds the fixed 1024-entry mismatch/report safety
+  cap and deterministic `conversion.report-limit` no-output path; broader Conversion and I10
+  closure remain open。
 - **I8.9 Strategy tests**：semantic/roundtrip/strict/repair、stale raw payload、drop authorization 和
   deterministic report。
 
