@@ -148,6 +148,7 @@ impl Layout {
             } else if self.line_start && self.output.ends_with('\n') {
                 self.output.pop();
                 self.line_start = false;
+                self.space();
             } else if !self.line_start {
                 self.space();
             }
