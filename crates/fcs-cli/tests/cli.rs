@@ -485,26 +485,18 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
 
 #[test]
 fn compile_uses_explicit_resource_resolver_root() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixtures = root.join("docs/conformance/fcs5/source/valid");
     let source_dir = tempfile::tempdir().unwrap();
     let resolver_dir = tempfile::tempdir().unwrap();
     fs::create_dir(resolver_dir.path().join("assets")).unwrap();
-    fs::write(
-        resolver_dir.path().join("assets/payload.bin"),
-        b"opaque resource",
+    fs::copy(
+        fixtures.join("assets/opaque-resource.bin"),
+        resolver_dir.path().join("assets/opaque-resource.bin"),
     )
     .unwrap();
     let source = source_dir.path().join("chart.fcs");
-    fs::write(
-        &source,
-        r#"#fcs 5.0.0
-format { profile: chart; }
-resources { binary payload { source: "assets/payload.bin"; mediaType: "application/octet-stream"; } }
-tempoMap { 0beat -> 120bpm; }
-lines { line main {} }
-collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
-"#,
-    )
-    .unwrap();
+    fs::copy(fixtures.join("note-policies.fcs"), &source).unwrap();
     let out = source_dir.path().join("out.fcbc");
     let output = bin()
         .arg("compile")
