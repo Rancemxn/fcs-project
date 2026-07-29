@@ -4825,7 +4825,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         .unwrap();
         let options = ExportOptions::semantic(descriptor);
 
-        let error = negotiate_export_with_options(&pec_chart(), &options).unwrap_err();
+        let error = export_pec_line_with_options(&pec_chart(), &options).unwrap_err();
 
         assert_eq!(error.category(), "conversion.capability-mismatch");
         assert!(
