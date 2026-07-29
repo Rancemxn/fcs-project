@@ -9,16 +9,22 @@ use fcs_model::{
     CanonicalNoteSet, CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject,
     CanonicalObjectEntry, CanonicalProfile, CanonicalResourceBundle, CanonicalScrollLine,
     CanonicalScrollSet, CanonicalScrollTempo, CanonicalScrollTempoMap, CanonicalScrollTempoPoint,
-    CanonicalSourceVersion, CanonicalSync, CanonicalTime, CanonicalTrackSet, CanonicalValue,
-    CanonicalVec2, ConversionDomain, ConversionEntry, ConversionPhase, ConversionPolicy,
-    ConversionReport, ConversionSeverity, ConversionStatus, DistributionMetadata, EntityKind,
-    ExpansionPath, InputContentHash, LogicalSourceLocator, MappingRuleRef, OriginState,
+    CanonicalSourceVersion, CanonicalSync, CanonicalTime, CanonicalTrack, CanonicalTrackBlend,
+    CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackPoint,
+    CanonicalTrackSegment, CanonicalTrackSet, CanonicalTrackTarget, CanonicalTrackValue,
+    CanonicalValue, CanonicalVec2, ConversionDomain, ConversionEntry, ConversionPhase,
+    ConversionPolicy, ConversionReport, ConversionSeverity, ConversionStatus, DistributionMetadata,
+    EntityKind, ExpansionPath, InputContentHash, LogicalSourceLocator, MappingRuleRef, OriginState,
     ProvenanceGraph, RepairMode, RestrictedProvenanceFact, ScrollTempoKey, SemanticStatus,
     StableId, StableIdRegistry, TempoPoint,
 };
 use sha2::{Digest, Sha256};
 
-use crate::pec::{PecError, PecNoteKind, PecNoteSide, PecSemanticDocument, SOURCE_INVALID};
+use crate::pec::{
+    PecError, PecNoteKind, PecNoteSide, PecSemanticDocument, PecSemanticEvent, PecSemanticProperty,
+    PecSemanticValue, SOURCE_INVALID,
+};
+use crate::rpe::RpeEventInterpolation;
 use crate::{ArtifactRole, ExactRational, SourceArtifact};
 
 const CANONICAL_SOURCE_VERSION: &str = "5.0.0";
@@ -116,6 +122,7 @@ pub fn lower_pec_to_canonical(
 
     let mut lines = Vec::with_capacity(line_count);
     let mut scroll_lines = Vec::with_capacity(line_count);
+    let mut tracks = Vec::new();
     let mut notes = Vec::new();
     let mut facts = Vec::new();
     let mut entries = Vec::new();
@@ -198,7 +205,7 @@ pub fn lower_pec_to_canonical(
             CanonicalScrollLine::new(
                 line_id.clone(),
                 coordinate,
-                1.0,
+                initial_scroll_speed(semantic, line_index),
                 false,
                 exact_f64(semantic.floor_scale_px(), "floorScalePx")?,
                 0.0,
@@ -207,6 +214,36 @@ pub fn lower_pec_to_canonical(
             .map_err(|error| canonical_error("line.scroll", error))?,
         );
         lines.push(canonical_line);
+    }
+
+    for line_index in 0..line_count {
+        let owner = line_ids.get(line_index).ok_or_else(|| {
+            PecError::new(
+                SOURCE_INVALID,
+                format!("line/{line_index}"),
+                "PEC event line index is out of range",
+            )
+        })?;
+        for property in [
+            PecSemanticProperty::Position,
+            PecSemanticProperty::Rotation,
+            PecSemanticProperty::Alpha,
+            PecSemanticProperty::Speed,
+        ] {
+            let property_events = semantic
+                .events()
+                .iter()
+                .filter(|event| event.line_index() == line_index && event.property() == property)
+                .collect::<Vec<_>>();
+            if property_events.is_empty() {
+                continue;
+            }
+            let pieces = property_events
+                .iter()
+                .map(|event| pec_event_piece(event, &time_map, profile, line_index))
+                .collect::<Result<Vec<_>, _>>()?;
+            tracks.push(pec_track(owner, property, pieces, line_index)?);
+        }
     }
 
     for (note_order, note) in semantic.notes().iter().enumerate() {
@@ -327,8 +364,8 @@ pub fn lower_pec_to_canonical(
         CanonicalLineGraph::new(lines).map_err(|error| canonical_error("chart.lines", error))?;
     let note_set =
         CanonicalNoteSet::new(notes).map_err(|error| canonical_error("chart.notes", error))?;
-    let track_set = CanonicalTrackSet::new(Vec::new())
-        .map_err(|error| canonical_error("chart.tracks", error))?;
+    let track_set =
+        CanonicalTrackSet::new(tracks).map_err(|error| canonical_error("chart.tracks", error))?;
     let scroll_set = CanonicalScrollSet::new(scroll_lines)
         .map_err(|error| canonical_error("chart.scroll", error))?;
     let chart = CanonicalChart::new(
@@ -392,6 +429,151 @@ fn build_time_map(
     }
     fcs_model::ChartTimeMap::new(tempo_points)
         .map_err(|error| canonical_error("chart.timeMap", error))
+}
+
+fn pec_event_piece(
+    event: &PecSemanticEvent,
+    time_map: &fcs_model::ChartTimeMap,
+    profile: crate::pec::PecProfile,
+    line_index: usize,
+) -> Result<CanonicalTrackPiece, PecError> {
+    let path = format!("line[{line_index}].event[{}]", event.source_order());
+    let start = canonical_event_time(event.start_time(), time_map, &path)?;
+    let end = canonical_event_time(event.end_time(), time_map, &path)?;
+    let start_value = pec_event_value(event.start(), event.property(), profile, &path)?;
+    let end_value = pec_event_value(event.end(), event.property(), profile, &path)?;
+    let interpolation = pec_interpolation(event.interpolation(), &path)?;
+    if start.chart_time_seconds() == end.chart_time_seconds() {
+        if start_value != end_value {
+            return Err(PecError::new(
+                crate::pec::PROFILE_NOT_APPLICABLE,
+                path,
+                "zero-duration PEC event has distinct endpoints",
+            ));
+        }
+        return CanonicalTrackPoint::new(start, start_value, event.source_order())
+            .map(CanonicalTrackPiece::Point)
+            .map_err(|error| canonical_error("chart.tracks", error));
+    }
+    CanonicalTrackSegment::new(
+        start,
+        end,
+        start_value,
+        end_value,
+        interpolation,
+        event.source_order(),
+    )
+    .map(CanonicalTrackPiece::Segment)
+    .map_err(|error| canonical_error("chart.tracks", error))
+}
+
+fn canonical_event_time(
+    time: &crate::pec::PecSemanticTime,
+    time_map: &fcs_model::ChartTimeMap,
+    path: &str,
+) -> Result<CanonicalTime, PecError> {
+    let beat = beat_from_exact(time.source_beat(), path)?;
+    time_map
+        .chart_time(beat)
+        .map_err(|error| canonical_error(path, error))
+}
+
+fn pec_event_value(
+    value: &PecSemanticValue,
+    property: PecSemanticProperty,
+    profile: crate::pec::PecProfile,
+    path: &str,
+) -> Result<CanonicalTrackValue, PecError> {
+    match (property, value) {
+        (PecSemanticProperty::Position, PecSemanticValue::Position { x, y }) => CanonicalVec2::new(
+            exact_f64(&crate::pec::line_x_canvas_2048(x)?, path)?,
+            exact_f64(&crate::pec::line_y_canvas_1400(y)?, path)?,
+        )
+        .map(CanonicalTrackValue::Vec2Length)
+        .map_err(|error| canonical_error(path, error)),
+        (PecSemanticProperty::Rotation, PecSemanticValue::Rotation(value)) => Ok(
+            CanonicalTrackValue::Angle(-exact_f64(value, path)? * std::f64::consts::PI / 180.0),
+        ),
+        (PecSemanticProperty::Alpha, PecSemanticValue::Alpha(value)) => {
+            let value = exact_f64(value, path)?;
+            if !(0.0..=255.0).contains(&value) {
+                return Err(PecError::new(
+                    crate::pec::PROFILE_NOT_APPLICABLE,
+                    path,
+                    "PEC alpha is outside the Phira byte range",
+                ));
+            }
+            Ok(CanonicalTrackValue::Float(value / 255.0))
+        }
+        (PecSemanticProperty::Speed, PecSemanticValue::Speed(value)) => {
+            Ok(CanonicalTrackValue::Float(exact_f64(
+                &crate::pec::cv_scale(value, profile.cv_scale())?,
+                path,
+            )?))
+        }
+        _ => Err(PecError::new(
+            crate::pec::PROFILE_NOT_APPLICABLE,
+            path,
+            "PEC event property and value kind do not match",
+        )),
+    }
+}
+
+fn pec_interpolation(
+    interpolation: &RpeEventInterpolation,
+    path: &str,
+) -> Result<CanonicalTrackInterpolation, PecError> {
+    match interpolation {
+        RpeEventInterpolation::Linear => Ok(CanonicalTrackInterpolation::Linear),
+        RpeEventInterpolation::Core(name) => Ok(CanonicalTrackInterpolation::Easing(name.clone())),
+        RpeEventInterpolation::CubicBezier(_) => Err(PecError::new(
+            crate::pec::PROFILE_NOT_APPLICABLE,
+            path,
+            "PEC line commands do not represent cubic Bezier interpolation",
+        )),
+    }
+}
+
+fn pec_track(
+    owner: &StableId,
+    property: PecSemanticProperty,
+    pieces: Vec<CanonicalTrackPiece>,
+    line_index: usize,
+) -> Result<CanonicalTrack, PecError> {
+    let (name, target) = match property {
+        PecSemanticProperty::Position => ("pec.position", CanonicalTrackTarget::Position),
+        PecSemanticProperty::Rotation => ("pec.rotation", CanonicalTrackTarget::Rotation),
+        PecSemanticProperty::Alpha => ("pec.alpha", CanonicalTrackTarget::Alpha),
+        PecSemanticProperty::Speed => ("pec.speed", CanonicalTrackTarget::ScrollSpeed),
+    };
+    CanonicalTrack::new(
+        owner.clone(),
+        name,
+        target,
+        CanonicalTrackBlend::Replace,
+        0,
+        CanonicalTrackFill::Base,
+        CanonicalTrackFill::Base,
+        CanonicalTrackFill::Base,
+        pieces,
+    )
+    .map_err(|error| canonical_error(&format!("line[{line_index}].tracks"), error))
+}
+
+fn initial_scroll_speed(semantic: &PecSemanticDocument, line_index: usize) -> f64 {
+    semantic
+        .events()
+        .iter()
+        .find(|event| {
+            event.line_index() == line_index && event.property() == PecSemanticProperty::Speed
+        })
+        .map_or(1.0, |event| {
+            if event.start_time().chart_time_seconds().is_positive() {
+                0.0
+            } else {
+                1.0
+            }
+        })
 }
 
 fn beat_from_exact(value: &ExactRational, path: &str) -> Result<Beat, PecError> {
@@ -504,6 +686,8 @@ mod tests {
     const SIMPLE: &str =
         "0\nbp 0.00 120\nn1 0 1.00 1024 1 0\n# 1.000\n& 1.000\nn2 0 2.00 3.00 0 1 0\n";
 
+    const EVENTS: &str = "0\nbp 0 120\ncp 0 0 1024 700\ncm 0 1 2 2048 1400 1\ncd 0 0 0\ncr 0 1 2 90 2\nca 0 0 255\ncf 0 1 2 128\ncv 0 0 5.85\n";
+
     fn artifact(bytes: &str) -> SourceArtifact {
         SourceArtifact::new("charts/main.pec", ArtifactRole::Chart, bytes.as_bytes()).unwrap()
     }
@@ -534,6 +718,34 @@ mod tests {
             .find(|note| note.kind() == CanonicalNoteKind::Tap)
             .unwrap();
         assert!((tap.gameplay().time().chart_time_seconds() - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn lowers_line_events_into_replace_tracks_with_source_order() {
+        let (semantic_doc, art) = semantic(EVENTS);
+        let import = lower_pec_to_canonical(&semantic_doc, &art).unwrap();
+        let chart = import.compilation().chart();
+        let tracks = chart.tracks().tracks();
+        assert_eq!(tracks.len(), 4);
+        assert!(tracks.iter().any(|track| {
+            track.name() == "pec.position"
+                && track.target() == CanonicalTrackTarget::Position
+                && track.blend() == CanonicalTrackBlend::Replace
+                && track.fill() == CanonicalTrackFill::Base
+        }));
+        assert!(tracks.iter().any(|track| track.name() == "pec.rotation"));
+        assert!(tracks.iter().any(|track| track.name() == "pec.alpha"));
+        assert!(tracks.iter().any(|track| track.name() == "pec.speed"));
+        assert_eq!(chart.scroll().lines()[0].speed(), 1.0);
+        let position = tracks
+            .iter()
+            .find(|track| track.name() == "pec.position")
+            .unwrap();
+        let order = match &position.pieces()[0] {
+            CanonicalTrackPiece::Point(point) => point.document_order(),
+            CanonicalTrackPiece::Segment(segment) => segment.document_order(),
+        };
+        assert_eq!(order, 1);
     }
 
     #[test]

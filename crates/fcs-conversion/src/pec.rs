@@ -4,12 +4,13 @@
 //! first-line offset). Token-stream and global-suffix-zip dialects remain profile-tagged
 //! compatibility paths that fail strict parse when their shape is required but not used.
 
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{One, Zero};
 
+use crate::rpe::{RpeEventInterpolation, rpe_easing_name};
 use crate::{
     DecimalLimits, ExactDecimal, ExactNumberError, ExactRational, LogicalSourceLocator,
     SourceArtifact, SourceFormat,
@@ -308,6 +309,72 @@ impl PecSemanticTime {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum PecSemanticProperty {
+    Position,
+    Rotation,
+    Alpha,
+    Speed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PecSemanticValue {
+    Position { x: ExactRational, y: ExactRational },
+    Rotation(ExactRational),
+    Alpha(ExactRational),
+    Speed(ExactRational),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PecSemanticEvent {
+    line_index: usize,
+    source_order: u64,
+    start_time: PecSemanticTime,
+    end_time: PecSemanticTime,
+    start: PecSemanticValue,
+    end: PecSemanticValue,
+    interpolation: RpeEventInterpolation,
+}
+
+impl PecSemanticEvent {
+    pub(crate) const fn line_index(&self) -> usize {
+        self.line_index
+    }
+
+    pub(crate) const fn source_order(&self) -> u64 {
+        self.source_order
+    }
+
+    pub(crate) fn start_time(&self) -> &PecSemanticTime {
+        &self.start_time
+    }
+
+    pub(crate) fn end_time(&self) -> &PecSemanticTime {
+        &self.end_time
+    }
+
+    pub(crate) const fn property(&self) -> PecSemanticProperty {
+        match &self.start {
+            PecSemanticValue::Position { .. } => PecSemanticProperty::Position,
+            PecSemanticValue::Rotation(_) => PecSemanticProperty::Rotation,
+            PecSemanticValue::Alpha(_) => PecSemanticProperty::Alpha,
+            PecSemanticValue::Speed(_) => PecSemanticProperty::Speed,
+        }
+    }
+
+    pub(crate) fn start(&self) -> &PecSemanticValue {
+        &self.start
+    }
+
+    pub(crate) fn end(&self) -> &PecSemanticValue {
+        &self.end
+    }
+
+    pub(crate) fn interpolation(&self) -> &RpeEventInterpolation {
+        &self.interpolation
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PecSemanticBpm {
     start_beat: ExactRational,
@@ -384,6 +451,7 @@ pub struct PecSemanticDocument {
     floor_scale_px: ExactRational,
     bpm_points: Vec<PecSemanticBpm>,
     notes: Vec<PecSemanticNote>,
+    events: Vec<PecSemanticEvent>,
     max_line_index: usize,
 }
 
@@ -414,6 +482,10 @@ impl PecSemanticDocument {
 
     pub fn notes(&self) -> &[PecSemanticNote] {
         &self.notes
+    }
+
+    pub(crate) fn events(&self) -> &[PecSemanticEvent] {
+        &self.events
     }
 
     pub const fn max_line_index(&self) -> usize {
@@ -650,10 +722,12 @@ pub fn interpret_pec(
     let mut bpm_points = Vec::new();
     let mut previous_beat: Option<ExactRational> = None;
     let mut notes = Vec::new();
+    let mut events = Vec::new();
+    let mut event_states: BTreeMap<(usize, PecSemanticProperty), PecEventState> = BTreeMap::new();
     let mut max_line_index = 0usize;
     let mut saw_non_bp = false;
 
-    for command in &source.commands {
+    for (source_order, command) in source.commands.iter().enumerate() {
         match command {
             PecSourceCommand::Bpm(point) => {
                 if saw_non_bp && profile == PecProfile::Phira {
@@ -682,18 +756,7 @@ pub fn interpret_pec(
             }
             PecSourceCommand::Note(note) => {
                 saw_non_bp = true;
-                let line_index = note
-                    .line_index
-                    .exact()
-                    .to_i64()
-                    .and_then(|value| usize::try_from(value).ok())
-                    .ok_or_else(|| {
-                        PecError::new(
-                            SOURCE_INVALID,
-                            format!("line:{}", note.line),
-                            "Note line index must be a non-negative integer",
-                        )
-                    })?;
+                let line_index = pec_line_index(&note.line_index, note.line)?;
                 max_line_index = max_line_index.max(line_index);
                 if note.kind == PecNoteKind::Hold {
                     let Some(end) = note.end_beat.as_ref() else {
@@ -772,21 +835,201 @@ pub fn interpret_pec(
                     "unknown PEC command is not accepted in this unit without Repair",
                 ));
             }
-            PecSourceCommand::Cv { line_index, .. }
-            | PecSourceCommand::Cp { line_index, .. }
-            | PecSourceCommand::Cd { line_index, .. }
-            | PecSourceCommand::Ca { line_index, .. }
-            | PecSourceCommand::Cm { line_index, .. }
-            | PecSourceCommand::Cr { line_index, .. }
-            | PecSourceCommand::Cf { line_index, .. } => {
+            PecSourceCommand::Cv {
+                line_index,
+                beat,
+                speed,
+                line,
+            } => {
                 saw_non_bp = true;
-                let index = line_index
-                    .exact()
-                    .to_i64()
-                    .and_then(|value| usize::try_from(value).ok());
-                if let Some(index) = index {
-                    max_line_index = max_line_index.max(index);
-                }
+                let index = pec_line_index(line_index, *line)?;
+                max_line_index = max_line_index.max(index);
+                let beat = beat.exact().clone();
+                let value = PecSemanticValue::Speed(speed.exact().clone());
+                add_pec_event(
+                    &mut events,
+                    &mut event_states,
+                    PecEventInput {
+                        line_index: index,
+                        source_order: source_order as u64,
+                        start_beat: beat.clone(),
+                        end_beat: beat,
+                        start_value: Some(value.clone()),
+                        end_value: value,
+                        interpolation: RpeEventInterpolation::Linear,
+                        line: *line,
+                    },
+                    &bpm_points,
+                )?;
+            }
+            PecSourceCommand::Cp {
+                line_index,
+                beat,
+                x,
+                y,
+                line,
+            } => {
+                saw_non_bp = true;
+                let index = pec_line_index(line_index, *line)?;
+                max_line_index = max_line_index.max(index);
+                let beat = beat.exact().clone();
+                let value = PecSemanticValue::Position {
+                    x: x.exact().clone(),
+                    y: y.exact().clone(),
+                };
+                add_pec_event(
+                    &mut events,
+                    &mut event_states,
+                    PecEventInput {
+                        line_index: index,
+                        source_order: source_order as u64,
+                        start_beat: beat.clone(),
+                        end_beat: beat,
+                        start_value: Some(value.clone()),
+                        end_value: value,
+                        interpolation: RpeEventInterpolation::Linear,
+                        line: *line,
+                    },
+                    &bpm_points,
+                )?;
+            }
+            PecSourceCommand::Cd {
+                line_index,
+                beat,
+                angle,
+                line,
+            } => {
+                saw_non_bp = true;
+                let index = pec_line_index(line_index, *line)?;
+                max_line_index = max_line_index.max(index);
+                let beat = beat.exact().clone();
+                let value = PecSemanticValue::Rotation(angle.exact().clone());
+                add_pec_event(
+                    &mut events,
+                    &mut event_states,
+                    PecEventInput {
+                        line_index: index,
+                        source_order: source_order as u64,
+                        start_beat: beat.clone(),
+                        end_beat: beat,
+                        start_value: Some(value.clone()),
+                        end_value: value,
+                        interpolation: RpeEventInterpolation::Linear,
+                        line: *line,
+                    },
+                    &bpm_points,
+                )?;
+            }
+            PecSourceCommand::Ca {
+                line_index,
+                beat,
+                alpha,
+                line,
+            } => {
+                saw_non_bp = true;
+                let index = pec_line_index(line_index, *line)?;
+                max_line_index = max_line_index.max(index);
+                let beat = beat.exact().clone();
+                let value = PecSemanticValue::Alpha(alpha.exact().clone());
+                add_pec_event(
+                    &mut events,
+                    &mut event_states,
+                    PecEventInput {
+                        line_index: index,
+                        source_order: source_order as u64,
+                        start_beat: beat.clone(),
+                        end_beat: beat,
+                        start_value: Some(value.clone()),
+                        end_value: value,
+                        interpolation: RpeEventInterpolation::Linear,
+                        line: *line,
+                    },
+                    &bpm_points,
+                )?;
+            }
+            PecSourceCommand::Cm {
+                line_index,
+                start_beat,
+                end_beat,
+                x,
+                y,
+                easing,
+                line,
+            } => {
+                saw_non_bp = true;
+                let index = pec_line_index(line_index, *line)?;
+                max_line_index = max_line_index.max(index);
+                add_pec_event(
+                    &mut events,
+                    &mut event_states,
+                    PecEventInput {
+                        line_index: index,
+                        source_order: source_order as u64,
+                        start_beat: start_beat.exact().clone(),
+                        end_beat: end_beat.exact().clone(),
+                        start_value: None,
+                        end_value: PecSemanticValue::Position {
+                            x: x.exact().clone(),
+                            y: y.exact().clone(),
+                        },
+                        interpolation: pec_interpolation(easing, *line)?,
+                        line: *line,
+                    },
+                    &bpm_points,
+                )?;
+            }
+            PecSourceCommand::Cr {
+                line_index,
+                start_beat,
+                end_beat,
+                angle,
+                easing,
+                line,
+            } => {
+                saw_non_bp = true;
+                let index = pec_line_index(line_index, *line)?;
+                max_line_index = max_line_index.max(index);
+                add_pec_event(
+                    &mut events,
+                    &mut event_states,
+                    PecEventInput {
+                        line_index: index,
+                        source_order: source_order as u64,
+                        start_beat: start_beat.exact().clone(),
+                        end_beat: end_beat.exact().clone(),
+                        start_value: None,
+                        end_value: PecSemanticValue::Rotation(angle.exact().clone()),
+                        interpolation: pec_interpolation(easing, *line)?,
+                        line: *line,
+                    },
+                    &bpm_points,
+                )?;
+            }
+            PecSourceCommand::Cf {
+                line_index,
+                start_beat,
+                end_beat,
+                alpha,
+                line,
+            } => {
+                saw_non_bp = true;
+                let index = pec_line_index(line_index, *line)?;
+                max_line_index = max_line_index.max(index);
+                add_pec_event(
+                    &mut events,
+                    &mut event_states,
+                    PecEventInput {
+                        line_index: index,
+                        source_order: source_order as u64,
+                        start_beat: start_beat.exact().clone(),
+                        end_beat: end_beat.exact().clone(),
+                        start_value: None,
+                        end_value: PecSemanticValue::Alpha(alpha.exact().clone()),
+                        interpolation: RpeEventInterpolation::Linear,
+                        line: *line,
+                    },
+                    &bpm_points,
+                )?;
             }
         }
     }
@@ -798,10 +1041,6 @@ pub fn interpret_pec(
             "PEC requires at least one bp command",
         ));
     }
-    if max_line_index >= limits_like_max_lines() {
-        // soft: only track for later
-    }
-
     let audio_offset_seconds = offset_with_bias(
         source.raw_offset_milliseconds.exact(),
         profile.offset_bias_ms(),
@@ -815,7 +1054,144 @@ pub fn interpret_pec(
         floor_scale_px: binding.floor_scale_px().clone(),
         bpm_points,
         notes,
+        events,
         max_line_index,
+    })
+}
+
+#[derive(Debug, Default)]
+struct PecEventState {
+    value: Option<PecSemanticValue>,
+    last_end: Option<ExactRational>,
+}
+
+struct PecEventInput {
+    line_index: usize,
+    source_order: u64,
+    start_beat: ExactRational,
+    end_beat: ExactRational,
+    start_value: Option<PecSemanticValue>,
+    end_value: PecSemanticValue,
+    interpolation: RpeEventInterpolation,
+    line: usize,
+}
+
+fn pec_line_index(value: &ExactDecimal, line: usize) -> Result<usize, PecError> {
+    let index = value
+        .exact()
+        .to_i64()
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| {
+            PecError::new(
+                SOURCE_INVALID,
+                format!("line:{line}"),
+                "PEC line index must be a non-negative integer",
+            )
+        })?;
+    if index >= 4096 {
+        return Err(PecError::new(
+            SOURCE_INVALID,
+            format!("line:{line}"),
+            "PEC line index exceeds the profile line limit",
+        ));
+    }
+    Ok(index)
+}
+
+fn add_pec_event(
+    events: &mut Vec<PecSemanticEvent>,
+    states: &mut BTreeMap<(usize, PecSemanticProperty), PecEventState>,
+    input: PecEventInput,
+    bpm_points: &[PecSemanticBpm],
+) -> Result<(), PecError> {
+    let property = input
+        .start_value
+        .as_ref()
+        .map_or_else(|| value_property(&input.end_value), value_property);
+    let state = states.entry((input.line_index, property)).or_default();
+    if state
+        .last_end
+        .as_ref()
+        .is_some_and(|last| input.start_beat.value() < last.value())
+    {
+        return Err(PecError::new(
+            SOURCE_INVALID,
+            format!("line:{}", input.line),
+            "PEC line events overlap or are out of source-time order",
+        ));
+    }
+    if input.end_beat.value() < input.start_beat.value() {
+        return Err(PecError::new(
+            SOURCE_INVALID,
+            format!("line:{}", input.line),
+            "PEC event endBeat must not precede startBeat",
+        ));
+    }
+    let start_value = match input.start_value {
+        Some(value) => value,
+        None if input.start_beat == input.end_beat => input.end_value.clone(),
+        None => state.value.clone().ok_or_else(|| {
+            PecError::new(
+                PROFILE_NOT_APPLICABLE,
+                format!("line:{}", input.line),
+                "PEC interpolated event requires a prior concrete value",
+            )
+        })?,
+    };
+    let start_time = semantic_time(&input.start_beat, bpm_points, input.line)?;
+    let end_time = semantic_time(&input.end_beat, bpm_points, input.line)?;
+    events.push(PecSemanticEvent {
+        line_index: input.line_index,
+        source_order: input.source_order,
+        start_time: start_time.clone(),
+        end_time,
+        start: start_value,
+        end: input.end_value.clone(),
+        interpolation: input.interpolation,
+    });
+    state.value = Some(input.end_value);
+    state.last_end = Some(input.end_beat);
+    Ok(())
+}
+
+fn value_property(value: &PecSemanticValue) -> PecSemanticProperty {
+    match value {
+        PecSemanticValue::Position { .. } => PecSemanticProperty::Position,
+        PecSemanticValue::Rotation(_) => PecSemanticProperty::Rotation,
+        PecSemanticValue::Alpha(_) => PecSemanticProperty::Alpha,
+        PecSemanticValue::Speed(_) => PecSemanticProperty::Speed,
+    }
+}
+
+fn pec_interpolation(
+    easing: &ExactDecimal,
+    line: usize,
+) -> Result<RpeEventInterpolation, PecError> {
+    let easing_id = easing.exact().to_i64().ok_or_else(|| {
+        PecError::new(
+            PROFILE_NOT_APPLICABLE,
+            format!("line:{line}.easing"),
+            "PEC easing must be an exact integer",
+        )
+    })?;
+    if easing_id < 0 {
+        return Err(PecError::new(
+            PROFILE_NOT_APPLICABLE,
+            format!("line:{line}.easing"),
+            "PEC easing ID must be non-negative",
+        ));
+    }
+    let name = rpe_easing_name(easing_id).ok_or_else(|| {
+        PecError::new(
+            PROFILE_NOT_APPLICABLE,
+            format!("line:{line}.easing"),
+            "PEC easing ID is outside the fixed Phira easing table",
+        )
+    })?;
+    Ok(if name == "linear" {
+        RpeEventInterpolation::Linear
+    } else {
+        RpeEventInterpolation::Core(name.to_owned())
     })
 }
 
@@ -1030,10 +1406,6 @@ fn validate_positive_finite(
     }
 }
 
-fn limits_like_max_lines() -> usize {
-    4096
-}
-
 fn integer(value: i64) -> BigRational {
     BigRational::from_integer(BigInt::from(value))
 }
@@ -1105,6 +1477,8 @@ mod tests {
     const SIMPLE: &str =
         "0\nbp 0.00 120\nn1 0 1.00 1024 1 0\n# 1.000\n& 1.000\nn2 0 2.00 3.00 0 1 0\n";
 
+    const EVENTS: &str = "0\nbp 0 120\ncp 0 0 1024 700\ncm 0 1 2 2048 1400 1\ncd 0 0 0\ncr 0 1 2 90 2\nca 0 0 255\ncf 0 1 2 128\ncv 0 0 5.85\n";
+
     fn artifact(bytes: &str) -> SourceArtifact {
         SourceArtifact::new("charts/main.pec", ArtifactRole::Chart, bytes.as_bytes()).unwrap()
     }
@@ -1171,6 +1545,41 @@ mod tests {
         assert_eq!(semantic.notes()[0].side(), PecNoteSide::Above);
         assert!(semantic.notes()[0].judgment_enabled());
         assert_eq!(semantic.notes()[0].position_x_px(), &exact("960"));
+    }
+
+    #[test]
+    fn phira_profile_preserves_ordered_line_events_and_scroll_points() {
+        let source = parse_pec_document(&artifact(EVENTS), PecLimits::default()).unwrap();
+        let binding = PecProfileBinding::new(
+            PecProfile::Phira,
+            ExactDecimal::parse("100", DecimalLimits::default()).unwrap(),
+        )
+        .unwrap();
+        let semantic = interpret_pec(&source, &binding).unwrap();
+        assert_eq!(semantic.events().len(), 7);
+        assert_eq!(
+            semantic.events()[0].property(),
+            PecSemanticProperty::Position
+        );
+        assert_eq!(semantic.events()[1].start_time().source_beat(), &exact("1"));
+        assert_eq!(semantic.events()[1].end_time().source_beat(), &exact("2"));
+        assert_eq!(semantic.events()[6].property(), PecSemanticProperty::Speed);
+        assert_eq!(semantic.events()[6].source_order(), 7);
+    }
+
+    #[test]
+    fn interpolated_line_event_requires_prior_concrete_value() {
+        let chart = "0\nbp 0 120\ncm 0 1 2 2048 1400 1\n";
+        let source = parse_pec_document(&artifact(chart), PecLimits::default()).unwrap();
+        let binding = PecProfileBinding::new(
+            PecProfile::Phira,
+            ExactDecimal::parse("100", DecimalLimits::default()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            interpret_pec(&source, &binding).unwrap_err().category(),
+            PROFILE_NOT_APPLICABLE
+        );
     }
 
     #[test]
