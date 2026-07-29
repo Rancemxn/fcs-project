@@ -616,6 +616,8 @@ distance、canonical assembly 或整体 I6 完成。固定 `serde` 1.0.228、
   reserialization and the remaining formatter policy are still open.
 - **I8.2 CapabilitySet**：每个目标版本声明 time/Note/Track/graph/expression/resource/limit 能力。
 - **I8.3 Negotiation**：direct/equivalent/bake/preserve/drop/unsupported 在写目标前完成并入 report。
+  Bounded child #415 now fails closed when `preserve` has no structured Fidelity or external-sidecar sink;
+  structured preserve output remains a separate Conversion residual.
 - **I8.4 Boundary-preserving bake**：先固定 tempo/Note/Hold/event，再优化 continuous segment；量化
   误差按目标和属性记录。
 - **I8.5 PGR exporter**：明确 v1/v3，line-local time/speed/floor、coordinate 和 Note encoding。

@@ -1662,6 +1662,20 @@ pub fn negotiate_export_with_options(
         )?;
     }
     let plan = NegotiationPlan { entries: plan };
+    if let Some(entry) = plan
+        .entries
+        .iter()
+        .find(|entry| entry.action == NegotiationAction::Preserve)
+    {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!(
+                "{} preservation requires a structured Fidelity or external sidecar sink",
+                entry.domain
+            ),
+        )
+        .with_entries(entries));
+    }
     if plan.has_unsupported() {
         let category = entries
             .iter()
@@ -4773,6 +4787,55 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         assert!(error.message().contains("strict export cannot preserve"));
         assert!(error.entries().iter().any(|entry| {
             entry.id() == "capability/motion" && entry.semantic_status() == SemanticStatus::Dropped
+        }));
+    }
+
+    #[test]
+    fn preserve_negotiation_fails_without_a_fidelity_or_sidecar_sink() {
+        let base = CapabilitySet::pec_line().descriptor(Some("pec.phira@1.0.0".into()));
+        let descriptor = CapabilityDescriptor::new(
+            base.format(),
+            base.version(),
+            base.profile().map(str::to_owned),
+            base.domains()
+                .iter()
+                .map(|domain| {
+                    if domain.domain() == CapabilityDomain::Timing {
+                        CapabilityDomainDescriptor::new(
+                            domain.domain(),
+                            false,
+                            false,
+                            false,
+                            true,
+                            false,
+                            domain.max_entities(),
+                            domain.max_bytes(),
+                        )
+                        .with_features(domain.features().to_vec())
+                        .and_then(|descriptor| {
+                            descriptor.with_limits(domain.limits().iter().cloned())
+                        })
+                        .unwrap()
+                    } else {
+                        domain.clone()
+                    }
+                })
+                .collect(),
+        )
+        .unwrap();
+        let options = ExportOptions::semantic(descriptor);
+
+        let error = negotiate_export_with_options(&pec_chart(), &options).unwrap_err();
+
+        assert_eq!(error.category(), "conversion.capability-mismatch");
+        assert!(
+            error
+                .message()
+                .contains("structured Fidelity or external sidecar sink")
+        );
+        assert!(error.entries().iter().any(|entry| {
+            entry.id() == "capability/timing"
+                && entry.semantic_status() == SemanticStatus::Preserved
         }));
     }
 
