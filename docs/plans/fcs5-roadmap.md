@@ -742,3 +742,6 @@ git diff --check
   helpers widened for verified metric collection; the active branch applies the same local lint boundary already
   used by other explicit multi-field constructors. The active checkpoints fix all five findings, add the §7.1 top-level typed approximation/drop authorization records, and retain verified maximum absolute error plus segment-count evidence for every exercised approximation budget. A declared metric that canonical comparison does not exercise now fails instead of silently passing. Bounded child #417 keeps non-finite comparison deltas out of verified metric evidence while preserving a hard mismatch. The active branch otherwise has local static evidence only under the user's
   temporary GitHub Actions waiver. It is not an exact-head Full Gate pass and does not close #294 or I10.
+  Bounded child #421 returns a deterministic `failed` ConversionReport with no successful output hash when
+  post-write same-profile canonical comparison rejects the attempted target bytes; broader Conversion and I10
+  closure remains open.
