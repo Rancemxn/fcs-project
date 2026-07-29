@@ -3704,7 +3704,7 @@ fn finish_export(
             entries.push(
                 ConversionEntry::new(
                     format!("roundtrip/unverified/{index:06}"),
-                    "conversion.capability-negotiated",
+                    "conversion.drop-applied",
                     conversion_domain_from_str(domain),
                     ConversionSeverity::Warning,
                     SemanticStatus::Dropped,
@@ -3758,7 +3758,7 @@ fn finish_export(
         entries.push(
             ConversionEntry::new(
                 format!("approximation/verified/{index:06}"),
-                "conversion.capability-negotiated",
+                "conversion.approximation-verified",
                 conversion_domain_from_str(metric_domain),
                 ConversionSeverity::Warning,
                 SemanticStatus::Approximated,
@@ -5059,6 +5059,9 @@ mod tests {
             .iter()
             .find(|entry| entry.id() == "approximation/verified/000000")
             .unwrap();
+        assert_eq!(verification.category(), "conversion.approximation-verified");
+        assert_eq!(verification.phase(), ConversionPhase::ReparseCompare);
+        assert_eq!(verification.semantic_status(), SemanticStatus::Approximated);
         assert_eq!(verification.field_key(), Some("presentation.value"));
         assert_eq!(
             verification.source_value(),
@@ -5206,11 +5209,24 @@ mod tests {
             outcome.comparison().unverified_selectors(),
             ["metadata.chart.meta"]
         );
-        assert!(outcome.report().entries().iter().any(|entry| {
-            entry.id() == "roundtrip/unverified/000000"
-                && entry.semantic_status() == SemanticStatus::Dropped
-                && entry.field_key() == Some("metadata.chart.meta")
-        }));
+        let applied = outcome
+            .report()
+            .entries()
+            .iter()
+            .find(|entry| entry.id() == "roundtrip/unverified/000000")
+            .unwrap();
+        assert_eq!(applied.category(), "conversion.drop-applied");
+        assert_eq!(applied.phase(), ConversionPhase::ReparseCompare);
+        assert_eq!(applied.semantic_status(), SemanticStatus::Dropped);
+        assert_eq!(applied.field_key(), Some("metadata.chart.meta"));
+        assert!(
+            outcome
+                .report()
+                .entries()
+                .iter()
+                .filter(|entry| entry.category() == "conversion.capability-negotiated")
+                .all(|entry| entry.phase() == ConversionPhase::CapabilityNegotiation)
+        );
         assert!(
             !outcome
                 .report()
