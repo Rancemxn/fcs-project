@@ -993,7 +993,8 @@ mod tests {
         assert_eq!(chart.tracks().tracks()[0].name(), "rpe.layer.0.speed");
         assert_eq!(chart.tracks().tracks()[0].blend(), CanonicalTrackBlend::Add);
         assert_eq!(chart.tracks().tracks()[0].fill(), CanonicalTrackFill::Zero);
-        assert_eq!(chart.scroll().lines()[0].speed(), 0.0);
+        let speed_owner = chart.tracks().tracks()[0].owner().value();
+        assert_eq!(chart.scroll().line(speed_owner).unwrap().speed(), 0.0);
         let lines: Vec<_> = chart.lines().lines().collect();
         let child = lines
             .iter()
