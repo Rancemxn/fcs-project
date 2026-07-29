@@ -2,6 +2,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+use fcs_source::elaborator::CompileTimeLimits;
+use fcs_source::parser::parse_document;
+
 fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_fcs"))
 }
@@ -81,6 +84,58 @@ fn format_rejects_invalid_source() {
     fs::write(&path, b"not a chart").unwrap();
     let output = bin().arg("format").arg(&path).output().unwrap();
     assert_eq!(output.status.code(), Some(3));
+}
+
+#[test]
+fn format_uses_the_fixed_text_policy_and_preserves_canonical_chart() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source =
+        fs::read_to_string(root.join("docs/conformance/fcs5/source/valid/minimal-chart.fcs"))
+            .unwrap();
+    let noisy = format!("{}\r\n\t\r\n", source.replace('\n', "  \r\n"));
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("noisy.fcs");
+    fs::write(&input, noisy).unwrap();
+
+    let output = bin().arg("format").arg(&input).output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let formatted = String::from_utf8(output.stdout).unwrap();
+    assert!(!formatted.contains('\r'));
+    assert!(formatted.ends_with('\n'));
+    assert!(!formatted.ends_with("\n\n"));
+    assert!(
+        !formatted
+            .lines()
+            .any(|line| line.ends_with(' ') || line.ends_with('\t'))
+    );
+
+    let original_chart = parse_document(&source)
+        .into_result()
+        .unwrap()
+        .canonical_chart(CompileTimeLimits::default())
+        .unwrap();
+    let formatted_chart = parse_document(&formatted)
+        .into_result()
+        .unwrap()
+        .canonical_chart(CompileTimeLimits::default())
+        .unwrap();
+    assert_eq!(formatted_chart, original_chart);
+
+    let output_path = dir.path().join("formatted.fcs");
+    let file_output = bin()
+        .arg("format")
+        .arg(&input)
+        .arg("--output")
+        .arg(&output_path)
+        .output()
+        .unwrap();
+    assert!(file_output.status.success());
+    assert!(file_output.stdout.is_empty());
+    assert_eq!(fs::read(output_path).unwrap(), formatted.as_bytes());
 }
 
 #[test]

@@ -9,10 +9,10 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand, ValueEnum};
 use fcs_conversion::{
     ArtifactRole, DecimalLimits, ExactDecimal, PecLimits, PecProfile, PecProfileBinding, PgrLimits,
-    PgrProfile, PgrProfileBinding, RpeProfileBinding, SourceArtifact, SourceFormat, interpret_pec,
-    interpret_pgr, interpret_rpe_semantics, lower_pec_to_canonical, lower_pgr_to_canonical,
-    lower_rpe_to_canonical, parse_json_document, parse_pec_document, parse_pgr_document,
-    parse_rpe_document,
+    PgrProfile, PgrProfileBinding, RpeProfileBinding, SourceArtifact, SourceFormat,
+    format_fcs_source, interpret_pec, interpret_pgr, interpret_rpe_semantics,
+    lower_pec_to_canonical, lower_pgr_to_canonical, lower_rpe_to_canonical, parse_json_document,
+    parse_pec_document, parse_pgr_document, parse_rpe_document,
 };
 use fcs_fcbc::{load_chart, load_container, write_from_compilation};
 use fcs_render::{DecodedRenderChart, evaluate_semantic_draw_list, load_render};
@@ -59,7 +59,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Format FCS source (semantic-preserving pass-through of UTF-8 bytes in this RC unit).
+    /// Format FCS source with the fixed text policy.
     Format {
         /// Path to a `.fcs` source file.
         path: PathBuf,
@@ -190,8 +190,6 @@ fn cmd_check(path: &Path, json: bool) -> ExitCode {
 }
 
 fn cmd_format(path: &Path, output: Option<&Path>) -> ExitCode {
-    // This RC unit keeps a product identity formatter: validated UTF-8 source is
-    // rewritten unchanged. A full FCS pretty-printer remains a later I8.1 unit.
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) => {
@@ -206,22 +204,22 @@ fn cmd_format(path: &Path, output: Option<&Path>) -> ExitCode {
             return ExitCategory::InputInvalid.code();
         }
     };
-    if let Err(diagnostics) = parse_document(text).into_result() {
-        let message = diagnostics
-            .first()
-            .map(|diagnostic| format!("{}: {}", diagnostic.code(), diagnostic.message()))
-            .unwrap_or_else(|| "source invalid".into());
-        eprintln!("error: cannot format invalid source: {message}");
-        return ExitCategory::InputInvalid.code();
-    }
+    let formatted = match format_fcs_source(text) {
+        Ok(formatted) => formatted,
+        Err(error) => {
+            let message = format!("{}: {}", error.category(), error.message());
+            eprintln!("error: cannot format invalid source: {message}");
+            return ExitCategory::InputInvalid.code();
+        }
+    };
     match output {
         Some(path) => {
-            if let Err(error) = fs::write(path, text.as_bytes()) {
+            if let Err(error) = fs::write(path, formatted.as_bytes()) {
                 eprintln!("error: failed to write {}: {error}", path.display());
                 return ExitCategory::Internal.code();
             }
         }
-        None => print!("{text}"),
+        None => print!("{formatted}"),
     }
     ExitCategory::Success.code()
 }
