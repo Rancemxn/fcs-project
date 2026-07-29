@@ -141,8 +141,10 @@ Conversion Specification 1.0 的 parser/profile/Repair 分层、source/target se
 7 个 parser dialect、56 个 mapping rule、diagnostic/report category、38 个 exact mapping
 vector、5 个非法边界、10 个选择/歧义向量以及 FCBC no-source-snapshot 投影记录在
 `docs/reviews/2026-07-15-conversion1-semantic-profile-closure-review.md`。该 record 是 2026-07-15 的固定
-快照，登记当日的 32 个 category；现行集合为 33 个，变更与其变更流程补记见
-`docs/reviews/2026-07-26-conversion1-diagnostic-category-amendment.md`。category 集合的活动权威是
+快照，登记当日的 32 个 category；`conversion.capability-negotiated` amendment 后为 33 个，现行集合为
+35 个。两次变更与流程补记分别见
+`docs/reviews/2026-07-26-conversion1-diagnostic-category-amendment.md` 和
+`docs/reviews/2026-07-29-conversion1-postwrite-category-amendment.md`。category 集合的活动权威是
 `fcs-conversion.md` 第 17.1/17.2 节与 `docs/conformance/conversion/diagnostic-categories.toml`，由
 manifest integrity test 在 full gate 上对活动树执行，固定 record 不承担该角色。这些向量已由 Rust 强类型
 manifest integrity test 验证，但活动 workspace 尚无 converter，也尚未提供真实外部 source→canonical

@@ -1105,6 +1105,8 @@ conversion.report-limit
 ```text
 conversion.generated-canonical-tempo
 conversion.capability-negotiated
+conversion.drop-applied
+conversion.approximation-verified
 conversion.compatibility-characterization
 conversion.tool-rewrite
 conversion.profile-evidence-conflict
