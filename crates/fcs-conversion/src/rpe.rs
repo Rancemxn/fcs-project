@@ -642,11 +642,19 @@ impl RpeSemanticBpmPoint {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RpeEventInterpolation {
+    Linear,
+    Core(String),
+    CubicBezier(Box<[ExactRational; 4]>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RpeSemanticCommonEvent {
     start_time: RpeSemanticTime,
     end_time: RpeSemanticTime,
     start: ExactRational,
     end: ExactRational,
+    interpolation: RpeEventInterpolation,
 }
 
 impl RpeSemanticCommonEvent {
@@ -665,6 +673,10 @@ impl RpeSemanticCommonEvent {
     pub fn end(&self) -> &ExactRational {
         &self.end
     }
+
+    pub(crate) fn interpolation(&self) -> &RpeEventInterpolation {
+        &self.interpolation
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -673,6 +685,7 @@ pub struct RpeSemanticSpeedEvent {
     end_time: RpeSemanticTime,
     start: ExactRational,
     end: ExactRational,
+    interpolation: RpeEventInterpolation,
 }
 
 impl RpeSemanticSpeedEvent {
@@ -690,6 +703,10 @@ impl RpeSemanticSpeedEvent {
 
     pub fn end(&self) -> &ExactRational {
         &self.end
+    }
+
+    pub(crate) fn interpolation(&self) -> &RpeEventInterpolation {
+        &self.interpolation
     }
 }
 
@@ -1171,6 +1188,15 @@ fn interpret_common_list(
                     )?,
                     start: event.start.exact().clone(),
                     end: event.end.exact().clone(),
+                    interpolation: event_interpolation(
+                        event.easing_type.as_ref(),
+                        event.easing_left.as_ref(),
+                        event.easing_right.as_ref(),
+                        event.bezier.as_ref(),
+                        event.bezier_points.as_deref(),
+                        event.linkgroup.as_ref(),
+                        &event_path,
+                    )?,
                 })
             })
             .collect(),
@@ -1208,9 +1234,184 @@ fn interpret_speed_list(
                     )?,
                     start: event.start.exact().clone(),
                     end: event.end.exact().clone(),
+                    interpolation: event_interpolation(
+                        event.easing_type.as_ref(),
+                        event.easing_left.as_ref(),
+                        event.easing_right.as_ref(),
+                        event.bezier.as_ref(),
+                        event.bezier_points.as_deref(),
+                        event.linkgroup.as_ref(),
+                        &event_path,
+                    )?,
                 })
             })
             .collect(),
+    }
+}
+
+const RPE_EASING_NAMES: [&str; 29] = [
+    "linear",
+    "easeOutSine",
+    "easeInSine",
+    "easeOutQuad",
+    "easeInQuad",
+    "easeInOutSine",
+    "easeInOutQuad",
+    "easeOutCubic",
+    "easeInCubic",
+    "easeOutQuart",
+    "easeInQuart",
+    "easeInOutCubic",
+    "easeInOutQuart",
+    "easeOutQuint",
+    "easeInQuint",
+    "easeOutExpo",
+    "easeInExpo",
+    "easeOutCirc",
+    "easeInCirc",
+    "easeOutBack",
+    "easeInBack",
+    "easeInOutCirc",
+    "easeInOutBack",
+    "easeOutElastic",
+    "easeInElastic",
+    "easeOutBounce",
+    "easeInBounce",
+    "easeInOutBounce",
+    "easeInOutElastic",
+];
+
+pub(crate) fn rpe_easing_name(id: i64) -> Option<&'static str> {
+    let index = id.max(1).checked_sub(1)?;
+    usize::try_from(index)
+        .ok()
+        .and_then(|index| RPE_EASING_NAMES.get(index).copied())
+}
+
+pub(crate) fn rpe_easing_id(name: &str) -> Option<i64> {
+    RPE_EASING_NAMES
+        .iter()
+        .position(|candidate| *candidate == name)
+        .map(|index| index as i64 + 1)
+}
+
+fn event_interpolation(
+    easing_type: Option<&ExactDecimal>,
+    easing_left: Option<&ExactDecimal>,
+    easing_right: Option<&ExactDecimal>,
+    bezier: Option<&ExactDecimal>,
+    bezier_points: Option<&[ExactDecimal]>,
+    linkgroup: Option<&ExactDecimal>,
+    path: &str,
+) -> Result<RpeEventInterpolation, RpeError> {
+    if linkgroup.is_some() {
+        return Err(RpeError::new(
+            PROFILE_NOT_APPLICABLE,
+            path,
+            "RPE event linkgroup semantics are not represented by a canonical Track",
+        ));
+    }
+    if easing_left.is_some() || easing_right.is_some() {
+        let valid = easing_left.is_some_and(|value| value.exact().is_zero())
+            && easing_right
+                .is_some_and(|value| value.exact() == &ExactRational::from_integer(BigInt::one()));
+        if !valid {
+            return Err(RpeError::new(
+                PROFILE_NOT_APPLICABLE,
+                path,
+                "RPE easing clipping is not represented by a canonical Track",
+            ));
+        }
+    }
+
+    let bezier_mode = match bezier {
+        None => 0,
+        Some(value) => value.exact().to_i64().ok_or_else(|| {
+            RpeError::new(
+                SOURCE_INVALID,
+                format!("{path}.bezier"),
+                "RPE bezier flag must be an exact integer",
+            )
+        })?,
+    };
+    match bezier_mode {
+        0 => {
+            if bezier_points.is_some() {
+                return Err(RpeError::new(
+                    PROFILE_NOT_APPLICABLE,
+                    path,
+                    "RPE bezierPoints require bezier=1",
+                ));
+            }
+            let easing_id = easing_type
+                .map(|value| {
+                    value.exact().to_i64().ok_or_else(|| {
+                        RpeError::new(
+                            SOURCE_INVALID,
+                            format!("{path}.easingType"),
+                            "RPE easingType must be an exact integer",
+                        )
+                    })
+                })
+                .transpose()?
+                .unwrap_or(1);
+            let name = rpe_easing_name(easing_id).ok_or_else(|| {
+                RpeError::new(
+                    PROFILE_NOT_APPLICABLE,
+                    format!("{path}.easingType"),
+                    format!("unsupported RPE easingType {easing_id}"),
+                )
+            })?;
+            Ok(if name == "linear" {
+                RpeEventInterpolation::Linear
+            } else {
+                RpeEventInterpolation::Core(name.to_owned())
+            })
+        }
+        1 => {
+            let points = bezier_points.ok_or_else(|| {
+                RpeError::new(
+                    SOURCE_INVALID,
+                    format!("{path}.bezierPoints"),
+                    "RPE bezier=1 requires four control values",
+                )
+            })?;
+            if points.len() != 4 {
+                return Err(RpeError::new(
+                    SOURCE_INVALID,
+                    format!("{path}.bezierPoints"),
+                    "RPE cubic Bezier requires four control values",
+                ));
+            }
+            let mut controls = points
+                .iter()
+                .map(|value| value.exact().clone())
+                .collect::<Vec<_>>();
+            let x_valid = controls[0]
+                .to_f64()
+                .is_ok_and(|value| (0.0..=1.0).contains(&value))
+                && controls[2]
+                    .to_f64()
+                    .is_ok_and(|value| (0.0..=1.0).contains(&value));
+            if !x_valid || controls.iter().any(|value| value.to_f64().is_err()) {
+                return Err(RpeError::new(
+                    SOURCE_INVALID,
+                    format!("{path}.bezierPoints"),
+                    "RPE cubic Bezier controls must be finite with x controls in [0,1]",
+                ));
+            }
+            Ok(RpeEventInterpolation::CubicBezier(Box::new([
+                controls.remove(0),
+                controls.remove(0),
+                controls.remove(0),
+                controls.remove(0),
+            ])))
+        }
+        _ => Err(RpeError::new(
+            PROFILE_NOT_APPLICABLE,
+            format!("{path}.bezier"),
+            "unsupported RPE bezier mode",
+        )),
     }
 }
 
@@ -2643,6 +2844,12 @@ mod tests {
             bytes.as_bytes(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn easing_zero_uses_the_reference_linear_alias() {
+        assert_eq!(rpe_easing_name(0), Some("linear"));
+        assert_eq!(rpe_easing_name(1), Some("linear"));
     }
 
     fn parse_minimal() -> RpeSourceDocument {

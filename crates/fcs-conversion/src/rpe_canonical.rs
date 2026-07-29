@@ -12,19 +12,22 @@ use fcs_model::{
     CanonicalNoteSet, CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject,
     CanonicalObjectEntry, CanonicalProfile, CanonicalResourceBundle, CanonicalScrollLine,
     CanonicalScrollSet, CanonicalScrollTempo, CanonicalScrollTempoMap, CanonicalScrollTempoPoint,
-    CanonicalSourceVersion, CanonicalSync, CanonicalTime, CanonicalTrackSet, CanonicalValue,
-    CanonicalVec2, ConversionDomain, ConversionEntry, ConversionPhase, ConversionPolicy,
-    ConversionReport, ConversionSeverity, ConversionStatus, DistributionMetadata, EntityKind,
-    ExpansionPath, InputContentHash, LogicalSourceLocator, MappingRuleRef, OriginState,
+    CanonicalSourceVersion, CanonicalSync, CanonicalTime, CanonicalTrack, CanonicalTrackBlend,
+    CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackPoint,
+    CanonicalTrackSegment, CanonicalTrackSet, CanonicalTrackTarget, CanonicalTrackValue,
+    CanonicalValue, CanonicalVec2, ConversionDomain, ConversionEntry, ConversionPhase,
+    ConversionPolicy, ConversionReport, ConversionSeverity, ConversionStatus, DistributionMetadata,
+    EntityKind, ExpansionPath, InputContentHash, LogicalSourceLocator, MappingRuleRef, OriginState,
     ProvenanceGraph, RepairMode, RestrictedProvenanceFact, ScrollTempoKey, SemanticStatus,
     StableId, StableIdRegistry, TempoPoint,
 };
 use sha2::{Digest, Sha256};
 
-use crate::rpe::LAYER_LOSS;
+use crate::rpe::{LAYER_LOSS, RpeEventInterpolation};
 use crate::{
-    ArtifactRole, ExactRational, RpeError, RpeNoteKind, RpeNoteSide, RpeProfile,
-    RpeSemanticInterpretation, SOURCE_INVALID, SourceArtifact,
+    ArtifactRole, ExactRational, RpeError, RpeLayerPolicy, RpeNoteKind, RpeNoteSide, RpeProfile,
+    RpeSemanticCommonEvent, RpeSemanticEventLayer, RpeSemanticInterpretation, RpeSemanticLine,
+    RpeSemanticSpeedEvent, RpeSpeedEra, SOURCE_INVALID, SourceArtifact,
 };
 
 const CANONICAL_SOURCE_VERSION: &str = "5.0.0";
@@ -129,6 +132,7 @@ pub fn lower_rpe_to_canonical(
     let mut lines = Vec::with_capacity(semantic.lines().len());
     let mut scroll_lines = Vec::with_capacity(semantic.lines().len());
     let mut notes = Vec::new();
+    let mut tracks = Vec::new();
     let mut facts = Vec::new();
     let mut entries = Vec::new();
     let artifact_fact = "rpe/artifact".to_owned();
@@ -159,6 +163,27 @@ pub fn lower_rpe_to_canonical(
 
     let mut note_order = 0u64;
     for (line_index, (line, line_id)) in semantic.lines().iter().zip(&line_ids).enumerate() {
+        let timing_line = timing.lines().get(line_index).ok_or_else(|| {
+            RpeError::new(
+                CANONICAL_INVALID,
+                format!("judgeLineList[{line_index}]"),
+                "semantic line and timing line counts differ",
+            )
+        })?;
+        let event_layers = retained_event_layers(timing_line, semantic.layer_policy());
+        let has_alpha_events = event_layers
+            .iter()
+            .any(|(_, layer)| !layer.alpha_events().is_empty());
+        let has_speed_events = event_layers
+            .iter()
+            .any(|(_, layer)| !layer.speed_events().is_empty());
+        lower_event_layers(
+            &mut tracks,
+            line_id,
+            line_index,
+            &event_layers,
+            line.speed_era(),
+        )?;
         let line_fact = format!("rpe/line/{line_index}");
         facts.push(fact(
             &line_fact,
@@ -190,7 +215,7 @@ pub fn lower_rpe_to_canonical(
                 .map_err(|error| canonical_error("line.position", error))?,
             0.0,
             CanonicalVec2::new(1.0, 1.0).map_err(|error| canonical_error("line.scale", error))?,
-            1.0,
+            if has_alpha_events { 0.0 } else { 1.0 },
             CanonicalVec2::new(0.0, 0.0)
                 .map_err(|error| canonical_error("line.transformOrigin", error))?,
             CanonicalVec2::new(0.5, 0.5)
@@ -222,8 +247,16 @@ pub fn lower_rpe_to_canonical(
         let coordinate = fcs_model::coordinate_for_tempo(&scroll_tempo, &time_map)
             .map_err(|error| canonical_error("line.scrollCoordinate", error))?;
         scroll_lines.push(
-            CanonicalScrollLine::new(line_id.clone(), coordinate, 1.0, false, 1.0, 0.0, 0.0)
-                .map_err(|error| canonical_error("line.scroll", error))?,
+            CanonicalScrollLine::new(
+                line_id.clone(),
+                coordinate,
+                if has_speed_events { 0.0 } else { 1.0 },
+                false,
+                1.0,
+                0.0,
+                0.0,
+            )
+            .map_err(|error| canonical_error("line.scroll", error))?,
         );
         lines.push(canonical_line);
 
@@ -388,8 +421,8 @@ pub fn lower_rpe_to_canonical(
         CanonicalLineGraph::new(lines).map_err(|error| canonical_error("chart.lines", error))?;
     let note_set =
         CanonicalNoteSet::new(notes).map_err(|error| canonical_error("chart.notes", error))?;
-    let track_set = CanonicalTrackSet::new(Vec::new())
-        .map_err(|error| canonical_error("chart.tracks", error))?;
+    let track_set =
+        CanonicalTrackSet::new(tracks).map_err(|error| canonical_error("chart.tracks", error))?;
     let scroll_set = CanonicalScrollSet::new(scroll_lines)
         .map_err(|error| canonical_error("chart.scroll", error))?;
     let chart = CanonicalChart::new(
@@ -444,6 +477,311 @@ pub fn lower_rpe_to_canonical(
         compilation,
         report,
     })
+}
+
+#[derive(Clone, Copy)]
+enum RpeTrackProperty {
+    MoveX,
+    MoveY,
+    Rotation,
+    Alpha,
+    Speed,
+}
+
+impl RpeTrackProperty {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::MoveX => "moveX",
+            Self::MoveY => "moveY",
+            Self::Rotation => "rotate",
+            Self::Alpha => "alpha",
+            Self::Speed => "speed",
+        }
+    }
+
+    const fn target(self) -> CanonicalTrackTarget {
+        match self {
+            Self::MoveX | Self::MoveY => CanonicalTrackTarget::Position,
+            Self::Rotation => CanonicalTrackTarget::Rotation,
+            Self::Alpha => CanonicalTrackTarget::Alpha,
+            Self::Speed => CanonicalTrackTarget::ScrollSpeed,
+        }
+    }
+}
+
+fn retained_event_layers(
+    line: &RpeSemanticLine,
+    policy: RpeLayerPolicy,
+) -> Vec<(usize, &RpeSemanticEventLayer)> {
+    let layers = line
+        .event_layers()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, layer)| layer.as_ref().map(|layer| (index, layer)));
+    match policy {
+        RpeLayerPolicy::Additive => layers.collect(),
+        RpeLayerPolicy::FirstOnly => layers.take(1).collect(),
+    }
+}
+
+fn lower_event_layers(
+    tracks: &mut Vec<CanonicalTrack>,
+    owner: &StableId,
+    line_index: usize,
+    layers: &[(usize, &RpeSemanticEventLayer)],
+    speed_era: RpeSpeedEra,
+) -> Result<(), RpeError> {
+    for (layer_index, layer) in layers {
+        add_common_track(
+            tracks,
+            owner,
+            line_index,
+            *layer_index,
+            RpeTrackProperty::MoveX,
+            layer.move_x_events(),
+        )?;
+        add_common_track(
+            tracks,
+            owner,
+            line_index,
+            *layer_index,
+            RpeTrackProperty::MoveY,
+            layer.move_y_events(),
+        )?;
+        add_common_track(
+            tracks,
+            owner,
+            line_index,
+            *layer_index,
+            RpeTrackProperty::Rotation,
+            layer.rotate_events(),
+        )?;
+        add_common_track(
+            tracks,
+            owner,
+            line_index,
+            *layer_index,
+            RpeTrackProperty::Alpha,
+            layer.alpha_events(),
+        )?;
+        add_speed_track(
+            tracks,
+            owner,
+            line_index,
+            *layer_index,
+            layer.speed_events(),
+            speed_era,
+        )?;
+    }
+    Ok(())
+}
+
+fn add_common_track(
+    tracks: &mut Vec<CanonicalTrack>,
+    owner: &StableId,
+    line_index: usize,
+    layer_index: usize,
+    property: RpeTrackProperty,
+    events: &[RpeSemanticCommonEvent],
+) -> Result<(), RpeError> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    let pieces = events
+        .iter()
+        .enumerate()
+        .map(|(order, event)| {
+            let path = format!(
+                "judgeLineList[{line_index}].eventLayers[{layer_index}].{}Events[{order}]",
+                property.name()
+            );
+            event_piece(
+                event.start_time().chart_time_seconds(),
+                event.end_time().chart_time_seconds(),
+                common_value(event.start(), property, &path)?,
+                common_value(event.end(), property, &path)?,
+                canonical_interpolation(event.interpolation(), &path)?,
+                order as u64,
+                &path,
+            )
+        })
+        .collect::<Result<Vec<_>, RpeError>>()?;
+    tracks.push(rpe_track(owner, layer_index, property, pieces, line_index)?);
+    Ok(())
+}
+
+fn add_speed_track(
+    tracks: &mut Vec<CanonicalTrack>,
+    owner: &StableId,
+    line_index: usize,
+    layer_index: usize,
+    events: &[RpeSemanticSpeedEvent],
+    speed_era: RpeSpeedEra,
+) -> Result<(), RpeError> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    let pieces = events
+        .iter()
+        .enumerate()
+        .map(|(order, event)| {
+            let path = format!(
+                "judgeLineList[{line_index}].eventLayers[{layer_index}].speedEvents[{order}]"
+            );
+            let interpolation = match speed_era {
+                RpeSpeedEra::LegacyLinear => CanonicalTrackInterpolation::Linear,
+                RpeSpeedEra::ModernEased => {
+                    canonical_interpolation(event.interpolation(), &path)?
+                }
+                RpeSpeedEra::LegacyDerivative if event.interpolation() == &RpeEventInterpolation::Linear => {
+                    CanonicalTrackInterpolation::Linear
+                }
+                RpeSpeedEra::LegacyDerivative => {
+                    return Err(RpeError::new(
+                        crate::PROFILE_NOT_APPLICABLE,
+                        path,
+                        "RPE legacy derivative speed easing is not representable by a canonical Track",
+                    ));
+                }
+            };
+            event_piece(
+                event.start_time().chart_time_seconds(),
+                event.end_time().chart_time_seconds(),
+                speed_value(event.start(), &path)?,
+                speed_value(event.end(), &path)?,
+                interpolation,
+                order as u64,
+                &path,
+            )
+        })
+        .collect::<Result<Vec<_>, RpeError>>()?;
+    tracks.push(rpe_track(
+        owner,
+        layer_index,
+        RpeTrackProperty::Speed,
+        pieces,
+        line_index,
+    )?);
+    Ok(())
+}
+
+fn rpe_track(
+    owner: &StableId,
+    layer_index: usize,
+    property: RpeTrackProperty,
+    pieces: Vec<CanonicalTrackPiece>,
+    line_index: usize,
+) -> Result<CanonicalTrack, RpeError> {
+    CanonicalTrack::new(
+        owner.clone(),
+        format!("rpe.layer.{layer_index}.{}", property.name()),
+        property.target(),
+        CanonicalTrackBlend::Add,
+        layer_index as i64,
+        CanonicalTrackFill::Zero,
+        CanonicalTrackFill::Zero,
+        CanonicalTrackFill::Zero,
+        pieces,
+    )
+    .map_err(|error| {
+        canonical_error(
+            &format!("judgeLineList[{line_index}].eventLayers[{layer_index}]"),
+            error,
+        )
+    })
+}
+
+fn common_value(
+    value: &ExactRational,
+    property: RpeTrackProperty,
+    path: &str,
+) -> Result<CanonicalTrackValue, RpeError> {
+    let value = exact_f64(value, path)?;
+    match property {
+        RpeTrackProperty::MoveX => CanonicalVec2::new(value * 1920.0 / 1350.0, 0.0)
+            .map(CanonicalTrackValue::Vec2Length)
+            .map_err(|error| canonical_error(path, error)),
+        RpeTrackProperty::MoveY => CanonicalVec2::new(0.0, value * 1080.0 / 900.0)
+            .map(CanonicalTrackValue::Vec2Length)
+            .map_err(|error| canonical_error(path, error)),
+        RpeTrackProperty::Rotation => Ok(CanonicalTrackValue::Angle(
+            -value * std::f64::consts::PI / 180.0,
+        )),
+        RpeTrackProperty::Alpha => Ok(CanonicalTrackValue::Float(value / 255.0)),
+        RpeTrackProperty::Speed => unreachable!("speed events use speed_value"),
+    }
+}
+
+fn speed_value(value: &ExactRational, path: &str) -> Result<CanonicalTrackValue, RpeError> {
+    Ok(CanonicalTrackValue::Float(exact_f64(value, path)? / 4.5))
+}
+
+fn canonical_interpolation(
+    interpolation: &RpeEventInterpolation,
+    path: &str,
+) -> Result<CanonicalTrackInterpolation, RpeError> {
+    match interpolation {
+        RpeEventInterpolation::Linear => Ok(CanonicalTrackInterpolation::Linear),
+        RpeEventInterpolation::Core(name) => Ok(CanonicalTrackInterpolation::Easing(name.clone())),
+        RpeEventInterpolation::CubicBezier(controls) => {
+            let values = controls
+                .iter()
+                .map(|value| exact_f64(value, path))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(CanonicalTrackInterpolation::CubicBezier([
+                values[0], values[1], values[2], values[3],
+            ]))
+        }
+    }
+}
+
+fn event_piece(
+    start: &ExactRational,
+    end: &ExactRational,
+    start_value: CanonicalTrackValue,
+    end_value: CanonicalTrackValue,
+    interpolation: CanonicalTrackInterpolation,
+    order: u64,
+    path: &str,
+) -> Result<CanonicalTrackPiece, RpeError> {
+    if end < start {
+        return Err(RpeError::new(
+            SOURCE_INVALID,
+            path,
+            "RPE event endTime must not precede startTime",
+        ));
+    }
+    let canonical_start = canonical_time(start, path)?;
+    let canonical_end = canonical_time(end, path)?;
+    if start == end {
+        if start_value != end_value {
+            return Err(RpeError::new(
+                crate::PROFILE_NOT_APPLICABLE,
+                path,
+                "zero-duration RPE event with distinct endpoints is unsupported",
+            ));
+        }
+        return CanonicalTrackPoint::new(canonical_start, start_value, order)
+            .map(CanonicalTrackPiece::Point)
+            .map_err(|error| canonical_error(path, error));
+    }
+    if canonical_end.chart_time_seconds() <= canonical_start.chart_time_seconds() {
+        return Err(RpeError::new(
+            CANONICAL_INVALID,
+            path,
+            "exact RPE event interval collapses during canonical Float64 conversion",
+        ));
+    }
+    CanonicalTrackSegment::new(
+        canonical_start,
+        canonical_end,
+        start_value,
+        end_value,
+        interpolation,
+        order,
+    )
+    .map(CanonicalTrackPiece::Segment)
+    .map_err(|error| canonical_error(path, error))
 }
 
 fn build_time_map(
@@ -651,6 +989,11 @@ mod tests {
         let chart = import.compilation().chart();
         assert_eq!(chart.lines().lines().count(), 2);
         assert_eq!(chart.notes().notes().len(), 2);
+        assert_eq!(chart.tracks().tracks().len(), 1);
+        assert_eq!(chart.tracks().tracks()[0].name(), "rpe.layer.0.speed");
+        assert_eq!(chart.tracks().tracks()[0].blend(), CanonicalTrackBlend::Add);
+        assert_eq!(chart.tracks().tracks()[0].fill(), CanonicalTrackFill::Zero);
+        assert_eq!(chart.scroll().lines()[0].speed(), 0.0);
         let lines: Vec<_> = chart.lines().lines().collect();
         let child = lines
             .iter()
@@ -675,6 +1018,61 @@ mod tests {
             .unwrap();
         assert!((tap.gameplay().time().chart_time_seconds() - 0.5).abs() < 1e-12);
         assert!(hold.gameplay().end_time().is_some());
+    }
+
+    #[test]
+    fn lowers_sparse_motion_layers_with_supported_shapes() {
+        let chart = r#"{
+            "META": {"RPEVersion": 170, "offset": 0},
+            "BPMList": [{"startTime": [0,0,1], "bpm": 120}],
+            "judgeLineList": [{
+                "eventLayers": [null, {
+                    "moveXEvents": [{"startTime": [0,0,1], "endTime": [2,0,1], "start": -675, "end": 675, "easingType": 2}],
+                    "moveYEvents": [{"startTime": [0,0,1], "endTime": [2,0,1], "start": -450, "end": 450, "bezier": 1, "bezierPoints": [0.25, 0, 0.75, 1]}],
+                    "rotateEvents": [{"startTime": [0,0,1], "endTime": [2,0,1], "start": 0, "end": 90}],
+                    "alphaEvents": [{"startTime": [0,0,1], "endTime": [2,0,1], "start": 0, "end": 255}],
+                    "speedEvents": [{"startTime": [0,0,1], "endTime": [2,0,1], "start": 1, "end": 2, "easingType": 2}]
+                }],
+                "notes": []
+            }]
+        }"#;
+        let (semantic_doc, art) = {
+            let art = artifact(chart);
+            let parsed = parse_json_document(SourceFormat::Rpe, &art).unwrap();
+            let source = parse_rpe_document(&parsed, RpeLimits::default()).unwrap();
+            let semantic = interpret_rpe_semantics(
+                &source,
+                &RpeProfileBinding::phira_rpe170_speed(Some(crate::RpeVersionEra::AtLeast170)),
+            )
+            .unwrap();
+            (semantic, art)
+        };
+        let import = lower_rpe_to_canonical(&semantic_doc, &art).unwrap();
+        let tracks = import.compilation().chart().tracks().tracks();
+        assert_eq!(tracks.len(), 5);
+        assert_eq!(tracks[0].name(), "rpe.layer.1.moveX");
+        assert!(tracks.iter().any(|track| {
+            track.name() == "rpe.layer.1.moveY"
+                && track.pieces().iter().any(|piece| {
+                    matches!(
+                        piece,
+                        CanonicalTrackPiece::Segment(segment)
+                            if matches!(segment.interpolation(), CanonicalTrackInterpolation::CubicBezier(_))
+                    )
+                })
+        }));
+        assert_eq!(
+            import
+                .compilation()
+                .chart()
+                .lines()
+                .lines()
+                .next()
+                .unwrap()
+                .base()
+                .alpha(),
+            0.0
+        );
     }
 
     #[test]

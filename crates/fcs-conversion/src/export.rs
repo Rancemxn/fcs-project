@@ -1128,6 +1128,15 @@ impl CapabilitySet {
                 if self.format == "rpe" {
                     add("line.parent", "linked");
                     add("line.inherit", "rpe-compatible");
+                    add("line.transform", "custom");
+                    for value in ["position", "rotation", "alpha", "scroll-speed"] {
+                        add("track.target", value);
+                    }
+                    for value in ["linear", "point", "easing", "cubic-bezier"] {
+                        add("track.interpolation", value);
+                    }
+                    add("track.blend", "add");
+                    add("track.fill", "zero");
                 }
                 if self.format != "rpe" {
                     add("line.parent", "none");
@@ -1876,7 +1885,7 @@ fn export_rpe_json_with_resource_context(
 ) -> Result<ExportOutcome, ExportError> {
     let (profile, binding, rpe_version) = selected_rpe_binding(options)?;
     let (negotiation, entries) = negotiate_export_with_options(chart, options)?;
-    require_rpe_chart_shape(chart, &negotiation)?;
+    require_rpe_chart_shape(chart, &negotiation, &binding)?;
     let offset_ms = chart
         .metadata()
         .sync()
@@ -2036,9 +2045,14 @@ fn export_rpe_json_with_resource_context(
                 })
                 .map_or(-1, |index| index as i64)
         };
+        let event_layers = if motion_dropped {
+            Vec::new()
+        } else {
+            rpe_event_layers(chart, line, &binding)?
+        };
         judge_lines.push(json!({
             "bpmfactor": 1,
-            "eventLayers": [],
+            "eventLayers": event_layers,
             "notes": notes,
             "father": father,
             "rotateWithFather": if motion_dropped {
@@ -2662,6 +2676,370 @@ fn line_base_is_default(line: &CanonicalLine, floor_scale: f64) -> bool {
         && base.z_order() == 0
 }
 
+#[derive(Clone, Copy)]
+enum RpeTrackProperty {
+    MoveX,
+    MoveY,
+    Rotation,
+    Alpha,
+    Speed,
+}
+
+impl RpeTrackProperty {
+    const fn field(self) -> &'static str {
+        match self {
+            Self::MoveX => "moveXEvents",
+            Self::MoveY => "moveYEvents",
+            Self::Rotation => "rotateEvents",
+            Self::Alpha => "alphaEvents",
+            Self::Speed => "speedEvents",
+        }
+    }
+
+    const fn target(self) -> CanonicalTrackTarget {
+        match self {
+            Self::MoveX | Self::MoveY => CanonicalTrackTarget::Position,
+            Self::Rotation => CanonicalTrackTarget::Rotation,
+            Self::Alpha => CanonicalTrackTarget::Alpha,
+            Self::Speed => CanonicalTrackTarget::ScrollSpeed,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RpeTrackSpec {
+    layer: usize,
+    property: RpeTrackProperty,
+}
+
+fn rpe_track_spec(track: &CanonicalTrack) -> Result<RpeTrackSpec, ExportError> {
+    let parts = track.name().split('.').collect::<Vec<_>>();
+    let ["rpe", "layer", layer, property] = parts.as_slice() else {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!(
+                "Track {} is not representable by the RPE event-layer writer",
+                track.name()
+            ),
+        ));
+    };
+    let layer = layer.parse::<usize>().map_err(|_| {
+        ExportError::new(
+            "conversion.capability-mismatch",
+            format!("RPE Track {} has an invalid layer index", track.name()),
+        )
+    })?;
+    let property = match *property {
+        "moveX" => RpeTrackProperty::MoveX,
+        "moveY" => RpeTrackProperty::MoveY,
+        "rotate" => RpeTrackProperty::Rotation,
+        "alpha" => RpeTrackProperty::Alpha,
+        "speed" => RpeTrackProperty::Speed,
+        _ => {
+            return Err(ExportError::new(
+                "conversion.capability-mismatch",
+                format!(
+                    "Track {} has an unsupported RPE event-layer property",
+                    track.name()
+                ),
+            ));
+        }
+    };
+    if track.target() != property.target()
+        || track.blend() != CanonicalTrackBlend::Add
+        || track.priority() != layer as i64
+        || track.fill() != CanonicalTrackFill::Zero
+        || track.extrapolate_before() != CanonicalTrackFill::Zero
+        || track.extrapolate_after() != CanonicalTrackFill::Zero
+    {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!(
+                "Track {} has unsupported RPE layer blend, priority, fill, or target",
+                track.name()
+            ),
+        ));
+    }
+    Ok(RpeTrackSpec { layer, property })
+}
+
+fn rpe_line_base_is_default(line: &CanonicalLine, alpha: f64) -> bool {
+    let base = line.base();
+    base.position().x() == 0.0
+        && base.position().y() == 0.0
+        && base.rotation() == 0.0
+        && base.scale().x() == 1.0
+        && base.scale().y() == 1.0
+        && base.alpha() == alpha
+        && base.transform_origin().x() == 0.0
+        && base.transform_origin().y() == 0.0
+        && base.texture_anchor().x() == 0.5
+        && base.texture_anchor().y() == 0.5
+        && base.floor_scale() == 1.0
+        && base.integration_origin() == 0.0
+        && base.initial_floor_position() == 0.0
+        && !base.allow_reverse_scroll()
+        && base.z_order() == 0
+}
+
+fn rpe_track_is_supported(
+    track: &CanonicalTrack,
+    spec: RpeTrackSpec,
+    binding: &RpeProfileBinding,
+) -> Result<(), ExportError> {
+    let mut document_orders = BTreeSet::new();
+    for piece in track.pieces() {
+        if !document_orders.insert(match piece {
+            CanonicalTrackPiece::Segment(segment) => segment.document_order(),
+            CanonicalTrackPiece::Point(point) => point.document_order(),
+        }) {
+            return Err(ExportError::new(
+                "conversion.capability-mismatch",
+                format!("Track {} has ambiguous source order", track.name()),
+            ));
+        }
+        if let CanonicalTrackPiece::Segment(segment) = piece {
+            let supported = match spec.property {
+                RpeTrackProperty::Speed => {
+                    rpe_speed_interpolation_supported(binding, segment.interpolation())
+                }
+                _ => !matches!(segment.interpolation(), CanonicalTrackInterpolation::Step),
+            };
+            if !supported {
+                return Err(ExportError::new(
+                    "conversion.capability-mismatch",
+                    format!(
+                        "Track {} has an unsupported RPE interpolation",
+                        track.name()
+                    ),
+                ));
+            }
+        }
+        match (spec.property, piece) {
+            (RpeTrackProperty::MoveX, CanonicalTrackPiece::Segment(segment)) => {
+                require_zero_position_component(segment.start_value(), true, track.name())?;
+                require_zero_position_component(segment.end_value(), true, track.name())?;
+            }
+            (RpeTrackProperty::MoveY, CanonicalTrackPiece::Segment(segment)) => {
+                require_zero_position_component(segment.start_value(), false, track.name())?;
+                require_zero_position_component(segment.end_value(), false, track.name())?;
+            }
+            (RpeTrackProperty::MoveX, CanonicalTrackPiece::Point(point)) => {
+                require_zero_position_component(point.value(), true, track.name())?;
+            }
+            (RpeTrackProperty::MoveY, CanonicalTrackPiece::Point(point)) => {
+                require_zero_position_component(point.value(), false, track.name())?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn rpe_speed_interpolation_supported(
+    binding: &RpeProfileBinding,
+    interpolation: &CanonicalTrackInterpolation,
+) -> bool {
+    if matches!(interpolation, CanonicalTrackInterpolation::Step) {
+        return false;
+    }
+    match binding.profile() {
+        RpeProfile::PhiraLegacySpeed => {
+            matches!(interpolation, CanonicalTrackInterpolation::Linear)
+        }
+        RpeProfile::PhiraRpe170Speed => match binding.rpe_version_era() {
+            Some(RpeVersionEra::Pre170) => {
+                matches!(interpolation, CanonicalTrackInterpolation::Linear)
+            }
+            Some(RpeVersionEra::AtLeast170) | None => true,
+        },
+        RpeProfile::CommunityDivideBpmfactor | RpeProfile::DocsExampleMultiplyBpmfactor => {
+            match binding.speed_mode() {
+                Some(crate::RpeSpeedMode::ModernEased) => true,
+                Some(crate::RpeSpeedMode::LegacyLinear | crate::RpeSpeedMode::LegacyDerivative) => {
+                    matches!(interpolation, CanonicalTrackInterpolation::Linear)
+                }
+                None => false,
+            }
+        }
+        RpeProfile::PhichainImport => false,
+    }
+}
+
+fn require_zero_position_component(
+    value: CanonicalTrackValue,
+    check_y: bool,
+    name: &str,
+) -> Result<(), ExportError> {
+    let CanonicalTrackValue::Vec2Length(value) = value else {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!("Track {name} has a non-position value"),
+        ));
+    };
+    let component = if check_y { value.y() } else { value.x() };
+    if component != 0.0 {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!("Track {name} has a nonzero unmapped position component"),
+        ));
+    }
+    Ok(())
+}
+
+fn rpe_event_layers(
+    chart: &CanonicalChart,
+    line: &CanonicalLine,
+    binding: &RpeProfileBinding,
+) -> Result<Vec<Value>, ExportError> {
+    let mut layers: BTreeMap<usize, BTreeMap<&'static str, Vec<Value>>> = BTreeMap::new();
+    for track in chart
+        .tracks()
+        .tracks()
+        .iter()
+        .filter(|track| track.owner() == line.id())
+    {
+        let spec = rpe_track_spec(track)?;
+        rpe_track_is_supported(track, spec, binding)?;
+        let mut pieces = track.pieces().iter().collect::<Vec<_>>();
+        pieces.sort_by_key(|piece| match piece {
+            CanonicalTrackPiece::Segment(segment) => segment.document_order(),
+            CanonicalTrackPiece::Point(point) => point.document_order(),
+        });
+        let events = pieces
+            .into_iter()
+            .map(|piece| rpe_event(chart, spec.property, piece))
+            .collect::<Result<Vec<_>, _>>()?;
+        if layers
+            .entry(spec.layer)
+            .or_default()
+            .insert(spec.property.field(), events)
+            .is_some()
+        {
+            return Err(ExportError::new(
+                "conversion.capability-mismatch",
+                format!("duplicate RPE event-layer property on layer {}", spec.layer),
+            ));
+        }
+    }
+    let Some(last_layer) = layers.keys().next_back().copied() else {
+        return Ok(Vec::new());
+    };
+    let mut output = vec![Value::Null; last_layer + 1];
+    for (layer_index, fields) in layers {
+        let object = fields
+            .into_iter()
+            .map(|(field, events)| (field.to_owned(), Value::Array(events)))
+            .collect();
+        output[layer_index] = Value::Object(object);
+    }
+    Ok(output)
+}
+
+fn rpe_event(
+    chart: &CanonicalChart,
+    property: RpeTrackProperty,
+    piece: &CanonicalTrackPiece,
+) -> Result<Value, ExportError> {
+    let (start_time, end_time, start_value, end_value, interpolation) = match piece {
+        CanonicalTrackPiece::Segment(segment) => (
+            segment.start().chart_time_seconds(),
+            segment.end().chart_time_seconds(),
+            segment.start_value(),
+            segment.end_value(),
+            Some(segment.interpolation()),
+        ),
+        CanonicalTrackPiece::Point(point) => (
+            point.time().chart_time_seconds(),
+            point.time().chart_time_seconds(),
+            point.value(),
+            point.value(),
+            None,
+        ),
+    };
+    let mut object = serde_json::Map::new();
+    object.insert(
+        "startTime".into(),
+        json!(seconds_to_rpe_beat(chart_time_to_beat(chart, start_time)?)),
+    );
+    object.insert(
+        "endTime".into(),
+        json!(seconds_to_rpe_beat(chart_time_to_beat(chart, end_time)?)),
+    );
+    object.insert("start".into(), json!(rpe_value(start_value, property)?));
+    object.insert("end".into(), json!(rpe_value(end_value, property)?));
+    if let Some(interpolation) = interpolation {
+        write_rpe_interpolation(&mut object, interpolation)?;
+    }
+    Ok(Value::Object(object))
+}
+
+fn chart_time_to_beat(chart: &CanonicalChart, seconds: f64) -> Result<f64, ExportError> {
+    chart
+        .time_map()
+        .beat_at_time(seconds)
+        .map_err(|error| ExportError::new("conversion.capability-mismatch", error.to_string()))
+}
+
+fn rpe_value(value: CanonicalTrackValue, property: RpeTrackProperty) -> Result<f64, ExportError> {
+    let value = match (property, value) {
+        (RpeTrackProperty::MoveX, CanonicalTrackValue::Vec2Length(value)) => {
+            value.x() * 1350.0 / 1920.0
+        }
+        (RpeTrackProperty::MoveY, CanonicalTrackValue::Vec2Length(value)) => {
+            value.y() * 900.0 / 1080.0
+        }
+        (RpeTrackProperty::Rotation, CanonicalTrackValue::Angle(value)) => {
+            -value * 180.0 / std::f64::consts::PI
+        }
+        (RpeTrackProperty::Alpha, CanonicalTrackValue::Float(value)) => value * 255.0,
+        (RpeTrackProperty::Speed, CanonicalTrackValue::Float(value)) => value * 4.5,
+        _ => {
+            return Err(ExportError::new(
+                "conversion.capability-mismatch",
+                "RPE Track value type does not match its event-layer property",
+            ));
+        }
+    };
+    value.is_finite().then_some(value).ok_or_else(|| {
+        ExportError::new(
+            "conversion.capability-mismatch",
+            "RPE event value is not finite",
+        )
+    })
+}
+
+fn write_rpe_interpolation(
+    object: &mut serde_json::Map<String, Value>,
+    interpolation: &CanonicalTrackInterpolation,
+) -> Result<(), ExportError> {
+    match interpolation {
+        CanonicalTrackInterpolation::Linear => {
+            object.insert("easingType".into(), json!(1));
+        }
+        CanonicalTrackInterpolation::Easing(name) => {
+            let id = crate::rpe::rpe_easing_id(name).ok_or_else(|| {
+                ExportError::new(
+                    "conversion.capability-mismatch",
+                    format!("unsupported Core easing {name} for RPE export"),
+                )
+            })?;
+            object.insert("easingType".into(), json!(id));
+        }
+        CanonicalTrackInterpolation::CubicBezier([x1, y1, x2, y2]) => {
+            object.insert("bezier".into(), json!(1));
+            object.insert("bezierPoints".into(), json!([x1, y1, x2, y2]));
+        }
+        CanonicalTrackInterpolation::Step => {
+            return Err(ExportError::new(
+                "conversion.capability-mismatch",
+                "RPE event layers do not represent Track step interpolation",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn note_gameplay_is_external_default(chart_note: &fcs_model::CanonicalNote) -> bool {
     let gameplay = chart_note.gameplay();
     gameplay.judge_shape() == &CanonicalJudgeShape::LineDefault
@@ -2677,19 +3055,30 @@ fn note_gameplay_is_external_default(chart_note: &fcs_model::CanonicalNote) -> b
 fn require_rpe_chart_shape(
     chart: &CanonicalChart,
     negotiation: &NegotiationPlan,
+    binding: &RpeProfileBinding,
 ) -> Result<(), ExportError> {
     require_external_payload_losses(chart, negotiation, "RPE")?;
-    if !chart.tracks().tracks().is_empty() && !negotiation.drops(CapabilityDomain::Motion) {
-        return Err(ExportError::new(
-            "conversion.capability-mismatch",
-            "RPE writer cannot represent canonical Tracks",
-        ));
+    let mut alpha_tracks = BTreeSet::new();
+    if !negotiation.drops(CapabilityDomain::Motion) {
+        for track in chart.tracks().tracks() {
+            let spec = rpe_track_spec(track)?;
+            rpe_track_is_supported(track, spec, binding)?;
+            if matches!(spec.property, RpeTrackProperty::Alpha) {
+                alpha_tracks.insert(track.owner().value());
+            }
+        }
     }
     for line in chart.lines().lines() {
         if !negotiation.drops(CapabilityDomain::Motion)
-            && (!line_base_is_default(line, 1.0)
-                || *line.inherit()
-                    != CanonicalLineInherit::new(true, line.inherit().rotation(), true, true, true))
+            && (!rpe_line_base_is_default(
+                line,
+                if alpha_tracks.contains(&line.id().value()) {
+                    0.0
+                } else {
+                    1.0
+                },
+            ) || *line.inherit()
+                != CanonicalLineInherit::new(true, line.inherit().rotation(), true, true, true))
         {
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
@@ -3246,8 +3635,10 @@ mod tests {
     use fcs_model::{
         CanonicalChart, CanonicalMetadata, CanonicalNote, CanonicalNotePresentation,
         CanonicalNoteSet, CanonicalObject, CanonicalResourceBundle, CanonicalSourceVersion,
-        CanonicalValue, DistributionMetadata, OriginState, ProvenanceGraph,
-        RestrictedProvenanceFact,
+        CanonicalTime, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
+        CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment,
+        CanonicalTrackTarget, CanonicalTrackValue, CanonicalValue, DistributionMetadata,
+        OriginState, ProvenanceGraph, RestrictedProvenanceFact,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -3331,8 +3722,7 @@ mod tests {
         changed
     }
 
-    fn rpe_chart() -> CanonicalChart {
-        let name = "rpe-minimal.rpe.json";
+    fn rpe_chart_from_fixture(name: &str, binding: &RpeProfileBinding) -> CanonicalChart {
         let bytes = fs::read(root().join(format!(
             "docs/conformance/conversion/public-fixtures/sources/{name}"
         )))
@@ -3340,8 +3730,33 @@ mod tests {
         let artifact = SourceArtifact::new(name, ArtifactRole::Chart, bytes).unwrap();
         let parsed = parse_json_document(SourceFormat::Rpe, &artifact).unwrap();
         let source = parse_rpe_document(&parsed, RpeLimits::default()).unwrap();
-        let binding = RpeProfileBinding::phira_legacy_speed();
-        let semantic = interpret_rpe_semantics(&source, &binding).unwrap();
+        let semantic = interpret_rpe_semantics(&source, binding).unwrap();
+        lower_rpe_to_canonical(&semantic, &artifact)
+            .unwrap()
+            .compilation()
+            .chart()
+            .clone()
+    }
+
+    fn rpe_chart() -> CanonicalChart {
+        rpe_chart_from_fixture(
+            "rpe-minimal.rpe.json",
+            &RpeProfileBinding::phira_legacy_speed(),
+        )
+    }
+
+    fn rpe_extreme_chart() -> CanonicalChart {
+        rpe_chart_from_fixture(
+            "rpe-extreme.rpe.json",
+            &RpeProfileBinding::phira_legacy_speed(),
+        )
+    }
+
+    fn reparse_rpe_chart(bytes: Vec<u8>, binding: &RpeProfileBinding) -> CanonicalChart {
+        let artifact = SourceArtifact::new("mutated.rpe.json", ArtifactRole::Chart, bytes).unwrap();
+        let parsed = parse_json_document(SourceFormat::Rpe, &artifact).unwrap();
+        let source = parse_rpe_document(&parsed, RpeLimits::default()).unwrap();
+        let semantic = interpret_rpe_semantics(&source, binding).unwrap();
         lower_rpe_to_canonical(&semantic, &artifact)
             .unwrap()
             .compilation()
@@ -3658,18 +4073,20 @@ mod tests {
     }
 
     #[test]
-    fn rpe_and_pec_export_reparse_compare_identity_and_metadata_only() {
+    fn rpe_and_pec_export_reparse_compare() {
         let rpe = rpe_chart();
         let rpe_options = profile_options(
             CapabilitySet::rpe_json(),
             RpeProfile::PhiraLegacySpeed.id(),
             RpeProfile::PhiraLegacySpeed.version(),
         );
+        let outcome = export_rpe_json_with_options(&rpe, &rpe_options).unwrap();
+        assert!(outcome.comparison().is_equivalent());
+        let target: Value = serde_json::from_slice(outcome.bytes()).unwrap();
         assert!(
-            export_rpe_json_with_options(&rpe, &rpe_options)
-                .unwrap()
-                .comparison()
-                .is_equivalent()
+            target["judgeLineList"][0]["eventLayers"][0]["speedEvents"]
+                .as_array()
+                .is_some_and(|events| !events.is_empty())
         );
 
         let pec = pec_chart();
@@ -3687,6 +4104,83 @@ mod tests {
     }
 
     #[test]
+    fn rpe_extreme_roundtrip_covers_sparse_motion_and_scroll_layers() {
+        let chart = rpe_extreme_chart();
+        let profile = RpeProfile::PhiraLegacySpeed;
+        let options = profile_options(CapabilitySet::rpe_json(), profile.id(), profile.version());
+        let outcome = export_rpe_json_with_options(&chart, &options).unwrap();
+        assert!(outcome.comparison().is_equivalent());
+        assert!(outcome.comparison().mismatches().is_empty());
+        assert_eq!(chart.tracks().tracks().len(), 6);
+
+        let target: Value = serde_json::from_slice(outcome.bytes()).unwrap();
+        let layers = target["judgeLineList"][0]["eventLayers"]
+            .as_array()
+            .expect("RPE eventLayers array");
+        assert_eq!(layers.len(), 3);
+        assert!(layers[1].is_null());
+        assert!(
+            layers[0]["moveXEvents"]
+                .as_array()
+                .is_some_and(|events| { !events.is_empty() })
+        );
+        assert!(
+            layers[2]["moveYEvents"]
+                .as_array()
+                .is_some_and(|events| { !events.is_empty() })
+        );
+        assert!(
+            layers[2]["speedEvents"]
+                .as_array()
+                .is_some_and(|events| { !events.is_empty() })
+        );
+    }
+
+    #[test]
+    fn rpe_extreme_motion_mutation_is_not_equivalent() {
+        let expected = rpe_extreme_chart();
+        let profile = RpeProfile::PhiraLegacySpeed;
+        let options = profile_options(CapabilitySet::rpe_json(), profile.id(), profile.version());
+        let outcome = export_rpe_json_with_options(&expected, &options).unwrap();
+        let mut target: Value = serde_json::from_slice(outcome.bytes()).unwrap();
+        target["judgeLineList"][0]["eventLayers"][0]["moveXEvents"][0]["end"] = json!(676);
+        let actual = reparse_rpe_chart(
+            serde_json::to_vec(&target).unwrap(),
+            &RpeProfileBinding::phira_legacy_speed(),
+        );
+        let comparison = crate::comparison::compare_canonical_charts(&expected, &actual);
+        assert!(!comparison.is_equivalent());
+        assert!(
+            comparison
+                .mismatches()
+                .iter()
+                .any(|mismatch| mismatch.domain() == "motion")
+        );
+    }
+
+    #[test]
+    fn rpe_extreme_speed_mutation_changes_cumulative_scroll_distance() {
+        let expected = rpe_extreme_chart();
+        let profile = RpeProfile::PhiraLegacySpeed;
+        let options = profile_options(CapabilitySet::rpe_json(), profile.id(), profile.version());
+        let outcome = export_rpe_json_with_options(&expected, &options).unwrap();
+        let mut target: Value = serde_json::from_slice(outcome.bytes()).unwrap();
+        target["judgeLineList"][0]["eventLayers"][0]["speedEvents"][0]["end"] = json!(4.25);
+        let actual = reparse_rpe_chart(
+            serde_json::to_vec(&target).unwrap(),
+            &RpeProfileBinding::phira_legacy_speed(),
+        );
+        let comparison = crate::comparison::compare_canonical_charts(&expected, &actual);
+        assert!(!comparison.is_equivalent());
+        assert!(
+            comparison
+                .mismatches()
+                .iter()
+                .any(|mismatch| mismatch.metric() == "scroll.distance")
+        );
+    }
+
+    #[test]
     fn rpe_parameterized_target_profiles_reuse_the_typed_binding_for_reparse() {
         let chart = rpe_chart();
         let cases = [
@@ -3698,6 +4192,10 @@ mod tests {
                 RpeProfileBinding::docs_example_multiply(RpeSpeedMode::ModernEased),
                 150,
             ),
+            (
+                RpeProfileBinding::phira_rpe170_speed(Some(RpeVersionEra::AtLeast170)),
+                170,
+            ),
         ];
         for (binding, expected_rpe_version) in cases {
             let profile = binding.profile();
@@ -3708,7 +4206,48 @@ mod tests {
             assert!(outcome.comparison().is_equivalent());
             let target: Value = serde_json::from_slice(outcome.bytes()).unwrap();
             assert_eq!(target["META"]["RPEVersion"], expected_rpe_version);
+            assert!(
+                target["judgeLineList"][0]["eventLayers"][0]["speedEvents"]
+                    .as_array()
+                    .is_some_and(|events| !events.is_empty())
+            );
         }
+    }
+
+    #[test]
+    fn rpe_export_rejects_unsupported_speed_track_shapes() {
+        let chart = rpe_chart();
+        let owner = chart.lines().lines().next().unwrap().id().clone();
+        let start = CanonicalTime::from_chart_time_seconds(0.0).unwrap();
+        let end = CanonicalTime::from_chart_time_seconds(1.0).unwrap();
+        let segment = CanonicalTrackSegment::new(
+            start,
+            end,
+            CanonicalTrackValue::Float(1.0),
+            CanonicalTrackValue::Float(2.0),
+            CanonicalTrackInterpolation::Step,
+            0,
+        )
+        .unwrap();
+        let track = CanonicalTrack::new(
+            owner,
+            "rpe.layer.0.speed",
+            CanonicalTrackTarget::ScrollSpeed,
+            CanonicalTrackBlend::Add,
+            0,
+            CanonicalTrackFill::Zero,
+            CanonicalTrackFill::Zero,
+            CanonicalTrackFill::Zero,
+            vec![CanonicalTrackPiece::Segment(segment)],
+        )
+        .unwrap();
+        let error = rpe_track_is_supported(
+            &track,
+            rpe_track_spec(&track).unwrap(),
+            &RpeProfileBinding::phira_legacy_speed(),
+        )
+        .unwrap_err();
+        assert_eq!(error.category(), "conversion.capability-mismatch");
     }
 
     #[test]
