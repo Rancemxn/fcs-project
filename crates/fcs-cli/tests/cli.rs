@@ -34,9 +34,9 @@ fn check_accepts_minimal_valid_source() {
 }
 
 #[test]
-fn inspect_accepts_minimal_runtime_hex() {
+fn inspect_accepts_nonempty_execution_hex() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let hex = root.join("docs/conformance/fcbc/minimal-runtime.hex");
+    let hex = root.join("docs/conformance/fcbc/nonempty-execution.hex");
     let output = bin()
         .arg("inspect")
         .arg(&hex)
@@ -49,7 +49,7 @@ fn inspect_accepts_minimal_runtime_hex() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("\"profile\":\"runtime\""));
+    assert!(stdout.contains("\"profile\":\"strict-runtime\""));
     assert!(stdout.contains("\"sectionCount\":14"));
 }
 
