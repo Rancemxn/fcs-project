@@ -2305,9 +2305,38 @@ fn pec_position_value(
             format!("{field} has the wrong canonical value type"),
         ));
     };
-    let x = (value.x() / 1920.0 + 0.5) * 2048.0;
-    let y = (value.y() / 1080.0 + 0.5) * 1400.0;
-    Ok((finite_decimal(x, field)?, finite_decimal(y, field)?))
+    Ok((
+        pec_canvas_coordinate(value.x(), 1920.0, 2048.0, field)?,
+        pec_canvas_coordinate(value.y(), 1080.0, 1400.0, field)?,
+    ))
+}
+
+fn pec_canvas_coordinate(
+    value: f64,
+    canonical_extent: f64,
+    source_extent: f64,
+    field: &str,
+) -> Result<String, ExportError> {
+    if !value.is_finite() {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!("{field} must be finite"),
+        ));
+    }
+    let source = (value / canonical_extent + 0.5) * source_extent;
+    for precision in 0..=30 {
+        let candidate = format!("{source:.precision$}");
+        let Ok(candidate_value) = candidate.parse::<f64>() else {
+            continue;
+        };
+        if (candidate_value / source_extent - 0.5) * canonical_extent == value {
+            return Ok(candidate);
+        }
+    }
+    Err(ExportError::new(
+        "conversion.capability-mismatch",
+        format!("{field} cannot be serialized without changing its canonical value"),
+    ))
 }
 
 fn pec_rotation_value(value: CanonicalTrackValue, field: &str) -> Result<String, ExportError> {
