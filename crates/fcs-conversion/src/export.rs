@@ -4133,7 +4133,7 @@ mod tests {
         let outcome = export_rpe_json_with_options(&chart, &options).unwrap();
         assert!(outcome.comparison().is_equivalent());
         assert!(outcome.comparison().mismatches().is_empty());
-        assert_eq!(chart.tracks().tracks().len(), 6);
+        assert_eq!(chart.tracks().tracks().len(), 7);
 
         let target: Value = serde_json::from_slice(outcome.bytes()).unwrap();
         let layers = target["judgeLineList"][0]["eventLayers"]
