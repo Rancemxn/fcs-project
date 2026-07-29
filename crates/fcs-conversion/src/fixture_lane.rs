@@ -271,7 +271,7 @@ pub fn load_fixture_expectation(path: &Path) -> Result<FixtureExpectation, Fixtu
     toml::from_str(&text).map_err(|error| FixtureLaneError::Expectation(error.to_string()))
 }
 
-/// Run one fixture through the real importer product path.
+/// Run one fixture through the real importer and declared export/reparse paths.
 pub fn run_import_fixture(
     root: &Path,
     fixture: &FixtureEntry,
@@ -287,13 +287,13 @@ pub fn run_import_fixture(
             message: error.to_string(),
         })?;
 
-    let products = match fixture.format {
+    let mut products = match fixture.format {
         FixtureFormat::Pgr => run_pgr(fixture, &artifact),
         FixtureFormat::Rpe => run_rpe(fixture, &artifact),
         FixtureFormat::Pec => run_pec(fixture, &artifact),
     }?;
     if fixture.export_reparse.is_some() {
-        run_export_reparse(fixture, &products)?;
+        products.report = run_export_reparse(fixture, &products)?;
     }
     Ok(products)
 }
@@ -557,9 +557,9 @@ fn run_pec(
 fn run_export_reparse(
     fixture: &FixtureEntry,
     products: &FixtureImportProducts,
-) -> Result<(), FixtureLaneError> {
+) -> Result<ConversionReport, FixtureLaneError> {
     let Some(target) = fixture.export_reparse.as_ref() else {
-        return Ok(());
+        return Ok(products.report.clone());
     };
     if target.parser_dialect != "pgr.json.v3"
         || target.target_profile != "pgr.phira.v3"
@@ -599,7 +599,7 @@ fn run_export_reparse(
             message: "product export/reparse did not produce an equivalent canonical result".into(),
         });
     }
-    Ok(())
+    Ok(outcome.report().clone())
 }
 
 fn parse_pgr_profile(id: &str) -> Result<PgrProfile, FixtureLaneError> {
