@@ -22,7 +22,7 @@ pub use document::{
 pub use expression::{
     parse_expression, parse_expression_with_limits, parse_type, parse_type_with_limits,
 };
-pub use format::canonicalize_numeric_literals;
+pub use format::{canonicalize_numeric_literals, canonicalize_source_layout};
 pub use header::parse_header;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

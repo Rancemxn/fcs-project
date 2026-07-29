@@ -666,19 +666,18 @@ fn push_report_entry(
     Ok(())
 }
 
-/// Validate FCS source and apply the fixed text policy: LF line endings, no
-/// trailing horizontal whitespace, no trailing blank lines, one final LF.
+/// Validate FCS source and apply its deterministic token-layout policy.
 pub fn format_fcs_source(source: &str) -> Result<String, ExportError> {
-    let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
-    let mut lines: Vec<_> = normalized
-        .split('\n')
-        .map(|line| line.trim_end_matches([' ', '\t']))
-        .collect();
-    while lines.last().is_some_and(|line| line.is_empty()) {
-        lines.pop();
-    }
-    let formatted = format!("{}\n", lines.join("\n"));
-    let formatted = fcs_source::parser::canonicalize_numeric_literals(&formatted)
+    let formatted = fcs_source::parser::canonicalize_source_layout(source)
+        .into_result()
+        .map_err(|diagnostics| {
+            let message = diagnostics
+                .first()
+                .map(|diagnostic| format!("{}: {}", diagnostic.code(), diagnostic.message()))
+                .unwrap_or_else(|| "formatted source invalid".into());
+            ExportError::new("source.invalid", message)
+        })?;
+    fcs_source::parser::parse_document(&formatted)
         .into_result()
         .map_err(|diagnostics| {
             let message = diagnostics
@@ -4416,6 +4415,17 @@ mod tests {
                 .lines()
                 .any(|line| line.ends_with(' ') || line.ends_with('\t'))
         );
+        assert!(formatted.contains("format {\n    profile: chart;\n}"));
+    }
+
+    #[test]
+    fn formatter_preserves_comments_and_string_payloads() {
+        let source =
+            "#fcs 5.0.0\nformat{profile:fragment;}meta{custom:{\"text\":\"1e2\"};}//keep\n";
+        let formatted = format_fcs_source(source).unwrap();
+        assert!(formatted.contains("} //keep"));
+        assert!(formatted.contains("\"text\": \"1e2\""));
+        assert_eq!(formatted, format_fcs_source(&formatted).unwrap());
     }
 
     #[test]
