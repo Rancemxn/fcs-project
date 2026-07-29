@@ -2273,7 +2273,7 @@ mod tests {
             &chart_with_notes(vec![tap_note()]),
             &chart_with_notes(Vec::new()),
             &BTreeMap::new(),
-            &["entity.note.documentOrder".to_owned()],
+            &["gameplay.note".to_owned()],
         );
         assert!(!comparison.is_equivalent());
         let counts: Vec<&str> = comparison
@@ -2344,7 +2344,7 @@ mod tests {
             &expected,
             &actual,
             &BTreeMap::new(),
-            &["gameplay.note".to_owned()],
+            &["gameplay.note.documentOrder".to_owned()],
         );
 
         assert!(
