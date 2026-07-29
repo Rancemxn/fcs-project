@@ -9,6 +9,7 @@ use fcs_model::{
 use fcs_runtime::EasingId;
 use sha2::{Digest, Sha256};
 
+use crate::container::ContainerProfile;
 use crate::error::{FcbcError, FcbcResult};
 
 /// The section 12 NoteRecord `kind` ordinals.
@@ -387,6 +388,7 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         &[],
         ExecutionGraph::Fixture,
         None,
+        ContainerProfile::StrictRuntime,
     )
     .expect("the fixed execution fixture is valid")
 }
@@ -397,6 +399,20 @@ pub fn write_nonempty_execution() -> Vec<u8> {
 /// descriptors owned by those records. Track/expression lowering is added by
 /// the following native handoff slices.
 pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<Vec<u8>> {
+    write_from_compilation_with_profile(compilation, ContainerProfile::StrictRuntime)
+}
+
+/// Writes a canonical compilation using the requested FCBC container profile.
+pub fn write_from_compilation_with_profile(
+    compilation: &CanonicalCompilation,
+    profile: ContainerProfile,
+) -> FcbcResult<Vec<u8>> {
+    if profile == ContainerProfile::Fidelity {
+        return Err(FcbcError::new(
+            "fcbc.profile-requirement-missing",
+            "fidelity profile requires a structured Fidelity section",
+        ));
+    }
     let chart = compilation.chart();
     let mut lines: Vec<LineFixture> = chart
         .lines()
@@ -711,6 +727,7 @@ pub fn write_from_compilation(compilation: &CanonicalCompilation) -> FcbcResult<
             has_notes: !notes.is_empty(),
         },
         chart.descriptors(),
+        profile,
     )
 }
 
@@ -2083,6 +2100,7 @@ fn assemble_package(
     extensions: &[ExtensionFixture],
     execution_graph: ExecutionGraph,
     runtime_descriptors: Option<&CanonicalDescriptorTable>,
+    profile: ContainerProfile,
 ) -> FcbcResult<Vec<u8>> {
     let mut lines = lines.to_vec();
     let mut notes = notes.to_vec();
@@ -2189,7 +2207,7 @@ fn assemble_package(
         body_cursor = bytes.len();
     }
 
-    write_header(&mut bytes, sections.len() as u32, feature_flags);
+    write_header(&mut bytes, sections.len() as u32, feature_flags, profile);
     write_section_table(&mut bytes, &sections);
     Ok(bytes)
 }
@@ -4036,7 +4054,12 @@ fn record(mut payload: Vec<u8>) -> Vec<u8> {
     bytes
 }
 
-fn write_header(bytes: &mut [u8], section_count: u32, feature_flags: u64) {
+fn write_header(
+    bytes: &mut [u8],
+    section_count: u32,
+    feature_flags: u64,
+    profile: ContainerProfile,
+) {
     bytes[0..4].copy_from_slice(b"FCSB");
     write_u16_at(bytes, 4, 128);
     write_u16_at(bytes, 6, 0);
@@ -4049,7 +4072,7 @@ fn write_header(bytes: &mut [u8], section_count: u32, feature_flags: u64) {
     write_u16_at(bytes, 20, 1);
     write_u16_at(bytes, 22, 0);
     write_u16_at(bytes, 24, 0);
-    bytes[26] = 3; // strict-runtime
+    bytes[26] = profile as u8;
     bytes[27] = 1; // binary64
     write_u64_at(bytes, 28, feature_flags);
     write_u32_at(bytes, 36, section_count);
