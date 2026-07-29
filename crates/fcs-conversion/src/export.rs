@@ -3699,30 +3699,7 @@ fn finish_export(
         )
         .with_entries(entries));
     }
-    if comparison.unverified_selectors().is_empty() {
-        entries.push(
-            ConversionEntry::new(
-                "roundtrip/equivalent",
-                "conversion.capability-negotiated",
-                ConversionDomain::Profile,
-                ConversionSeverity::Info,
-                SemanticStatus::Equivalent,
-                ConversionPhase::ReparseCompare,
-                None,
-                None,
-                None,
-                Some("canonical".into()),
-                None,
-                None,
-                None,
-                None,
-                None,
-                "same-profile target reparse is canonically equivalent",
-                [],
-            )
-            .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?,
-        );
-    } else {
+    if !comparison.unverified_selectors().is_empty() {
         for (index, selector) in comparison.unverified_selectors().iter().enumerate() {
             let domain = selector.split('.').next().unwrap_or(selector);
             entries.push(
@@ -5250,6 +5227,13 @@ mod tests {
         let outcome = export_rpe_json_with_options(&rpe_chart(), &options).unwrap();
 
         assert_eq!(outcome.report().status(), ConversionStatus::Equivalent);
+        assert!(
+            !outcome
+                .report()
+                .entries()
+                .iter()
+                .any(|entry| entry.id() == "roundtrip/equivalent")
+        );
         let approximation = outcome.report().approximation_authorization().unwrap();
         assert_eq!(approximation.target_domains(), ["motion"]);
         assert_eq!(approximation.error_budgets()["motion.track_value"], 0.001);
