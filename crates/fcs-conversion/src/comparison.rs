@@ -8,7 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use fcs_model::{
     Beat, CanonicalChart, CanonicalCompilation, CanonicalContentSha256, CanonicalLine,
     CanonicalResourceBundle, CanonicalScrollLine, CanonicalTime, CanonicalTrack,
-    CanonicalTrackPiece, CanonicalTrackTarget, CanonicalTrackValue, EntityKind, StableId,
+    CanonicalTrackPiece, CanonicalTrackTarget, CanonicalTrackValue, DropAuthorization, EntityKind,
+    StableId,
 };
 use fcs_runtime::{evaluate_line_scroll, evaluate_line_transform};
 
@@ -83,6 +84,7 @@ fn aligned_note_id<'a>(
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComparisonMismatch {
     domain: String,
+    selector: String,
     metric: String,
     field: String,
     expected: String,
@@ -99,10 +101,13 @@ impl ComparisonMismatch {
         actual: impl Into<String>,
         error: Option<f64>,
     ) -> Self {
+        let domain = domain.into();
+        let field = field.into();
         Self {
-            domain: domain.into(),
+            selector: comparison_selector(&domain, &field),
+            domain,
             metric: metric.into(),
-            field: field.into(),
+            field,
             expected: expected.into(),
             actual: actual.into(),
             error,
@@ -115,6 +120,10 @@ impl ComparisonMismatch {
 
     pub fn metric(&self) -> &str {
         &self.metric
+    }
+
+    pub fn selector(&self) -> &str {
+        &self.selector
     }
 
     pub fn field(&self) -> &str {
@@ -132,6 +141,24 @@ impl ComparisonMismatch {
     pub const fn error(&self) -> Option<f64> {
         self.error
     }
+}
+
+fn comparison_selector(domain: &str, field: &str) -> String {
+    let (entity, property) = match field.split_once('.') {
+        Some((entity, property)) => (entity, property),
+        None if field.contains('[') => (field, "entity"),
+        None => ("chart", field),
+    };
+    let entity = entity.split('[').next().unwrap_or(entity);
+    let entity = match entity {
+        "lines" | "line" | "scroll" => "line",
+        "notes" | "note" => "note",
+        "tracks" | "track" => "track",
+        "resources" | "resource" => "resource",
+        other => other,
+    };
+    let property = property.split(['.', '[', '@']).next().unwrap_or(property);
+    format!("{domain}.{entity}.{property}")
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -158,12 +185,12 @@ pub struct CanonicalComparison {
     mismatches: Vec<ComparisonMismatch>,
     verified_maximum_errors: BTreeMap<String, f64>,
     verified_sample_counts: BTreeMap<String, u64>,
-    unverified_domains: Vec<String>,
+    unverified_selectors: Vec<String>,
 }
 
 impl CanonicalComparison {
     pub fn is_equivalent(&self) -> bool {
-        self.mismatches.is_empty() && self.unverified_domains.is_empty()
+        self.mismatches.is_empty() && self.unverified_selectors.is_empty()
     }
 
     pub fn mismatches(&self) -> &[ComparisonMismatch] {
@@ -184,8 +211,13 @@ impl CanonicalComparison {
         self.verified_sample_counts.get(metric).copied()
     }
 
+    pub fn unverified_selectors(&self) -> &[String] {
+        &self.unverified_selectors
+    }
+
+    /// Compatibility accessor; values are stable selectors, not bare domains.
     pub fn unverified_domains(&self) -> &[String] {
-        &self.unverified_domains
+        self.unverified_selectors()
     }
 }
 
@@ -205,12 +237,12 @@ pub fn compare_canonical_compilations(
     compare_canonical_compilations_with_budgets(expected, actual, &BTreeMap::new(), &[])
 }
 
-/// Compare canonical products with explicit metric budgets and dropped domains.
+/// Compare canonical products with explicit metric budgets and dropped selectors.
 pub fn compare_canonical_compilations_with_budgets(
     expected: &CanonicalCompilation,
     actual: &CanonicalCompilation,
     budgets: &BTreeMap<String, f64>,
-    dropped_domains: &[String],
+    dropped_selectors: &[String],
 ) -> CanonicalComparison {
     compare_canonical_charts_with_resources_with_budgets(
         expected.chart(),
@@ -218,18 +250,18 @@ pub fn compare_canonical_compilations_with_budgets(
         Some(expected.resources()),
         Some(actual.resources()),
         budgets,
-        dropped_domains,
+        dropped_selectors,
         None,
     )
 }
 
 /// Compare canonical fields with explicit metric budgets and explicitly dropped
-/// domains. A missing budget remains exact; no implicit epsilon is used.
+/// selectors. A missing budget remains exact; no implicit epsilon is used.
 pub fn compare_canonical_charts_with_budgets(
     expected: &CanonicalChart,
     actual: &CanonicalChart,
     budgets: &BTreeMap<String, f64>,
-    dropped_domains: &[String],
+    dropped_selectors: &[String],
 ) -> CanonicalComparison {
     compare_canonical_charts_with_resources_with_budgets(
         expected,
@@ -237,7 +269,7 @@ pub fn compare_canonical_charts_with_budgets(
         None,
         None,
         budgets,
-        dropped_domains,
+        dropped_selectors,
         None,
     )
 }
@@ -248,10 +280,10 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
     expected_resources: Option<&CanonicalResourceBundle>,
     actual_resources: Option<&CanonicalResourceBundle>,
     budgets: &BTreeMap<String, f64>,
-    dropped_domains: &[String],
+    dropped_selectors: &[String],
     alignment: Option<&EntityAlignment>,
 ) -> CanonicalComparison {
-    let mut mismatches = Mismatches::new(dropped_domains);
+    let mut mismatches = Mismatches::new(dropped_selectors);
     let mut verified_maximum_errors = VerifiedMetricObservations::default();
 
     if expected.source_version() != actual.source_version() {
@@ -300,8 +332,8 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
     if let (Some(expected), Some(actual)) = (expected_resources, actual_resources) {
         compare_resource_bundles(expected, actual, &mut mismatches);
     }
-    // These four routines each report more than one domain, so they always run
-    // and the sink drops only the domains that were actually authorized.
+    // These routines always run; the sink drops only explicitly authorized
+    // selectors.
     compare_lines(
         expected,
         actual,
@@ -365,11 +397,11 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
         mismatches: mismatches.into_inner(),
         verified_maximum_errors: maximum_errors,
         verified_sample_counts: sample_counts,
-        unverified_domains: {
-            let mut domains = dropped_domains.to_vec();
-            domains.sort();
-            domains.dedup();
-            domains
+        unverified_selectors: {
+            let mut selectors = dropped_selectors.to_vec();
+            selectors.sort();
+            selectors.dedup();
+            selectors
         },
     }
 }
@@ -408,14 +440,14 @@ fn compare_resource_bundles(
                     );
                 }
             }
-            (Some(_), None) => mismatch(
+            (Some(_), None) => structural_mismatch(
                 mismatches,
                 "resource",
                 format!("resources[{id}]"),
                 "present",
                 "missing",
             ),
-            (None, Some(_)) => mismatch(
+            (None, Some(_)) => structural_mismatch(
                 mismatches,
                 "resource",
                 format!("resources[{id}]"),
@@ -438,37 +470,27 @@ fn format_content_sha256(digest: CanonicalContentSha256) -> String {
 
 /// The single sink every canonical mismatch is recorded through.
 ///
-/// Drop authorization is per domain, but one comparison routine can report
-/// facts belonging to several domains: `compare_lines` is the only checker of
-/// `entity` documentOrder and `scroll` scrollTempo as well as `motion` fields.
-/// Filtering here, rather than at the call sites, keeps an authorization for
-/// one domain from silently suppressing verification of another.
+/// One comparison routine can report several domain/entity/field selectors.
+/// Filtering here keeps an authorization from suppressing sibling facts.
 struct Mismatches<'a> {
-    dropped: &'a [String],
+    dropped_selectors: &'a [String],
     items: Vec<ComparisonMismatch>,
 }
 
 impl<'a> Mismatches<'a> {
-    fn new(dropped: &'a [String]) -> Self {
+    fn new(dropped_selectors: &'a [String]) -> Self {
         Self {
-            dropped,
+            dropped_selectors,
             items: Vec::new(),
         }
     }
 
-    /// A domain is dropped by an exact match or by a dotted-prefix ancestor,
-    /// so `motion` covers `motion.transform` but never `motionBlur`.
-    fn is_dropped(dropped: &[String], domain: &str) -> bool {
-        dropped.iter().any(|allowed| {
-            domain == allowed
-                || domain
-                    .strip_prefix(allowed)
-                    .is_some_and(|suffix| suffix.starts_with('.'))
-        })
-    }
-
     fn push(&mut self, mismatch: ComparisonMismatch) {
-        if Self::is_dropped(self.dropped, mismatch.domain()) {
+        if self
+            .dropped_selectors
+            .iter()
+            .any(|selector| DropAuthorization::selector_matches(selector, mismatch.selector()))
+        {
             return;
         }
         self.items.push(mismatch);
@@ -602,18 +624,27 @@ fn compare_sync(
                 verified_maximum_errors,
                 mismatches,
             );
-            if left.primary_audio() != right.primary_audio() || left.preview() != right.preview() {
+            if left.primary_audio() != right.primary_audio() {
                 mismatch(
                     mismatches,
-                    "timing",
-                    "sync.discrete",
-                    format!("{:?}/{:?}", left.primary_audio(), left.preview()),
-                    format!("{:?}/{:?}", right.primary_audio(), right.preview()),
+                    "resource",
+                    "sync.primaryAudio",
+                    format!("{:?}", left.primary_audio()),
+                    format!("{:?}", right.primary_audio()),
+                );
+            }
+            if left.preview() != right.preview() {
+                mismatch(
+                    mismatches,
+                    "metadata",
+                    "sync.preview",
+                    format!("{:?}", left.preview()),
+                    format!("{:?}", right.preview()),
                 );
             }
         }
         (None, None) => {}
-        (left, right) => mismatch(
+        (left, right) => structural_mismatch(
             mismatches,
             "timing",
             "sync",
@@ -668,7 +699,7 @@ fn compare_lines(
         matched.insert(right.id().value());
         let field = |name: &str| format!("lines[{index}].{name}");
         if left.document_order() != right.document_order() {
-            mismatch(
+            structural_mismatch(
                 mismatches,
                 "entity",
                 field("documentOrder"),
@@ -944,7 +975,7 @@ fn compare_notes(
         let lg = left.gameplay();
         let rg = right.gameplay();
         if left.document_order() != right.document_order() {
-            mismatch(
+            structural_mismatch(
                 mismatches,
                 "entity",
                 field("documentOrder"),
@@ -952,21 +983,36 @@ fn compare_notes(
                 right.document_order().to_string(),
             );
         }
-        if lg.kind() != rg.kind()
-            || lg.side() != rg.side()
-            || lg.judgment_enabled() != rg.judgment_enabled()
-            || lg.judge_shape() != rg.judge_shape()
-            || lg.sound_policy() != rg.sound_policy()
-            || lg.score_policy() != rg.score_policy()
-        {
-            mismatch(
-                mismatches,
-                "gameplay",
-                field("discrete"),
-                format!("{:?}", lg),
-                format!("{:?}", rg),
-            );
-        }
+        compare_discrete("gameplay", field("kind"), lg.kind(), rg.kind(), mismatches);
+        compare_discrete("gameplay", field("side"), lg.side(), rg.side(), mismatches);
+        compare_discrete(
+            "gameplay",
+            field("judgmentEnabled"),
+            lg.judgment_enabled(),
+            rg.judgment_enabled(),
+            mismatches,
+        );
+        compare_discrete(
+            "gameplay",
+            field("judgeShape"),
+            lg.judge_shape(),
+            rg.judge_shape(),
+            mismatches,
+        );
+        compare_discrete(
+            "gameplay",
+            field("soundPolicy"),
+            lg.sound_policy(),
+            rg.sound_policy(),
+            mismatches,
+        );
+        compare_discrete(
+            "gameplay",
+            field("scorePolicy"),
+            lg.score_policy(),
+            rg.score_policy(),
+            mismatches,
+        );
         let left_line = aligned_line_id(alignment, lg.line());
         let right_line = Some(rg.line());
         if left_line != right_line {
@@ -1017,20 +1063,41 @@ fn compare_notes(
                 mismatches,
             );
         }
-        if lp.color() != rp.color()
-            || lp.texture() != rp.texture()
-            || lp.render_enabled() != rp.render_enabled()
-            || lp.visible_from() != rp.visible_from()
-            || lp.visible_until() != rp.visible_until()
-        {
-            mismatch(
-                mismatches,
-                "presentation",
-                field("discrete"),
-                format!("{:?}", lp),
-                format!("{:?}", rp),
-            );
-        }
+        compare_discrete(
+            "presentation",
+            field("color"),
+            lp.color(),
+            rp.color(),
+            mismatches,
+        );
+        compare_discrete(
+            "presentation",
+            field("texture"),
+            lp.texture(),
+            rp.texture(),
+            mismatches,
+        );
+        compare_discrete(
+            "presentation",
+            field("renderEnabled"),
+            lp.render_enabled(),
+            rp.render_enabled(),
+            mismatches,
+        );
+        compare_discrete(
+            "presentation",
+            field("visibleFrom"),
+            lp.visible_from(),
+            rp.visible_from(),
+            mismatches,
+        );
+        compare_discrete(
+            "presentation",
+            field("visibleUntil"),
+            lp.visible_until(),
+            rp.visible_until(),
+            mismatches,
+        );
         compare_optional_source_beat(
             field("visibleFrom"),
             lp.visible_from(),
@@ -1192,15 +1259,20 @@ fn compare_track_piece(
                 verified_maximum_errors,
                 mismatches,
             );
-            if left.interpolation() != right.interpolation()
-                || left.document_order() != right.document_order()
-            {
-                mismatch(
+            compare_discrete(
+                "motion",
+                field("interpolation"),
+                left.interpolation(),
+                right.interpolation(),
+                mismatches,
+            );
+            if left.document_order() != right.document_order() {
+                structural_mismatch(
                     mismatches,
-                    "motion",
-                    field("shape"),
-                    format!("{:?}/{}", left.interpolation(), left.document_order()),
-                    format!("{:?}/{}", right.interpolation(), right.document_order()),
+                    "entity",
+                    field("documentOrder"),
+                    left.document_order().to_string(),
+                    right.document_order().to_string(),
                 );
             }
         }
@@ -1222,7 +1294,7 @@ fn compare_track_piece(
                 mismatches,
             );
             if left.document_order() != right.document_order() {
-                mismatch(
+                structural_mismatch(
                     mismatches,
                     "entity",
                     field("documentOrder"),
@@ -1763,6 +1835,24 @@ fn structural_mismatch(
     ));
 }
 
+fn compare_discrete<T: std::fmt::Debug + PartialEq>(
+    domain: &str,
+    field: String,
+    expected: T,
+    actual: T,
+    mismatches: &mut Mismatches<'_>,
+) {
+    if expected != actual {
+        mismatch(
+            mismatches,
+            domain,
+            field,
+            format!("{expected:?}"),
+            format!("{actual:?}"),
+        );
+    }
+}
+
 fn mismatch(
     mismatches: &mut Mismatches<'_>,
     domain: impl Into<String>,
@@ -1790,51 +1880,48 @@ fn metric_mismatch(
 mod tests {
     use super::*;
     use fcs_model::{
-        Beat, CanonicalBundledResource, CanonicalChartScrollTempoPoint, CanonicalColor,
-        CanonicalCompilation, CanonicalJudgeShape, CanonicalLineBase, CanonicalLineGraph,
-        CanonicalLineInherit, CanonicalMetadata, CanonicalNote, CanonicalNoteGameplay,
-        CanonicalNoteKind, CanonicalNotePresentation, CanonicalNoteScorePolicy, CanonicalNoteSet,
-        CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalProfile,
-        CanonicalResource, CanonicalResourceBundle, CanonicalResourceKind,
-        CanonicalScrollCoordinate, CanonicalScrollLine, CanonicalScrollSet, CanonicalScrollTempo,
-        CanonicalSourceVersion, CanonicalTextualId, CanonicalTime, CanonicalTrackSet,
-        CanonicalVec2, ChartTimeMap, DistributionMetadata, EntityKind, StableId, StableIdRegistry,
-        TempoPoint,
+        AudioOffset, Beat, CanonicalBundledResource, CanonicalChartScrollTempoPoint,
+        CanonicalColor, CanonicalCompilation, CanonicalJudgeShape, CanonicalLineBase,
+        CanonicalLineGraph, CanonicalLineInherit, CanonicalMetadata, CanonicalNote,
+        CanonicalNoteGameplay, CanonicalNoteKind, CanonicalNotePresentation,
+        CanonicalNoteScorePolicy, CanonicalNoteSet, CanonicalNoteSide, CanonicalNoteSoundPolicy,
+        CanonicalObject, CanonicalPreview, CanonicalProfile, CanonicalResource,
+        CanonicalResourceBundle, CanonicalResourceKind, CanonicalScrollCoordinate,
+        CanonicalScrollLine, CanonicalScrollSet, CanonicalScrollTempo, CanonicalSourceVersion,
+        CanonicalSync, CanonicalTextualId, CanonicalTime, CanonicalTrackSet, CanonicalVec2,
+        ChartTimeMap, DistributionMetadata, EntityKind, StableId, StableIdRegistry, TempoPoint,
     };
 
-    fn record(sink: &mut Mismatches<'_>, domain: &str) {
+    fn record(sink: &mut Mismatches<'_>, domain: &str, field: &str) {
         sink.push(ComparisonMismatch::new(
-            domain, "discrete", "field", "expected", "actual", None,
+            domain, "discrete", field, "expected", "actual", None,
         ));
     }
 
     #[test]
-    fn a_drop_authorization_only_suppresses_its_own_domain() {
-        // compare_lines is the sole checker of entity documentOrder and scroll
-        // scrollTempo as well as motion fields, so a motion-only authorization
-        // must not take those other domains down with it.
-        let dropped = vec!["motion".to_owned()];
+    fn a_drop_authorization_only_suppresses_its_own_selector() {
+        let dropped = vec!["motion.line.parent".to_owned()];
         let mut sink = Mismatches::new(&dropped);
-        record(&mut sink, "motion");
-        record(&mut sink, "entity");
-        record(&mut sink, "scroll");
+        record(&mut sink, "motion", "lines[0].parent");
+        record(&mut sink, "motion", "lines[0].inherit");
+        record(&mut sink, "entity", "lines[0].documentOrder");
         let kept: Vec<String> = sink
             .into_inner()
             .iter()
-            .map(|mismatch| mismatch.domain().to_owned())
+            .map(|mismatch| mismatch.selector().to_owned())
             .collect();
-        assert_eq!(kept, ["entity", "scroll"]);
+        assert_eq!(kept, ["motion.line.inherit", "entity.line.documentOrder"]);
     }
 
     #[test]
-    fn a_dropped_domain_covers_its_dotted_descendants_only() {
-        let dropped = vec!["motion".to_owned()];
+    fn an_entity_wide_selector_does_not_cover_other_entities() {
+        let dropped = vec!["motion.line".to_owned()];
         let mut sink = Mismatches::new(&dropped);
-        record(&mut sink, "motion.transform");
-        record(&mut sink, "motionBlur");
+        record(&mut sink, "motion", "lines[0].parent");
+        record(&mut sink, "motion", "tracks[0].header");
         let kept = sink.into_inner();
         assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0].domain(), "motionBlur");
+        assert_eq!(kept[0].selector(), "motion.track.header");
     }
 
     /// A chart holding `notes` on one Line, with everything else minimal.
@@ -1870,6 +1957,29 @@ mod tests {
             CanonicalTrackSet::new(Vec::new()).unwrap(),
             CanonicalScrollSet::new(Vec::new()).unwrap(),
             [],
+        )
+    }
+
+    fn chart_with_sync(sync: CanonicalSync) -> CanonicalChart {
+        let chart = chart_with_notes(vec![tap_note()]);
+        CanonicalChart::new(
+            chart.source_version().clone(),
+            chart.profile(),
+            chart.features().iter().copied(),
+            chart.time_map().clone(),
+            CanonicalMetadata::new(
+                chart.metadata().meta().cloned(),
+                chart.metadata().contributors().clone(),
+                chart.metadata().credits().to_vec(),
+                chart.metadata().resources().clone(),
+                chart.metadata().artwork().cloned(),
+                Some(sync),
+            ),
+            chart.lines().clone(),
+            chart.notes().clone(),
+            chart.tracks().clone(),
+            chart.scroll().clone(),
+            chart.required_extensions().iter().cloned(),
         )
     }
 
@@ -2103,17 +2213,22 @@ mod tests {
         (line, note)
     }
 
-    fn tap_note_with_time(time: CanonicalTime) -> CanonicalNote {
+    fn note_with(
+        kind: CanonicalNoteKind,
+        time: CanonicalTime,
+        document_order: u64,
+        sound_policy: CanonicalNoteSoundPolicy,
+    ) -> CanonicalNote {
         let (line, note) = ids();
         let gameplay = CanonicalNoteGameplay::new(
-            CanonicalNoteKind::Tap,
+            kind,
             line,
             time,
             None,
             CanonicalNoteSide::Above,
             true,
             CanonicalJudgeShape::LineDefault,
-            CanonicalNoteSoundPolicy::Default,
+            sound_policy,
             CanonicalNoteScorePolicy::Default,
         )
         .unwrap();
@@ -2133,7 +2248,16 @@ mod tests {
             None,
         )
         .unwrap();
-        CanonicalNote::new(note, CanonicalNoteKind::Tap, 0, gameplay, presentation).unwrap()
+        CanonicalNote::new(note, kind, document_order, gameplay, presentation).unwrap()
+    }
+
+    fn tap_note_with_time(time: CanonicalTime) -> CanonicalNote {
+        note_with(
+            CanonicalNoteKind::Tap,
+            time,
+            0,
+            CanonicalNoteSoundPolicy::Default,
+        )
     }
 
     fn tap_note() -> CanonicalNote {
@@ -2149,7 +2273,7 @@ mod tests {
             &chart_with_notes(vec![tap_note()]),
             &chart_with_notes(Vec::new()),
             &BTreeMap::new(),
-            &["gameplay".to_owned()],
+            &["entity.note.documentOrder".to_owned()],
         );
         assert!(!comparison.is_equivalent());
         let counts: Vec<&str> = comparison
@@ -2159,6 +2283,112 @@ mod tests {
             .collect();
         assert!(counts.contains(&"note.count"));
         assert!(counts.iter().any(|field| field.starts_with("notes[")));
+    }
+
+    #[test]
+    fn a_field_selector_keeps_unrelated_note_failures() {
+        let expected = chart_with_notes(vec![note_with(
+            CanonicalNoteKind::Tap,
+            CanonicalTime::from_chart_time_seconds(1.0).unwrap(),
+            0,
+            CanonicalNoteSoundPolicy::Default,
+        )]);
+        let actual = chart_with_notes(vec![note_with(
+            CanonicalNoteKind::Drag,
+            CanonicalTime::from_chart_time_seconds(1.0).unwrap(),
+            0,
+            CanonicalNoteSoundPolicy::None,
+        )]);
+        let comparison = compare_canonical_charts_with_budgets(
+            &expected,
+            &actual,
+            &BTreeMap::new(),
+            &["gameplay.note.soundPolicy".to_owned()],
+        );
+
+        assert!(!comparison.is_equivalent());
+        assert!(
+            comparison
+                .mismatches()
+                .iter()
+                .any(|mismatch| mismatch.selector() == "gameplay.note.kind")
+        );
+        assert!(
+            !comparison
+                .mismatches()
+                .iter()
+                .any(|mismatch| mismatch.selector() == "gameplay.note.soundPolicy")
+        );
+        assert_eq!(
+            comparison.unverified_selectors(),
+            ["gameplay.note.soundPolicy"]
+        );
+    }
+
+    #[test]
+    fn a_document_order_selector_cannot_suppress_structure() {
+        let time = CanonicalTime::from_chart_time_seconds(1.0).unwrap();
+        let expected = chart_with_notes(vec![note_with(
+            CanonicalNoteKind::Tap,
+            time,
+            0,
+            CanonicalNoteSoundPolicy::Default,
+        )]);
+        let actual = chart_with_notes(vec![note_with(
+            CanonicalNoteKind::Tap,
+            time,
+            1,
+            CanonicalNoteSoundPolicy::Default,
+        )]);
+        let comparison = compare_canonical_charts_with_budgets(
+            &expected,
+            &actual,
+            &BTreeMap::new(),
+            &["gameplay.note".to_owned()],
+        );
+
+        assert!(
+            comparison
+                .mismatches()
+                .iter()
+                .any(|mismatch| mismatch.selector() == "entity.note.documentOrder")
+        );
+    }
+
+    #[test]
+    fn a_timing_sync_selector_keeps_resource_and_metadata_facts() {
+        let expected = chart_with_sync(
+            CanonicalSync::new(
+                Some("song-a".into()),
+                AudioOffset::new(0.0).unwrap(),
+                CanonicalPreview::new(1.0, 2.0),
+            )
+            .unwrap(),
+        );
+        let actual = chart_with_sync(
+            CanonicalSync::new(
+                Some("song-b".into()),
+                AudioOffset::new(0.5).unwrap(),
+                CanonicalPreview::new(2.0, 3.0),
+            )
+            .unwrap(),
+        );
+        let comparison = compare_canonical_charts_with_budgets(
+            &expected,
+            &actual,
+            &BTreeMap::new(),
+            &["timing.sync".to_owned()],
+        );
+
+        let selectors = comparison
+            .mismatches()
+            .iter()
+            .map(ComparisonMismatch::selector)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            selectors,
+            ["resource.sync.primaryAudio", "metadata.sync.preview"]
+        );
     }
 
     #[test]
@@ -2330,7 +2560,7 @@ mod tests {
             &expected,
             &actual,
             &BTreeMap::new(),
-            &["timing".to_owned()],
+            &["timing.tempo".to_owned()],
         );
 
         assert!(!comparison.is_equivalent());
@@ -2338,24 +2568,24 @@ mod tests {
     }
 
     #[test]
-    fn a_filtered_domain_is_unverified_instead_of_equivalent() {
+    fn a_filtered_selector_is_unverified_instead_of_equivalent() {
         let comparison = compare_canonical_charts_with_budgets(
             &chart_with_notes(vec![tap_note()]),
             &chart_with_notes(vec![tap_note()]),
             &BTreeMap::new(),
-            &["metadata".to_owned()],
+            &["metadata.chart".to_owned()],
         );
 
         assert!(!comparison.is_equivalent());
-        assert_eq!(comparison.unverified_domains(), ["metadata"]);
+        assert_eq!(comparison.unverified_selectors(), ["metadata.chart"]);
     }
 
     #[test]
     fn an_empty_authorization_keeps_every_domain() {
         let dropped: Vec<String> = Vec::new();
         let mut sink = Mismatches::new(&dropped);
-        record(&mut sink, "motion");
-        record(&mut sink, "entity");
+        record(&mut sink, "motion", "lines[0].parent");
+        record(&mut sink, "entity", "lines[0].documentOrder");
         assert_eq!(sink.into_inner().len(), 2);
     }
 }
