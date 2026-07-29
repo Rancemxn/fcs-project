@@ -212,7 +212,7 @@ Core、FCBC/ABI、Render 与 Conversion 的候选 delta 已依序写入；阶段
 `docs/reviews/2026-07-15-fcbc2-execution-abi-closure-review.md`、
 `docs/reviews/2026-07-15-render1-resource-binding-closure-review.md` 和
 `docs/reviews/2026-07-15-conversion1-semantic-profile-closure-review.md`。Conversion corpus 当前绑定
-12 个 profile、7 个 parser dialect、56 个 mapping rule、33 个 diagnostic/report category、38 个
+12 个 profile、7 个 parser dialect、56 个 mapping rule、37 个 diagnostic/report category、38 个
 exact vector、5 个 invalid vector 与 10 个 selection vector。非空 Execution ABI
 writer→static bytes→independent loader/evaluator、bits/trace/direct-seek 与 mutation corpus 已完成并
 通过独立复审，见 `docs/reviews/2026-07-16-fcbc2-execution-abi-nonempty-review.md`。RenderSection
@@ -696,7 +696,7 @@ git diff --check
   又使五个版本域进入 Draft/联合重审，不能把 S14 hash 当作当前完整规范 hash；
 - S15：FCS Core、FCBC/ABI、Render 与 Conversion 候选 delta 已依依赖顺序写入；FCS manifest 为
   39 项，FCBC 有三个 schema 2 golden/17 个 mutation，Render 有 embedded-resource binding，
-  Conversion 有 12-profile/7-dialect/56-rule/33-category/38-valid/5-invalid/10-selection registry。统一
+  Conversion 有 12-profile/7-dialect/56-rule/37-category/38-valid/5-invalid/10-selection registry。统一
   cross-spec/hash/test 候选自检见 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md`；非空 ABI
   artifact 已由 `docs/reviews/2026-07-16-fcbc2-execution-abi-nonempty-review.md` 独立复审关闭；Render
   binary/raster 的历史 closure 已被 executable-vector 审计发现的 REN-I08–I16 重新打开；随后固定

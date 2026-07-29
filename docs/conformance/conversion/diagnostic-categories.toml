@@ -62,6 +62,12 @@ domain = "profile"
 description = "A required typed profile parameter is missing, unknown, ill-typed or out of range."
 
 [[category]]
+id = "conversion.profile-registry-integrity"
+uses = ["diagnostic"]
+domain = "profile"
+description = "The installed profile registry cannot be read, parsed, or verified against its descriptor hashes."
+
+[[category]]
 id = "conversion.ambiguous-source-semantics"
 uses = ["diagnostic"]
 domain = "profile"
@@ -150,6 +156,12 @@ id = "conversion.report-limit"
 uses = ["diagnostic"]
 domain = "metadata"
 description = "A report, evidence, profile-candidate or comparison budget is exceeded."
+
+[[category]]
+id = "conversion.internal"
+uses = ["diagnostic"]
+domain = "cross-domain"
+description = "An unexpected product boundary failure prevents a valid conversion artifact from being serialized."
 
 [[category]]
 id = "conversion.generated-canonical-tempo"
