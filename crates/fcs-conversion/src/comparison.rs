@@ -175,6 +175,9 @@ struct VerifiedMetricObservations {
 
 impl VerifiedMetricObservations {
     fn observe(&mut self, metric: &str, error: f64) {
+        if !error.is_finite() {
+            return;
+        }
         self.maximum_errors
             .entry(metric.to_owned())
             .and_modify(|maximum| *maximum = maximum.max(error))
@@ -2506,6 +2509,27 @@ mod tests {
         }));
         assert_eq!(comparison.verified_maximum_error(metric), None);
         assert_eq!(comparison.verified_sample_count(metric), None);
+    }
+
+    #[test]
+    fn non_finite_budgeted_error_is_a_mismatch_without_verified_metric_evidence() {
+        let mut verified = VerifiedMetricObservations::default();
+        let mut mismatches = Mismatches::new(&[]);
+
+        compare_float(
+            "timing",
+            "timing.chart_time",
+            "tempo[0].chartTime".into(),
+            f64::NAN,
+            0.0,
+            &BTreeMap::from([("timing.chart_time".to_owned(), 1.0)]),
+            &mut verified,
+            &mut mismatches,
+        );
+
+        assert_eq!(mismatches.into_inner().len(), 1);
+        assert_eq!(verified.maximum_errors.get("timing.chart_time"), None);
+        assert_eq!(verified.sample_counts.get("timing.chart_time"), None);
     }
 
     #[test]
