@@ -14,8 +14,9 @@ use serde::Deserialize;
 use crate::{
     ArtifactRole, CapabilitySet, DecimalLimits, ExactDecimal, ExportOptions, PecLimits, PecProfile,
     PecProfileBinding, PgrLimits, PgrProfile, PgrProfileBinding, RpeLimits, RpeProfileBinding,
-    RpeSpeedMode, SourceArtifact, SourceFormat, export_pgr_v3_with_options, interpret_pec,
-    interpret_pgr, interpret_rpe_semantics, lower_pec_to_canonical, lower_pgr_to_canonical,
+    RpeSpeedMode, SourceArtifact, SourceFormat, export_pec_line_with_options,
+    export_pgr_v3_with_options, export_rpe_json_with_options, interpret_pec, interpret_pgr,
+    interpret_rpe_semantics, lower_pec_to_canonical, lower_pgr_to_canonical,
     lower_rpe_to_canonical, parse_json_document, parse_pec_document, parse_pgr_document,
     parse_rpe_document,
 };
@@ -561,18 +562,6 @@ fn run_export_reparse(
     let Some(target) = fixture.export_reparse.as_ref() else {
         return Ok(products.report.clone());
     };
-    if target.parser_dialect != "pgr.json.v3"
-        || target.target_profile != "pgr.phira.v3"
-        || target.target_profile_version != "1.0.0"
-    {
-        return Err(FixtureLaneError::Export {
-            fixture_id: fixture.id.clone(),
-            message: format!(
-                "unsupported export/reparse target {}/{}/{}",
-                target.parser_dialect, target.target_profile, target.target_profile_version
-            ),
-        });
-    }
     let floor_scale = ExactDecimal::parse(&target.floor_scale_px, DecimalLimits::default())
         .map_err(|error| FixtureLaneError::Export {
             fixture_id: fixture.id.clone(),
@@ -582,15 +571,61 @@ fn run_export_reparse(
         "{}@{}",
         target.target_profile, target.target_profile_version
     );
-    let options = ExportOptions::semantic(CapabilitySet::pgr_v3().descriptor(Some(target_profile)))
-        .with_floor_scale_px(floor_scale);
-    let outcome =
-        export_pgr_v3_with_options(products.compilation.chart(), &options).map_err(|error| {
-            FixtureLaneError::Export {
-                fixture_id: fixture.id.clone(),
-                message: error.to_string(),
+    let outcome = match fixture.format {
+        FixtureFormat::Pgr => {
+            if target.parser_dialect != "pgr.json.v3"
+                || target.target_profile != "pgr.phira.v3"
+                || target.target_profile_version != "1.0.0"
+            {
+                return Err(unsupported_export_target(fixture));
             }
-        })?;
+            let options =
+                ExportOptions::semantic(CapabilitySet::pgr_v3().descriptor(Some(target_profile)))
+                    .with_floor_scale_px(floor_scale);
+            export_pgr_v3_with_options(products.compilation.chart(), &options)
+        }
+        FixtureFormat::Rpe => {
+            if target.parser_dialect != "rpe.json.compatible" {
+                return Err(unsupported_export_target(fixture));
+            }
+            let binding = parse_rpe_binding(&target.target_profile).map_err(|error| {
+                FixtureLaneError::Export {
+                    fixture_id: fixture.id.clone(),
+                    message: error.to_string(),
+                }
+            })?;
+            if binding.profile().version() != target.target_profile_version {
+                return Err(unsupported_export_target(fixture));
+            }
+            let options =
+                ExportOptions::semantic(CapabilitySet::rpe_json().descriptor(Some(target_profile)))
+                    .with_rpe_profile_binding(binding)
+                    .with_floor_scale_px(floor_scale);
+            export_rpe_json_with_options(products.compilation.chart(), &options)
+        }
+        FixtureFormat::Pec => {
+            if target.parser_dialect != "pec.line-command" {
+                return Err(unsupported_export_target(fixture));
+            }
+            let profile = parse_pec_profile(&target.target_profile).map_err(|error| {
+                FixtureLaneError::Export {
+                    fixture_id: fixture.id.clone(),
+                    message: error.to_string(),
+                }
+            })?;
+            if profile.version() != target.target_profile_version {
+                return Err(unsupported_export_target(fixture));
+            }
+            let options =
+                ExportOptions::semantic(CapabilitySet::pec_line().descriptor(Some(target_profile)))
+                    .with_floor_scale_px(floor_scale);
+            export_pec_line_with_options(products.compilation.chart(), &options)
+        }
+    }
+    .map_err(|error| FixtureLaneError::Export {
+        fixture_id: fixture.id.clone(),
+        message: error.to_string(),
+    })?;
     if !outcome.comparison().is_equivalent()
         || outcome.report().status() != ConversionStatus::Equivalent
     {
@@ -600,6 +635,23 @@ fn run_export_reparse(
         });
     }
     Ok(outcome.report().clone())
+}
+
+fn unsupported_export_target(fixture: &FixtureEntry) -> FixtureLaneError {
+    let target = fixture
+        .export_reparse
+        .as_ref()
+        .expect("export target is present while dispatching");
+    FixtureLaneError::Export {
+        fixture_id: fixture.id.clone(),
+        message: format!(
+            "unsupported export/reparse target {}/{}/{} for {}",
+            target.parser_dialect,
+            target.target_profile,
+            target.target_profile_version,
+            fixture.format.as_str()
+        ),
+    }
 }
 
 fn parse_pgr_profile(id: &str) -> Result<PgrProfile, FixtureLaneError> {
@@ -732,15 +784,46 @@ mod tests {
         let export_targets: Vec<_> = manifest
             .fixtures
             .iter()
-            .filter_map(|fixture| fixture.export_reparse.as_ref())
+            .filter(|fixture| fixture.export_reparse.is_some())
             .collect();
-        assert_eq!(export_targets.len(), 1);
-        let target = export_targets[0];
+        assert_eq!(export_targets.len(), 3);
+        let fixture = export_targets
+            .iter()
+            .find(|fixture| fixture.id == "pgr-feature")
+            .expect("PGR feature export target");
+        let target = fixture
+            .export_reparse
+            .as_ref()
+            .expect("PGR feature target metadata");
         assert_eq!(target.parser_dialect, "pgr.json.v3");
         assert_eq!(target.target_profile, "pgr.phira.v3");
         assert_eq!(target.target_profile_version, "1.0.0");
         assert_eq!(target.floor_scale_px, "120");
         assert_eq!(target.policy, "semantic");
+    }
+
+    #[test]
+    fn export_reparse_rejects_a_target_dialect_for_the_wrong_format() {
+        let root = public_fixture_root();
+        let mut fixture = load_fixture_manifest(&root.join("manifest.toml"))
+            .unwrap()
+            .fixtures
+            .into_iter()
+            .find(|fixture| fixture.id == "rpe-extreme")
+            .expect("RPE fixture");
+        fixture
+            .export_reparse
+            .as_mut()
+            .expect("RPE export target")
+            .parser_dialect = "pec.line-command".into();
+
+        let error = run_import_fixture(&root, &fixture).unwrap_err();
+        assert!(matches!(error, FixtureLaneError::Export { .. }));
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported export/reparse target")
+        );
     }
 
     #[test]

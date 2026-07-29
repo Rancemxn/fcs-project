@@ -68,6 +68,13 @@ producer_evidence = "synthetic-public-extreme"
 runtime_evidence = "none"
 policy = "strict"
 
+[fixture.export_reparse]
+parser_dialect = "rpe.json.compatible"
+target_profile = "rpe.phira.legacy-speed"
+target_profile_version = "1.0.0"
+floor_scale_px = "120"
+policy = "semantic"
+
 [[fixture]]
 id = "pec-minimal"
 lane = "public"
@@ -97,3 +104,10 @@ expected = "expected/pec-feature.toml"
 producer_evidence = "synthetic-public-feature"
 runtime_evidence = "none"
 policy = "strict"
+
+[fixture.export_reparse]
+parser_dialect = "pec.line-command"
+target_profile = "pec.phira"
+target_profile_version = "1.0.0"
+floor_scale_px = "100"
+policy = "semantic"

@@ -2,6 +2,6 @@ id = "pec-feature"
 expected_status = "equivalent"
 expected_lines = 1
 expected_notes = 5
-required_categories = []
+required_categories = ["conversion.capability-negotiated"]
 required_provenance_keys = ["pec/artifact", "pec/profile", "pec/line/0"]
 empty_resources = true
