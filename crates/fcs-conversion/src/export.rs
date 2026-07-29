@@ -652,6 +652,15 @@ pub fn format_fcs_source(source: &str) -> Result<String, ExportError> {
         lines.pop();
     }
     let formatted = format!("{}\n", lines.join("\n"));
+    let formatted = fcs_source::parser::canonicalize_numeric_literals(&formatted)
+        .into_result()
+        .map_err(|diagnostics| {
+            let message = diagnostics
+                .first()
+                .map(|diagnostic| format!("{}: {}", diagnostic.code(), diagnostic.message()))
+                .unwrap_or_else(|| "formatted source invalid".into());
+            ExportError::new("source.invalid", message)
+        })?;
     fcs_source::parser::parse_document(&formatted)
         .into_result()
         .map_err(|diagnostics| {
@@ -4343,8 +4352,49 @@ mod tests {
     }
 
     #[test]
+    fn formatter_applies_deterministic_numeric_policy() {
+        let source = "#fcs 5.0.0\nformat { profile: fragment; }\n\
+meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
+\"angle\": 0.5rad, \"beat\": 1.25beat }; }";
+        let formatted = format_fcs_source(source).unwrap();
+        assert!(formatted.contains("100.0"));
+        assert!(formatted.contains("0.001s"));
+        assert!(formatted.contains("2px"));
+        assert!(formatted.contains("0.5rad"));
+        assert!(formatted.contains("1.25beat"));
+        assert_eq!(formatted, format_fcs_source(&formatted).unwrap());
+    }
+
+    #[test]
+    fn formatter_numeric_rewrite_preserves_canonical_chart_semantics() {
+        let source =
+            fs::read_to_string(root().join("docs/conformance/fcs5/source/valid/minimal-chart.fcs"))
+                .unwrap()
+                .replace("120bpm", "120.00e0bpm");
+        let formatted = format_fcs_source(&source).unwrap();
+        let canonical = |input: &str| {
+            fcs_source::parser::parse_document(input)
+                .into_result()
+                .unwrap()
+                .canonical_chart(fcs_source::elaborator::CompileTimeLimits::default())
+                .unwrap()
+        };
+        assert_eq!(canonical(&source), canonical(&formatted));
+        assert!(formatted.contains("120bpm"));
+    }
+
+    #[test]
     fn format_fcs_source_rejects_invalid() {
         let error = format_fcs_source("not a chart").unwrap_err();
+        assert_eq!(error.category(), "source.invalid");
+    }
+
+    #[test]
+    fn format_fcs_source_rejects_non_finite_numeric_literals() {
+        let error = format_fcs_source(
+            "#fcs 5.0.0\nformat { profile: fragment; }\nmeta { custom: { \"x\": 1e999 }; }",
+        )
+        .unwrap_err();
         assert_eq!(error.category(), "source.invalid");
     }
 
