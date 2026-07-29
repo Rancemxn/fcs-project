@@ -1290,7 +1290,6 @@ fn required_capability_features(
                     || base.transform_origin().y() != 0.0
                     || base.texture_anchor().x() != 0.5
                     || base.texture_anchor().y() != 0.5
-                    || (base.floor_scale() != 1.0 && base.floor_scale() != 120.0)
                     || base.integration_origin() != 0.0
                     || base.initial_floor_position() != 0.0
                     || base.allow_reverse_scroll()
