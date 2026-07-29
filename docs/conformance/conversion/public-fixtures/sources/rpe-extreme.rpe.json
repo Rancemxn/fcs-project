@@ -37,6 +37,35 @@
               "easingType": 1
             }
           ]
+        },
+        null,
+        {
+          "moveYEvents": [
+            {
+              "startTime": [0, 0, 1],
+              "endTime": [16, 0, 1],
+              "start": -450,
+              "end": 450,
+              "easingType": 1
+            }
+          ],
+          "alphaEvents": [
+            {
+              "startTime": [0, 0, 1],
+              "endTime": [16, 0, 1],
+              "start": 0,
+              "end": 255,
+              "easingType": 1
+            }
+          ],
+          "speedEvents": [
+            {
+              "startTime": [0, 0, 1],
+              "endTime": [16, 0, 1],
+              "start": 0.5,
+              "end": 0.5
+            }
+          ]
         }
       ],
       "notes": [
