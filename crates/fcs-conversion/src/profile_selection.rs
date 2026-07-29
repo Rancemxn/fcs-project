@@ -704,6 +704,11 @@ mod tests {
             .join("../../docs/conformance/conversion/selection-vectors.toml")
     }
 
+    fn diagnostic_registry_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/conformance/conversion/diagnostic-categories.toml")
+    }
+
     #[derive(Debug, Deserialize)]
     struct SelectionFile {
         selection: Vec<SelectionVector>,
@@ -745,6 +750,16 @@ mod tests {
         parameters: BTreeMap<String, String>,
     }
 
+    #[derive(Debug, Deserialize)]
+    struct DiagnosticRegistry {
+        category: Vec<DiagnosticCategory>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct DiagnosticCategory {
+        id: String,
+    }
+
     #[test]
     fn registry_loads_and_verifies_all_descriptor_hashes() {
         let registry = load_profile_registry(registry_path()).unwrap();
@@ -772,6 +787,24 @@ mod tests {
         let bytes = fs::read(path).unwrap();
         let digest = lower_hex(&Sha256::digest(&bytes));
         assert_ne!(digest, bad.content_sha256);
+    }
+
+    #[test]
+    fn every_product_conversion_category_is_registered() {
+        let file: DiagnosticRegistry =
+            toml::from_str(&fs::read_to_string(diagnostic_registry_path()).unwrap()).unwrap();
+        let mut product = crate::PRODUCT_CONVERSION_CATEGORIES.to_vec();
+        product.sort_unstable();
+        assert!(
+            product.windows(2).all(|pair| pair[0] != pair[1]),
+            "product Conversion category inventory contains a duplicate"
+        );
+        for category in product {
+            assert!(
+                file.category.iter().any(|entry| entry.id == category),
+                "product Conversion category is absent from the registry: {category}"
+            );
+        }
     }
 
     #[test]

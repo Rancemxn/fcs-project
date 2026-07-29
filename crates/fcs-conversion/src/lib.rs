@@ -25,6 +25,36 @@ mod repair;
 mod rpe;
 mod rpe_canonical;
 
+/// Conversion categories emitted by the active product paths.
+pub const PRODUCT_CONVERSION_CATEGORIES: &[&str] = &[
+    "conversion.ambiguous-source-semantics",
+    "conversion.approximation-budget-exceeded",
+    "conversion.approximation-not-authorized",
+    "conversion.approximation-verified",
+    "conversion.capability-mismatch",
+    "conversion.capability-negotiated",
+    "conversion.compatibility-characterization",
+    "conversion.distance-mismatch",
+    "conversion.drop-applied",
+    "conversion.drop-not-authorized",
+    "conversion.generated-canonical-tempo",
+    "conversion.internal",
+    "conversion.layer-loss",
+    "conversion.profile-not-applicable",
+    "conversion.profile-not-found",
+    "conversion.profile-parameter-invalid",
+    "conversion.profile-registry-integrity",
+    "conversion.repair-not-authorized",
+    "conversion.report-limit",
+    "conversion.resource-missing",
+    "conversion.roundtrip-mismatch",
+    "conversion.source-invalid",
+    "conversion.target-profile-required",
+    "conversion.tool-rewrite",
+    "conversion.unsupported-format",
+    "conversion.unsupported-format-version",
+];
+
 pub use capability::{
     ApproximationAuthorization, CapabilityDescriptor, CapabilityDomain, CapabilityDomainDescriptor,
     CapabilityError, CapabilityFeature, CapabilityLimit, DropAuthorization,
