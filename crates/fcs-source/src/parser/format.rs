@@ -9,6 +9,8 @@ use super::token::{Keyword, Punctuation, Token};
 
 /// Rewrite source trivia and token separators into one deterministic layout.
 pub fn canonicalize_source_layout(source: &str) -> ParseOutput<String> {
+    let normalized = normalize_source_trivia(source);
+    let source = normalized.as_str();
     let tokens = match lex_document(source, ParseLimits::default()) {
         Ok(tokens) => tokens,
         Err(diagnostics) => return ParseOutput::new(None, diagnostics),
@@ -470,6 +472,18 @@ fn normalize_line_endings(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+fn normalize_source_trivia(source: &str) -> String {
+    let normalized = normalize_line_endings(source);
+    let mut lines: Vec<_> = normalized
+        .split('\n')
+        .map(|line| line.trim_end_matches([' ', '\t']))
+        .collect();
+    while lines.last().is_some_and(|line| line.is_empty()) {
+        lines.pop();
+    }
+    format!("{}\n", lines.join("\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{canonicalize_numeric_literals, canonicalize_source_layout};
@@ -511,6 +525,18 @@ mod tests {
         assert!(formatted.contains("layer opaque"));
         assert!(formatted.contains("\"{ raw }\""));
         assert!(formatted.matches("\"1e2\"").count() >= 2);
+    }
+
+    #[test]
+    fn normalizes_line_endings_and_trailing_trivia_before_validation() {
+        let source = "#fcs 5.0.0  \r\nformat { profile: fragment; }  \r\n";
+        let formatted = canonicalize_source_layout(source)
+            .into_result()
+            .expect("trailing source trivia should be normalized");
+        assert_eq!(
+            formatted,
+            "#fcs 5.0.0\nformat {\n    profile: fragment;\n}\n"
+        );
     }
 
     #[test]
