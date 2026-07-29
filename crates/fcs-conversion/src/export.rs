@@ -14,7 +14,8 @@ use fcs_model::{
     CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece,
     CanonicalTrackTarget, CanonicalTrackValue, CanonicalValue, ConversionDomain, ConversionEntry,
     ConversionPhase, ConversionPolicy, ConversionReport, ConversionSeverity, ConversionStatus,
-    EntityKind, ErrorMetric, ExpansionPath, RepairMode, SemanticStatus, StableId, StableIdRegistry,
+    EntityKind, ErrorMetric, ExpansionPath, RepairMode, ReportError, SemanticStatus, StableId,
+    StableIdRegistry,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -37,6 +38,7 @@ pub struct ExportError {
     category: &'static str,
     message: String,
     entries: Vec<ConversionEntry>,
+    report: Option<Box<ConversionReport>>,
 }
 
 #[derive(Default)]
@@ -611,6 +613,7 @@ impl ExportError {
             category,
             message: message.into(),
             entries: Vec::new(),
+            report: None,
         }
     }
 
@@ -619,6 +622,32 @@ impl ExportError {
         entries.truncate(MAX_REPORT_ENTRIES);
         self.entries = entries;
         self
+    }
+
+    fn with_failed_report(
+        mut self,
+        format: &str,
+        options: &ExportOptions,
+        attempted_bytes: &[u8],
+    ) -> Result<Self, ReportError> {
+        let attempted_hash = lower_hex(Sha256::digest(attempted_bytes));
+        let report = ConversionReport::new_with_authorizations(
+            format!("{format}-export-failed-{attempted_hash}"),
+            options.policy,
+            options.repair_mode.clone(),
+            options
+                .approximation
+                .enabled()
+                .then(|| options.approximation.clone()),
+            options.drop.enabled().then(|| options.drop.clone()),
+            self.entries,
+            Vec::new(),
+            [ConversionStatus::Failed],
+            None,
+        )?;
+        self.entries = report.entries().to_vec();
+        self.report = Some(Box::new(report));
+        Ok(self)
     }
 
     pub const fn category(&self) -> &'static str {
@@ -631,6 +660,10 @@ impl ExportError {
 
     pub fn entries(&self) -> &[ConversionEntry] {
         &self.entries
+    }
+
+    pub fn report(&self) -> Option<&ConversionReport> {
+        self.report.as_deref()
     }
 }
 
@@ -3756,7 +3789,9 @@ fn finish_export(
                 comparison.mismatches().len()
             ),
         )
-        .with_entries(entries));
+        .with_entries(entries)
+        .with_failed_report(format, options, &bytes)
+        .map_err(|error| ExportError::new("conversion.report-limit", error.to_string()))?);
     }
     if !comparison.unverified_selectors().is_empty() {
         for (index, selector) in comparison.unverified_selectors().iter().enumerate() {
@@ -5486,8 +5521,23 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
             DropAuthorization::new(["entity.chart.sourceVersion".into()], "not negotiated")
                 .unwrap(),
         );
-        let error = export_rpe_json_with_options(&chart, &options).unwrap_err();
-        assert_eq!(error.category(), "conversion.roundtrip-mismatch");
+        let first = export_rpe_json_with_options(&chart, &options).unwrap_err();
+        let second = export_rpe_json_with_options(&chart, &options).unwrap_err();
+        assert_eq!(first.category(), "conversion.roundtrip-mismatch");
+        let report = first.report().expect("post-write failure report");
+        assert_eq!(report.status(), ConversionStatus::Failed);
+        assert!(report.output_hash().is_none());
+        assert_eq!(report.conversion_policy(), options.policy);
+        assert_eq!(report.repair_mode(), &options.repair_mode);
+        assert_eq!(report.entries(), first.entries());
+        assert_eq!(
+            report.drop_authorization().unwrap().target_selectors(),
+            ["entity.chart.sourceVersion"]
+        );
+        assert_eq!(
+            report.operation_id(),
+            second.report().unwrap().operation_id()
+        );
     }
 
     #[test]
