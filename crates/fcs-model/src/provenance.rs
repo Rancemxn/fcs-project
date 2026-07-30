@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::report::RepairRecord;
-use crate::{CanonicalChart, CanonicalObject, CanonicalResourceBundle};
+use crate::{CanonicalChart, CanonicalObject, CanonicalResourceBundle, ConversionDomain};
 
 /// Closed origin-state set from Conversion Specification §5.2.
 ///
@@ -114,6 +114,60 @@ impl SemanticStatus {
         Self::ALL
             .into_iter()
             .find(|status| status.as_str() == spelling)
+    }
+}
+
+/// Source-free record of a capability fact retained only in FCBC Fidelity.
+///
+/// The current Fidelity schema registers capability negotiation as the sole
+/// semantic-loss category. Future categories must be added here before they
+/// become valid distribution data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticLoss {
+    domain: ConversionDomain,
+    status: SemanticStatus,
+    category: String,
+    entity_id: Option<String>,
+}
+
+impl SemanticLoss {
+    pub const CAPABILITY_NEGOTIATED: &'static str = "conversion.capability-negotiated";
+
+    pub fn new(
+        domain: ConversionDomain,
+        status: SemanticStatus,
+        category: impl Into<String>,
+        entity_id: Option<String>,
+    ) -> Result<Self, ProvenanceError> {
+        let category = category.into();
+        if category != Self::CAPABILITY_NEGOTIATED {
+            return Err(ProvenanceError::InvalidSemanticLossCategory(category));
+        }
+        if entity_id.as_ref().is_some_and(String::is_empty) {
+            return Err(ProvenanceError::EmptySemanticLossEntityId);
+        }
+        Ok(Self {
+            domain,
+            status,
+            category,
+            entity_id,
+        })
+    }
+
+    pub const fn domain(&self) -> ConversionDomain {
+        self.domain
+    }
+
+    pub const fn status(&self) -> SemanticStatus {
+        self.status
+    }
+
+    pub fn category(&self) -> &str {
+        &self.category
+    }
+
+    pub fn entity_id(&self) -> Option<&str> {
+        self.entity_id.as_deref()
     }
 }
 
@@ -495,6 +549,7 @@ pub struct DistributionMetadata {
     provenance: ProvenanceGraph,
     repair_records: Vec<RepairRecord>,
     input_hashes: Vec<InputContentHash>,
+    semantic_losses: Vec<SemanticLoss>,
     custom: CanonicalObject,
 }
 
@@ -510,6 +565,7 @@ impl DistributionMetadata {
             provenance,
             repair_records,
             input_hashes,
+            semantic_losses: Vec::new(),
             custom,
         })
     }
@@ -520,6 +576,7 @@ impl DistributionMetadata {
             provenance: ProvenanceGraph::empty(),
             repair_records: Vec::new(),
             input_hashes: Vec::new(),
+            semantic_losses: Vec::new(),
             custom: CanonicalObject::new(Vec::new()).expect("empty object is valid"),
         }
     }
@@ -536,6 +593,22 @@ impl DistributionMetadata {
         &self.input_hashes
     }
 
+    pub fn semantic_losses(&self) -> &[SemanticLoss] {
+        &self.semantic_losses
+    }
+
+    pub fn with_semantic_losses(
+        mut self,
+        semantic_losses: impl IntoIterator<Item = SemanticLoss>,
+    ) -> Self {
+        for loss in semantic_losses {
+            if !self.semantic_losses.contains(&loss) {
+                self.semantic_losses.push(loss);
+            }
+        }
+        self
+    }
+
     pub fn custom(&self) -> &CanonicalObject {
         &self.custom
     }
@@ -544,6 +617,7 @@ impl DistributionMetadata {
         self.provenance.is_empty()
             && self.repair_records.is_empty()
             && self.input_hashes.is_empty()
+            && self.semantic_losses.is_empty()
             && self.custom.entries().is_empty()
     }
 }
@@ -600,6 +674,8 @@ pub enum ProvenanceError {
     InvalidSourceLocator(String),
     AbsoluteOrUriSourceLocator(String),
     InvalidInputHashDigest(String),
+    InvalidSemanticLossCategory(String),
+    EmptySemanticLossEntityId,
     DuplicateFactId(String),
     MissingDependency {
         fact_id: String,
@@ -639,6 +715,18 @@ impl fmt::Display for ProvenanceError {
                 formatter,
                 "input hash digest must be 64 lowercase hex digits: {digest}"
             ),
+            Self::InvalidSemanticLossCategory(category) => {
+                write!(
+                    formatter,
+                    "semantic loss category is not registered: {category}"
+                )
+            }
+            Self::EmptySemanticLossEntityId => {
+                write!(
+                    formatter,
+                    "semantic loss entity id must not be empty when present"
+                )
+            }
             Self::DuplicateFactId(id) => {
                 write!(formatter, "duplicate provenance fact id: {id}")
             }

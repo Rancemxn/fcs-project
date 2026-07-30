@@ -59,7 +59,7 @@ pub use capability::{
     ApproximationAuthorization, CapabilityDescriptor, CapabilityDomainDescriptor, CapabilityError,
     CapabilityFeature, CapabilityLimit, DropAuthorization,
 };
-pub(crate) use comparison::compare_canonical_charts_with_resources_with_budgets;
+pub(crate) use comparison::compare_canonical_charts_with_resources_with_budgets_and_ignored;
 pub use comparison::{
     CanonicalComparison, ComparisonMismatch, compare_canonical_charts,
     compare_canonical_charts_with_budgets, compare_canonical_compilations,

@@ -794,7 +794,14 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
             )])
             .unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .with_semantic_losses([fcs_model::SemanticLoss::new(
+            fcs_model::ConversionDomain::Timing,
+            fcs_model::SemanticStatus::Preserved,
+            fcs_model::SemanticLoss::CAPABILITY_NEGOTIATED,
+            None,
+        )
+        .unwrap()]);
         let compilation =
             CanonicalCompilation::new(base.chart().clone(), base.resources().clone(), distribution);
 
@@ -810,6 +817,13 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
                 .contains(crate::FeatureFlags::HAS_FIDELITY)
         );
         assert!(container.section_types().contains(&16));
+        assert!(
+            fidelity
+                .windows(fcs_model::SemanticLoss::CAPABILITY_NEGOTIATED.len())
+                .any(|window| {
+                    window == fcs_model::SemanticLoss::CAPABILITY_NEGOTIATED.as_bytes()
+                })
+        );
         assert!(
             !fidelity
                 .windows(raw_source_value.len())
@@ -3132,6 +3146,10 @@ fn string_table_values<'a>(
             "semanticStatus",
             "dependencies",
             "stale",
+            "domain",
+            "status",
+            "category",
+            "entityId",
             "sha256",
         ]);
         for hash in fidelity.input_hashes() {
@@ -3157,6 +3175,16 @@ fn string_table_values<'a>(
                 strings.push(status.as_str());
             }
             strings.extend(fact.dependencies().iter().map(String::as_str));
+        }
+        for loss in fidelity.semantic_losses() {
+            strings.extend([
+                loss.domain().as_str(),
+                loss.status().as_str(),
+                loss.category(),
+            ]);
+            if let Some(entity_id) = loss.entity_id() {
+                strings.push(entity_id);
+            }
         }
         collect_canonical_object_strings(fidelity.custom(), &mut strings);
     }
@@ -3215,6 +3243,11 @@ fn fidelity_section(metadata: &DistributionMetadata, strings: &[&str]) -> FcbcRe
         .into_iter()
         .map(|rule| value_string(string_index(strings, rule)))
         .collect();
+    let semantic_losses = metadata
+        .semantic_losses()
+        .iter()
+        .map(|loss| fidelity_semantic_loss_value(loss, strings))
+        .collect::<FcbcResult<Vec<_>>>()?;
     let fields = vec![
         (
             "specificationVersion",
@@ -3225,12 +3258,36 @@ fn fidelity_section(metadata: &DistributionMetadata, strings: &[&str]) -> FcbcRe
         ("entityMappings", value_array(14, Vec::new())),
         ("fieldFacts", value_array(14, facts)),
         ("mappingRules", value_array(4, mapping_rules)),
-        ("semanticLosses", value_array(14, Vec::new())),
+        ("semanticLosses", value_array(14, semantic_losses)),
         (
             "custom",
             canonical_object_value(metadata.custom(), strings)?,
         ),
     ];
+    Ok(value_object(&fields, strings))
+}
+
+fn fidelity_semantic_loss_value(
+    loss: &fcs_model::SemanticLoss,
+    strings: &[&str],
+) -> FcbcResult<Vec<u8>> {
+    let mut fields = vec![
+        (
+            "domain",
+            value_string(string_index(strings, loss.domain().as_str())),
+        ),
+        (
+            "status",
+            value_string(string_index(strings, loss.status().as_str())),
+        ),
+        (
+            "category",
+            value_string(string_index(strings, loss.category())),
+        ),
+    ];
+    if let Some(entity_id) = loss.entity_id() {
+        fields.push(("entityId", value_string(string_index(strings, entity_id))));
+    }
     Ok(value_object(&fields, strings))
 }
 

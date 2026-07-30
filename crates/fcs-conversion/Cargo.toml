@@ -19,3 +19,4 @@ sha2.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+fcs-fcbc = { path = "../fcs-fcbc" }
