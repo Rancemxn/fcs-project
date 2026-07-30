@@ -118,6 +118,11 @@
   sg run -l rust -p 'fn $NAME($$$ARGS) $$$BODY' crates
   ```
 
+- 本地文件读取、搜索和定位优先使用 FastCtx MCP 的 `read`、`grep` 和 `glob`，传入绝对路径。它们按文件
+  实际编码读取并保留行号，避免 Windows PowerShell 默认编码造成证据误读；需要读多个文件时使用一次批量
+  `read`。只有 FastCtx 报告编码不明确时才按其候选显式传入 `encoding`，不得用 `Get-Content`、`type` 或
+  `Set-Content` 重写文件来“修复”显示问题。
+
 先用 `eza` 看结构、`fd` 定位范围，再用 `rg` 或 `sg` 缩小目标。阅读实现时同时查看调用方、对应测试和
 相关规范，避免只根据单个匹配结果推断行为。目标项目检查默认排除 `refer/`；只有“阅读路由”
 明确要求研究外部证据或依赖源码时才进入，并遵守对应快照、版本和参考仓库规则。
