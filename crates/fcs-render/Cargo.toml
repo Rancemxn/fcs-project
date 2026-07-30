@@ -12,5 +12,6 @@ sha2.workspace = true
 ttf-parser = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+fcs-source = { path = "../fcs-source" }
 serde = { workspace = true, features = ["derive"] }
 toml.workspace = true

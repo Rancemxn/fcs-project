@@ -2,7 +2,8 @@ use fcs_model::{
     CanonicalCompilation, CanonicalDescriptorKind, CanonicalDescriptorTable,
     CanonicalExpressionDag, CanonicalExpressionOpcode, CanonicalExpressionType,
     CanonicalExpressionValue, CanonicalJudgeShape, CanonicalNoteKind, CanonicalNoteScorePolicy,
-    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalRequiredExtension,
+    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalRenderGeometryData,
+    CanonicalRenderPaintData, CanonicalRenderScene, CanonicalRequiredExtension,
     CanonicalResourceKind, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
     CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget,
     CanonicalTrackValue, CanonicalValue, CanonicalValueType, DistributionMetadata,
@@ -389,6 +390,7 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         &[],
         ExecutionGraph::Fixture,
         None,
+        None,
         ContainerProfile::StrictRuntime,
         None,
     )
@@ -723,6 +725,7 @@ pub fn write_from_compilation_with_profile(
             has_notes: !notes.is_empty(),
         },
         chart.descriptors(),
+        chart.render(),
         profile,
         (profile == ContainerProfile::Fidelity).then_some(compilation.distribution()),
     )
@@ -2208,6 +2211,7 @@ fn assemble_package(
     extensions: &[ExtensionFixture],
     execution_graph: ExecutionGraph,
     runtime_descriptors: Option<&CanonicalDescriptorTable>,
+    render: Option<&CanonicalRenderScene>,
     profile: ContainerProfile,
     fidelity: Option<&DistributionMetadata>,
 ) -> FcbcResult<Vec<u8>> {
@@ -2262,8 +2266,12 @@ fn assemble_package(
     });
     constants.dedup();
     let indices = constant_indices(&constants);
-    let (track_section, expressions) = match execution_graph {
-        ExecutionGraph::Fixture => (tracks_section(&indices), expression_section(&indices)),
+    let (track_section, expressions, descriptor_indices) = match execution_graph {
+        ExecutionGraph::Fixture => (
+            tracks_section(&indices),
+            expression_section(&indices),
+            Vec::new(),
+        ),
         ExecutionGraph::Native { has_notes } => native_tracks_section(
             &constants,
             &indices,
@@ -2289,13 +2297,24 @@ fn assemble_package(
             "fidelity profile requires a structured Fidelity section",
         ));
     }
-    let strings = string_table_values(resources, &notes, extensions, fidelity);
+    let mut strings = string_table_values(resources, &notes, extensions, fidelity);
+    if render.is_some() {
+        strings.extend(["originDescriptor", "sizeDescriptor"]);
+        strings.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+        strings.dedup();
+    }
     let (resource_records, resource_data) = resource_sections(resources, &strings);
     let fidelity_section = fidelity
         .map(|metadata| fidelity_section(metadata, &strings))
         .transpose()?;
     if fidelity_section.is_some() {
         feature_flags |= crate::FeatureFlags::HAS_FIDELITY;
+    }
+    let render_section = render
+        .map(|scene| render_section(scene, &descriptor_indices, &strings))
+        .transpose()?;
+    if render_section.is_some() {
+        feature_flags |= crate::FeatureFlags::HAS_RENDER;
     }
 
     let mut sections = vec![
@@ -2313,6 +2332,9 @@ fn assemble_package(
         Section::new(12, expressions),
         Section::new(13, distances),
     ];
+    if let Some(render_section) = render_section {
+        sections.push(Section::new(14, render_section));
+    }
     if !extensions.is_empty() {
         sections.push(Section::new(15, extensions_section(extensions, &strings)));
     }
@@ -2344,6 +2366,184 @@ impl Section {
             offset: 0,
         }
     }
+}
+
+fn render_section(
+    scene: &CanonicalRenderScene,
+    descriptor_indices: &[u32],
+    strings: &[&str],
+) -> FcbcResult<Vec<u8>> {
+    if scene.paths().iter().next().is_some()
+        || scene.strokes().iter().next().is_some()
+        || scene.clips().iter().next().is_some()
+        || scene.glyph_runs().iter().next().is_some()
+    {
+        return Err(FcbcError::new(
+            "fcbc.render-unsupported",
+            "product Render writer currently supports only Rect + solid scenes",
+        ));
+    }
+    let descriptor = |index: usize| {
+        descriptor_indices.get(index).copied().ok_or_else(|| {
+            FcbcError::new(
+                "fcbc.dangling-reference",
+                format!("Render descriptor {index} is not encoded in Core"),
+            )
+        })
+    };
+    let layer_order = scene.layer_draw_order();
+    let mut encoded_layer = vec![0u32; scene.layers().len()];
+    for (index, layer) in layer_order.iter().enumerate() {
+        encoded_layer[*layer] = index as u32;
+    }
+    let mut geometry_order: Vec<usize> = (0..scene.geometries().len()).collect();
+    geometry_order.sort_by_key(|index| scene.geometries()[*index].id().value());
+    let mut geometry_indices = vec![0u32; scene.geometries().len()];
+    for (index, geometry) in geometry_order.iter().enumerate() {
+        geometry_indices[*geometry] = index as u32;
+    }
+    let mut paint_order: Vec<usize> = (0..scene.paints().len()).collect();
+    paint_order.sort_by_key(|index| scene.paints()[*index].id().value());
+    let mut paint_indices = vec![0u32; scene.paints().len()];
+    for (index, paint) in paint_order.iter().enumerate() {
+        paint_indices[*paint] = index as u32;
+    }
+
+    let mut roots = Vec::<(usize, usize)>::new();
+    let mut layer_root_ranges = vec![(NULL_INDEX, 0u32); layer_order.len()];
+    for (encoded, source_layer) in layer_order.iter().enumerate() {
+        let mut layer_roots = scene.layers()[*source_layer].roots().to_vec();
+        layer_roots.sort_by(|left, right| {
+            let left = &scene.nodes()[*left];
+            let right = &scene.nodes()[*right];
+            left.z_order()
+                .cmp(&right.z_order())
+                .then(left.document_order().cmp(&right.document_order()))
+                .then(left.id().value().cmp(&right.id().value()))
+        });
+        let first = roots.len();
+        roots.extend(layer_roots.into_iter().map(|node| (*source_layer, node)));
+        layer_root_ranges[encoded] = if roots.len() == first {
+            (NULL_INDEX, 0)
+        } else {
+            (first as u32, (roots.len() - first) as u32)
+        };
+    }
+
+    let mut payload = Vec::new();
+    put_u16(&mut payload, 1);
+    put_u16(&mut payload, 0);
+    put_u16(&mut payload, 0);
+    put_u16(&mut payload, 0);
+    put_f64(&mut payload, scene.viewport().width());
+    put_f64(&mut payload, scene.viewport().height());
+    put_u16(&mut payload, scene.viewport().color_space().ordinal());
+    put_u16(&mut payload, 0);
+    put_u32(&mut payload, scene.layers().len() as u32);
+    put_u32(&mut payload, scene.nodes().len() as u32);
+    put_u32(&mut payload, scene.geometries().len() as u32);
+    put_u32(&mut payload, scene.paths().len() as u32);
+    put_u32(&mut payload, scene.paints().len() as u32);
+    put_u32(&mut payload, 0);
+    put_u32(&mut payload, 0);
+    put_u32(&mut payload, 0);
+    for (encoded, source_layer) in layer_order.iter().enumerate() {
+        let layer = &scene.layers()[*source_layer];
+        let (first_root, root_count) = layer_root_ranges[encoded];
+        let mut record_payload = Vec::new();
+        put_u64(&mut record_payload, layer.id().value());
+        put_u16(&mut record_payload, layer.pass().ordinal());
+        put_u16(&mut record_payload, 0);
+        put_i32(&mut record_payload, layer.z_order());
+        put_u32(&mut record_payload, layer.document_order());
+        put_u32(&mut record_payload, first_root);
+        put_u32(&mut record_payload, root_count);
+        payload.extend_from_slice(&record(record_payload));
+    }
+    for (source_layer, node_index) in &roots {
+        let node = &scene.nodes()[*node_index];
+        if node.parent().is_some() || node.kind() != fcs_model::CanonicalRenderNodeKind::Rect {
+            return Err(FcbcError::new(
+                "fcbc.render-unsupported",
+                "product Render writer currently supports root Rect nodes only",
+            ));
+        }
+        let geometry = node.geometry().ok_or_else(|| {
+            FcbcError::new("fcbc.dangling-reference", "Render Rect has no geometry")
+        })?;
+        let paint = node.fill_paint().ok_or_else(|| {
+            FcbcError::new("fcbc.dangling-reference", "Render Rect has no fill paint")
+        })?;
+        let attachment_id = node.attachment().target().map_or(0, |id| id.value());
+        let mut record_payload = Vec::new();
+        put_u64(&mut record_payload, node.id().value());
+        put_u16(&mut record_payload, node.kind().ordinal());
+        put_u16(&mut record_payload, 0b11 | (u16::from(node.isolate()) << 2));
+        put_u32(&mut record_payload, NULL_INDEX);
+        put_u32(&mut record_payload, encoded_layer[*source_layer]);
+        put_u32(&mut record_payload, node.document_order());
+        put_i32(&mut record_payload, node.z_order());
+        put_u16(&mut record_payload, node.attachment().ordinal());
+        put_u16(&mut record_payload, 0);
+        put_u64(&mut record_payload, attachment_id);
+        put_f64(&mut record_payload, node.active().start());
+        put_f64(&mut record_payload, node.active().end());
+        put_u32(&mut record_payload, descriptor(node.position())?);
+        put_u32(&mut record_payload, descriptor(node.origin())?);
+        put_u32(&mut record_payload, descriptor(node.rotation())?);
+        put_u32(&mut record_payload, descriptor(node.scale())?);
+        put_u32(&mut record_payload, descriptor(node.opacity())?);
+        put_u32(&mut record_payload, descriptor(node.visibility())?);
+        put_u32(&mut record_payload, geometry_indices[geometry]);
+        put_u32(&mut record_payload, paint_indices[paint]);
+        put_u32(&mut record_payload, NULL_INDEX);
+        put_u32(&mut record_payload, NULL_INDEX);
+        put_u16(&mut record_payload, node.composite().ordinal());
+        put_u16(&mut record_payload, 0);
+        record_payload.extend_from_slice(&empty_object());
+        payload.extend_from_slice(&record(record_payload));
+    }
+    for geometry_index in &geometry_order {
+        let geometry = &scene.geometries()[*geometry_index];
+        let CanonicalRenderGeometryData::Rect { origin, size } = geometry.data() else {
+            return Err(FcbcError::new(
+                "fcbc.render-unsupported",
+                "Render geometry is not a Rect",
+            ));
+        };
+        let fields = value_object(
+            &[
+                (
+                    "originDescriptor",
+                    value_int(i64::from(descriptor(*origin)?)),
+                ),
+                ("sizeDescriptor", value_int(i64::from(descriptor(*size)?))),
+            ],
+            strings,
+        );
+        let mut record_payload = Vec::new();
+        put_u64(&mut record_payload, geometry.id().value());
+        put_u16(&mut record_payload, geometry.kind().ordinal());
+        put_u16(&mut record_payload, 0);
+        record_payload.extend_from_slice(&fields);
+        payload.extend_from_slice(&record(record_payload));
+    }
+    for paint_index in &paint_order {
+        let paint = &scene.paints()[*paint_index];
+        let CanonicalRenderPaintData::Solid { color } = paint.data() else {
+            return Err(FcbcError::new(
+                "fcbc.render-unsupported",
+                "Render paint is not Solid",
+            ));
+        };
+        let mut record_payload = Vec::new();
+        put_u64(&mut record_payload, paint.id().value());
+        put_u16(&mut record_payload, 1);
+        put_u16(&mut record_payload, 0);
+        put_u32(&mut record_payload, descriptor(*color)?);
+        payload.extend_from_slice(&record(record_payload));
+    }
+    Ok(record(payload))
 }
 
 fn fixture_constants() -> Vec<Constant> {
@@ -3775,7 +3975,7 @@ fn native_tracks_section(
     tracks: &[NativeTrackFixture],
     has_notes: bool,
     runtime_descriptors: Option<&CanonicalDescriptorTable>,
-) -> FcbcResult<(Vec<u8>, Vec<u8>)> {
+) -> FcbcResult<(Vec<u8>, Vec<u8>, Vec<u32>)> {
     let mut descriptors = Vec::new();
     let mut expressions = NativeExpressionPool::default();
     let mut runtime_descriptor_indices = runtime_descriptors
@@ -3898,12 +4098,32 @@ fn native_tracks_section(
         }
     }
 
+    if let Some(table) = runtime_descriptors {
+        for canonical_index in 0..table.descriptors().len() {
+            native_canonical_descriptor(
+                table,
+                canonical_index,
+                constants,
+                &mut descriptors,
+                &mut expressions,
+                &mut runtime_descriptor_indices,
+            )?;
+        }
+    }
+
     let mut section = Vec::new();
     put_u32(&mut section, descriptors.len() as u32);
     for descriptor in descriptors {
         section.extend_from_slice(&descriptor);
     }
-    Ok((section, expressions.section()))
+    Ok((
+        section,
+        expressions.section(),
+        runtime_descriptor_indices
+            .into_iter()
+            .map(|index| index.expect("canonical descriptor must be reachable"))
+            .collect(),
+    ))
 }
 
 fn note_property_path(property: usize) -> &'static str {

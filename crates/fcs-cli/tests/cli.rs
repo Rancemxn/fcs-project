@@ -455,6 +455,47 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
 }
 
 #[test]
+fn compile_preserves_render_source_and_inspect_loads_it() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("render.fcs");
+    fs::copy(
+        root.join("docs/conformance/render/solid-rect-4x4.fcs"),
+        &source,
+    )
+    .unwrap();
+    let out = dir.path().join("render.fcbc");
+    let output = bin()
+        .arg("compile")
+        .arg(&source)
+        .arg("--output")
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let inspect = bin()
+        .arg("inspect")
+        .arg(&out)
+        .arg("--render")
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        inspect.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&inspect.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&inspect.stdout);
+    assert!(stdout.contains("\"layerCount\":1"));
+    assert!(stdout.contains("\"nodeCount\":1"));
+    assert!(stdout.contains("\"drawOps\":1"));
+}
+
+#[test]
 fn compile_honors_public_compile_limits() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("chart.fcs");
