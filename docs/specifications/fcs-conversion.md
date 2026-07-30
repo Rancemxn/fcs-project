@@ -428,6 +428,15 @@ metadata/credits/resource/package/render/effect
 entity/event/resource/byte limits
 ```
 
+Capability descriptor 的 domain keyspace 与第 7.2 节完全一致，只能使用 `timing`、`gameplay`、
+`motion`、`scroll`、`presentation`、`resource`、`metadata`、`syntax`、`profile` 和 `package`。
+Numeric precision、entity identity、limit 和 expression/runtime-extension 是 capability axis，不是额外
+domain：它们必须声明在实际约束的上述 domain 内。只有对整个 target semantic profile 统一生效、
+无法归属到更具体语义域的 runtime expression environment、extension registry、numeric policy 或
+entity-identity policy 才能放在 `profile`；resource/package count 与 byte closure 分别放在
+`resource`/`package`。一个 axis 影响多个 domain 时必须在每个受影响 domain 分别声明，不能先建立
+`numeric`、`entity`、`limits` 或 `expression` 伪 domain 再在 report 中折叠。
+
 Negotiation 必须在写目标 bytes 前完成。每个 canonical feature 按以下优先顺序得到一个 decision：
 
 ```text
@@ -475,6 +484,7 @@ RenderSection 均不可见。
 
 Drop 需要独立 `DropAuthorization`，并列出 domain/entity/field；Approximation 授权不隐含 drop，
 Repair 授权也不隐含二者。授权 object 进入 report，不得只保存无法审计的人类摘要。
+两种授权的 domain 或 selector 首段必须是第 7.2 节注册的 domain；未知 domain 在授权输入边界直接失败。
 
 ---
 
@@ -543,6 +553,11 @@ ConversionEntry {
 Entry 先按 conversion phase，再按 canonical entity stable order、field schema order、rule ID 排序。
 Message 不是稳定 API；category/domain/status/profile/rule 是机器接口。大型 source/object/resource
 payload 不得复制进 entry。
+
+Capability negotiation 与 limit entry 必须直接使用其 descriptor 所属的第 7.2 节 domain。`profile`
+只记录 profile selection/binding 以及第 6.2 节允许的 target-wide capability；`package` 只记录 package
+与 distribution closure。实现不得把未知或 cross-cutting axis 静默映射到 `profile`/`package`，也不得
+把 `numeric`、`entity`、`limits` 或 `expression` 当作隐藏的 entry domain。
 
 ### 7.3 ErrorMetric
 

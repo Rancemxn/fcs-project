@@ -6,64 +6,9 @@
 
 use std::fmt;
 
+use fcs_model::ConversionDomain;
+
 pub use fcs_model::{ApproximationAuthorization, DropAuthorization};
-
-/// Canonical feature domains used by Conversion §6.2 and §7.2.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum CapabilityDomain {
-    Timing,
-    Gameplay,
-    Motion,
-    Scroll,
-    Presentation,
-    Resource,
-    Metadata,
-    Numeric,
-    Entity,
-    Limits,
-    Expression,
-    Package,
-}
-
-impl CapabilityDomain {
-    pub const ALL: [Self; 12] = [
-        Self::Timing,
-        Self::Gameplay,
-        Self::Motion,
-        Self::Scroll,
-        Self::Presentation,
-        Self::Resource,
-        Self::Metadata,
-        Self::Numeric,
-        Self::Entity,
-        Self::Limits,
-        Self::Expression,
-        Self::Package,
-    ];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Timing => "timing",
-            Self::Gameplay => "gameplay",
-            Self::Motion => "motion",
-            Self::Scroll => "scroll",
-            Self::Presentation => "presentation",
-            Self::Resource => "resource",
-            Self::Metadata => "metadata",
-            Self::Numeric => "numeric",
-            Self::Entity => "entity",
-            Self::Limits => "limits",
-            Self::Expression => "expression",
-            Self::Package => "package",
-        }
-    }
-}
-
-impl fmt::Display for CapabilityDomain {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
 
 /// One stable capability axis/value declaration.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -136,10 +81,10 @@ fn validate_key(kind: &str, value: &str) -> Result<(), CapabilityError> {
     Ok(())
 }
 
-/// One typed domain declaration in a target capability descriptor.
+/// One section 7.2 domain declaration in a target capability descriptor.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CapabilityDomainDescriptor {
-    domain: CapabilityDomain,
+    domain: ConversionDomain,
     exact: bool,
     equivalent: bool,
     approximation: bool,
@@ -154,7 +99,7 @@ pub struct CapabilityDomainDescriptor {
 impl CapabilityDomainDescriptor {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        domain: CapabilityDomain,
+        domain: ConversionDomain,
         exact: bool,
         equivalent: bool,
         approximation: bool,
@@ -212,7 +157,7 @@ impl CapabilityDomainDescriptor {
         Ok(self)
     }
 
-    pub const fn domain(&self) -> CapabilityDomain {
+    pub const fn domain(&self) -> ConversionDomain {
         self.domain
     }
 
@@ -327,8 +272,8 @@ impl CapabilityDescriptor {
             domain.validate()?;
         }
         domains.sort_by_key(|domain| domain.domain());
-        if domains.len() != CapabilityDomain::ALL.len()
-            || CapabilityDomain::ALL
+        if domains.len() != ConversionDomain::ALL.len()
+            || ConversionDomain::ALL
                 .into_iter()
                 .any(|domain| !domains.iter().any(|entry| entry.domain() == domain))
         {
@@ -368,7 +313,7 @@ impl CapabilityDescriptor {
         &self.domains
     }
 
-    pub fn domain(&self, domain: CapabilityDomain) -> Option<&CapabilityDomainDescriptor> {
+    pub fn domain(&self, domain: ConversionDomain) -> Option<&CapabilityDomainDescriptor> {
         self.domains.iter().find(|entry| entry.domain() == domain)
     }
 }
@@ -395,7 +340,7 @@ mod tests {
     use super::*;
 
     fn exact_domains() -> Vec<CapabilityDomainDescriptor> {
-        CapabilityDomain::ALL
+        ConversionDomain::ALL
             .into_iter()
             .map(|domain| {
                 CapabilityDomainDescriptor::new(
@@ -422,7 +367,7 @@ mod tests {
     #[test]
     fn feature_and_limit_declarations_are_validated_and_sorted() {
         let descriptor = CapabilityDomainDescriptor::new(
-            CapabilityDomain::Gameplay,
+            ConversionDomain::Gameplay,
             true,
             false,
             false,
@@ -454,7 +399,7 @@ mod tests {
         let feature = CapabilityFeature::new("note.kind", "tap").unwrap();
         assert!(
             CapabilityDomainDescriptor::new(
-                CapabilityDomain::Gameplay,
+                ConversionDomain::Gameplay,
                 true,
                 false,
                 false,
@@ -470,7 +415,7 @@ mod tests {
         let limit = CapabilityLimit::new("entity.count", 1.0).unwrap();
         assert!(
             CapabilityDomainDescriptor::new(
-                CapabilityDomain::Gameplay,
+                ConversionDomain::Gameplay,
                 true,
                 false,
                 false,

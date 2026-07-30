@@ -56,8 +56,8 @@ pub const PRODUCT_CONVERSION_CATEGORIES: &[&str] = &[
 ];
 
 pub use capability::{
-    ApproximationAuthorization, CapabilityDescriptor, CapabilityDomain, CapabilityDomainDescriptor,
-    CapabilityError, CapabilityFeature, CapabilityLimit, DropAuthorization,
+    ApproximationAuthorization, CapabilityDescriptor, CapabilityDomainDescriptor, CapabilityError,
+    CapabilityFeature, CapabilityLimit, DropAuthorization,
 };
 pub(crate) use comparison::compare_canonical_charts_with_resources_with_budgets;
 pub use comparison::{

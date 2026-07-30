@@ -311,7 +311,7 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
     if expected.source_version() != actual.source_version() {
         mismatch(
             &mut mismatches,
-            "entity",
+            "profile",
             "chart.sourceVersion",
             expected.source_version().to_string(),
             actual.source_version().to_string(),
@@ -320,7 +320,7 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
     if expected.profile() != actual.profile() || expected.features() != actual.features() {
         mismatch(
             &mut mismatches,
-            "entity",
+            "profile",
             "chart.profile",
             format!("{:?}/{:?}", expected.profile(), expected.features()),
             format!("{:?}/{:?}", actual.profile(), actual.features()),
@@ -391,7 +391,7 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
     if expected.descriptors() != actual.descriptors() {
         mismatch(
             &mut mismatches,
-            "expression",
+            "profile",
             "descriptor.structure",
             aggregate_fingerprint(expected.descriptors()),
             aggregate_fingerprint(actual.descriptors()),
@@ -400,7 +400,7 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
     if expected.required_extensions() != actual.required_extensions() {
         mismatch(
             &mut mismatches,
-            "expression",
+            "profile",
             "required_extensions",
             aggregate_fingerprint(expected.required_extensions()),
             aggregate_fingerprint(actual.required_extensions()),
@@ -720,7 +720,7 @@ fn compare_lines(
         let Some(target_id) = aligned_line_id(alignment, left.id()) else {
             structural_mismatch(
                 mismatches,
-                "entity",
+                "motion",
                 format!("lines[{}]", left.id().value()),
                 "present",
                 "missing",
@@ -734,7 +734,7 @@ fn compare_lines(
         else {
             structural_mismatch(
                 mismatches,
-                "entity",
+                "motion",
                 format!("lines[{}]", left.id().value()),
                 "present",
                 "missing",
@@ -746,7 +746,7 @@ fn compare_lines(
         if left.document_order() != right.document_order() {
             structural_mismatch(
                 mismatches,
-                "entity",
+                "motion",
                 field("documentOrder"),
                 left.document_order().to_string(),
                 right.document_order().to_string(),
@@ -858,7 +858,7 @@ fn compare_lines(
         if !matched.contains(&line.id().value()) {
             structural_mismatch(
                 mismatches,
-                "entity",
+                "motion",
                 format!("lines[{}]", line.id().value()),
                 "missing",
                 "present",
@@ -1022,7 +1022,7 @@ fn compare_notes(
         if left.document_order() != right.document_order() {
             structural_mismatch(
                 mismatches,
-                "entity",
+                "gameplay",
                 field("documentOrder"),
                 left.document_order().to_string(),
                 right.document_order().to_string(),
@@ -1314,7 +1314,7 @@ fn compare_track_piece(
             if left.document_order() != right.document_order() {
                 structural_mismatch(
                     mismatches,
-                    "entity",
+                    "motion",
                     field("documentOrder"),
                     left.document_order().to_string(),
                     right.document_order().to_string(),
@@ -1341,7 +1341,7 @@ fn compare_track_piece(
             if left.document_order() != right.document_order() {
                 structural_mismatch(
                     mismatches,
-                    "entity",
+                    "motion",
                     field("documentOrder"),
                     left.document_order().to_string(),
                     right.document_order().to_string(),
@@ -1950,13 +1950,13 @@ mod tests {
         let mut sink = Mismatches::new(&dropped);
         record(&mut sink, "motion", "lines[0].parent");
         record(&mut sink, "motion", "lines[0].inherit");
-        record(&mut sink, "entity", "lines[0].documentOrder");
+        record(&mut sink, "motion", "lines[0].documentOrder");
         let kept: Vec<String> = sink
             .into_inner()
             .iter()
             .map(|mismatch| mismatch.selector().to_owned())
             .collect();
-        assert_eq!(kept, ["motion.line.inherit", "entity.line.documentOrder"]);
+        assert_eq!(kept, ["motion.line.inherit", "motion.line.documentOrder"]);
     }
 
     #[test]
@@ -2423,7 +2423,7 @@ mod tests {
             comparison
                 .mismatches()
                 .iter()
-                .any(|mismatch| mismatch.selector() == "entity.note.documentOrder")
+                .any(|mismatch| mismatch.selector() == "gameplay.note.documentOrder")
         );
     }
 
@@ -2715,7 +2715,7 @@ mod tests {
         let dropped: Vec<String> = Vec::new();
         let mut sink = Mismatches::new(&dropped);
         record(&mut sink, "motion", "lines[0].parent");
-        record(&mut sink, "entity", "lines[0].documentOrder");
+        record(&mut sink, "motion", "lines[0].documentOrder");
         assert_eq!(sink.into_inner().len(), 2);
     }
 

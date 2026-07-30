@@ -22,10 +22,10 @@ use sha2::{Digest, Sha256};
 
 use crate::comparison::{EntityAlignment, MAX_REPORT_ENTRIES};
 use crate::{
-    ApproximationAuthorization, ArtifactRole, CapabilityDescriptor, CapabilityDomain,
-    CapabilityDomainDescriptor, CapabilityFeature, DecimalLimits, DropAuthorization, ExactDecimal,
-    PecLimits, PecProfile, PecProfileBinding, PgrLimits, PgrProfile, PgrProfileBinding, RpeLimits,
-    RpeProfile, RpeProfileBinding, RpeVersionEra, SourceArtifact, SourceFormat,
+    ApproximationAuthorization, ArtifactRole, CapabilityDescriptor, CapabilityDomainDescriptor,
+    CapabilityFeature, DecimalLimits, DropAuthorization, ExactDecimal, PecLimits, PecProfile,
+    PecProfileBinding, PgrLimits, PgrProfile, PgrProfileBinding, RpeLimits, RpeProfile,
+    RpeProfileBinding, RpeVersionEra, SourceArtifact, SourceFormat,
     compare_canonical_charts_with_resources_with_budgets, interpret_pec, interpret_pgr,
     interpret_rpe_semantics, lower_pec_to_canonical, lower_pgr_to_canonical,
     lower_rpe_to_canonical, parse_json_document, parse_pec_document, parse_pgr_document,
@@ -66,7 +66,7 @@ fn pgr_line_tracks<'a>(
             ("pgr.rotation", CanonicalTrackTarget::Rotation) => &mut found.rotation,
             ("pgr.alpha", CanonicalTrackTarget::Alpha) => &mut found.alpha,
             ("pgr.speed", CanonicalTrackTarget::ScrollSpeed) => &mut found.speed,
-            _ if negotiation.drops(CapabilityDomain::Motion) => continue,
+            _ if negotiation.drops(ConversionDomain::Motion) => continue,
             _ => {
                 return Err(ExportError::new(
                     "conversion.capability-mismatch",
@@ -98,7 +98,7 @@ fn require_pgr_chart_shape(
     })?;
     for line in chart.lines().lines() {
         let base = line.base();
-        if !negotiation.drops(CapabilityDomain::Motion)
+        if !negotiation.drops(ConversionDomain::Motion)
             && (line.parent().is_some()
                 || line.inherit() != &CanonicalLineInherit::default()
                 || base.position().x() != 0.0
@@ -152,10 +152,10 @@ fn require_pgr_chart_shape(
             || presentation.visible_from().is_some()
             || presentation.visible_until().is_some()
             || presentation.scroll_factor() < 0.0;
-        if (gameplay_unsupported && !negotiation.drops(CapabilityDomain::Gameplay))
+        if (gameplay_unsupported && !negotiation.drops(ConversionDomain::Gameplay))
             || (presentation_unsupported
-                && !negotiation.drops(CapabilityDomain::Presentation)
-                && !negotiation.approximates(CapabilityDomain::Presentation))
+                && !negotiation.drops(ConversionDomain::Presentation)
+                && !negotiation.approximates(ConversionDomain::Presentation))
         {
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
@@ -531,14 +531,14 @@ impl ExportOutcome {
 /// One domain decision made before target bytes are written.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NegotiationEntry {
-    domain: CapabilityDomain,
+    domain: ConversionDomain,
     action: NegotiationAction,
     category: &'static str,
     status: SemanticStatus,
 }
 
 impl NegotiationEntry {
-    pub const fn domain(&self) -> CapabilityDomain {
+    pub const fn domain(&self) -> ConversionDomain {
         self.domain
     }
 
@@ -574,18 +574,18 @@ impl NegotiationPlan {
             .unwrap_or(NegotiationAction::Direct)
     }
 
-    pub fn action_for(&self, domain: CapabilityDomain) -> Option<NegotiationAction> {
+    pub fn action_for(&self, domain: ConversionDomain) -> Option<NegotiationAction> {
         self.entries
             .iter()
             .find(|entry| entry.domain == domain)
             .map(|entry| entry.action)
     }
 
-    pub fn drops(&self, domain: CapabilityDomain) -> bool {
+    pub fn drops(&self, domain: ConversionDomain) -> bool {
         self.action_for(domain) == Some(NegotiationAction::Drop)
     }
 
-    pub fn approximates(&self, domain: CapabilityDomain) -> bool {
+    pub fn approximates(&self, domain: ConversionDomain) -> bool {
         self.action_for(domain) == Some(NegotiationAction::Bake)
     }
 
@@ -600,7 +600,7 @@ impl NegotiationPlan {
 const LINEAR_SEGMENT_QUANTUM: f64 = 0.001;
 
 fn baked_presentation_value(value: f64, negotiation: &NegotiationPlan) -> f64 {
-    if negotiation.approximates(CapabilityDomain::Presentation) {
+    if negotiation.approximates(ConversionDomain::Presentation) {
         (value / LINEAR_SEGMENT_QUANTUM).round() * LINEAR_SEGMENT_QUANTUM
     } else {
         value
@@ -848,7 +848,7 @@ fn export_pgr_with_resource_context(
                 .map(|end| chart_time_to_pgr_t(end.chart_time_seconds(), bpm) - time_t)
                 .unwrap_or(0.0)
                 .max(0.0);
-            let position_x = if negotiation.drops(CapabilityDomain::Presentation) {
+            let position_x = if negotiation.drops(ConversionDomain::Presentation) {
                 0.0
             } else {
                 baked_presentation_value(note.presentation().position_x(), &negotiation) / 108.0
@@ -865,7 +865,7 @@ fn export_pgr_with_resource_context(
                 "time": time_t,
                 "holdTime": hold_time,
                 "positionX": position_x,
-                "speed": if negotiation.drops(CapabilityDomain::Presentation) {
+                "speed": if negotiation.drops(ConversionDomain::Presentation) {
                     1.0
                 } else {
                     baked_presentation_value(note.presentation().scroll_factor(), &negotiation)
@@ -891,7 +891,7 @@ fn export_pgr_with_resource_context(
             note_order = note_order.saturating_add(1);
         }
         let (move_events, rotate_events, alpha_events) =
-            if negotiation.drops(CapabilityDomain::Motion) {
+            if negotiation.drops(ConversionDomain::Motion) {
                 (Vec::new(), Vec::new(), Vec::new())
             } else {
                 (
@@ -1101,82 +1101,72 @@ impl CapabilitySet {
             profile,
             vec![
                 exact(
-                    CapabilityDomain::Timing,
+                    ConversionDomain::Timing,
                     self.time,
-                    self.features(CapabilityDomain::Timing),
+                    self.features(ConversionDomain::Timing),
                 ),
                 exact(
-                    CapabilityDomain::Gameplay,
+                    ConversionDomain::Gameplay,
                     self.notes,
-                    self.features(CapabilityDomain::Gameplay),
+                    self.features(ConversionDomain::Gameplay),
                 ),
                 exact(
-                    CapabilityDomain::Motion,
+                    ConversionDomain::Motion,
                     self.tracks || line_motion,
-                    self.features(CapabilityDomain::Motion),
+                    self.features(ConversionDomain::Motion),
                 ),
                 exact(
-                    CapabilityDomain::Scroll,
+                    ConversionDomain::Scroll,
                     self.time,
-                    self.features(CapabilityDomain::Scroll),
+                    self.features(ConversionDomain::Scroll),
                 ),
                 exact(
-                    CapabilityDomain::Presentation,
+                    ConversionDomain::Presentation,
                     self.notes,
-                    self.features(CapabilityDomain::Presentation),
+                    self.features(ConversionDomain::Presentation),
                 ),
                 exact(
-                    CapabilityDomain::Resource,
+                    ConversionDomain::Resource,
                     self.resources,
-                    self.features(CapabilityDomain::Resource),
+                    self.features(ConversionDomain::Resource),
                 ),
                 exact(
-                    CapabilityDomain::Metadata,
+                    ConversionDomain::Metadata,
                     false,
-                    self.features(CapabilityDomain::Metadata),
+                    self.features(ConversionDomain::Metadata),
                 ),
                 exact(
-                    CapabilityDomain::Numeric,
+                    ConversionDomain::Syntax,
                     true,
-                    self.features(CapabilityDomain::Numeric),
+                    self.features(ConversionDomain::Syntax),
                 ),
                 exact(
-                    CapabilityDomain::Entity,
+                    ConversionDomain::Profile,
                     true,
-                    self.features(CapabilityDomain::Entity),
+                    self.features(ConversionDomain::Profile),
                 ),
                 exact(
-                    CapabilityDomain::Limits,
-                    true,
-                    self.features(CapabilityDomain::Limits),
-                ),
-                exact(
-                    CapabilityDomain::Expression,
-                    self.expressions,
-                    self.features(CapabilityDomain::Expression),
-                ),
-                exact(
-                    CapabilityDomain::Package,
+                    ConversionDomain::Package,
                     self.resources,
-                    self.features(CapabilityDomain::Package),
+                    self.features(ConversionDomain::Package),
                 ),
             ],
         )
         .expect("static compatibility capability descriptor")
     }
 
-    fn features(&self, domain: CapabilityDomain) -> Vec<CapabilityFeature> {
+    fn features(&self, domain: ConversionDomain) -> Vec<CapabilityFeature> {
         let mut features = Vec::new();
         let mut add = |axis: &str, value: &str| {
             features.push(capability_feature(axis, value));
         };
         match domain {
-            CapabilityDomain::Timing if self.time => {
+            ConversionDomain::Timing if self.time => {
                 add("time.domain", "chartTime");
                 add("time.exactness", "exact");
                 add("time.precision", "binary64");
             }
-            CapabilityDomain::Gameplay if self.notes => {
+            ConversionDomain::Gameplay if self.notes => {
                 for value in ["tap", "hold", "flick", "drag"] {
                     add("note.kind", value);
                 }
@@ -1191,7 +1181,7 @@ impl CapabilitySet {
                 }
                 add("note.hold-geometry", "canonical");
             }
-            CapabilityDomain::Motion => {
+            ConversionDomain::Motion => {
                 if self.format == "rpe" {
                     add("line.parent", "linked");
                     add("line.inherit", "rpe-compatible");
@@ -1232,26 +1222,28 @@ impl CapabilitySet {
                     }
                 }
             }
-            CapabilityDomain::Scroll if self.time => {
+            ConversionDomain::Scroll if self.time => {
                 add("scroll.speed", "canonical");
                 add("scroll.distance", "canonical");
                 add("scroll.hold-geometry", "canonical");
             }
-            CapabilityDomain::Presentation if self.notes => {
+            ConversionDomain::Presentation if self.notes => {
                 add("note.presentation", "default");
                 add("note.position-x", "canonical");
                 add("note.scroll-factor", "canonical");
             }
-            CapabilityDomain::Resource if self.resources => {
+            ConversionDomain::Resource if self.resources => {
                 add("resource.bytes", "raw");
             }
-            CapabilityDomain::Numeric => add("numeric.values", "finite-binary64"),
-            CapabilityDomain::Entity => add("entity.identity", "stable"),
-            CapabilityDomain::Expression if self.expressions => {
-                add("expression.descriptor", "typed");
-                add("runtime.extension", "declared");
+            ConversionDomain::Profile => {
+                add("numeric.values", "finite-binary64");
+                add("entity.identity", "stable");
+                if self.expressions {
+                    add("expression.descriptor", "typed");
+                    add("runtime.extension", "declared");
+                }
             }
-            CapabilityDomain::Package if self.resources => {
+            ConversionDomain::Package if self.resources => {
                 add("package.resources", "contained");
             }
             _ => {}
@@ -1266,7 +1258,7 @@ fn capability_feature(axis: &str, value: impl Into<String>) -> CapabilityFeature
 
 fn required_capability_features(
     chart: &CanonicalChart,
-    domain: CapabilityDomain,
+    domain: ConversionDomain,
 ) -> Vec<CapabilityFeature> {
     let mut features = BTreeSet::new();
     let mut add = |axis: &str, value: &str| {
@@ -1274,12 +1266,12 @@ fn required_capability_features(
     };
 
     match domain {
-        CapabilityDomain::Timing => {
+        ConversionDomain::Timing => {
             add("time.domain", "chartTime");
             add("time.exactness", "exact");
             add("time.precision", "binary64");
         }
-        CapabilityDomain::Gameplay => {
+        ConversionDomain::Gameplay => {
             for note in chart.notes().notes() {
                 add("note.kind", canonical_note_kind(note.kind()));
                 let gameplay = note.gameplay();
@@ -1308,7 +1300,7 @@ fn required_capability_features(
                 }
             }
         }
-        CapabilityDomain::Motion => {
+        ConversionDomain::Motion => {
             for track in chart.tracks().tracks() {
                 add("track.target", canonical_track_target(track.target()));
                 let mut has_segment = false;
@@ -1366,7 +1358,7 @@ fn required_capability_features(
                 }
             }
         }
-        CapabilityDomain::Scroll => {
+        ConversionDomain::Scroll => {
             if !chart.scroll().lines().is_empty() {
                 add("scroll.speed", "canonical");
                 add("scroll.distance", "canonical");
@@ -1388,7 +1380,7 @@ fn required_capability_features(
                 add("scroll.hold-geometry", "canonical");
             }
         }
-        CapabilityDomain::Presentation if !chart.notes().notes().is_empty() => {
+        ConversionDomain::Presentation if !chart.notes().notes().is_empty() => {
             for note in chart.notes().notes() {
                 add("note.presentation", note_presentation_mode(note));
                 if note.presentation().position_x() != 0.0 {
@@ -1399,13 +1391,15 @@ fn required_capability_features(
                 }
             }
         }
-        CapabilityDomain::Resource if !chart.metadata().resources().is_empty() => {
+        ConversionDomain::Resource if !chart.metadata().resources().is_empty() => {
             add("resource.bytes", "raw");
         }
-        CapabilityDomain::Package if !chart.metadata().resources().is_empty() => {
+        ConversionDomain::Package if !chart.metadata().resources().is_empty() => {
             add("package.resources", "contained");
         }
-        CapabilityDomain::Expression => {
+        ConversionDomain::Profile => {
+            add("numeric.values", "finite-binary64");
+            add("entity.identity", "stable");
             if chart.descriptors().is_some() {
                 add("expression.descriptor", "typed");
             }
@@ -1542,38 +1536,35 @@ pub fn negotiate_export_with_options(
 
     let mut entries = Vec::new();
     let mut plan = Vec::new();
-    for domain in CapabilityDomain::ALL {
+    for domain in ConversionDomain::ALL {
         let descriptor = options.capabilities.domain(domain);
         let required_features = required_capability_features(chart, domain);
         let needed = match domain {
-            CapabilityDomain::Timing => true,
-            CapabilityDomain::Gameplay => !chart.notes().notes().is_empty(),
-            CapabilityDomain::Motion => {
-                !chart.tracks().tracks().is_empty() || !required_features.is_empty()
+            ConversionDomain::Timing => true,
+            ConversionDomain::Gameplay => !chart.notes().notes().is_empty(),
+            ConversionDomain::Motion => {
+                chart.lines().lines().next().is_some()
+                    || !chart.tracks().tracks().is_empty()
+                    || !required_features.is_empty()
             }
-            CapabilityDomain::Scroll => {
+            ConversionDomain::Scroll => {
                 !chart.scroll().lines().is_empty() || !required_features.is_empty()
             }
-            CapabilityDomain::Presentation => !chart.notes().notes().is_empty(),
-            CapabilityDomain::Resource => {
+            ConversionDomain::Presentation => !chart.notes().notes().is_empty(),
+            ConversionDomain::Resource => {
                 !chart.metadata().resources().is_empty()
                     || chart.metadata().sync().is_some_and(|sync| {
                         sync.primary_audio().is_some() || sync.preview().is_some()
                     })
             }
-            CapabilityDomain::Metadata => {
+            ConversionDomain::Metadata => {
                 chart.metadata().meta().is_some()
                     || !chart.metadata().contributors().is_empty()
                     || !chart.metadata().credits().is_empty()
                     || chart.metadata().artwork().is_some()
             }
-            CapabilityDomain::Numeric => true,
-            CapabilityDomain::Entity => chart.lines().lines().next().is_some(),
-            CapabilityDomain::Limits => true,
-            CapabilityDomain::Expression => {
-                chart.descriptors().is_some() || !chart.required_extensions().is_empty()
-            }
-            CapabilityDomain::Package => {
+            ConversionDomain::Syntax | ConversionDomain::Profile => true,
+            ConversionDomain::Package => {
                 !chart.metadata().resources().is_empty()
                     || chart.metadata().sync().is_some_and(|sync| {
                         sync.primary_audio().is_some() || sync.preview().is_some()
@@ -1653,7 +1644,7 @@ pub fn negotiate_export_with_options(
             ConversionEntry::new(
                 format!("capability/{}", domain.as_str()),
                 category,
-                conversion_domain(domain),
+                domain,
                 if action == NegotiationAction::Unsupported {
                     ConversionSeverity::Error
                 } else if matches!(
@@ -1762,40 +1753,35 @@ pub fn negotiate_export_with_options(
     Ok((plan, entries))
 }
 
-fn capability_entity_count(chart: &CanonicalChart, domain: CapabilityDomain) -> usize {
+fn capability_entity_count(chart: &CanonicalChart, domain: ConversionDomain) -> usize {
     match domain {
-        CapabilityDomain::Timing => chart.time_map().segments().count(),
-        CapabilityDomain::Gameplay | CapabilityDomain::Presentation => chart.notes().notes().len(),
-        CapabilityDomain::Motion => chart.tracks().tracks().len(),
-        CapabilityDomain::Scroll => chart.scroll().lines().len(),
-        CapabilityDomain::Resource | CapabilityDomain::Package => {
+        ConversionDomain::Timing => chart.time_map().segments().count(),
+        ConversionDomain::Gameplay | ConversionDomain::Presentation => chart.notes().notes().len(),
+        ConversionDomain::Motion => chart.lines().lines().count() + chart.tracks().tracks().len(),
+        ConversionDomain::Scroll => chart.scroll().lines().len(),
+        ConversionDomain::Resource | ConversionDomain::Package => {
             chart.metadata().resources().len()
         }
-        CapabilityDomain::Metadata => {
+        ConversionDomain::Metadata => {
             chart.metadata().meta().map_or(0, BTreeMap::len)
                 + chart.metadata().contributors().len()
                 + chart.metadata().credits().len()
                 + usize::from(chart.metadata().artwork().is_some())
         }
-        CapabilityDomain::Entity => {
-            chart.lines().lines().count()
-                + chart.notes().notes().len()
-                + chart.tracks().tracks().len()
-        }
-        CapabilityDomain::Expression => {
+        ConversionDomain::Profile => {
             chart
                 .descriptors()
                 .map_or(0, |table| table.descriptors().len())
                 + chart.required_extensions().len()
         }
-        CapabilityDomain::Numeric | CapabilityDomain::Limits => 0,
+        ConversionDomain::Syntax => 0,
     }
 }
 
 fn capability_limit_failure(
     descriptor: &CapabilityDomainDescriptor,
     chart: &CanonicalChart,
-    domain: CapabilityDomain,
+    domain: ConversionDomain,
 ) -> Option<String> {
     for limit in descriptor.limits() {
         let count = match limit.name() {
@@ -1818,60 +1804,58 @@ fn capability_limit_failure(
     None
 }
 
-fn capability_event_count(chart: &CanonicalChart, domain: CapabilityDomain) -> usize {
+fn capability_event_count(chart: &CanonicalChart, domain: ConversionDomain) -> usize {
     match domain {
-        CapabilityDomain::Timing => chart.time_map().segments().count(),
-        CapabilityDomain::Gameplay | CapabilityDomain::Presentation => chart.notes().notes().len(),
-        CapabilityDomain::Motion => chart
+        ConversionDomain::Timing => chart.time_map().segments().count(),
+        ConversionDomain::Gameplay | ConversionDomain::Presentation => chart.notes().notes().len(),
+        ConversionDomain::Motion => chart
             .tracks()
             .tracks()
             .iter()
             .map(|track| track.pieces().len())
             .sum(),
-        CapabilityDomain::Scroll => chart
+        ConversionDomain::Scroll => chart
             .scroll()
             .lines()
             .iter()
             .map(|line| line.coordinate().points().len())
             .sum(),
-        CapabilityDomain::Resource | CapabilityDomain::Package => {
+        ConversionDomain::Resource | ConversionDomain::Package => {
             chart.metadata().resources().len()
         }
-        CapabilityDomain::Metadata => capability_entity_count(chart, domain),
-        CapabilityDomain::Numeric | CapabilityDomain::Limits => 0,
-        CapabilityDomain::Entity => capability_entity_count(chart, domain),
-        CapabilityDomain::Expression => capability_entity_count(chart, domain),
+        ConversionDomain::Metadata => capability_entity_count(chart, domain),
+        ConversionDomain::Syntax => 0,
+        ConversionDomain::Profile => capability_entity_count(chart, domain),
     }
 }
 
-fn approximation_segment_count(chart: &CanonicalChart, domain: CapabilityDomain) -> usize {
+fn approximation_segment_count(chart: &CanonicalChart, domain: ConversionDomain) -> usize {
     match domain {
-        CapabilityDomain::Timing => chart.time_map().segments().count(),
-        CapabilityDomain::Gameplay | CapabilityDomain::Presentation => chart.notes().notes().len(),
-        CapabilityDomain::Motion => chart
+        ConversionDomain::Timing => chart.time_map().segments().count(),
+        ConversionDomain::Gameplay | ConversionDomain::Presentation => chart.notes().notes().len(),
+        ConversionDomain::Motion => chart
             .tracks()
             .tracks()
             .iter()
             .map(|track| track.pieces().len())
             .sum(),
-        CapabilityDomain::Scroll => chart
+        ConversionDomain::Scroll => chart
             .scroll()
             .lines()
             .iter()
             .map(|line| line.coordinate().points().len())
             .sum(),
-        CapabilityDomain::Resource | CapabilityDomain::Package => {
+        ConversionDomain::Resource | ConversionDomain::Package => {
             chart.metadata().resources().len()
         }
-        CapabilityDomain::Metadata => capability_entity_count(chart, domain),
-        CapabilityDomain::Numeric | CapabilityDomain::Limits => 0,
-        CapabilityDomain::Entity => capability_entity_count(chart, domain),
-        CapabilityDomain::Expression => capability_entity_count(chart, domain),
+        ConversionDomain::Metadata => capability_entity_count(chart, domain),
+        ConversionDomain::Syntax => 0,
+        ConversionDomain::Profile => capability_entity_count(chart, domain),
     }
 }
 
 fn negotiation_message(
-    domain: CapabilityDomain,
+    domain: ConversionDomain,
     action: NegotiationAction,
     options: &ExportOptions,
     approximation_segments: usize,
@@ -1923,22 +1907,6 @@ fn negotiation_message(
             options.drop.reason()
         ),
         _ => format!("{} domain negotiated as {}", domain, action.as_str()),
-    }
-}
-
-fn conversion_domain(domain: CapabilityDomain) -> ConversionDomain {
-    match domain {
-        CapabilityDomain::Timing => ConversionDomain::Timing,
-        CapabilityDomain::Gameplay => ConversionDomain::Gameplay,
-        CapabilityDomain::Motion => ConversionDomain::Motion,
-        CapabilityDomain::Scroll => ConversionDomain::Scroll,
-        CapabilityDomain::Presentation => ConversionDomain::Presentation,
-        CapabilityDomain::Resource => ConversionDomain::Resource,
-        CapabilityDomain::Metadata => ConversionDomain::Metadata,
-        CapabilityDomain::Numeric | CapabilityDomain::Entity | CapabilityDomain::Expression => {
-            ConversionDomain::Profile
-        }
-        CapabilityDomain::Limits | CapabilityDomain::Package => ConversionDomain::Package,
     }
 }
 
@@ -2052,7 +2020,7 @@ fn export_rpe_json_with_resource_context(
                 CanonicalNoteSide::Above => 1,
                 CanonicalNoteSide::Below => 0,
             };
-            let presentation_dropped = negotiation.drops(CapabilityDomain::Presentation);
+            let presentation_dropped = negotiation.drops(ConversionDomain::Presentation);
             let raw_speed = if presentation_dropped {
                 4.5
             } else {
@@ -2125,7 +2093,7 @@ fn export_rpe_json_with_resource_context(
             ));
             target_note_order = target_note_order.saturating_add(1);
         }
-        let motion_dropped = negotiation.drops(CapabilityDomain::Motion);
+        let motion_dropped = negotiation.drops(ConversionDomain::Motion);
         let father = if motion_dropped {
             -1
         } else {
@@ -2230,7 +2198,7 @@ fn pec_track_events(
     profile: PecProfile,
     negotiation: &NegotiationPlan,
 ) -> Result<Vec<(u64, String)>, ExportError> {
-    if negotiation.drops(CapabilityDomain::Motion) {
+    if negotiation.drops(ConversionDomain::Motion) {
         return Ok(Vec::new());
     }
     let mut events = Vec::new();
@@ -2573,7 +2541,7 @@ fn export_pec_line_with_resource_context(
                 ExportError::new("conversion.capability-mismatch", error.to_string())
             })?;
         let beat = finite_decimal(beat, "PEC Note beat")?;
-        let presentation_dropped = negotiation.drops(CapabilityDomain::Presentation);
+        let presentation_dropped = negotiation.drops(ConversionDomain::Presentation);
         let x = if presentation_dropped {
             0.0
         } else {
@@ -2991,7 +2959,7 @@ fn require_external_payload_losses(
         || !metadata.contributors().is_empty()
         || !metadata.credits().is_empty()
         || metadata.artwork().is_some();
-    if has_metadata && !negotiation.drops(CapabilityDomain::Metadata) {
+    if has_metadata && !negotiation.drops(ConversionDomain::Metadata) {
         return Err(ExportError::new(
             "conversion.capability-mismatch",
             format!("{format} writer cannot represent canonical metadata"),
@@ -3003,8 +2971,8 @@ fn require_external_payload_losses(
             .sync()
             .is_some_and(|sync| sync.primary_audio().is_some() || sync.preview().is_some());
     if has_resources
-        && !(negotiation.drops(CapabilityDomain::Resource)
-            && negotiation.drops(CapabilityDomain::Package))
+        && !(negotiation.drops(ConversionDomain::Resource)
+            && negotiation.drops(ConversionDomain::Package))
     {
         return Err(ExportError::new(
             "conversion.capability-mismatch",
@@ -3013,7 +2981,7 @@ fn require_external_payload_losses(
     }
 
     if (chart.descriptors().is_some() || !chart.required_extensions().is_empty())
-        && !negotiation.drops(CapabilityDomain::Expression)
+        && !negotiation.drops(ConversionDomain::Profile)
     {
         return Err(ExportError::new(
             "conversion.capability-mismatch",
@@ -3425,7 +3393,7 @@ fn require_rpe_chart_shape(
 ) -> Result<(), ExportError> {
     require_external_payload_losses(chart, negotiation, "RPE")?;
     let mut alpha_tracks = BTreeSet::new();
-    if !negotiation.drops(CapabilityDomain::Motion) {
+    if !negotiation.drops(ConversionDomain::Motion) {
         for track in chart.tracks().tracks() {
             let spec = rpe_track_spec(track)?;
             rpe_track_is_supported(track, spec, binding)?;
@@ -3435,7 +3403,7 @@ fn require_rpe_chart_shape(
         }
     }
     for line in chart.lines().lines() {
-        if !negotiation.drops(CapabilityDomain::Motion)
+        if !negotiation.drops(ConversionDomain::Motion)
             && (!rpe_line_base_is_default(
                 line,
                 if alpha_tracks.contains(&line.id().value()) {
@@ -3466,10 +3434,10 @@ fn require_rpe_chart_shape(
             || presentation.texture().is_some()
             || !presentation.render_enabled()
             || presentation.visible_until().is_some();
-        if (gameplay_unsupported && !negotiation.drops(CapabilityDomain::Gameplay))
+        if (gameplay_unsupported && !negotiation.drops(ConversionDomain::Gameplay))
             || (presentation_unsupported
-                && !negotiation.drops(CapabilityDomain::Presentation)
-                && !negotiation.approximates(CapabilityDomain::Presentation))
+                && !negotiation.drops(ConversionDomain::Presentation)
+                && !negotiation.approximates(ConversionDomain::Presentation))
         {
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
@@ -3496,7 +3464,7 @@ fn require_pec_chart_shape(
     let mut lines: Vec<_> = chart.lines().lines().collect();
     lines.sort_by_key(|line| line.document_order());
     for (index, line) in lines.iter().enumerate() {
-        if !negotiation.drops(CapabilityDomain::Motion)
+        if !negotiation.drops(ConversionDomain::Motion)
             && (line.document_order() != index as u64
                 || line.parent().is_some()
                 || line.inherit() != &CanonicalLineInherit::default()
@@ -3521,7 +3489,7 @@ fn require_pec_chart_shape(
             .tracks()
             .iter()
             .any(|track| track.owner().value() == line.id().value());
-        if index > 0 && !has_note && (!has_track || negotiation.drops(CapabilityDomain::Motion)) {
+        if index > 0 && !has_note && (!has_track || negotiation.drops(ConversionDomain::Motion)) {
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
                 format!("PEC cannot encode empty line {index} without a line command"),
@@ -3541,10 +3509,10 @@ fn require_pec_chart_shape(
             || !presentation.render_enabled()
             || presentation.visible_from().is_some()
             || presentation.visible_until().is_some();
-        if (gameplay_unsupported && !negotiation.drops(CapabilityDomain::Gameplay))
+        if (gameplay_unsupported && !negotiation.drops(ConversionDomain::Gameplay))
             || (presentation_unsupported
-                && !negotiation.drops(CapabilityDomain::Presentation)
-                && !negotiation.approximates(CapabilityDomain::Presentation))
+                && !negotiation.drops(ConversionDomain::Presentation)
+                && !negotiation.approximates(ConversionDomain::Presentation))
         {
             return Err(ExportError::new(
                 "conversion.capability-mismatch",
@@ -3591,7 +3559,7 @@ fn finish_export(
                 ConversionEntry::new(
                     format!("capability/{}/limit", descriptor.domain()),
                     "conversion.capability-mismatch",
-                    conversion_domain(descriptor.domain()),
+                    descriptor.domain(),
                     ConversionSeverity::Error,
                     SemanticStatus::Unsupported,
                     ConversionPhase::Export,
@@ -3624,7 +3592,7 @@ fn finish_export(
             .with_entries(entries));
         }
     }
-    let approximation_output_segments = CapabilityDomain::ALL
+    let approximation_output_segments = ConversionDomain::ALL
         .into_iter()
         .filter(|domain| negotiation.approximates(*domain))
         .map(|domain| approximation_segment_count(actual, domain))
@@ -3709,7 +3677,7 @@ fn finish_export(
                         metric
                             .split_once('.')
                             .map_or(metric.as_str(), |(domain, _)| domain),
-                    ),
+                    )?,
                     ConversionSeverity::Error,
                     SemanticStatus::Unsupported,
                     ConversionPhase::ReparseCompare,
@@ -3751,7 +3719,7 @@ fn finish_export(
                 ConversionEntry::new(
                     format!("roundtrip/{index:06}"),
                     category,
-                    conversion_domain_from_str(mismatch.domain()),
+                    conversion_domain_from_str(mismatch.domain())?,
                     ConversionSeverity::Error,
                     SemanticStatus::Unsupported,
                     ConversionPhase::ReparseCompare,
@@ -3801,7 +3769,7 @@ fn finish_export(
                 ConversionEntry::new(
                     format!("roundtrip/unverified/{index:06}"),
                     "conversion.drop-applied",
-                    conversion_domain_from_str(domain),
+                    conversion_domain_from_str(domain)?,
                     ConversionSeverity::Warning,
                     SemanticStatus::Dropped,
                     ConversionPhase::ReparseCompare,
@@ -3835,12 +3803,12 @@ fn finish_export(
         let metric_domain = metric
             .split_once('.')
             .map_or(metric.as_str(), |(domain, _)| domain);
-        let verified_output_segments = CapabilityDomain::ALL
+        let verified_output_segments = ConversionDomain::ALL
             .into_iter()
             .find(|domain| domain.as_str() == metric_domain)
             .map_or(0, |domain| approximation_segment_count(actual, domain));
         let error_metric = ErrorMetric::new(
-            conversion_domain_from_str(metric_domain),
+            conversion_domain_from_str(metric_domain)?,
             metric.clone(),
             *declared_maximum,
             verified_maximum,
@@ -3856,7 +3824,7 @@ fn finish_export(
             ConversionEntry::new(
                 format!("approximation/verified/{index:06}"),
                 "conversion.approximation-verified",
-                conversion_domain_from_str(metric_domain),
+                conversion_domain_from_str(metric_domain)?,
                 ConversionSeverity::Warning,
                 SemanticStatus::Approximated,
                 ConversionPhase::ReparseCompare,
@@ -3923,7 +3891,7 @@ fn negotiated_comparison_budgets(
         .error_budgets()
         .iter()
         .filter(|(metric, _)| {
-            CapabilityDomain::ALL.into_iter().any(|domain| {
+            ConversionDomain::ALL.into_iter().any(|domain| {
                 negotiation.approximates(domain)
                     && (metric.as_str() == domain.as_str()
                         || metric
@@ -3935,18 +3903,13 @@ fn negotiated_comparison_budgets(
         .collect()
 }
 
-fn conversion_domain_from_str(domain: &str) -> ConversionDomain {
-    match domain {
-        "timing" => ConversionDomain::Timing,
-        "gameplay" => ConversionDomain::Gameplay,
-        "motion" => ConversionDomain::Motion,
-        "scroll" => ConversionDomain::Scroll,
-        "presentation" => ConversionDomain::Presentation,
-        "resource" => ConversionDomain::Resource,
-        "metadata" => ConversionDomain::Metadata,
-        "package" => ConversionDomain::Package,
-        _ => ConversionDomain::Profile,
-    }
+fn conversion_domain_from_str(domain: &str) -> Result<ConversionDomain, ExportError> {
+    ConversionDomain::parse(domain).ok_or_else(|| {
+        ExportError::new(
+            "conversion.internal",
+            format!("unregistered ConversionReport domain: {domain}"),
+        )
+    })
 }
 
 fn lower_hex(bytes: impl AsRef<[u8]>) -> String {
@@ -4231,7 +4194,7 @@ mod tests {
         let base = CapabilitySet::pec_line().descriptor(Some(profile.into()));
         let motion_features = CapabilitySet::pgr_v3()
             .descriptor(None)
-            .domain(CapabilityDomain::Motion)
+            .domain(ConversionDomain::Motion)
             .unwrap()
             .features()
             .to_vec();
@@ -4239,9 +4202,9 @@ mod tests {
             base.format(),
             base.version(),
             base.profile().map(str::to_owned),
-            CapabilityDomain::ALL
+            ConversionDomain::ALL
                 .map(|domain| {
-                    if domain == CapabilityDomain::Motion {
+                    if domain == ConversionDomain::Motion {
                         CapabilityDomainDescriptor::new(
                             domain,
                             false,
@@ -4267,7 +4230,7 @@ mod tests {
     fn descriptor_with_domain(
         set: CapabilitySet,
         profile: &str,
-        target: CapabilityDomain,
+        target: ConversionDomain,
         exact: bool,
         approximation: bool,
         drop: bool,
@@ -4317,7 +4280,7 @@ mod tests {
             .map(|descriptor| {
                 if matches!(
                     descriptor.domain(),
-                    CapabilityDomain::Motion | CapabilityDomain::Scroll
+                    ConversionDomain::Motion | ConversionDomain::Scroll
                 ) {
                     CapabilityDomainDescriptor::new(
                         descriptor.domain(),
@@ -4329,7 +4292,7 @@ mod tests {
                         descriptor.max_entities(),
                         descriptor.max_bytes(),
                     )
-                    .with_features(if descriptor.domain() == CapabilityDomain::Scroll {
+                    .with_features(if descriptor.domain() == ConversionDomain::Scroll {
                         Vec::new()
                     } else {
                         descriptor.features().to_vec()
@@ -4911,7 +4874,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
             base.domains()
                 .iter()
                 .map(|domain| {
-                    if domain.domain() == CapabilityDomain::Timing {
+                    if domain.domain() == ConversionDomain::Timing {
                         CapabilityDomainDescriptor::new(
                             domain.domain(),
                             false,
@@ -4963,7 +4926,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
                     .features()
                     .iter()
                     .filter(|feature| {
-                        !(descriptor.domain() == CapabilityDomain::Gameplay
+                        !(descriptor.domain() == ConversionDomain::Gameplay
                             && feature.axis() == "note.kind"
                             && feature.value() == "hold")
                     })
@@ -5011,7 +4974,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
             .domains()
             .iter()
             .map(|descriptor| {
-                if descriptor.domain() != CapabilityDomain::Gameplay {
+                if descriptor.domain() != ConversionDomain::Gameplay {
                     return descriptor.clone();
                 }
                 CapabilityDomainDescriptor::new(
@@ -5046,7 +5009,9 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         )
         .unwrap_err();
         assert!(error.entries().iter().any(|entry| {
-            entry.field_key() == Some("entity.count") && entry.message().contains("entity.count")
+            entry.domain() == ConversionDomain::Gameplay
+                && entry.field_key() == Some("entity.count")
+                && entry.message().contains("entity.count")
         }));
     }
 
@@ -5059,7 +5024,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
             .domains()
             .iter()
             .map(|descriptor| {
-                if descriptor.domain() != CapabilityDomain::Motion {
+                if descriptor.domain() != ConversionDomain::Motion {
                     return descriptor.clone();
                 }
                 CapabilityDomainDescriptor::new(
@@ -5109,7 +5074,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         .unwrap();
 
         assert_eq!(
-            plan.action_for(CapabilityDomain::Motion),
+            plan.action_for(ConversionDomain::Motion),
             Some(NegotiationAction::Bake)
         );
         assert!(entries.iter().any(|entry| {
@@ -5139,7 +5104,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         .unwrap();
 
         assert_eq!(
-            plan.action_for(CapabilityDomain::Motion),
+            plan.action_for(ConversionDomain::Motion),
             Some(NegotiationAction::Drop)
         );
     }
@@ -5165,8 +5130,8 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         )
         .unwrap();
 
-        assert!(outcome.negotiation().drops(CapabilityDomain::Motion));
-        assert!(outcome.negotiation().drops(CapabilityDomain::Scroll));
+        assert!(outcome.negotiation().drops(ConversionDomain::Motion));
+        assert!(outcome.negotiation().drops(ConversionDomain::Scroll));
         let target: Value = serde_json::from_slice(outcome.bytes()).unwrap();
         let lines = target["judgeLineList"].as_array().unwrap();
         assert!(lines.iter().all(|line| {
@@ -5183,7 +5148,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
             .domains()
             .iter()
             .map(|descriptor| {
-                if descriptor.domain() != CapabilityDomain::Gameplay {
+                if descriptor.domain() != ConversionDomain::Gameplay {
                     return descriptor.clone();
                 }
                 CapabilityDomainDescriptor::new(
@@ -5255,11 +5220,11 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         let (plan, _) =
             negotiate_export_with_options(&chart, &drop.with_drop(authorization)).unwrap();
         assert_eq!(
-            plan.action_for(CapabilityDomain::Motion),
+            plan.action_for(ConversionDomain::Motion),
             Some(NegotiationAction::Drop)
         );
         assert_ne!(
-            plan.action_for(CapabilityDomain::Gameplay),
+            plan.action_for(ConversionDomain::Gameplay),
             Some(NegotiationAction::Drop)
         );
     }
@@ -5271,7 +5236,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         let descriptor = descriptor_with_domain(
             CapabilitySet::pgr_v3(),
             &profile,
-            CapabilityDomain::Presentation,
+            ConversionDomain::Presentation,
             false,
             true,
             false,
@@ -5304,7 +5269,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         let descriptor = descriptor_with_domain(
             CapabilitySet::pgr_v3(),
             &profile,
-            CapabilityDomain::Presentation,
+            ConversionDomain::Presentation,
             false,
             true,
             false,
@@ -5338,7 +5303,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         assert!(
             outcome
                 .negotiation()
-                .approximates(CapabilityDomain::Presentation)
+                .approximates(ConversionDomain::Presentation)
         );
         assert_ne!(outcome.bytes(), exact.bytes());
         assert_eq!(outcome.report().status(), ConversionStatus::Approximate);
@@ -5410,7 +5375,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         let descriptor = descriptor_with_domain(
             CapabilitySet::pgr_v3(),
             &profile,
-            CapabilityDomain::Presentation,
+            ConversionDomain::Presentation,
             false,
             true,
             false,
@@ -5446,7 +5411,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         let descriptor = descriptor_with_domain(
             CapabilitySet::pgr_v3(),
             &profile,
-            CapabilityDomain::Presentation,
+            ConversionDomain::Presentation,
             false,
             true,
             false,
@@ -5486,7 +5451,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         let descriptor = descriptor_with_domain(
             CapabilitySet::rpe_json(),
             &profile,
-            CapabilityDomain::Metadata,
+            ConversionDomain::Metadata,
             false,
             false,
             true,
@@ -5503,7 +5468,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
             &ExportOptions::semantic(descriptor).with_drop(authorization),
         )
         .unwrap();
-        assert!(outcome.negotiation().drops(CapabilityDomain::Metadata));
+        assert!(outcome.negotiation().drops(ConversionDomain::Metadata));
         assert_eq!(outcome.report().status(), ConversionStatus::Approximate);
         assert!(!outcome.comparison().is_equivalent());
         assert_eq!(
@@ -5594,7 +5559,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
             RpeProfile::PhiraLegacySpeed.version(),
         )
         .with_drop(
-            DropAuthorization::new(["entity.chart.sourceVersion".into()], "not negotiated")
+            DropAuthorization::new(["metadata.chart.sourceVersion".into()], "not negotiated")
                 .unwrap(),
         );
         let first = export_rpe_json_with_options(&chart, &options).unwrap_err();
@@ -5608,7 +5573,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         assert_eq!(report.entries(), first.entries());
         assert_eq!(
             report.drop_authorization().unwrap().target_selectors(),
-            ["entity.chart.sourceVersion"]
+            ["metadata.chart.sourceVersion"]
         );
         assert_eq!(
             report.operation_id(),
@@ -5645,7 +5610,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
         let descriptor = descriptor_with_domain(
             CapabilitySet::rpe_json(),
             &profile,
-            CapabilityDomain::Limits,
+            ConversionDomain::Package,
             true,
             false,
             false,
@@ -5670,7 +5635,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
             .domains()
             .iter()
             .map(|descriptor| {
-                if descriptor.domain() != CapabilityDomain::Limits {
+                if descriptor.domain() != ConversionDomain::Package {
                     return descriptor.clone();
                 }
                 CapabilityDomainDescriptor::new(
@@ -5704,7 +5669,9 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
 
         assert_eq!(error.category(), "conversion.capability-mismatch");
         assert!(error.entries().iter().any(|entry| {
-            entry.field_key() == Some("byte.count") && entry.message().contains("byte.count")
+            entry.domain() == ConversionDomain::Package
+                && entry.field_key() == Some("byte.count")
+                && entry.message().contains("byte.count")
         }));
     }
 
@@ -5785,6 +5752,49 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
                 .iter()
                 .all(|entry| entry.category() == "conversion.capability-negotiated")
         );
+    }
+
+    #[test]
+    fn capability_and_report_domains_share_the_section_7_2_inventory() {
+        let chart = pgr_chart("pgr-feature.pgr.json", PgrProfile::PhiraV3);
+        let profile = profile_reference(PgrProfile::PhiraV3.id(), PgrProfile::PhiraV3.version());
+        let descriptor = CapabilitySet::pgr_v3().descriptor(Some(profile.clone()));
+        assert_eq!(
+            descriptor
+                .domains()
+                .iter()
+                .map(CapabilityDomainDescriptor::domain)
+                .collect::<Vec<_>>(),
+            ConversionDomain::ALL.to_vec()
+        );
+
+        let options = ExportOptions::semantic(descriptor).with_target_profile(profile);
+        let (_, entries) = negotiate_export_with_options(&chart, &options).unwrap();
+        assert!(entries.iter().any(|entry| {
+            entry.id() == "capability/profile" && entry.domain() == ConversionDomain::Profile
+        }));
+        assert!(entries.iter().all(|entry| !matches!(
+            entry.id(),
+            "capability/numeric"
+                | "capability/entity"
+                | "capability/limits"
+                | "capability/expression"
+        )));
+        assert_eq!(
+            capability_entity_count(&chart, ConversionDomain::Motion),
+            chart.lines().lines().count() + chart.tracks().tracks().len()
+        );
+    }
+
+    #[test]
+    fn unregistered_report_domains_do_not_fall_back_to_profile_or_package() {
+        for domain in ["numeric", "entity", "limits", "expression", "unknown"] {
+            let error = conversion_domain_from_str(domain).unwrap_err();
+            assert_eq!(error.category(), "conversion.internal");
+        }
+        for domain in ConversionDomain::ALL {
+            assert_eq!(conversion_domain_from_str(domain.as_str()).unwrap(), domain);
+        }
     }
 
     #[test]

@@ -751,3 +751,6 @@ git diff --check
   same-binding export/reparse coverage for every entry; broader #294 and I10 closure remain open.
   Bounded child #429 assembles the I10.1–I10.4 CLI profile/limit/resource/Core-load and canonical conversion
   paths; it does not close #294, #295, #296, distribution/executable-conformance work, or I10 re-freeze.
+  Bounded child #425 owns the Conversion 1.0 capability/report-domain correction: descriptors and report entries
+  use the same section 7.2 domain keyspace, while numeric/entity/limit/expression remain per-domain axes; broader
+  capability depth, target reparse, Render, final conformance, and I10 re-freeze remain open.

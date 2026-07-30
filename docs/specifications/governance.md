@@ -151,6 +151,12 @@ manifest integrity test 在 full gate 上对活动树执行，固定 record 不�
 manifest integrity test 验证，但活动 workspace 尚无 converter，也尚未提供真实外部 source→canonical
 golden→target reparse 闭环；因此该 closure 仍是 Draft 候选证据。
 
+2026-07-30 的 capability/report domain clarification 记录在
+`docs/reviews/2026-07-30-conversion1-capability-domain-amendment.md`：Capability descriptor 与
+ConversionReport 共用第 7.2 节的十个 domain，numeric/entity/limit/expression 作为所属 domain 内的
+axis，不再经隐式 fallback 折叠。该澄清不改变候选 SemVer；Conversion 仍为 Draft，#294、#325、
+#425 和 I10 的其余 gate 仍须单独关闭。
+
 四规范当前候选 bytes、跨域不变量、完整 workspace gate、suite/tree hash，以及 blocker ledger
 统一记录在 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md` 及其 dated amendment。ABI
 第 7.2 项已关闭；第 7.3 项的旧规范文字 closure 已被 REN-I08–I16 amendment 重新打开，新的
