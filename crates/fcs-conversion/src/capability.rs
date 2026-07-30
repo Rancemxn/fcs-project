@@ -233,6 +233,18 @@ impl CapabilityDomainDescriptor {
                 self.domain
             )));
         }
+        if (self.max_bytes.is_some()
+            || self.limits.iter().any(|limit| limit.name() == "byte.count"))
+            && !matches!(
+                self.domain,
+                ConversionDomain::Resource | ConversionDomain::Package
+            )
+        {
+            return Err(CapabilityError::InvalidDescriptor(format!(
+                "{} capability cannot declare a byte limit",
+                self.domain
+            )));
+        }
         Ok(())
     }
 }
@@ -427,5 +439,32 @@ mod tests {
             .with_limits([limit.clone(), limit])
             .is_err()
         );
+    }
+
+    #[test]
+    fn byte_limits_are_restricted_to_resource_and_package_domains() {
+        let descriptor = |domain, max_bytes| {
+            CapabilityDomainDescriptor::new(
+                domain, true, false, false, false, false, None, max_bytes,
+            )
+        };
+        let byte_count = |domain| {
+            descriptor(domain, None)
+                .with_limits([CapabilityLimit::new("byte.count", 1.0).unwrap()])
+                .unwrap()
+        };
+
+        assert!(
+            descriptor(ConversionDomain::Motion, Some(1))
+                .validate()
+                .is_err()
+        );
+        assert!(byte_count(ConversionDomain::Profile).validate().is_err());
+        assert!(
+            descriptor(ConversionDomain::Package, Some(1))
+                .validate()
+                .is_ok()
+        );
+        assert!(byte_count(ConversionDomain::Resource).validate().is_ok());
     }
 }

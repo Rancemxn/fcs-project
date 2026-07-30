@@ -3540,14 +3540,23 @@ fn finish_export(
     bytes: Vec<u8>,
 ) -> Result<ExportOutcome, ExportError> {
     for descriptor in options.capabilities.domains() {
+        let observed_bytes = match descriptor.domain() {
+            ConversionDomain::Resource => actual_resources
+                .resources()
+                .values()
+                .map(|resource| resource.bytes().len())
+                .fold(0usize, usize::saturating_add),
+            ConversionDomain::Package => bytes.len(),
+            _ => continue,
+        };
         let limit_name = if descriptor
             .max_bytes()
-            .is_some_and(|limit| bytes.len() > limit)
+            .is_some_and(|limit| observed_bytes > limit)
         {
             Some("max_bytes".to_owned())
         } else if descriptor
             .limit("byte.count")
-            .is_some_and(|limit| bytes.len() as f64 > limit)
+            .is_some_and(|limit| observed_bytes as f64 > limit)
         {
             Some("byte.count".to_owned())
         } else {
@@ -5673,6 +5682,33 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
                 && entry.field_key() == Some("byte.count")
                 && entry.message().contains("byte.count")
         }));
+    }
+
+    #[test]
+    fn resource_byte_limit_does_not_measure_the_target_artifact() {
+        let chart = rpe_chart();
+        assert!(chart.metadata().resources().is_empty());
+        let profile = profile_reference(
+            RpeProfile::PhiraLegacySpeed.id(),
+            RpeProfile::PhiraLegacySpeed.version(),
+        );
+        let descriptor = descriptor_with_domain(
+            CapabilitySet::rpe_json(),
+            &profile,
+            ConversionDomain::Resource,
+            true,
+            false,
+            false,
+            None,
+            Some(1),
+        );
+        let outcome = export_rpe_json_with_options(
+            &chart,
+            &ExportOptions::semantic(descriptor).with_target_profile(profile),
+        )
+        .unwrap();
+
+        assert!(outcome.bytes().len() > 1);
     }
 
     #[test]
