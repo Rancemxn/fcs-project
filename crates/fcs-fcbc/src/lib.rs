@@ -36,4 +36,6 @@ pub use loader::{
     RuntimeValue, SectionInfo, Segment, TempoPoint, ValueType, load, load_chart,
     validate_descriptor_env_p_context, validate_descriptor_environment_for_target,
 };
-pub use writer::{write_from_compilation, write_nonempty_execution};
+pub use writer::{
+    write_from_compilation, write_from_compilation_with_profile, write_nonempty_execution,
+};
