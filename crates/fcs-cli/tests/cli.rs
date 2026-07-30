@@ -517,7 +517,7 @@ fn compile_uses_explicit_resource_resolver_root() {
 }
 
 #[test]
-fn compile_rejects_fidelity_without_a_fidelity_section() {
+fn compile_emits_a_loadable_fidelity_section() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("chart.fcs");
     fs::write(
@@ -541,7 +541,23 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
         .output()
         .unwrap();
 
-    assert_eq!(output.status.code(), Some(4));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("fcbc.profile-requirement-missing"));
-    assert!(!out.exists());
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bytes = fs::read(&out).unwrap();
+    let container = fcs_fcbc::load_container(&bytes).unwrap();
+    assert_eq!(
+        container.header.profile,
+        fcs_fcbc::ContainerProfile::Fidelity
+    );
+    assert!(
+        container
+            .header
+            .feature_flags
+            .contains(fcs_fcbc::FeatureFlags::HAS_FIDELITY)
+    );
+    assert!(container.section_types().contains(&16));
+    fcs_fcbc::load_chart(&bytes).unwrap();
 }

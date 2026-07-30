@@ -2,9 +2,10 @@ use fcs_model::{
     CanonicalCompilation, CanonicalDescriptorKind, CanonicalDescriptorTable,
     CanonicalExpressionDag, CanonicalExpressionOpcode, CanonicalExpressionType,
     CanonicalExpressionValue, CanonicalJudgeShape, CanonicalNoteKind, CanonicalNoteScorePolicy,
-    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalRequiredExtension, CanonicalResourceKind,
-    CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation,
-    CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget, CanonicalTrackValue,
+    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalRequiredExtension,
+    CanonicalResourceKind, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
+    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget,
+    CanonicalTrackValue, CanonicalValue, CanonicalValueType, DistributionMetadata,
 };
 use fcs_runtime::EasingId;
 use sha2::{Digest, Sha256};
@@ -389,6 +390,7 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         ExecutionGraph::Fixture,
         None,
         ContainerProfile::StrictRuntime,
+        None,
     )
     .expect("the fixed execution fixture is valid")
 }
@@ -407,12 +409,6 @@ pub fn write_from_compilation_with_profile(
     compilation: &CanonicalCompilation,
     profile: ContainerProfile,
 ) -> FcbcResult<Vec<u8>> {
-    if profile == ContainerProfile::Fidelity {
-        return Err(FcbcError::new(
-            "fcbc.profile-requirement-missing",
-            "fidelity profile requires a structured Fidelity section",
-        ));
-    }
     let chart = compilation.chart();
     let mut lines: Vec<LineFixture> = chart
         .lines()
@@ -728,6 +724,7 @@ pub fn write_from_compilation_with_profile(
         },
         chart.descriptors(),
         profile,
+        (profile == ContainerProfile::Fidelity).then_some(compilation.distribution()),
     )
 }
 
@@ -741,18 +738,115 @@ mod compilation_tests {
     use fcs_source::parser::parse_document;
     use tempfile::tempdir;
 
-    /// Compiles `source` and returns the product FCBC bytes.
-    fn compile(source: &str) -> Vec<u8> {
+    fn compilation(source: &str) -> CanonicalCompilation {
         let workspace = tempdir().unwrap();
         let document = parse_document(source).into_result().unwrap();
-        let compilation = document
+        document
             .canonical_compilation(
                 CompileTimeLimits::default(),
                 workspace.path(),
                 ResourceLimits::default(),
             )
-            .unwrap();
+            .unwrap()
+    }
+
+    /// Compiles `source` and returns the product FCBC bytes.
+    fn compile(source: &str) -> Vec<u8> {
+        let compilation = compilation(source);
         write_from_compilation(&compilation).unwrap()
+    }
+
+    #[test]
+    fn fidelity_profile_encodes_source_free_section_without_changing_execution() {
+        let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
+"#;
+        let base = compilation(source);
+        let raw_source_value = "authoring source text must not be serialized";
+        let distribution = DistributionMetadata::new(
+            fcs_model::ProvenanceGraph::new([fcs_model::RestrictedProvenanceFact::new(
+                "pgr/note/0",
+                Some("chart.json".into()),
+                Some(fcs_model::LogicalSourceLocator::new("chart.json").unwrap()),
+                Some(raw_source_value.into()),
+                Some(0),
+                Some(fcs_model::MappingRuleRef::new("pgr.note.position@1.0.0").unwrap()),
+                fcs_model::OriginState::Imported,
+                Some(fcs_model::SemanticStatus::Mapped),
+                [],
+            )
+            .unwrap()])
+            .unwrap(),
+            Vec::new(),
+            vec![
+                fcs_model::InputContentHash::sha256_lower_hex(
+                    "a".repeat(64),
+                    Some(fcs_model::LogicalSourceLocator::new("chart.json").unwrap()),
+                )
+                .unwrap(),
+            ],
+            CanonicalObject::new(vec![fcs_model::CanonicalObjectEntry::new(
+                "producer",
+                CanonicalValue::String("fixture".into()),
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+        let compilation =
+            CanonicalCompilation::new(base.chart().clone(), base.resources().clone(), distribution);
+
+        let strict = write_from_compilation(&compilation).unwrap();
+        let fidelity =
+            write_from_compilation_with_profile(&compilation, ContainerProfile::Fidelity).unwrap();
+        let container = crate::load_container(&fidelity).unwrap();
+        assert_eq!(container.header.profile, ContainerProfile::Fidelity);
+        assert!(
+            container
+                .header
+                .feature_flags
+                .contains(crate::FeatureFlags::HAS_FIDELITY)
+        );
+        assert!(container.section_types().contains(&16));
+        assert!(
+            !fidelity
+                .windows(raw_source_value.len())
+                .any(|window| window == raw_source_value.as_bytes())
+        );
+
+        let strict_chart = crate::load_chart(&strict).unwrap();
+        let fidelity_chart = crate::load_chart(&fidelity).unwrap();
+        assert_eq!(fidelity_chart.constants, strict_chart.constants);
+        assert_eq!(fidelity_chart.resources, strict_chart.resources);
+        assert_eq!(fidelity_chart.extensions, strict_chart.extensions);
+        assert_eq!(fidelity_chart.tempo_points, strict_chart.tempo_points);
+        assert_eq!(fidelity_chart.lines, strict_chart.lines);
+        assert_eq!(fidelity_chart.notes, strict_chart.notes);
+
+        let mut malformed = fidelity.clone();
+        let digest_offset = malformed
+            .windows(64)
+            .position(|window| {
+                window == b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            })
+            .unwrap();
+        malformed[digest_offset] = b'A';
+        let strings = container
+            .sections
+            .iter()
+            .find(|section| section.section_type == 1)
+            .unwrap();
+        let start = strings.offset as usize;
+        let end = start + strings.length as usize;
+        let checksum = crate::section_crc32_iso_hdlc(&malformed[start..end]);
+        let entry = (0..container.header.section_count as usize)
+            .map(|index| 128 + index * 40)
+            .find(|offset| malformed[*offset..*offset + 4] == 1u32.to_le_bytes())
+            .unwrap();
+        malformed[entry + 32..entry + 36].copy_from_slice(&checksum.to_le_bytes());
+        assert_eq!(crate::load_chart(&malformed), Err("fcbc.invalid-fidelity"));
     }
 
     #[test]
@@ -2101,6 +2195,7 @@ fn assemble_package(
     execution_graph: ExecutionGraph,
     runtime_descriptors: Option<&CanonicalDescriptorTable>,
     profile: ContainerProfile,
+    fidelity: Option<&DistributionMetadata>,
 ) -> FcbcResult<Vec<u8>> {
     let mut lines = lines.to_vec();
     let mut notes = notes.to_vec();
@@ -2174,8 +2269,20 @@ fn assemble_package(
     if !extensions.is_empty() {
         feature_flags |= 1 << 2;
     }
-    let strings = string_table_values(resources, &notes, extensions);
+    if profile == ContainerProfile::Fidelity && fidelity.is_none() {
+        return Err(FcbcError::new(
+            "fcbc.profile-requirement-missing",
+            "fidelity profile requires a structured Fidelity section",
+        ));
+    }
+    let strings = string_table_values(resources, &notes, extensions, fidelity);
     let (resource_records, resource_data) = resource_sections(resources, &strings);
+    let fidelity_section = fidelity
+        .map(|metadata| fidelity_section(metadata, &strings))
+        .transpose()?;
+    if fidelity_section.is_some() {
+        feature_flags |= crate::FeatureFlags::HAS_FIDELITY;
+    }
 
     let mut sections = vec![
         Section::new(1, string_table_section(&strings)),
@@ -2194,6 +2301,9 @@ fn assemble_package(
     ];
     if !extensions.is_empty() {
         sections.push(Section::new(15, extensions_section(extensions, &strings)));
+    }
+    if let Some(fidelity_section) = fidelity_section {
+        sections.push(Section::new(16, fidelity_section));
     }
     sections.push(Section::new(20, resource_data));
     let table_length = sections.len() * 40;
@@ -2974,6 +3084,7 @@ fn string_table_values<'a>(
     resources: &[ResourceFixture<'a>],
     notes: &'a [NoteFixture],
     extensions: &'a [ExtensionFixture],
+    fidelity: Option<&'a DistributionMetadata>,
 ) -> Vec<&'a str> {
     let mut strings = vec!["kind", "lineDefault"];
     for note in notes {
@@ -2998,9 +3109,346 @@ fn string_table_values<'a>(
             .iter()
             .map(|extension| extension.namespace.as_str()),
     );
+    if let Some(fidelity) = fidelity {
+        strings.extend([
+            "specificationVersion",
+            "1.0.0",
+            "sources",
+            "profileBindings",
+            "entityMappings",
+            "fieldFacts",
+            "mappingRules",
+            "semanticLosses",
+            "custom",
+            "logicalSource",
+            "hashAlgorithm",
+            "digest",
+            "id",
+            "sourceArtifactId",
+            "sourceLocator",
+            "sourceOrder",
+            "mappingRuleRef",
+            "originState",
+            "semanticStatus",
+            "dependencies",
+            "stale",
+            "sha256",
+        ]);
+        for hash in fidelity.input_hashes() {
+            strings.push(hash.algorithm());
+            strings.push(hash.digest_lower_hex());
+            if let Some(locator) = hash.logical_source() {
+                strings.push(locator.as_str());
+            }
+        }
+        for fact in fidelity.provenance().facts().values() {
+            strings.push(fact.id());
+            if let Some(artifact) = fact.source_artifact_id() {
+                strings.push(artifact);
+            }
+            if let Some(locator) = fact.source_locator() {
+                strings.push(locator.as_str());
+            }
+            if let Some(rule) = fact.mapping_rule_ref() {
+                strings.push(rule.as_str());
+            }
+            strings.push(fact.origin_state().as_str());
+            if let Some(status) = fact.semantic_status() {
+                strings.push(status.as_str());
+            }
+            strings.extend(fact.dependencies().iter().map(String::as_str));
+        }
+        collect_canonical_object_strings(fidelity.custom(), &mut strings);
+    }
     strings.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
     strings.dedup();
     strings
+}
+
+fn collect_canonical_object_strings<'a>(object: &'a CanonicalObject, strings: &mut Vec<&'a str>) {
+    for entry in object.entries() {
+        strings.push(entry.key());
+        collect_canonical_value_strings(entry.value(), strings);
+    }
+}
+
+fn collect_canonical_value_strings<'a>(value: &'a CanonicalValue, strings: &mut Vec<&'a str>) {
+    match value {
+        CanonicalValue::String(value)
+        | CanonicalValue::ResourceReference(value)
+        | CanonicalValue::ContributorReference(value) => strings.push(value),
+        CanonicalValue::Array { values, .. } => {
+            for value in values {
+                collect_canonical_value_strings(value, strings);
+            }
+        }
+        CanonicalValue::Object(object) => collect_canonical_object_strings(object, strings),
+        CanonicalValue::Null
+        | CanonicalValue::Bool(_)
+        | CanonicalValue::Int(_)
+        | CanonicalValue::Float(_)
+        | CanonicalValue::Time(_)
+        | CanonicalValue::Beat(_)
+        | CanonicalValue::Color(_) => {}
+    }
+}
+
+fn fidelity_section(metadata: &DistributionMetadata, strings: &[&str]) -> FcbcResult<Vec<u8>> {
+    let sources = metadata
+        .input_hashes()
+        .iter()
+        .map(|hash| fidelity_source_value(hash, strings))
+        .collect::<FcbcResult<Vec<_>>>()?;
+    let facts = metadata
+        .provenance()
+        .facts()
+        .values()
+        .map(|fact| fidelity_fact_value(fact, strings))
+        .collect::<FcbcResult<Vec<_>>>()?;
+    let mapping_rules = metadata
+        .provenance()
+        .facts()
+        .values()
+        .filter_map(|fact| fact.mapping_rule_ref())
+        .map(|rule| rule.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|rule| value_string(string_index(strings, rule)))
+        .collect();
+    let fields = vec![
+        (
+            "specificationVersion",
+            value_string(string_index(strings, "1.0.0")),
+        ),
+        ("sources", value_array(14, sources)),
+        ("profileBindings", value_array(14, Vec::new())),
+        ("entityMappings", value_array(14, Vec::new())),
+        ("fieldFacts", value_array(14, facts)),
+        ("mappingRules", value_array(4, mapping_rules)),
+        ("semanticLosses", value_array(14, Vec::new())),
+        (
+            "custom",
+            canonical_object_value(metadata.custom(), strings)?,
+        ),
+    ];
+    Ok(value_object(&fields, strings))
+}
+
+fn fidelity_source_value(
+    hash: &fcs_model::InputContentHash,
+    strings: &[&str],
+) -> FcbcResult<Vec<u8>> {
+    if hash.algorithm() != "sha256" || !is_sha256_digest(hash.digest_lower_hex()) {
+        return Err(FcbcError::new(
+            "fcbc.invalid-fidelity",
+            "Fidelity source hashes must be lowercase SHA-256 digests",
+        ));
+    }
+    let mut fields = Vec::new();
+    if let Some(locator) = hash.logical_source() {
+        fields.push((
+            "logicalSource",
+            value_string(string_index(strings, locator.as_str())),
+        ));
+    }
+    fields.extend([
+        (
+            "hashAlgorithm",
+            value_string(string_index(strings, hash.algorithm())),
+        ),
+        (
+            "digest",
+            value_string(string_index(strings, hash.digest_lower_hex())),
+        ),
+    ]);
+    Ok(value_object(&fields, strings))
+}
+
+fn fidelity_fact_value(
+    fact: &fcs_model::RestrictedProvenanceFact,
+    strings: &[&str],
+) -> FcbcResult<Vec<u8>> {
+    let mut fields = vec![("id", value_string(string_index(strings, fact.id())))];
+    if let Some(artifact) = fact.source_artifact_id() {
+        fields.push((
+            "sourceArtifactId",
+            value_string(string_index(strings, artifact)),
+        ));
+    }
+    if let Some(locator) = fact.source_locator() {
+        fields.push((
+            "sourceLocator",
+            value_string(string_index(strings, locator.as_str())),
+        ));
+    }
+    if let Some(order) = fact.source_order() {
+        let order = i64::try_from(order).map_err(|_| {
+            FcbcError::new(
+                "fcbc.invalid-fidelity",
+                "Fidelity sourceOrder exceeds the FCBC signed integer range",
+            )
+        })?;
+        fields.push(("sourceOrder", value_int(order)));
+    }
+    if let Some(rule) = fact.mapping_rule_ref() {
+        fields.push((
+            "mappingRuleRef",
+            value_string(string_index(strings, rule.as_str())),
+        ));
+    }
+    fields.push((
+        "originState",
+        value_string(string_index(strings, fact.origin_state().as_str())),
+    ));
+    if let Some(status) = fact.semantic_status() {
+        fields.push((
+            "semanticStatus",
+            value_string(string_index(strings, status.as_str())),
+        ));
+    }
+    let dependencies = fact
+        .dependencies()
+        .iter()
+        .map(|dependency| value_string(string_index(strings, dependency)))
+        .collect();
+    fields.push(("dependencies", value_array(4, dependencies)));
+    fields.push(("stale", value_bool(fact.is_stale())));
+    // `source_value` remains an untyped String in the model. It is intentionally
+    // not projected: the writer cannot prove it is one numeric/enum fact rather
+    // than source text, which Fidelity is forbidden to retain.
+    Ok(value_object(&fields, strings))
+}
+
+fn canonical_object_value(object: &CanonicalObject, strings: &[&str]) -> FcbcResult<Vec<u8>> {
+    let fields = object
+        .entries()
+        .iter()
+        .map(|entry| Ok((entry.key(), canonical_value(entry.value(), strings, 0)?)))
+        .collect::<FcbcResult<Vec<_>>>()?;
+    Ok(value_object(&fields, strings))
+}
+
+fn canonical_value(value_: &CanonicalValue, strings: &[&str], depth: usize) -> FcbcResult<Vec<u8>> {
+    if depth > 32 {
+        return Err(FcbcError::new(
+            "fcbc.limit-exceeded",
+            "Fidelity custom value nesting exceeds the FCBC limit",
+        ));
+    }
+    match value_ {
+        CanonicalValue::Null => Ok(value(0, Vec::new())),
+        CanonicalValue::Bool(value_) => Ok(value_bool(*value_)),
+        CanonicalValue::Int(value_) => Ok(value_int(*value_)),
+        CanonicalValue::Float(value_) => value_finite_scalar(3, *value_),
+        CanonicalValue::String(value_) => Ok(value_string(string_index(strings, value_))),
+        CanonicalValue::Time(value_) => value_finite_scalar(5, *value_),
+        CanonicalValue::Beat(value_) => {
+            let mut payload = Vec::new();
+            put_i64(&mut payload, value_.numerator());
+            put_i64(&mut payload, value_.denominator());
+            Ok(value(6, payload))
+        }
+        CanonicalValue::Color(value_) => {
+            let components = [value_.red(), value_.green(), value_.blue(), value_.alpha()];
+            if components.iter().any(|component| !component.is_finite()) {
+                return Err(FcbcError::new(
+                    "fcbc.invalid-fidelity",
+                    "Fidelity colors must have finite components",
+                ));
+            }
+            let mut payload = Vec::new();
+            for component in components {
+                put_f64(&mut payload, component);
+            }
+            Ok(value(9, payload))
+        }
+        CanonicalValue::ResourceReference(_) | CanonicalValue::ContributorReference(_) => {
+            Err(FcbcError::new(
+                "fcbc.invalid-fidelity",
+                "Fidelity custom cannot encode unresolved entity references",
+            ))
+        }
+        CanonicalValue::Array {
+            element_type,
+            values,
+        } => {
+            let tag = canonical_value_type_tag(element_type)?;
+            let values = values
+                .iter()
+                .map(|value_| canonical_value(value_, strings, depth + 1))
+                .collect::<FcbcResult<Vec<_>>>()?;
+            Ok(value_array(tag, values))
+        }
+        CanonicalValue::Object(object) => {
+            let fields = object
+                .entries()
+                .iter()
+                .map(|entry| {
+                    Ok((
+                        entry.key(),
+                        canonical_value(entry.value(), strings, depth + 1)?,
+                    ))
+                })
+                .collect::<FcbcResult<Vec<_>>>()?;
+            Ok(value_object(&fields, strings))
+        }
+    }
+}
+
+fn canonical_value_type_tag(value_type: &CanonicalValueType) -> FcbcResult<u8> {
+    match value_type {
+        CanonicalValueType::Null => Err(FcbcError::new(
+            "fcbc.invalid-fidelity",
+            "Fidelity arrays cannot have null elements",
+        )),
+        CanonicalValueType::Bool => Ok(1),
+        CanonicalValueType::Int => Ok(2),
+        CanonicalValueType::Float => Ok(3),
+        CanonicalValueType::String => Ok(4),
+        CanonicalValueType::Time => Ok(5),
+        CanonicalValueType::Beat => Ok(6),
+        CanonicalValueType::Color => Ok(9),
+        CanonicalValueType::ResourceReference => Ok(11),
+        CanonicalValueType::ContributorReference => Ok(12),
+        CanonicalValueType::Array(_) => Ok(13),
+        CanonicalValueType::Object => Ok(14),
+    }
+}
+
+fn value_bool(value_: bool) -> Vec<u8> {
+    let mut payload = vec![u8::from(value_)];
+    payload.resize(8, 0);
+    value(1, payload)
+}
+
+fn value_int(value_: i64) -> Vec<u8> {
+    value(2, value_.to_le_bytes().to_vec())
+}
+
+fn value_finite_scalar(tag: u8, value_: f64) -> FcbcResult<Vec<u8>> {
+    if !value_.is_finite() {
+        return Err(FcbcError::new(
+            "fcbc.invalid-fidelity",
+            "Fidelity scalar values must be finite",
+        ));
+    }
+    Ok(value_scalar(tag, value_))
+}
+
+fn value_array(element_tag: u8, values: Vec<Vec<u8>>) -> Vec<u8> {
+    let mut payload = vec![element_tag, 0, 0, 0];
+    put_u32(&mut payload, values.len() as u32);
+    for value_ in values {
+        payload.extend_from_slice(&value_);
+    }
+    value(13, payload)
+}
+
+fn is_sha256_digest(value_: &str) -> bool {
+    value_.len() == 64
+        && value_
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 fn string_index(strings: &[&str], value: &str) -> u32 {
