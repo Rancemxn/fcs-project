@@ -914,11 +914,30 @@ fn parse_fidelity(bytes: &[u8], strings: &[String]) -> Result<(), &'static str> 
             .map_err(|_| "fcbc.invalid-fidelity")?;
     }
     for loss in fidelity_array(fields[6], 14)? {
-        if loss.tag != 14 {
-            return Err("fcbc.invalid-fidelity");
-        }
+        parse_fidelity_semantic_loss(loss, strings)?;
     }
     if fields[7].tag != 14 {
+        return Err("fcbc.invalid-fidelity");
+    }
+    Ok(())
+}
+
+fn parse_fidelity_semantic_loss(
+    loss: &ParsedValue,
+    strings: &[String],
+) -> Result<(), &'static str> {
+    let fields = match loss.fields.len() {
+        3 => fidelity_object(loss, strings, &["domain", "status", "category"])?,
+        4 => fidelity_object(loss, strings, &["domain", "status", "category", "entityId"])?,
+        _ => return Err("fcbc.invalid-fidelity"),
+    };
+    if fcs_model::ConversionDomain::parse(fidelity_string(fields[0], strings)?).is_none()
+        || fcs_model::SemanticStatus::parse(fidelity_string(fields[1], strings)?).is_none()
+        || fidelity_string(fields[2], strings)? != fcs_model::SemanticLoss::CAPABILITY_NEGOTIATED
+    {
+        return Err("fcbc.invalid-fidelity");
+    }
+    if fields.len() == 4 && fidelity_string(fields[3], strings)?.is_empty() {
         return Err("fcbc.invalid-fidelity");
     }
     Ok(())

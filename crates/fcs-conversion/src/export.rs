@@ -14,8 +14,8 @@ use fcs_model::{
     CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece,
     CanonicalTrackTarget, CanonicalTrackValue, CanonicalValue, ConversionDomain, ConversionEntry,
     ConversionPhase, ConversionPolicy, ConversionReport, ConversionSeverity, ConversionStatus,
-    EntityKind, ErrorMetric, ExpansionPath, RepairMode, ReportError, SemanticStatus, StableId,
-    StableIdRegistry,
+    EntityKind, ErrorMetric, ExpansionPath, RepairMode, ReportError, SemanticLoss, SemanticStatus,
+    StableId, StableIdRegistry,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -26,7 +26,7 @@ use crate::{
     CapabilityFeature, DecimalLimits, DropAuthorization, ExactDecimal, PecLimits, PecProfile,
     PecProfileBinding, PgrLimits, PgrProfile, PgrProfileBinding, RpeLimits, RpeProfile,
     RpeProfileBinding, RpeVersionEra, SourceArtifact, SourceFormat,
-    compare_canonical_charts_with_resources_with_budgets, interpret_pec, interpret_pgr,
+    compare_canonical_charts_with_resources_with_budgets_and_ignored, interpret_pec, interpret_pgr,
     interpret_rpe_semantics, lower_pec_to_canonical, lower_pgr_to_canonical,
     lower_rpe_to_canonical, parse_json_document, parse_pec_document, parse_pgr_document,
     parse_rpe_document,
@@ -504,6 +504,7 @@ pub struct ExportOutcome {
     negotiation: NegotiationPlan,
     comparison: crate::CanonicalComparison,
     report: ConversionReport,
+    distribution: Option<fcs_model::DistributionMetadata>,
 }
 
 impl ExportOutcome {
@@ -525,6 +526,12 @@ impl ExportOutcome {
 
     pub const fn report(&self) -> &ConversionReport {
         &self.report
+    }
+
+    /// Source-free metadata for a compilation export, including any structured
+    /// preserve facts that must be written through FCBC Fidelity.
+    pub fn distribution(&self) -> Option<&fcs_model::DistributionMetadata> {
+        self.distribution.as_ref()
     }
 }
 
@@ -583,6 +590,17 @@ impl NegotiationPlan {
 
     pub fn drops(&self, domain: ConversionDomain) -> bool {
         self.action_for(domain) == Some(NegotiationAction::Drop)
+    }
+
+    pub fn preserves(&self, domain: ConversionDomain) -> bool {
+        self.action_for(domain) == Some(NegotiationAction::Preserve)
+    }
+
+    fn omits(&self, domain: ConversionDomain) -> bool {
+        matches!(
+            self.action_for(domain),
+            Some(NegotiationAction::Drop | NegotiationAction::Preserve)
+        )
     }
 
     pub fn approximates(&self, domain: ConversionDomain) -> bool {
@@ -768,6 +786,7 @@ pub fn export_pgr_compilation_with_options(
         compilation.chart(),
         Some(compilation.resources()),
         options,
+        true,
     )?;
     record_compilation_roundtrip_context(outcome, compilation, options)
 }
@@ -777,13 +796,14 @@ pub fn export_pgr_with_options(
     chart: &CanonicalChart,
     options: &ExportOptions,
 ) -> Result<ExportOutcome, ExportError> {
-    export_pgr_with_resource_context(chart, None, options)
+    export_pgr_with_resource_context(chart, None, options, false)
 }
 
 fn export_pgr_with_resource_context(
     chart: &CanonicalChart,
     expected_resources: Option<&CanonicalResourceBundle>,
     options: &ExportOptions,
+    fidelity_sink: bool,
 ) -> Result<ExportOutcome, ExportError> {
     let profile = selected_pgr_profile(options)?;
     if !profile.strict_eligible() {
@@ -792,7 +812,8 @@ fn export_pgr_with_resource_context(
             "the selected PGR profile is source-only and cannot be an export target",
         ));
     }
-    let (negotiation, entries) = negotiate_export_with_options(chart, options)?;
+    let (negotiation, entries) =
+        negotiate_export_with_fidelity_sink(chart, options, fidelity_sink)?;
     require_pgr_chart_shape(chart, options, &negotiation)?;
     let bpm = single_global_bpm(chart, "PGR")?;
     let offset = chart
@@ -1511,6 +1532,14 @@ pub fn negotiate_export_with_options(
     chart: &CanonicalChart,
     options: &ExportOptions,
 ) -> Result<(NegotiationPlan, Vec<ConversionEntry>), ExportError> {
+    negotiate_export_with_fidelity_sink(chart, options, false)
+}
+
+fn negotiate_export_with_fidelity_sink(
+    chart: &CanonicalChart,
+    options: &ExportOptions,
+    fidelity_sink: bool,
+) -> Result<(NegotiationPlan, Vec<ConversionEntry>), ExportError> {
     if options.policy == ConversionPolicy::Strict
         && options
             .target_profile
@@ -1686,10 +1715,31 @@ pub fn negotiate_export_with_options(
         )?;
     }
     let plan = NegotiationPlan { entries: plan };
-    if let Some(entry) = plan
-        .entries
-        .iter()
-        .find(|entry| entry.action == NegotiationAction::Preserve)
+    if fidelity_sink
+        && let Some(entry) = plan.entries.iter().find(|entry| {
+            entry.action == NegotiationAction::Preserve
+                && !matches!(
+                    entry.domain,
+                    ConversionDomain::Metadata
+                        | ConversionDomain::Resource
+                        | ConversionDomain::Package
+                )
+        })
+    {
+        return Err(ExportError::new(
+            "conversion.capability-mismatch",
+            format!(
+                "{} preservation cannot omit canonical target data from the external writer",
+                entry.domain
+            ),
+        )
+        .with_entries(entries));
+    }
+    if !fidelity_sink
+        && let Some(entry) = plan
+            .entries
+            .iter()
+            .find(|entry| entry.action == NegotiationAction::Preserve)
     {
         return Err(ExportError::new(
             "conversion.capability-mismatch",
@@ -1935,16 +1985,18 @@ pub fn export_rpe_json_with_options(
     chart: &CanonicalChart,
     options: &ExportOptions,
 ) -> Result<ExportOutcome, ExportError> {
-    export_rpe_json_with_resource_context(chart, None, options)
+    export_rpe_json_with_resource_context(chart, None, options, false)
 }
 
 fn export_rpe_json_with_resource_context(
     chart: &CanonicalChart,
     expected_resources: Option<&CanonicalResourceBundle>,
     options: &ExportOptions,
+    fidelity_sink: bool,
 ) -> Result<ExportOutcome, ExportError> {
     let (profile, binding, rpe_version) = selected_rpe_binding(options)?;
-    let (negotiation, entries) = negotiate_export_with_options(chart, options)?;
+    let (negotiation, entries) =
+        negotiate_export_with_fidelity_sink(chart, options, fidelity_sink)?;
     require_rpe_chart_shape(chart, &negotiation, &binding)?;
     let offset_ms = chart
         .metadata()
@@ -2170,6 +2222,7 @@ pub fn export_rpe_compilation_with_options(
         compilation.chart(),
         Some(compilation.resources()),
         options,
+        true,
     )?;
     record_compilation_roundtrip_context(outcome, compilation, options)
 }
@@ -2188,7 +2241,7 @@ pub fn export_pec_line_with_options(
     chart: &CanonicalChart,
     options: &ExportOptions,
 ) -> Result<ExportOutcome, ExportError> {
-    export_pec_line_with_resource_context(chart, None, options)
+    export_pec_line_with_resource_context(chart, None, options, false)
 }
 
 fn pec_track_events(
@@ -2468,6 +2521,7 @@ fn export_pec_line_with_resource_context(
     chart: &CanonicalChart,
     expected_resources: Option<&CanonicalResourceBundle>,
     options: &ExportOptions,
+    fidelity_sink: bool,
 ) -> Result<ExportOutcome, ExportError> {
     let profile = selected_pec_profile(options)?;
     if !profile.strict_eligible() {
@@ -2476,7 +2530,8 @@ fn export_pec_line_with_resource_context(
             "the selected PEC profile is source-only and cannot be an export target",
         ));
     }
-    let (negotiation, entries) = negotiate_export_with_options(chart, options)?;
+    let (negotiation, entries) =
+        negotiate_export_with_fidelity_sink(chart, options, fidelity_sink)?;
     require_pec_chart_shape(chart, options, &negotiation)?;
     let offset = chart
         .metadata()
@@ -2638,6 +2693,7 @@ pub fn export_pec_compilation_with_options(
         compilation.chart(),
         Some(compilation.resources()),
         options,
+        true,
     )?;
     record_compilation_roundtrip_context(outcome, compilation, options)
 }
@@ -2721,6 +2777,27 @@ fn record_compilation_roundtrip_context(
     compilation: &CanonicalCompilation,
     options: &ExportOptions,
 ) -> Result<ExportOutcome, ExportError> {
+    let semantic_losses = outcome
+        .negotiation
+        .entries()
+        .iter()
+        .filter(|entry| entry.action() == NegotiationAction::Preserve)
+        .map(|entry| {
+            SemanticLoss::new(
+                entry.domain(),
+                SemanticStatus::Preserved,
+                entry.category(),
+                None,
+            )
+            .map_err(|error| ExportError::new("conversion.internal", error.to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    outcome.distribution = Some(
+        compilation
+            .distribution()
+            .clone()
+            .with_semantic_losses(semantic_losses),
+    );
     if options.policy != ConversionPolicy::Roundtrip {
         return Ok(outcome);
     }
@@ -2959,7 +3036,7 @@ fn require_external_payload_losses(
         || !metadata.contributors().is_empty()
         || !metadata.credits().is_empty()
         || metadata.artwork().is_some();
-    if has_metadata && !negotiation.drops(ConversionDomain::Metadata) {
+    if has_metadata && !negotiation.omits(ConversionDomain::Metadata) {
         return Err(ExportError::new(
             "conversion.capability-mismatch",
             format!("{format} writer cannot represent canonical metadata"),
@@ -2970,10 +3047,9 @@ fn require_external_payload_losses(
         || metadata
             .sync()
             .is_some_and(|sync| sync.primary_audio().is_some() || sync.preview().is_some());
-    if has_resources
-        && !(negotiation.drops(ConversionDomain::Resource)
-            && negotiation.drops(ConversionDomain::Package))
-    {
+    let resource_loss = negotiation.omits(ConversionDomain::Resource);
+    let package_loss = negotiation.omits(ConversionDomain::Package);
+    if has_resources && !(resource_loss && package_loss) {
         return Err(ExportError::new(
             "conversion.capability-mismatch",
             format!("{format} writer cannot represent canonical resources or package bindings"),
@@ -2981,7 +3057,7 @@ fn require_external_payload_losses(
     }
 
     if (chart.descriptors().is_some() || !chart.required_extensions().is_empty())
-        && !negotiation.drops(ConversionDomain::Profile)
+        && !negotiation.omits(ConversionDomain::Profile)
     {
         return Err(ExportError::new(
             "conversion.capability-mismatch",
@@ -2989,6 +3065,23 @@ fn require_external_payload_losses(
         ));
     }
     Ok(())
+}
+
+fn preserved_selectors(negotiation: &NegotiationPlan) -> Vec<String> {
+    negotiation
+        .entries()
+        .iter()
+        .filter(|entry| {
+            entry.action() == NegotiationAction::Preserve
+                && matches!(
+                    entry.domain(),
+                    ConversionDomain::Metadata
+                        | ConversionDomain::Resource
+                        | ConversionDomain::Package
+                )
+        })
+        .map(|entry| entry.domain().as_str().to_owned())
+        .collect()
 }
 
 fn line_base_is_default(line: &CanonicalLine, floor_scale: f64) -> bool {
@@ -3655,13 +3748,20 @@ fn finish_export(
         })
         .cloned()
         .collect::<Vec<_>>();
-    let comparison = compare_canonical_charts_with_resources_with_budgets(
+    let preserved = preserved_selectors(&negotiation);
+    let mut ignored_selectors = dropped_selectors.clone();
+    ignored_selectors.extend(preserved.iter().cloned());
+    let comparison = compare_canonical_charts_with_resources_with_budgets_and_ignored(
         expected,
         actual,
         expected_resources,
         Some(actual_resources),
         &comparison_budgets,
-        &dropped_selectors,
+        crate::comparison::ComparisonFilters {
+            dropped_selectors: &dropped_selectors,
+            ignored_selectors: &ignored_selectors,
+            ignored_structural_selectors: &preserved,
+        },
         Some(alignment),
     );
     let observed_report_entries = entries
@@ -3888,6 +3988,7 @@ fn finish_export(
         negotiation,
         comparison,
         report,
+        distribution: None,
     })
 }
 
@@ -3986,7 +4087,7 @@ mod tests {
         CanonicalTime, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
         CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment,
         CanonicalTrackTarget, CanonicalTrackValue, CanonicalValue, DistributionMetadata,
-        OriginState, ProvenanceGraph, RestrictedProvenanceFact,
+        InputContentHash, OriginState, ProvenanceGraph, RestrictedProvenanceFact,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -4231,6 +4332,74 @@ mod tests {
                     }
                 })
                 .into(),
+        )
+        .unwrap()
+    }
+
+    fn preserve_timing_descriptor() -> CapabilityDescriptor {
+        let base = CapabilitySet::pec_line().descriptor(Some("pec.phira@1.0.0".into()));
+        CapabilityDescriptor::new(
+            base.format(),
+            base.version(),
+            base.profile().map(str::to_owned),
+            base.domains()
+                .iter()
+                .map(|domain| {
+                    if domain.domain() == ConversionDomain::Timing {
+                        CapabilityDomainDescriptor::new(
+                            domain.domain(),
+                            false,
+                            false,
+                            false,
+                            true,
+                            false,
+                            domain.max_entities(),
+                            domain.max_bytes(),
+                        )
+                        .with_features(domain.features().to_vec())
+                        .and_then(|descriptor| {
+                            descriptor.with_limits(domain.limits().iter().cloned())
+                        })
+                        .unwrap()
+                    } else {
+                        domain.clone()
+                    }
+                })
+                .collect(),
+        )
+        .unwrap()
+    }
+
+    fn preserve_metadata_descriptor() -> CapabilityDescriptor {
+        let base = CapabilitySet::pec_line().descriptor(Some("pec.phira@1.0.0".into()));
+        CapabilityDescriptor::new(
+            base.format(),
+            base.version(),
+            base.profile().map(str::to_owned),
+            base.domains()
+                .iter()
+                .map(|domain| {
+                    if domain.domain() == ConversionDomain::Metadata {
+                        CapabilityDomainDescriptor::new(
+                            domain.domain(),
+                            false,
+                            false,
+                            false,
+                            true,
+                            false,
+                            domain.max_entities(),
+                            domain.max_bytes(),
+                        )
+                        .with_features(domain.features().to_vec())
+                        .and_then(|descriptor| {
+                            descriptor.with_limits(domain.limits().iter().cloned())
+                        })
+                        .unwrap()
+                    } else {
+                        domain.clone()
+                    }
+                })
+                .collect(),
         )
         .unwrap()
     }
@@ -4875,38 +5044,7 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
 
     #[test]
     fn preserve_negotiation_fails_without_a_fidelity_or_sidecar_sink() {
-        let base = CapabilitySet::pec_line().descriptor(Some("pec.phira@1.0.0".into()));
-        let descriptor = CapabilityDescriptor::new(
-            base.format(),
-            base.version(),
-            base.profile().map(str::to_owned),
-            base.domains()
-                .iter()
-                .map(|domain| {
-                    if domain.domain() == ConversionDomain::Timing {
-                        CapabilityDomainDescriptor::new(
-                            domain.domain(),
-                            false,
-                            false,
-                            false,
-                            true,
-                            false,
-                            domain.max_entities(),
-                            domain.max_bytes(),
-                        )
-                        .with_features(domain.features().to_vec())
-                        .and_then(|descriptor| {
-                            descriptor.with_limits(domain.limits().iter().cloned())
-                        })
-                        .unwrap()
-                    } else {
-                        domain.clone()
-                    }
-                })
-                .collect(),
-        )
-        .unwrap();
-        let options = ExportOptions::semantic(descriptor);
+        let options = ExportOptions::semantic(preserve_timing_descriptor());
 
         let error = export_pec_line_with_options(&pec_chart(), &options).unwrap_err();
 
@@ -4920,6 +5058,136 @@ meta { custom: { \"float\": 1e2, \"time\": 1ms, \"length\": 2.0px, \
             entry.id() == "capability/timing"
                 && entry.semantic_status() == SemanticStatus::Preserved
         }));
+    }
+
+    #[test]
+    fn compilation_export_preserves_into_source_free_fidelity_metadata() {
+        let chart = with_metadata_fact(&pec_chart());
+        let distribution = DistributionMetadata::new(
+            ProvenanceGraph::empty(),
+            Vec::new(),
+            vec![InputContentHash::sha256_lower_hex("a".repeat(64), None).unwrap()],
+            CanonicalObject::new(Vec::new()).unwrap(),
+        )
+        .unwrap();
+        let compilation = CanonicalCompilation::new(
+            chart.clone(),
+            CanonicalResourceBundle::new(Vec::new()).unwrap(),
+            distribution,
+        );
+        let outcome = export_pec_compilation_with_options(
+            &compilation,
+            &ExportOptions::semantic(preserve_metadata_descriptor()),
+        )
+        .unwrap();
+
+        assert_eq!(outcome.report().status(), ConversionStatus::PreservedOnly);
+        assert!(outcome.report().entries().iter().any(|entry| {
+            entry.id() == "capability/metadata"
+                && entry.semantic_status() == SemanticStatus::Preserved
+        }));
+        assert!(
+            !String::from_utf8(outcome.bytes().to_vec())
+                .unwrap()
+                .contains("semanticLosses")
+        );
+        assert!(compilation.distribution().semantic_losses().is_empty());
+        let losses = outcome.distribution().unwrap().semantic_losses();
+        assert_eq!(losses.len(), 1);
+        assert_eq!(losses[0].domain(), ConversionDomain::Metadata);
+        assert_eq!(losses[0].status(), SemanticStatus::Preserved);
+        assert_eq!(losses[0].category(), SemanticLoss::CAPABILITY_NEGOTIATED);
+        assert_eq!(losses[0].entity_id(), None);
+
+        let fidelity_compilation = CanonicalCompilation::new(
+            chart.clone(),
+            CanonicalResourceBundle::new(Vec::new()).unwrap(),
+            outcome.distribution().unwrap().clone(),
+        );
+        let fidelity = fcs_fcbc::write_from_compilation_with_profile(
+            &fidelity_compilation,
+            fcs_fcbc::ContainerProfile::Fidelity,
+        )
+        .unwrap();
+        let stripped = fcs_fcbc::write_from_compilation_with_profile(
+            &CanonicalCompilation::new(
+                chart,
+                CanonicalResourceBundle::new(Vec::new()).unwrap(),
+                DistributionMetadata::empty(),
+            ),
+            fcs_fcbc::ContainerProfile::StrictRuntime,
+        )
+        .unwrap();
+        let fidelity_container = fcs_fcbc::load_container(&fidelity).unwrap();
+        let stripped_container = fcs_fcbc::load_container(&stripped).unwrap();
+        assert_eq!(
+            fidelity_container.header.profile,
+            fcs_fcbc::ContainerProfile::Fidelity
+        );
+        assert!(fidelity_container.section_types().contains(&16));
+        assert_eq!(
+            stripped_container.header.profile,
+            fcs_fcbc::ContainerProfile::StrictRuntime
+        );
+        assert!(!stripped_container.section_types().contains(&16));
+        assert!(
+            fidelity
+                .windows(SemanticLoss::CAPABILITY_NEGOTIATED.len())
+                .any(|window| window == SemanticLoss::CAPABILITY_NEGOTIATED.as_bytes())
+        );
+        let fidelity_chart = fcs_fcbc::load_chart(&fidelity).unwrap();
+        let stripped_chart = fcs_fcbc::load_chart(&stripped).unwrap();
+        assert_eq!(
+            fidelity_chart.document_profile,
+            stripped_chart.document_profile
+        );
+        assert_eq!(fidelity_chart.constants, stripped_chart.constants);
+        assert_eq!(fidelity_chart.resources, stripped_chart.resources);
+        assert_eq!(fidelity_chart.extensions, stripped_chart.extensions);
+        assert_eq!(fidelity_chart.tempo_points, stripped_chart.tempo_points);
+        assert_eq!(fidelity_chart.lines, stripped_chart.lines);
+        assert_eq!(fidelity_chart.notes, stripped_chart.notes);
+        assert_eq!(fidelity_chart.descriptors, stripped_chart.descriptors);
+        assert_eq!(fidelity_chart.expressions, stripped_chart.expressions);
+        assert_eq!(fidelity_chart.distances, stripped_chart.distances);
+
+        let strict = ExportOptions::strict(preserve_metadata_descriptor())
+            .with_target_profile("pec.phira@1.0.0");
+        let error = export_pec_compilation_with_options(&compilation, &strict).unwrap_err();
+        assert_eq!(error.category(), "conversion.capability-mismatch");
+        assert!(error.message().contains("strict export cannot preserve"));
+    }
+
+    #[test]
+    fn compilation_export_omits_preserved_metadata_from_external_bytes() {
+        let chart = with_metadata_fact(&pec_chart());
+        let compilation = CanonicalCompilation::new(
+            chart,
+            CanonicalResourceBundle::new(Vec::new()).unwrap(),
+            DistributionMetadata::empty(),
+        );
+        let outcome = export_pec_compilation_with_options(
+            &compilation,
+            &ExportOptions::semantic(preserve_metadata_descriptor()),
+        )
+        .unwrap();
+
+        assert!(outcome.negotiation().preserves(ConversionDomain::Metadata));
+        assert_eq!(outcome.report().status(), ConversionStatus::PreservedOnly);
+        assert!(
+            !String::from_utf8(outcome.bytes().to_vec())
+                .unwrap()
+                .contains("dropped title")
+        );
+        assert!(outcome.comparison().is_equivalent());
+        assert!(
+            outcome
+                .distribution()
+                .unwrap()
+                .semantic_losses()
+                .iter()
+                .any(|loss| loss.domain() == ConversionDomain::Metadata)
+        );
     }
 
     #[test]

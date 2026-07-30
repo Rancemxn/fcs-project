@@ -305,7 +305,42 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
     dropped_selectors: &[String],
     alignment: Option<&EntityAlignment>,
 ) -> CanonicalComparison {
-    let mut mismatches = Mismatches::new(dropped_selectors);
+    compare_canonical_charts_with_resources_with_budgets_and_ignored(
+        expected,
+        actual,
+        expected_resources,
+        actual_resources,
+        budgets,
+        ComparisonFilters {
+            dropped_selectors,
+            ignored_selectors: dropped_selectors,
+            ignored_structural_selectors: &[],
+        },
+        alignment,
+    )
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ComparisonFilters<'a> {
+    pub(crate) dropped_selectors: &'a [String],
+    pub(crate) ignored_selectors: &'a [String],
+    pub(crate) ignored_structural_selectors: &'a [String],
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compare_canonical_charts_with_resources_with_budgets_and_ignored(
+    expected: &CanonicalChart,
+    actual: &CanonicalChart,
+    expected_resources: Option<&CanonicalResourceBundle>,
+    actual_resources: Option<&CanonicalResourceBundle>,
+    budgets: &BTreeMap<String, f64>,
+    filters: ComparisonFilters<'_>,
+    alignment: Option<&EntityAlignment>,
+) -> CanonicalComparison {
+    let mut mismatches = Mismatches::with_structural(
+        filters.ignored_selectors,
+        filters.ignored_structural_selectors,
+    );
     let mut verified_maximum_errors = VerifiedMetricObservations::default();
 
     if expected.source_version() != actual.source_version() {
@@ -418,7 +453,7 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets(
         verified_maximum_errors: maximum_errors,
         verified_sample_counts: sample_counts,
         unverified_selectors: {
-            let mut selectors = dropped_selectors.to_vec();
+            let mut selectors = filters.dropped_selectors.to_vec();
             selectors.sort();
             selectors.dedup();
             selectors
@@ -504,15 +539,25 @@ fn aggregate_fingerprint(value: impl Debug) -> String {
 /// One comparison routine can report several domain/entity/field selectors.
 /// Filtering here keeps an authorization from suppressing sibling facts.
 struct Mismatches<'a> {
-    dropped_selectors: &'a [String],
+    ignored_selectors: &'a [String],
+    ignored_structural_selectors: &'a [String],
     items: Vec<ComparisonMismatch>,
     observed_count: usize,
 }
 
 impl<'a> Mismatches<'a> {
-    fn new(dropped_selectors: &'a [String]) -> Self {
+    #[cfg(test)]
+    fn new(ignored_selectors: &'a [String]) -> Self {
+        Self::with_structural(ignored_selectors, &[])
+    }
+
+    fn with_structural(
+        ignored_selectors: &'a [String],
+        ignored_structural_selectors: &'a [String],
+    ) -> Self {
         Self {
-            dropped_selectors,
+            ignored_selectors,
+            ignored_structural_selectors,
             items: Vec::new(),
             observed_count: 0,
         }
@@ -520,7 +565,7 @@ impl<'a> Mismatches<'a> {
 
     fn push(&mut self, mismatch: ComparisonMismatch) {
         if self
-            .dropped_selectors
+            .ignored_selectors
             .iter()
             .any(|selector| DropAuthorization::selector_matches(selector, mismatch.selector()))
         {
@@ -538,6 +583,13 @@ impl<'a> Mismatches<'a> {
     /// into a no-op for that domain. The mismatch keeps its own domain so the
     /// report still names the domain that lost the entities.
     fn push_structural(&mut self, mismatch: ComparisonMismatch) {
+        if self
+            .ignored_structural_selectors
+            .iter()
+            .any(|selector| DropAuthorization::selector_matches(selector, mismatch.selector()))
+        {
+            return;
+        }
         self.record(mismatch);
     }
 

@@ -58,7 +58,7 @@ pub use note::{
 pub use provenance::{
     CanonicalCompilation, DistributionMetadata, InputContentHash, LogicalSourceLocator,
     MappingRuleRef, OriginState, ProvenanceError, ProvenanceGraph, RestrictedProvenanceFact,
-    SemanticStatus,
+    SemanticLoss, SemanticStatus,
 };
 pub use render::{
     CanonicalActiveInterval, CanonicalArcDirection, CanonicalGlyphPlacement, CanonicalGlyphRun,
