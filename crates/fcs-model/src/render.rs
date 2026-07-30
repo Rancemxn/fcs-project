@@ -1525,6 +1525,177 @@ impl CanonicalRenderScene {
         &self.glyph_runs
     }
 
+    /// Rewrites descriptor references after the canonical descriptor table has
+    /// interned and reordered its entries.
+    pub fn remap_descriptors(&mut self, mapping: &[usize]) -> Result<(), CanonicalRenderError> {
+        let remap = |index: &mut usize| {
+            *index = *mapping
+                .get(*index)
+                .ok_or(CanonicalRenderError::UnresolvedReference)?;
+            Ok::<_, CanonicalRenderError>(())
+        };
+        for node in &mut self.nodes {
+            for index in [
+                &mut node.position,
+                &mut node.origin,
+                &mut node.rotation,
+                &mut node.scale,
+                &mut node.opacity,
+                &mut node.visibility,
+            ] {
+                remap(index)?;
+            }
+        }
+        for geometry in &mut self.geometries {
+            match &mut geometry.data {
+                CanonicalRenderGeometryData::Rect { origin, size }
+                | CanonicalRenderGeometryData::RoundedRect { origin, size, .. } => {
+                    remap(origin)?;
+                    remap(size)?;
+                    if let CanonicalRenderGeometryData::RoundedRect { radii, .. } =
+                        &mut geometry.data
+                    {
+                        for index in radii {
+                            remap(index)?;
+                        }
+                    }
+                }
+                CanonicalRenderGeometryData::Circle { center, radius } => {
+                    remap(center)?;
+                    remap(radius)?;
+                }
+                CanonicalRenderGeometryData::Ellipse {
+                    center,
+                    radius_x,
+                    radius_y,
+                    rotation,
+                } => {
+                    remap(center)?;
+                    remap(radius_x)?;
+                    remap(radius_y)?;
+                    remap(rotation)?;
+                }
+                CanonicalRenderGeometryData::Line { start, end } => {
+                    remap(start)?;
+                    remap(end)?;
+                }
+                CanonicalRenderGeometryData::Polyline { points }
+                | CanonicalRenderGeometryData::Polygon { points } => {
+                    for index in points {
+                        remap(index)?;
+                    }
+                }
+                CanonicalRenderGeometryData::Path { .. } => {}
+                CanonicalRenderGeometryData::Image {
+                    destination,
+                    source,
+                    ..
+                } => {
+                    for index in destination {
+                        remap(index)?;
+                    }
+                    if let Some(source) = source {
+                        for index in source {
+                            remap(index)?;
+                        }
+                    }
+                }
+                CanonicalRenderGeometryData::Text { origin, .. } => remap(origin)?,
+            }
+        }
+        for path in &mut self.paths {
+            for command in &mut path.commands {
+                match command {
+                    CanonicalPathCommand::MoveTo(index) | CanonicalPathCommand::LineTo(index) => {
+                        remap(index)?
+                    }
+                    CanonicalPathCommand::QuadraticTo(first, second) => {
+                        remap(first)?;
+                        remap(second)?;
+                    }
+                    CanonicalPathCommand::CubicTo(first, second, third) => {
+                        remap(first)?;
+                        remap(second)?;
+                        remap(third)?;
+                    }
+                    CanonicalPathCommand::Arc {
+                        center,
+                        radius,
+                        start_angle,
+                        end_angle,
+                        ..
+                    } => {
+                        remap(center)?;
+                        remap(radius)?;
+                        remap(start_angle)?;
+                        remap(end_angle)?;
+                    }
+                    CanonicalPathCommand::EllipseArc {
+                        center,
+                        radius_x,
+                        radius_y,
+                        rotation,
+                        start_angle,
+                        end_angle,
+                        ..
+                    } => {
+                        remap(center)?;
+                        remap(radius_x)?;
+                        remap(radius_y)?;
+                        remap(rotation)?;
+                        remap(start_angle)?;
+                        remap(end_angle)?;
+                    }
+                    CanonicalPathCommand::Close => {}
+                }
+            }
+        }
+        for paint in &mut self.paints {
+            match &mut paint.data {
+                CanonicalRenderPaintData::Solid { color } => remap(color)?,
+                CanonicalRenderPaintData::LinearGradient {
+                    start, end, stops, ..
+                } => {
+                    remap(start)?;
+                    remap(end)?;
+                    for stop in stops {
+                        remap(&mut stop.color)?;
+                    }
+                }
+                CanonicalRenderPaintData::RadialGradient {
+                    start_center,
+                    start_radius,
+                    end_center,
+                    end_radius,
+                    stops,
+                    ..
+                } => {
+                    for index in [start_center, start_radius, end_center, end_radius] {
+                        remap(index)?;
+                    }
+                    for stop in stops {
+                        remap(&mut stop.color)?;
+                    }
+                }
+                CanonicalRenderPaintData::ImagePattern { transform, .. } => {
+                    remap(&mut transform.position)?;
+                    remap(&mut transform.origin)?;
+                    remap(&mut transform.rotation)?;
+                    remap(&mut transform.scale)?;
+                }
+            }
+        }
+        for stroke in &mut self.strokes {
+            remap(&mut stroke.paint)?;
+            remap(&mut stroke.width)?;
+            remap(&mut stroke.dash_offset)?;
+        }
+        for glyph_run in &mut self.glyph_runs {
+            remap(&mut glyph_run.size)?;
+        }
+        Ok(())
+    }
+
     /// Layer indices in the fixed draw order `(pass, zOrder, documentOrder, id)`.
     ///
     /// Pass ordering uses the section 14.1 ordinal, which is the sequence

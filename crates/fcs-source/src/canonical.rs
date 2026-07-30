@@ -4,18 +4,26 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use fcs_model::{
-    AudioOffset, Beat as CanonicalBeat, CanonicalArtwork, CanonicalChart, CanonicalChartError,
-    CanonicalColor, CanonicalCompilation, CanonicalContributor, CanonicalCredit,
-    CanonicalCreditRole, CanonicalLineGraph, CanonicalMetadata, CanonicalObject,
+    AudioOffset, Beat as CanonicalBeat, CanonicalActiveInterval, CanonicalArtwork, CanonicalChart,
+    CanonicalChartError, CanonicalColor, CanonicalCompilation, CanonicalContributor,
+    CanonicalCredit, CanonicalCreditRole, CanonicalDescriptorDomain, CanonicalDescriptorKind,
+    CanonicalDescriptorRoot, CanonicalDescriptorTable, CanonicalExpressionType,
+    CanonicalExpressionValue, CanonicalLineGraph, CanonicalMetadata, CanonicalObject,
     CanonicalObjectEntry, CanonicalPreview, CanonicalProfile, CanonicalProfileFeature,
-    CanonicalRequiredExtension, CanonicalResource, CanonicalResourceKind, CanonicalSourceVersion,
-    CanonicalSync, CanonicalValue, CanonicalValueType, DeclaredSha256, DistributionMetadata,
+    CanonicalPropertyDescriptor, CanonicalRenderAttachment, CanonicalRenderColorSpace,
+    CanonicalRenderComposite, CanonicalRenderGeometry, CanonicalRenderGeometryData,
+    CanonicalRenderLayer, CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec,
+    CanonicalRenderPaint, CanonicalRenderPaintData, CanonicalRenderPass, CanonicalRenderScene,
+    CanonicalRenderSceneSpec, CanonicalRequiredExtension, CanonicalResource, CanonicalResourceKind,
+    CanonicalSourceVersion, CanonicalSync, CanonicalTextualId, CanonicalValue, CanonicalValueType,
+    CanonicalViewport, DeclaredSha256, DistributionMetadata, EntityKind, StableId,
+    StableIdRegistry,
 };
 
 use crate::ast::{
     Definition, Document, DocumentProfile, ExtensionRequirement, FieldPath, MetaBlock,
-    ProfileFeature, ResourceKind, SchemaField, SchemaValue, SourceExpression, SourceLiteral,
-    SourceSpan, SyncBlock, TopLevelBlockKind, TypedValue,
+    ProfileFeature, RenderBodyItem, RenderItem, ResourceKind, SchemaField, SchemaValue,
+    SourceExpression, SourceLiteral, SourceSpan, SyncBlock, TopLevelBlockKind, TypedValue,
 };
 use crate::custom::CustomValueLimits;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLabel, DiagnosticStage};
@@ -141,6 +149,29 @@ impl Document {
         })
     }
 
+    /// Source-aware canonical boundary for a document carrying a Render scene.
+    pub fn canonical_chart_with_source(
+        &self,
+        source: &str,
+        limits: CompileTimeLimits,
+    ) -> Result<CanonicalChart, Vec<Diagnostic>> {
+        let mut chart = self.canonical_chart(limits)?;
+        let Some(crate::ast::TopLevelBlock::Render(block)) =
+            self.top_level(TopLevelBlockKind::Render)
+        else {
+            return Ok(chart);
+        };
+        let scene = crate::parser::parse_render_scene(source, block).into_result()?;
+        let (mut render, render_descriptors) = lower_render_scene(&scene, self.format.span)?;
+        let (descriptors, mapping) =
+            merge_render_descriptors(chart.descriptors(), &render_descriptors, self.format.span)?;
+        render
+            .remap_descriptors(&mapping)
+            .map_err(|error| vec![render_error(format!("{error:?}"), self.format.span)])?;
+        chart = chart.with_descriptors(descriptors).with_render(render);
+        Ok(chart)
+    }
+
     /// Assembles the FCS §17 CanonicalCompilation product.
     ///
     /// Native FCS compile paths produce empty DistributionMetadata. Conversion
@@ -154,6 +185,22 @@ impl Document {
         resource_limits: crate::resource::ResourceLimits,
     ) -> Result<CanonicalCompilation, Vec<Diagnostic>> {
         let chart = self.canonical_chart(limits)?;
+        let resources = self.canonical_resource_bundle(workspace_root, resource_limits)?;
+        Ok(CanonicalCompilation::new(
+            chart,
+            resources,
+            DistributionMetadata::empty(),
+        ))
+    }
+
+    pub fn canonical_compilation_with_source(
+        &self,
+        source: &str,
+        limits: CompileTimeLimits,
+        workspace_root: impl AsRef<std::path::Path>,
+        resource_limits: crate::resource::ResourceLimits,
+    ) -> Result<CanonicalCompilation, Vec<Diagnostic>> {
+        let chart = self.canonical_chart_with_source(source, limits)?;
         let resources = self.canonical_resource_bundle(workspace_root, resource_limits)?;
         Ok(CanonicalCompilation::new(
             chart,
@@ -210,6 +257,543 @@ impl Document {
         }
         Ok(())
     }
+}
+
+fn merge_render_descriptors(
+    core: Option<&CanonicalDescriptorTable>,
+    render: &CanonicalDescriptorTable,
+    span: SourceSpan,
+) -> Result<(CanonicalDescriptorTable, Vec<usize>), Vec<Diagnostic>> {
+    let (mut descriptors, mut roots) = core
+        .map(|table| (table.descriptors().to_vec(), table.roots().to_vec()))
+        .unwrap_or_default();
+    if core.is_some() {
+        let offset = descriptors.len();
+        roots.extend(
+            render
+                .roots()
+                .iter()
+                .map(|root| {
+                    CanonicalDescriptorRoot::new(
+                        root.target_path().to_owned(),
+                        root.owner(),
+                        root.descriptor() + offset,
+                    )
+                    .map_err(|error| render_error(format!("{error:?}"), span))
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| vec![error])?,
+        );
+        descriptors.extend(render.descriptors().iter().cloned());
+    } else {
+        descriptors = render.descriptors().to_vec();
+        roots = render.roots().to_vec();
+    }
+    let merged = CanonicalDescriptorTable::new(descriptors, roots)
+        .map_err(|error| vec![render_error(format!("{error:?}"), span)])?;
+    let mapping = render
+        .descriptors()
+        .iter()
+        .map(|descriptor| {
+            merged
+                .descriptors()
+                .iter()
+                .position(|candidate| candidate == descriptor)
+                .ok_or_else(|| {
+                    vec![render_error(
+                        "Render descriptor was lost during merge",
+                        span,
+                    )]
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((merged, mapping))
+}
+
+fn render_error(message: impl Into<String>, span: SourceSpan) -> Diagnostic {
+    Diagnostic::new(
+        DiagnosticCode::TYPE_INVALID_OPERATION,
+        DiagnosticStage::Canonical,
+        message,
+        span,
+    )
+}
+
+fn render_field<'a>(fields: &'a [SchemaField], path: &str) -> Option<&'a SchemaField> {
+    fields
+        .iter()
+        .find(|field| field.path.segments.join(".") == path)
+}
+
+fn render_body_field<'a>(items: &'a [RenderBodyItem], path: &str) -> Option<&'a SchemaField> {
+    items.iter().find_map(|item| match item {
+        RenderBodyItem::Field(field) if field.path.segments.join(".") == path => {
+            Some(field.as_ref())
+        }
+        _ => None,
+    })
+}
+
+fn render_value(field: &SchemaField) -> Result<TypedValue, Diagnostic> {
+    let SchemaValue::Expression(expression) = &field.value else {
+        return Err(render_error(
+            "Render field must be a compile-time expression",
+            field.span,
+        ));
+    };
+    crate::elaborator::evaluate_metadata_expression(expression, None)
+}
+
+fn render_paint_color(field: &SchemaField) -> Result<TypedValue, Diagnostic> {
+    let SchemaValue::Expression(expression) = &field.value else {
+        return Err(render_error(
+            "Render paint must be a compile-time expression",
+            field.span,
+        ));
+    };
+    if let SourceExpression::Call {
+        callee, arguments, ..
+    } = expression
+        && let SourceExpression::Name { name, .. } = callee.as_ref()
+        && name == "solid"
+    {
+        let [argument] = arguments.as_slice() else {
+            return Err(render_error(
+                "solid paint requires one color argument",
+                field.span,
+            ));
+        };
+        return crate::elaborator::evaluate_metadata_expression(argument, None);
+    }
+    Err(render_error(
+        "Render fill must use solid(color)",
+        field.span,
+    ))
+}
+
+fn render_value_or<T>(
+    fields: &[SchemaField],
+    path: &str,
+    default: T,
+    convert: impl FnOnce(TypedValue) -> Result<T, Diagnostic>,
+) -> Result<T, Diagnostic> {
+    match render_field(fields, path) {
+        Some(field) => convert(render_value(field)?),
+        None => Ok(default),
+    }
+}
+
+fn render_body_value_or<T>(
+    items: &[RenderBodyItem],
+    path: &str,
+    default: T,
+    convert: impl FnOnce(TypedValue) -> Result<T, Diagnostic>,
+) -> Result<T, Diagnostic> {
+    match render_body_field(items, path) {
+        Some(field) => convert(render_value(field)?),
+        None => Ok(default),
+    }
+}
+
+fn render_length(value: TypedValue, span: SourceSpan) -> Result<f64, Diagnostic> {
+    match value {
+        TypedValue::Length(value) if value.is_finite() => Ok(value),
+        other => Err(render_error(
+            format!("expected length, found {}", other.ty()),
+            span,
+        )),
+    }
+}
+
+fn render_vec2_length(value: TypedValue, span: SourceSpan) -> Result<[f64; 2], Diagnostic> {
+    let TypedValue::Vec2(x, y) = value else {
+        return Err(render_error("expected vec2<length>", span));
+    };
+    Ok([render_length(*x, span)?, render_length(*y, span)?])
+}
+
+fn render_string(value: TypedValue, span: SourceSpan) -> Result<String, Diagnostic> {
+    match value {
+        TypedValue::String(value) => Ok(value),
+        other => Err(render_error(
+            format!("expected string, found {}", other.ty()),
+            span,
+        )),
+    }
+}
+
+fn render_int(value: TypedValue, span: SourceSpan) -> Result<i32, Diagnostic> {
+    match value {
+        TypedValue::Int(value) => {
+            i32::try_from(value).map_err(|_| render_error("Render integer is outside i32", span))
+        }
+        other => Err(render_error(
+            format!("expected int, found {}", other.ty()),
+            span,
+        )),
+    }
+}
+
+fn render_descriptor_value(
+    value: TypedValue,
+) -> Result<(CanonicalExpressionType, CanonicalExpressionValue), Diagnostic> {
+    let canonical = match value {
+        TypedValue::Bool(value) => CanonicalExpressionValue::Bool(value),
+        TypedValue::Int(value) => CanonicalExpressionValue::Int(value),
+        TypedValue::Float(value) => CanonicalExpressionValue::Float(value),
+        TypedValue::Time(value) => CanonicalExpressionValue::Time(value),
+        TypedValue::Beat(value) => CanonicalExpressionValue::ExactBeat(
+            CanonicalBeat::new(value.numerator(), value.denominator())
+                .map_err(|_| render_error("invalid Beat descriptor", SourceSpan::new(0, 0)))?,
+        ),
+        TypedValue::Length(value) => CanonicalExpressionValue::Length(value),
+        TypedValue::Angle(value) => CanonicalExpressionValue::Angle(value),
+        TypedValue::Color(value) => CanonicalExpressionValue::Color(value.to_linear()),
+        TypedValue::Vec2(x, y) => {
+            let (_, x) = render_descriptor_value(*x)?;
+            let (_, y) = render_descriptor_value(*y)?;
+            CanonicalExpressionValue::Vec2(Box::new(x), Box::new(y))
+        }
+        other => {
+            return Err(render_error(
+                format!("unsupported Render descriptor value {}", other.ty()),
+                SourceSpan::new(0, 0),
+            ));
+        }
+    };
+    Ok((canonical.value_type(), canonical))
+}
+
+fn render_stable_id(
+    registry: &mut StableIdRegistry,
+    kind: EntityKind,
+    textual: String,
+    span: SourceSpan,
+) -> Result<StableId, Diagnostic> {
+    let textual = CanonicalTextualId::explicit(textual)
+        .map_err(|error| render_error(error.to_string(), span))?;
+    registry
+        .insert(kind, textual)
+        .map_err(|error| render_error(error.to_string(), span))
+}
+
+fn lower_render_scene(
+    scene: &crate::ast::RenderScene,
+    span: SourceSpan,
+) -> Result<(CanonicalRenderScene, CanonicalDescriptorTable), Vec<Diagnostic>> {
+    let result = (|| {
+        let viewport_width = render_field(&scene.viewport.fields, "width")
+            .ok_or_else(|| render_error("Render viewport requires width", scene.viewport.span))
+            .and_then(|field| render_length(render_value(field)?, field.span))?;
+        let viewport_height = render_field(&scene.viewport.fields, "height")
+            .ok_or_else(|| render_error("Render viewport requires height", scene.viewport.span))
+            .and_then(|field| render_length(render_value(field)?, field.span))?;
+        let color_space = match render_value_or(
+            &scene.viewport.fields,
+            "colorSpace",
+            "linear-srgb".to_owned(),
+            |value| render_string(value, scene.viewport.span),
+        )?
+        .as_str()
+        {
+            "linear-srgb" => CanonicalRenderColorSpace::LinearSrgb,
+            "srgb" => CanonicalRenderColorSpace::Srgb,
+            other => {
+                return Err(render_error(
+                    format!("unsupported Render colorSpace {other}"),
+                    scene.viewport.span,
+                ));
+            }
+        };
+
+        let mut descriptors = Vec::<CanonicalPropertyDescriptor>::new();
+        let mut descriptor_values =
+            Vec::<(CanonicalExpressionType, CanonicalExpressionValue)>::new();
+        let descriptor = |value: TypedValue,
+                          descriptors: &mut Vec<CanonicalPropertyDescriptor>,
+                          values: &mut Vec<(CanonicalExpressionType, CanonicalExpressionValue)>|
+         -> Result<usize, Diagnostic> {
+            let (ty, canonical) = render_descriptor_value(value)?;
+            let index = descriptors.len();
+            descriptors.push(
+                CanonicalPropertyDescriptor::new(
+                    ty.clone(),
+                    CanonicalDescriptorDomain::new(None, None, false).expect("unbounded domain"),
+                    CanonicalDescriptorKind::Constant(canonical.clone()),
+                )
+                .map_err(|error| render_error(error.to_string(), span))?,
+            );
+            values.push((ty, canonical));
+            Ok(index)
+        };
+        let mut registry = StableIdRegistry::new();
+        let mut layers = Vec::new();
+        let mut nodes = Vec::new();
+        let mut geometries = Vec::new();
+        let mut paints = Vec::new();
+        let mut descriptor_roots = Vec::<(String, u64, usize)>::new();
+
+        for (layer_index, layer) in scene.layers.iter().enumerate() {
+            let pass = render_body_field(&layer.items, "pass")
+                .ok_or_else(|| render_error("Render layer requires pass", layer.span))
+                .and_then(|field| render_string(render_value(field)?, field.span))
+                .and_then(|value| {
+                    CanonicalRenderPass::from_spelling(&value).ok_or_else(|| {
+                        render_error(format!("unsupported Render pass {value}"), layer.span)
+                    })
+                })?;
+            let z_order = render_body_value_or(&layer.items, "zOrder", 0, |value| {
+                render_int(value, layer.span)
+            })?;
+            let attachment =
+                match render_body_value_or(&layer.items, "space", "world".to_owned(), |value| {
+                    render_string(value, layer.span)
+                })?
+                .as_str()
+                {
+                    "world" => CanonicalRenderAttachment::World,
+                    "screen" => CanonicalRenderAttachment::Screen,
+                    other => {
+                        return Err(render_error(
+                            format!("unsupported Render space {other}"),
+                            layer.span,
+                        ));
+                    }
+                };
+            let layer_id = render_stable_id(
+                &mut registry,
+                EntityKind::RenderLayer,
+                format!("layer/{}", layer.name),
+                layer.name_span,
+            )?;
+            let mut roots = Vec::new();
+            let children = layer.items.iter().find_map(|item| match item {
+                RenderBodyItem::Children(children) => Some(&children.items),
+                _ => None,
+            });
+            let Some(children) = children else {
+                layers.push(
+                    CanonicalRenderLayer::new(layer_id, pass, z_order, layer_index as u32, roots)
+                        .map_err(|error| render_error(format!("{error:?}"), layer.span))?,
+                );
+                continue;
+            };
+            for (document_order, item) in children.iter().enumerate() {
+                let RenderItem::Node(node) = item else {
+                    return Err(render_error(
+                        "Render children must contain concrete nodes",
+                        item.span(),
+                    ));
+                };
+                if node.kind != CanonicalRenderNodeKind::Rect {
+                    return Err(render_error(
+                        "product Render lowering currently supports Rect only",
+                        node.span,
+                    ));
+                }
+                let node_path = format!("layer/{}/{}", layer.name, node.name);
+                let node_id = render_stable_id(
+                    &mut registry,
+                    EntityKind::RenderNode,
+                    node_path.clone(),
+                    node.name_span,
+                )?;
+                let origin = render_body_value_or(
+                    &node.items,
+                    "origin",
+                    TypedValue::vec2(TypedValue::Length(0.0), TypedValue::Length(0.0))
+                        .expect("vec2"),
+                    Ok,
+                )
+                .and_then(|value| render_vec2_length(value, node.span))?;
+                let size_field = render_body_field(&node.items, "size")
+                    .ok_or_else(|| render_error("Rect requires size", node.span))?;
+                let size = render_vec2_length(render_value(size_field)?, size_field.span)?;
+                let fill_field = render_body_field(&node.items, "fill")
+                    .ok_or_else(|| render_error("Rect requires fill", node.span))?;
+                let TypedValue::Color(color) = render_paint_color(fill_field)? else {
+                    return Err(render_error(
+                        "solid paint requires a color",
+                        fill_field.span,
+                    ));
+                };
+                let solid_color = descriptor(
+                    TypedValue::Color(color),
+                    &mut descriptors,
+                    &mut descriptor_values,
+                )?;
+                let origin_descriptor = descriptor(
+                    TypedValue::vec2(TypedValue::Length(origin[0]), TypedValue::Length(origin[1]))
+                        .expect("vec2"),
+                    &mut descriptors,
+                    &mut descriptor_values,
+                )?;
+                let size_descriptor = descriptor(
+                    TypedValue::vec2(TypedValue::Length(size[0]), TypedValue::Length(size[1]))
+                        .expect("vec2"),
+                    &mut descriptors,
+                    &mut descriptor_values,
+                )?;
+                let position = descriptor(
+                    TypedValue::vec2(TypedValue::Length(0.0), TypedValue::Length(0.0))
+                        .expect("vec2"),
+                    &mut descriptors,
+                    &mut descriptor_values,
+                )?;
+                let rotation = descriptor(
+                    TypedValue::Angle(0.0),
+                    &mut descriptors,
+                    &mut descriptor_values,
+                )?;
+                let scale = descriptor(
+                    TypedValue::vec2(TypedValue::Float(1.0), TypedValue::Float(1.0)).expect("vec2"),
+                    &mut descriptors,
+                    &mut descriptor_values,
+                )?;
+                let opacity = descriptor(
+                    TypedValue::Float(1.0),
+                    &mut descriptors,
+                    &mut descriptor_values,
+                )?;
+                let visibility = descriptor(
+                    TypedValue::Bool(true),
+                    &mut descriptors,
+                    &mut descriptor_values,
+                )?;
+                let geometry_id = render_stable_id(
+                    &mut registry,
+                    EntityKind::RenderGeometry,
+                    format!("{node_path}/geometry"),
+                    node.span,
+                )?;
+                let paint_id = render_stable_id(
+                    &mut registry,
+                    EntityKind::RenderPaint,
+                    format!("{node_path}/fill"),
+                    node.span,
+                )?;
+                let geometry = CanonicalRenderGeometry::new(
+                    geometry_id.clone(),
+                    CanonicalRenderGeometryData::Rect {
+                        origin: origin_descriptor,
+                        size: size_descriptor,
+                    },
+                )
+                .map_err(|error| render_error(format!("{error:?}"), node.span))?;
+                let paint = CanonicalRenderPaint::new(
+                    paint_id.clone(),
+                    CanonicalRenderPaintData::Solid { color: solid_color },
+                )
+                .map_err(|error| render_error(format!("{error:?}"), node.span))?;
+                let node = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+                    id: node_id.clone(),
+                    kind: CanonicalRenderNodeKind::Rect,
+                    parent: None,
+                    layer: layer_index,
+                    document_order: document_order as u32,
+                    z_order: 0,
+                    attachment: attachment.clone(),
+                    active: CanonicalActiveInterval::unbounded(),
+                    isolate: false,
+                    follow_hidden_attachment: false,
+                    position,
+                    origin: origin_descriptor,
+                    rotation,
+                    scale,
+                    opacity,
+                    visibility,
+                    geometry: Some(geometries.len()),
+                    fill_paint: Some(paints.len()),
+                    stroke: None,
+                    clip: None,
+                    composite: CanonicalRenderComposite::SourceOver,
+                })
+                .map_err(|error| render_error(format!("{error:?}"), node.span))?;
+                roots.push(nodes.len());
+                nodes.push(node);
+                geometries.push(geometry);
+                paints.push(paint);
+                descriptor_roots.extend([
+                    ("render.node.position".to_owned(), node_id.value(), position),
+                    (
+                        "render.node.origin".to_owned(),
+                        node_id.value(),
+                        origin_descriptor,
+                    ),
+                    ("render.node.rotation".to_owned(), node_id.value(), rotation),
+                    ("render.node.scale".to_owned(), node_id.value(), scale),
+                    ("render.node.opacity".to_owned(), node_id.value(), opacity),
+                    (
+                        "render.node.visibility".to_owned(),
+                        node_id.value(),
+                        visibility,
+                    ),
+                    (
+                        "render.geometry.origin".to_owned(),
+                        geometry_id.value(),
+                        origin_descriptor,
+                    ),
+                    (
+                        "render.geometry.size".to_owned(),
+                        geometry_id.value(),
+                        size_descriptor,
+                    ),
+                    (
+                        "render.paint.color".to_owned(),
+                        paint_id.value(),
+                        solid_color,
+                    ),
+                ]);
+            }
+            layers.push(
+                CanonicalRenderLayer::new(layer_id, pass, z_order, layer_index as u32, roots)
+                    .map_err(|error| render_error(format!("{error:?}"), layer.span))?,
+            );
+        }
+        let roots = descriptor_roots
+            .into_iter()
+            .map(|(target_path, owner, descriptor)| {
+                CanonicalDescriptorRoot::new(target_path, owner, descriptor)
+                    .map_err(|error| render_error(format!("{error:?}"), span))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let table = CanonicalDescriptorTable::new(descriptors, roots)
+            .map_err(|error| render_error(format!("{error:?}"), span))?;
+        let mapping = descriptor_values
+            .iter()
+            .map(|(ty, value)| {
+                let expected = CanonicalPropertyDescriptor::new(
+                    ty.clone(),
+                    CanonicalDescriptorDomain::new(None, None, false).expect("unbounded domain"),
+                    CanonicalDescriptorKind::Constant(value.clone()),
+                )
+                .expect("descriptor already validated");
+                table
+                    .descriptors()
+                    .iter()
+                    .position(|candidate| candidate == &expected)
+                    .ok_or_else(|| render_error("descriptor interning lost a Render value", span))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut render = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+            viewport: CanonicalViewport::new(viewport_width, viewport_height, color_space)
+                .map_err(|error| render_error(format!("{error:?}"), span))?,
+            layers,
+            nodes,
+            geometries,
+            paths: Vec::new(),
+            paints,
+            strokes: Vec::new(),
+            clips: Vec::new(),
+            glyph_runs: Vec::new(),
+        })
+        .map_err(|error| render_error(format!("{error:?}"), span))?;
+        render
+            .remap_descriptors(&mapping)
+            .map_err(|error| render_error(format!("{error:?}"), span))?;
+        Ok((render, table))
+    })();
+    result.map_err(|diagnostic| vec![diagnostic])
 }
 
 fn profile_requirement_diagnostics(

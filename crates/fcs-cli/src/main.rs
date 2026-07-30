@@ -456,7 +456,8 @@ fn cmd_compile(path: &Path, output: Option<&Path>, options: &CompileOptions) -> 
         .resolver_root
         .as_deref()
         .unwrap_or(default_workspace);
-    let compilation = match document.canonical_compilation(
+    let compilation = match document.canonical_compilation_with_source(
+        text,
         options.compile_time_limits(),
         workspace,
         options.resource_limits(),
@@ -500,6 +501,12 @@ fn cmd_compile(path: &Path, output: Option<&Path>, options: &CompileOptions) -> 
     };
     if let Err(error) = load_chart(&fcbc) {
         eprintln!("error: compiled FCBC failed Core load: {error}");
+        return ExitCategory::Internal.code();
+    }
+    if compilation.chart().render().is_some()
+        && let Err(error) = load_render(&fcbc)
+    {
+        eprintln!("error: compiled FCBC failed Render load: {error}");
         return ExitCategory::Internal.code();
     }
     let out_path = output
