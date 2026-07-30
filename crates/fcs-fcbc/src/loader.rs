@@ -313,6 +313,8 @@ struct ParsedValue {
     string_ref: Option<u32>,
     scalar: Option<f64>,
     vec2: Option<(u8, [f64; 2])>,
+    array_element_tag: Option<u8>,
+    array: Vec<ParsedValue>,
     fields: Vec<(u32, ParsedValue)>,
 }
 
@@ -451,6 +453,9 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
     } else {
         Vec::new()
     };
+    if feature_flags & (1 << 3) != 0 {
+        parse_fidelity(section_payload(bytes, &section_map, 16)?, &strings)?;
+    }
     let mut resources = parse_resources(section_payload(bytes, &section_map, 6)?, &strings)?;
     validate_resource_data(section_payload(bytes, &section_map, 20)?, &mut resources)?;
     parse_sync(section_payload(bytes, &section_map, 7)?, &resources)?;
@@ -667,7 +672,7 @@ fn parse_container(bytes: &[u8]) -> Result<ParsedContainer, &'static str> {
             return Err("fcbc.unknown-required-section");
         }
     }
-    validate_feature_sections(feature_flags, &sections)?;
+    validate_feature_sections(profile, feature_flags, &sections)?;
 
     Ok((
         profile,
@@ -678,6 +683,7 @@ fn parse_container(bytes: &[u8]) -> Result<ParsedContainer, &'static str> {
 }
 
 fn validate_feature_sections(
+    profile: u8,
     feature_flags: u64,
     sections: &[RawSection],
 ) -> Result<(), &'static str> {
@@ -693,6 +699,9 @@ fn validate_feature_sections(
         if actual.is_some_and(|section| section.flags & 1 == 0) {
             return Err("fcbc.profile-requirement-missing");
         }
+    }
+    if profile == 1 && feature_flags & (1 << 3) == 0 {
+        return Err("fcbc.profile-requirement-missing");
     }
     Ok(())
 }
@@ -861,6 +870,236 @@ fn parse_meta(bytes: &[u8], strings: &[String]) -> Result<u8, &'static str> {
     }
     cursor.finish()?;
     Ok(document_profile)
+}
+
+fn parse_fidelity(bytes: &[u8], strings: &[String]) -> Result<(), &'static str> {
+    let mut cursor = Cursor::new(bytes, "fcbc.invalid-fidelity");
+    let fidelity = parse_value(&mut cursor, strings.len())?;
+    cursor.finish()?;
+    let fields = fidelity_object(
+        &fidelity,
+        strings,
+        &[
+            "specificationVersion",
+            "sources",
+            "profileBindings",
+            "entityMappings",
+            "fieldFacts",
+            "mappingRules",
+            "semanticLosses",
+            "custom",
+        ],
+    )?;
+    if fidelity_string(fields[0], strings)? != "1.0.0" {
+        return Err("fcbc.invalid-fidelity");
+    }
+    for source in fidelity_array(fields[1], 14)? {
+        parse_fidelity_source(source, strings)?;
+    }
+    for binding in fidelity_array(fields[2], 14)? {
+        if binding.tag != 14 {
+            return Err("fcbc.invalid-fidelity");
+        }
+    }
+    for mapping in fidelity_array(fields[3], 14)? {
+        if mapping.tag != 14 {
+            return Err("fcbc.invalid-fidelity");
+        }
+    }
+    for fact in fidelity_array(fields[4], 14)? {
+        parse_fidelity_fact(fact, strings)?;
+    }
+    for rule in fidelity_array(fields[5], 4)? {
+        fcs_model::MappingRuleRef::new(fidelity_string(rule, strings)?.to_owned())
+            .map_err(|_| "fcbc.invalid-fidelity")?;
+    }
+    for loss in fidelity_array(fields[6], 14)? {
+        if loss.tag != 14 {
+            return Err("fcbc.invalid-fidelity");
+        }
+    }
+    if fields[7].tag != 14 {
+        return Err("fcbc.invalid-fidelity");
+    }
+    Ok(())
+}
+
+fn parse_fidelity_source(source: &ParsedValue, strings: &[String]) -> Result<(), &'static str> {
+    let keys = source
+        .fields
+        .first()
+        .and_then(|(key, _)| strings.get(*key as usize))
+        .map(String::as_str);
+    let fields = match keys {
+        Some("logicalSource") => fidelity_object(
+            source,
+            strings,
+            &["logicalSource", "hashAlgorithm", "digest"],
+        )?,
+        _ => fidelity_object(source, strings, &["hashAlgorithm", "digest"])?,
+    };
+    let (algorithm, digest) = match fields.as_slice() {
+        [locator, algorithm, digest] => {
+            fcs_model::LogicalSourceLocator::new(fidelity_string(locator, strings)?.to_owned())
+                .map_err(|_| "fcbc.invalid-fidelity")?;
+            (
+                fidelity_string(algorithm, strings)?,
+                fidelity_string(digest, strings)?,
+            )
+        }
+        [algorithm, digest] => (
+            fidelity_string(algorithm, strings)?,
+            fidelity_string(digest, strings)?,
+        ),
+        _ => return Err("fcbc.invalid-fidelity"),
+    };
+    if algorithm != "sha256" || !is_sha256_digest(digest) {
+        return Err("fcbc.invalid-fidelity");
+    }
+    Ok(())
+}
+
+fn parse_fidelity_fact(fact: &ParsedValue, strings: &[String]) -> Result<(), &'static str> {
+    if fact.tag != 14
+        || fact.fields.is_empty()
+        || fidelity_field_name(&fact.fields[0], strings)? != "id"
+    {
+        return Err("fcbc.invalid-fidelity");
+    }
+    if fidelity_string(&fact.fields[0].1, strings)?.is_empty() {
+        return Err("fcbc.invalid-fidelity");
+    }
+    let mut index = 1;
+    for name in [
+        "sourceArtifactId",
+        "sourceLocator",
+        "sourceOrder",
+        "mappingRuleRef",
+    ] {
+        if fact
+            .fields
+            .get(index)
+            .is_some_and(|field| fidelity_field_name(field, strings).ok() == Some(name))
+        {
+            let value = &fact.fields[index].1;
+            match name {
+                "sourceLocator" => {
+                    fcs_model::LogicalSourceLocator::new(
+                        fidelity_string(value, strings)?.to_owned(),
+                    )
+                    .map_err(|_| "fcbc.invalid-fidelity")?;
+                }
+                "mappingRuleRef" => {
+                    fcs_model::MappingRuleRef::new(fidelity_string(value, strings)?.to_owned())
+                        .map_err(|_| "fcbc.invalid-fidelity")?;
+                }
+                "sourceArtifactId" => {
+                    if fidelity_string(value, strings)?.is_empty() {
+                        return Err("fcbc.invalid-fidelity");
+                    }
+                }
+                "sourceOrder" if value.tag != 2 => return Err("fcbc.invalid-fidelity"),
+                _ => {}
+            }
+            index += 1;
+        }
+    }
+    let origin = fact.fields.get(index).ok_or("fcbc.invalid-fidelity")?;
+    if fidelity_field_name(origin, strings)? != "originState"
+        || fcs_model::OriginState::parse(fidelity_string(&origin.1, strings)?).is_none()
+    {
+        return Err("fcbc.invalid-fidelity");
+    }
+    index += 1;
+    if fact
+        .fields
+        .get(index)
+        .is_some_and(|field| fidelity_field_name(field, strings).ok() == Some("semanticStatus"))
+    {
+        if fcs_model::SemanticStatus::parse(fidelity_string(&fact.fields[index].1, strings)?)
+            .is_none()
+        {
+            return Err("fcbc.invalid-fidelity");
+        }
+        index += 1;
+    }
+    let dependencies = fact.fields.get(index).ok_or("fcbc.invalid-fidelity")?;
+    if fidelity_field_name(dependencies, strings)? != "dependencies" {
+        return Err("fcbc.invalid-fidelity");
+    }
+    for dependency in fidelity_array(&dependencies.1, 4)? {
+        if fidelity_string(dependency, strings)?.is_empty() {
+            return Err("fcbc.invalid-fidelity");
+        }
+    }
+    index += 1;
+    let stale = fact.fields.get(index).ok_or("fcbc.invalid-fidelity")?;
+    if fidelity_field_name(stale, strings)? != "stale"
+        || stale.1.tag != 1
+        || index + 1 != fact.fields.len()
+    {
+        return Err("fcbc.invalid-fidelity");
+    }
+    Ok(())
+}
+
+fn fidelity_object<'a>(
+    value: &'a ParsedValue,
+    strings: &[String],
+    names: &[&str],
+) -> Result<Vec<&'a ParsedValue>, &'static str> {
+    if value.tag != 14 || value.fields.len() != names.len() {
+        return Err("fcbc.invalid-fidelity");
+    }
+    value
+        .fields
+        .iter()
+        .zip(names)
+        .map(|(field, name)| {
+            if fidelity_field_name(field, strings)? != *name {
+                return Err("fcbc.invalid-fidelity");
+            }
+            Ok(&field.1)
+        })
+        .collect()
+}
+
+fn fidelity_field_name<'a>(
+    field: &(u32, ParsedValue),
+    strings: &'a [String],
+) -> Result<&'a str, &'static str> {
+    strings
+        .get(field.0 as usize)
+        .map(String::as_str)
+        .ok_or("fcbc.invalid-fidelity")
+}
+
+fn fidelity_array(value: &ParsedValue, element_tag: u8) -> Result<&[ParsedValue], &'static str> {
+    if value.tag != 13 || value.array_element_tag != Some(element_tag) {
+        return Err("fcbc.invalid-fidelity");
+    }
+    Ok(&value.array)
+}
+
+fn fidelity_string<'a>(
+    value: &ParsedValue,
+    strings: &'a [String],
+) -> Result<&'a str, &'static str> {
+    if value.tag != 4 {
+        return Err("fcbc.invalid-fidelity");
+    }
+    value
+        .string_ref
+        .and_then(|reference| strings.get(reference as usize))
+        .map(String::as_str)
+        .ok_or("fcbc.invalid-fidelity")
+}
+
+fn is_sha256_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 fn parse_contributors(bytes: &[u8], strings: &[String]) -> Result<BTreeSet<u64>, &'static str> {
@@ -2853,6 +3092,8 @@ fn parse_value_at_depth(
         string_ref: None,
         scalar: None,
         vec2: None,
+        array_element_tag: None,
+        array: Vec::new(),
         fields: Vec::new(),
     };
     match tag {
@@ -2904,12 +3145,14 @@ fn parse_value_at_depth(
                 return Err("fcbc.invalid-record");
             }
             value.zeroes(3)?;
+            parsed.array_element_tag = Some(element_tag);
             let count = limited_count(value.u32()?)?;
             for _ in 0..count {
                 let element = parse_value_at_depth(&mut value, string_count, depth + 1)?;
                 if element.tag != element_tag {
                     return Err("fcbc.invalid-record");
                 }
+                parsed.array.push(element);
             }
         }
         14 => {

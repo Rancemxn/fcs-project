@@ -174,7 +174,7 @@ pub fn load_container_with_identity(bytes: &[u8]) -> FcbcResult<ValidatedContain
     let sections = parse_section_table(bytes, &header)?;
     validate_section_layout(bytes, &header, &sections)?;
     validate_required_core_sections(&sections)?;
-    validate_feature_sections(header.feature_flags, &sections)?;
+    validate_feature_sections(header.profile, header.feature_flags, &sections)?;
 
     let mut digest = [0u8; 32];
     digest.copy_from_slice(&Sha256::digest(bytes));
@@ -568,7 +568,11 @@ fn validate_required_core_sections(sections: &[SectionEntry]) -> FcbcResult<()> 
     Ok(())
 }
 
-fn validate_feature_sections(flags: FeatureFlags, sections: &[SectionEntry]) -> FcbcResult<()> {
+fn validate_feature_sections(
+    profile: ContainerProfile,
+    flags: FeatureFlags,
+    sections: &[SectionEntry],
+) -> FcbcResult<()> {
     let bindings = [
         (FeatureFlags::HAS_RENDER, 14u32),
         (FeatureFlags::HAS_EXTENSIONS, 15),
@@ -596,6 +600,12 @@ fn validate_feature_sections(flags: FeatureFlags, sections: &[SectionEntry]) -> 
                 format!("feature section {section_type} must be REQUIRED"),
             ));
         }
+    }
+    if profile == ContainerProfile::Fidelity && !flags.contains(FeatureFlags::HAS_FIDELITY) {
+        return Err(FcbcError::new(
+            "fcbc.profile-requirement-missing",
+            "fidelity profile requires HAS_FIDELITY",
+        ));
     }
     Ok(())
 }
