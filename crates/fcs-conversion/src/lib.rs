@@ -7,7 +7,7 @@ use std::fmt;
 
 use fcs_model::LogicalSourceLocator;
 use serde::Deserializer;
-use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use serde::de::{MapAccess, SeqAccess, Visitor};
 use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 
@@ -206,6 +206,8 @@ pub struct ImportLimits {
     pub max_artifacts: usize,
     pub max_single_artifact_bytes: usize,
     pub max_total_artifact_bytes: usize,
+    /// Maximum object/array nesting depth materialized by the lossless JSON parser.
+    pub max_json_depth: usize,
 }
 
 impl Default for ImportLimits {
@@ -214,6 +216,7 @@ impl Default for ImportLimits {
             max_artifacts: 1024,
             max_single_artifact_bytes: 64 * 1024 * 1024,
             max_total_artifact_bytes: 256 * 1024 * 1024,
+            max_json_depth: 128,
         }
     }
 }
@@ -399,13 +402,23 @@ pub fn parse_json_document(
     format: SourceFormat,
     artifact: &SourceArtifact,
 ) -> Result<ParsedSourceDocument, ImportError> {
+    parse_json_document_with_limits(format, artifact, ImportLimits::default())
+}
+
+/// Parses one PGR/RPE JSON artifact with explicit resource limits and without
+/// interpreting its fields.
+pub fn parse_json_document_with_limits(
+    format: SourceFormat,
+    artifact: &SourceArtifact,
+    limits: ImportLimits,
+) -> Result<ParsedSourceDocument, ImportError> {
     if format == SourceFormat::Pec {
         return Err(ImportError::JsonFormatUnsupported);
     }
     std::str::from_utf8(artifact.bytes()).map_err(|_| ImportError::InvalidUtf8)?;
     let raw: Box<RawValue> = serde_json::from_slice(artifact.bytes())
         .map_err(|error| ImportError::Json(error.to_string()))?;
-    let body = parse_raw_json(raw.get())?;
+    let body = parse_raw_json(raw.get(), limits.max_json_depth, 1)?;
     Ok(ParsedSourceDocument {
         artifact_id: artifact.logical_id().clone(),
         artifact_content_sha256: artifact.content_sha256(),
@@ -414,7 +427,11 @@ pub fn parse_json_document(
     })
 }
 
-fn parse_raw_json(raw: &str) -> Result<LosslessJsonValue, ImportError> {
+fn parse_raw_json(
+    raw: &str,
+    max_json_depth: usize,
+    depth: usize,
+) -> Result<LosslessJsonValue, ImportError> {
     let raw = raw.trim();
     let first = raw
         .as_bytes()
@@ -423,24 +440,42 @@ fn parse_raw_json(raw: &str) -> Result<LosslessJsonValue, ImportError> {
         .ok_or(ImportError::Json("JSON value must not be empty".into()))?;
     match first {
         b'{' => {
+            enforce_json_depth(max_json_depth, depth)?;
             let mut deserializer = serde_json::Deserializer::from_str(raw);
-            let value = deserializer
-                .deserialize_map(ObjectVisitor)
+            let raw_members = deserializer
+                .deserialize_map(RawObjectVisitor)
                 .map_err(|error| ImportError::Json(error.to_string()))?;
             deserializer
                 .end()
                 .map_err(|error| ImportError::Json(error.to_string()))?;
-            Ok(LosslessJsonValue::Object(value))
+            let child_depth = depth.saturating_add(1);
+            let mut members = Vec::with_capacity(raw_members.len());
+            for (raw_key, raw_value) in raw_members {
+                let key = parse_json_string(raw_key.get())?;
+                let value = parse_raw_json(raw_value.get(), max_json_depth, child_depth)?;
+                members.push(LosslessJsonMember { key, value });
+            }
+            Ok(LosslessJsonValue::Object(members))
         }
         b'[' => {
+            enforce_json_depth(max_json_depth, depth)?;
             let mut deserializer = serde_json::Deserializer::from_str(raw);
-            let value = deserializer
-                .deserialize_seq(ArrayVisitor)
+            let raw_values = deserializer
+                .deserialize_seq(RawArrayVisitor)
                 .map_err(|error| ImportError::Json(error.to_string()))?;
             deserializer
                 .end()
                 .map_err(|error| ImportError::Json(error.to_string()))?;
-            Ok(LosslessJsonValue::Array(value))
+            let child_depth = depth.saturating_add(1);
+            let mut values = Vec::with_capacity(raw_values.len());
+            for raw_value in raw_values {
+                values.push(parse_raw_json(
+                    raw_value.get(),
+                    max_json_depth,
+                    child_depth,
+                )?);
+            }
+            Ok(LosslessJsonValue::Array(values))
         }
         b'"' => Ok(LosslessJsonValue::String(parse_json_string(raw)?)),
         b't' if raw == "true" => Ok(LosslessJsonValue::Bool(true)),
@@ -454,10 +489,21 @@ fn parse_raw_json(raw: &str) -> Result<LosslessJsonValue, ImportError> {
     }
 }
 
-struct ObjectVisitor;
+fn enforce_json_depth(max_json_depth: usize, observed: usize) -> Result<(), ImportError> {
+    if observed > max_json_depth {
+        return Err(ImportError::LimitExceeded {
+            kind: "max_json_depth",
+            limit: max_json_depth,
+            observed,
+        });
+    }
+    Ok(())
+}
 
-impl<'de> Visitor<'de> for ObjectVisitor {
-    type Value = Vec<LosslessJsonMember>;
+struct RawObjectVisitor;
+
+impl<'de> Visitor<'de> for RawObjectVisitor {
+    type Value = Vec<(Box<RawValue>, Box<RawValue>)>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("a JSON object")
@@ -469,10 +515,8 @@ impl<'de> Visitor<'de> for ObjectVisitor {
     {
         let mut members = Vec::new();
         while let Some(raw_key) = map.next_key::<Box<RawValue>>()? {
-            let key = parse_json_string(raw_key.get()).map_err(de::Error::custom)?;
-            let raw: Box<RawValue> = map.next_value()?;
-            let value = parse_raw_json(raw.get()).map_err(de::Error::custom)?;
-            members.push(LosslessJsonMember { key, value });
+            let raw_value: Box<RawValue> = map.next_value()?;
+            members.push((raw_key, raw_value));
         }
         Ok(members)
     }
@@ -486,10 +530,10 @@ fn parse_json_string(raw: &str) -> Result<LosslessJsonString, ImportError> {
     })
 }
 
-struct ArrayVisitor;
+struct RawArrayVisitor;
 
-impl<'de> Visitor<'de> for ArrayVisitor {
-    type Value = Vec<LosslessJsonValue>;
+impl<'de> Visitor<'de> for RawArrayVisitor {
+    type Value = Vec<Box<RawValue>>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("a JSON array")
@@ -501,7 +545,7 @@ impl<'de> Visitor<'de> for ArrayVisitor {
     {
         let mut values = Vec::new();
         while let Some(raw) = sequence.next_element::<Box<RawValue>>()? {
-            values.push(parse_raw_json(raw.get()).map_err(de::Error::custom)?);
+            values.push(raw);
         }
         Ok(values)
     }
@@ -646,11 +690,47 @@ mod tests {
     }
 
     #[test]
+    fn json_parser_enforces_container_nesting_depth_before_materialization() {
+        let limits = ImportLimits {
+            max_json_depth: 2,
+            ..ImportLimits::default()
+        };
+        for json in [r#"{"value":[]}"#, "[[]]"] {
+            parse_json_document_with_limits(SourceFormat::Pgr, &artifact(json), limits).unwrap();
+        }
+        for json in [r#"{"value":[[]]}"#, "[[[]]]"] {
+            assert!(matches!(
+                parse_json_document_with_limits(SourceFormat::Pgr, &artifact(json), limits),
+                Err(ImportError::LimitExceeded {
+                    kind: "max_json_depth",
+                    limit: 2,
+                    observed: 3,
+                })
+            ));
+        }
+
+        let scalar_only = ImportLimits {
+            max_json_depth: 0,
+            ..ImportLimits::default()
+        };
+        parse_json_document_with_limits(SourceFormat::Pgr, &artifact("1"), scalar_only).unwrap();
+        assert!(matches!(
+            parse_json_document_with_limits(SourceFormat::Pgr, &artifact("{}"), scalar_only),
+            Err(ImportError::LimitExceeded {
+                kind: "max_json_depth",
+                limit: 0,
+                observed: 1,
+            })
+        ));
+    }
+
+    #[test]
     fn artifact_limits_reject_oversized_inputs_and_sets() {
         let limits = ImportLimits {
             max_artifacts: 1,
             max_single_artifact_bytes: 2,
             max_total_artifact_bytes: 2,
+            ..ImportLimits::default()
         };
         assert!(matches!(
             SourceArtifact::new_with_limits(
@@ -685,6 +765,7 @@ mod tests {
             max_artifacts: 2,
             max_single_artifact_bytes: 2,
             max_total_artifact_bytes: 2,
+            ..ImportLimits::default()
         };
         assert!(matches!(
             SourceArtifactSet::new_with_limits([first, second], total_limits),

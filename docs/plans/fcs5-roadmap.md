@@ -754,3 +754,6 @@ git diff --check
   Bounded child #425 owns the Conversion 1.0 capability/report-domain correction: descriptors and report entries
   use the same section 7.2 domain keyspace, while numeric/entity/limit/expression remain per-domain axes; broader
   capability depth, target reparse, Render, final conformance, and I10 re-freeze remain open.
+  Bounded child #432 adds an explicit finite external JSON container-nesting limit to `ImportLimits`, preserves the
+  default `parse_json_document` entry point, and reports the first rejected depth as typed `max_json_depth`
+  evidence before recursive lossless materialization; broader #294/#295/#296 and I10 closure remain open.
