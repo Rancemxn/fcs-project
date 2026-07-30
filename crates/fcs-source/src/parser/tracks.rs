@@ -114,7 +114,7 @@ where
             .map(|bpm| SourceBpm::from_value(-bpm.get())))
 }
 
-fn tracks_block_parser<'tokens, I>()
+pub(super) fn tracks_block_parser<'tokens, I>()
 -> impl Parser<'tokens, I, TracksBlock, ParserExtra<'tokens>> + Clone
 where
     I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,

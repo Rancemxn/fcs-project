@@ -8,6 +8,7 @@ mod header;
 mod input;
 mod lexer;
 mod metadata;
+mod render;
 mod tempo;
 mod token;
 mod tracks;
@@ -24,6 +25,7 @@ pub use expression::{
 };
 pub use format::{canonicalize_numeric_literals, canonicalize_source_layout};
 pub use header::parse_header;
+pub use render::{parse_render_scene, parse_render_scene_with_limits};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParseLimits {
