@@ -88,9 +88,12 @@ impl ApproximationAuthorization {
         let mut target_domains: Vec<_> = target_domains.into_iter().collect();
         target_domains.sort();
         target_domains.dedup();
-        if target_domains.iter().any(|domain| domain.trim().is_empty()) {
+        if target_domains
+            .iter()
+            .any(|domain| ConversionDomain::parse(domain).is_none())
+        {
             return Err(ReportError::InvalidAuthorization(
-                "approximation target domains must be non-empty".into(),
+                "approximation target domains must use registered conversion domains".into(),
             ));
         }
         let mut error_budgets = BTreeMap::new();
@@ -288,6 +291,7 @@ impl DropAuthorization {
     fn valid_selector(selector: &str) -> bool {
         let parts = selector.split('.').collect::<Vec<_>>();
         (2..=3).contains(&parts.len())
+            && ConversionDomain::parse(parts[0]).is_some()
             && parts.iter().all(|part| {
                 !part.is_empty()
                     && part
@@ -424,6 +428,12 @@ impl ConversionDomain {
         Self::ALL
             .into_iter()
             .find(|domain| domain.as_str() == spelling)
+    }
+}
+
+impl fmt::Display for ConversionDomain {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
     }
 }
 
@@ -1658,6 +1668,20 @@ mod tests {
         ));
         assert!(matches!(
             DropAuthorization::new(["metadata.chart/meta".into()], "explicit loss"),
+            Err(ReportError::InvalidAuthorization(_))
+        ));
+        assert!(matches!(
+            ApproximationAuthorization::new(
+                ["entity".into()],
+                [("entity.value".into(), 0.1)],
+                1,
+                "adaptive",
+                "1.0.0",
+            ),
+            Err(ReportError::InvalidAuthorization(_))
+        ));
+        assert!(matches!(
+            DropAuthorization::new(["expression.chart".into()], "explicit loss"),
             Err(ReportError::InvalidAuthorization(_))
         ));
     }
