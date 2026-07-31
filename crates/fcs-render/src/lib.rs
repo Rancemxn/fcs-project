@@ -595,6 +595,14 @@ mod tests {
             .position(|node| node.parent == Some(parent as u32))
             .expect("fixture Note-attached child");
         let child_id = render.nodes[child].id;
+        let parent_id = render.nodes[parent].id;
+        for node in &mut render.nodes {
+            if node.parent.is_none() && node.id != parent_id {
+                node.flags = 0;
+                node.active_start = 0.0;
+                node.active_end = 0.0;
+            }
+        }
 
         let dynamic_visibility = add_descriptor_segment_points(
             &mut render,
