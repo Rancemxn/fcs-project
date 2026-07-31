@@ -210,6 +210,8 @@
   reviewer 先推送 finding branch 的诊断 SHA，以 `workflow_dispatch` full gate 取得 red evidence；只有根因确认后
   才能创建 corrective PR，随后以该 PR 新 SHA 的成功 run 取得 green evidence。两个 run 都必须记录 URL/ID、event、
   精确 `headSha` 和 conclusion。
+- 根 `AGENTS.md` 对主实现会话的本地编译放开（`cargo check`/`cargo clippy`/`cargo build`/`cargo fmt`）不适用于
+  本 loop：reviewer corrective worktree 保持完全不编译；审查的 test/conformance 证据仍只来自同 SHA full-gate run。
 - corrective PR 创建前，reviewer 必须确认 worktree owner、用途、base/head SHA、分支、变更范围和验证命令；
   PR 正文或首条进度评论必须链接 finding、记录根因和实际验证结果。只创建分支或只提交猜测性 patch 不满足
   corrective delivery。
@@ -258,10 +260,15 @@ comment 与主 loop 使用同一 raw-Markdown 传输契约：
 review loop 修改 comment template 或本文件后，必须运行以下命令并要求 exit 0：
 
 ~~~sh
-markdownlint --disable MD013 MD025 MD060 -- docs/loops/loop.md docs/loops/review-loop.md
+tmpdir="$(mktemp -d)"
+printf '{ "MD013": false, "MD025": false, "MD060": false }' > "$tmpdir/.markdownlint.jsonc"
+markdownlint-cli2 --config "$tmpdir/.markdownlint.jsonc" docs/loops/loop.md docs/loops/review-loop.md
+rm -r "$tmpdir"
 ~~~
 
-MD013、MD025 和 MD060 仅用于保留本仓库已有的中文长行、独立 H1 契约章节和 compact table pipe 风格；其余
+本仓库使用全局 `markdownlint-cli2`（未安装 `markdownlint` CLI）；cli2 没有 `--disable` 参数，例外通过临时
+`.markdownlint.jsonc` 配置文件豁免（文件名后缀决定 cli2 的配置格式；临时文件不得进入仓库提交）。MD013、MD025
+和 MD060 仅用于保留本仓库已有的中文长行、独立 H1 契约章节和 compact table pipe 风格；其余
 markdownlint 规则仍然有效。此检查验证 loop 文档，不会替代 comment payload 的 remote read-back。
 
 # Audit Comment Contract

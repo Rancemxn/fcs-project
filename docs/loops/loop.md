@@ -202,12 +202,16 @@
 在提交或修改本节的 comment template 后，必须运行以下仓库级 Markdown 检查，并要求 exit 0：
 
 ~~~sh
-markdownlint --disable MD013 MD025 MD060 -- docs/loops/loop.md docs/loops/review-loop.md
+tmpdir="$(mktemp -d)"
+printf '{ "MD013": false, "MD025": false, "MD060": false }' > "$tmpdir/.markdownlint.jsonc"
+markdownlint-cli2 --config "$tmpdir/.markdownlint.jsonc" docs/loops/loop.md docs/loops/review-loop.md
+rm -r "$tmpdir"
 ~~~
 
-MD013、MD025 和 MD060 是本仓库这两份契约的显式排版例外：中文长行不强制硬折行；每个独立契约章节保留
-H1；现有表格保留 compact pipe 风格。除这三条外不得禁用规则；markdownlint 通过也不能替代 GitHub comment
-payload 的 read-back gate。
+本仓库使用全局 `markdownlint-cli2`（未安装 `markdownlint` CLI）；cli2 没有 `--disable` 参数，因此 MD013、MD025 和
+MD060 通过写入临时 `.markdownlint.jsonc` 配置文件豁免，该文件不得进入仓库提交。这三个例外是本仓库这两份契约的
+显式排版例外：中文长行不强制硬折行；每个独立契约章节保留 H1；现有表格保留 compact pipe 风格。除这三条外不得
+禁用规则；markdownlint 通过也不能替代 GitHub comment payload 的 read-back gate。
 
 ~~~md
 ## Primary audit result
@@ -257,8 +261,9 @@ Routine GitHub delivery 和满足 Authorized Change & Delivery 条件的普通 m
 
 # Measurement Domain
 
-本地只运行不编译、不测试且不生成构建产物的静态检查。所有 Rust、build/dependency、测试、fuzz 和可执行
-fixture 反馈均由 GitHub `.github/workflows/full-gate.yml` 执行，并绑定精确 head SHA。验证记录必须区分
+本地允许运行编译、lint 与格式检查（`cargo check`、`cargo clippy`、`cargo build`、`cargo fmt`，详见根
+`AGENTS.md` 的 Rust 开发与验证）；本地不运行测试。测试、fuzz 和可执行 fixture 反馈均由 GitHub
+`.github/workflows/full-gate.yml` 执行，并绑定精确 head SHA。验证记录必须区分
 passed、failed、queued、skipped 和 non-applicable，不能把缺失或运行中的 gate 写成通过。
 
 | Output domain | Verification method | Required artifact |
@@ -272,7 +277,7 @@ passed、failed、queued、skipped 和 non-applicable，不能把缺失或运行
 | Conversion | 真实固定来源 PGR v1/v3、RPE、PEC 经 exact ProfileBinding 完成 parse→canonical→target→同 profile reparse；验证 capability/error budget | source/package fixture、canonical golden、resource bundle、ConversionReport/Fidelity bytes、round-trip 报告 |
 | Render | RenderSection codec、resource decode/shaping、semantic draw list 和 reference raster 容差比较 | 非空 RenderSection golden、固定 image/font、semantic snapshot、raster/diff |
 | CLI 与发行组合 | 命令、profile/resource/capability/budget 参数、exit category、JSON/text diagnostic 和端到端组合 | command transcript、expected output/exit、package/tree/version 审计 |
-| Rust workspace | draft PR 的每个验证 SHA 运行 ADR 0013 的完整 GitHub gate；必要时对解析为目标 SHA 的 ref 人工 dispatch，并核对 run `headSha`；不在本地运行编译、测试或 fuzz | workflow/run URL、run ID、event、精确 head SHA、conclusion、step 结果和跳过原因 |
+| Rust workspace | draft PR 的每个验证 SHA 运行 ADR 0013 的完整 GitHub gate；必要时对解析为目标 SHA 的 ref 人工 dispatch，并核对 run `headSha`；不在本地运行测试或 fuzz，本地编译/lint/格式只作开发反馈 | workflow/run URL、run ID、event、精确 head SHA、conclusion、step 结果和跳过原因 |
 | Repository/conformance integrity | file/suite/tree hash 独立复算；UTF-8/NUL/链接；archive/main/workspace/refer 边界 | hash ledger、路径计数、`git status`、结构与链接审计 |
 
 # Residual Routing
