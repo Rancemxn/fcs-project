@@ -1217,6 +1217,9 @@ mod tests {
         render.nodes[second_index].geometry_ref = rect_geometry;
         render.nodes[second_index].fill_paint = Some(blue_paint);
         render.nodes[second_index].composite = 1;
+        // The fixture's rounded node opacity descriptor is the speed track
+        // (evaluates 0.0 at t=0), which would make the blue op transparent.
+        render.nodes[second_index].opacity_descriptor = 8;
 
         assert_eq!(
             rasterize_solid_rgba8(&render, 1, 1).expect("composited raster"),
