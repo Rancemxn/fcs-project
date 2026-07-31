@@ -1098,6 +1098,7 @@ mod tests {
         };
         let bytes = write_nonempty_render(&core, assets);
         let mut render = load_render(&bytes).expect("product render load");
+        make_world_attached(&mut render);
         set_full_viewport_rect(&mut render);
         let color_descriptor = render
             .paints
