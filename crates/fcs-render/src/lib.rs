@@ -545,14 +545,6 @@ mod tests {
             .position(|node| node.parent == Some(parent as u32))
             .expect("fixture child");
         let child_id = render.nodes[child].id;
-        let parent_id = render.nodes[parent].id;
-        for node in &mut render.nodes {
-            if node.parent.is_none() && node.id != parent_id {
-                node.flags = 0;
-                node.active_start = 0.0;
-                node.active_end = 0.0;
-            }
-        }
         assert!(
             !evaluate_semantic_draw_list_at(&render, 0.0)
                 .expect("hidden query")
@@ -566,12 +558,19 @@ mod tests {
                 .any(|op| op.node_id == child_id)
         );
         let paint = render.nodes[child].fill_paint.expect("fixture child paint");
-        let color_descriptor = match render.paints[paint as usize].data {
-            PaintData::Solid { color } => color,
+        // Fixture solid paints share one color descriptor; poison a child-only
+        // descriptor so the hidden-subtree query proves the subtree is skipped
+        // while later active roots stay queryable without tripping shared paint.
+        let poisoned = render.core.descriptors.len() as u32;
+        render.core.descriptors.push(PropertyDescriptor {
+            property_type: ValueType::Color,
+            domain: render.core.descriptors[2].domain,
+            kind: DescriptorKind::Constant(u32::MAX),
+        });
+        match &mut render.paints[paint as usize].data {
+            PaintData::Solid { color } => *color = poisoned,
             _ => panic!("fixture child uses a solid paint"),
-        };
-        render.core.descriptors[color_descriptor as usize].kind =
-            DescriptorKind::Constant(u32::MAX);
+        }
 
         let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("invisible subtree query");
         assert!(!draw.is_empty(), "later root remains queryable");
