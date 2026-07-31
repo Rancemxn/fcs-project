@@ -539,6 +539,14 @@ mod tests {
             .position(|node| node.parent == Some(parent as u32))
             .expect("fixture child");
         let child_id = render.nodes[child].id;
+        let parent_id = render.nodes[parent].id;
+        for node in &mut render.nodes {
+            if node.parent.is_none() && node.id != parent_id {
+                node.flags = 0;
+                node.active_start = 0.0;
+                node.active_end = 0.0;
+            }
+        }
         assert!(
             !evaluate_semantic_draw_list_at(&render, 0.0)
                 .expect("hidden query")
@@ -636,12 +644,27 @@ mod tests {
             .iter()
             .position(|node| node.kind == NodeKind::Rect)
             .expect("fixture Rect node");
+        render.viewport_width = 1.0;
+        render.viewport_height = 1.0;
+        let mut active_nodes = vec![rect_index];
+        let mut current = Some(rect_index);
+        while let Some(index) = current {
+            active_nodes.push(index);
+            current = render.nodes[index].parent.map(|parent| parent as usize);
+        }
+        for (index, node) in render.nodes.iter_mut().enumerate() {
+            if !active_nodes.contains(&index) {
+                node.flags = 0;
+                node.active_start = 0.0;
+                node.active_end = 0.0;
+            }
+        }
 
         let dynamic_origin = add_descriptor_segment_points(
             &mut render,
             RuntimeValue::Vec2 {
                 ty: ValueType::Vec2Length,
-                value: [0.0, 0.0],
+                value: [-0.5, -0.5],
             },
             RuntimeValue::Vec2 {
                 ty: ValueType::Vec2Length,
@@ -688,7 +711,7 @@ mod tests {
             .into_iter()
             .find(|op| op.node_id == render.nodes[rect_index].id)
             .expect("Rect at start");
-        assert_eq!(at_start.bounds, [0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(at_start.bounds, [-0.5, -0.5, 0.5, 0.5]);
         assert_eq!(at_start.fill_rgba, Some([1.0, 0.0, 0.0, 1.0]));
 
         let at_end = evaluate_semantic_draw_list_at(&render, 1.0)
