@@ -213,10 +213,12 @@
   会话的工作树、活动实现分支和 `main`。
 - 主会话在每个非机械实现 work-unit 的适用同 SHA GitHub full gate 成功后直接执行 Primary Self-Audit，不调用
   subagent。它必须固定 `Issue/PR 或 commit + head SHA + scope + commands + full-gate evidence + acceptance gate`，
-  并在 PR（若存在）和关联 Issue 各追加一条
+  并对该固定快照运行 Codex review（`/codex:review`，等价于 codex-companion 的 `review` 子命令）；Codex review
+  verdict 为 `approve` 且没有未解决的 critical/high finding，是 Primary audit 记为 `pass` 的必要前置条件。
+  随后在 PR（若存在）和关联 Issue 各追加一条
   `Primary audit result`；只有 `pass` 且无未解决 Critical/Important finding 时，主会话才可 Ready/merge。Primary
-  audit 不是 reviewer 的独立证据，消息包含 Target、Head SHA、Scope、Commands、Full-gate evidence、Verdict、
-  Findings、Gate impact、Limitations 和 Next，不包含 `Advisories`，不手写日期、不编辑旧消息。
+  audit 不是 reviewer 的独立证据，消息包含 Target、Head SHA、Scope、Commands、Codex review、Full-gate evidence、
+  Verdict、Findings、Gate impact、Limitations 和 Next，不包含 `Advisories`，不手写日期、不编辑旧消息。
 - Primary audit 通过后，当前会话发送 `Review requested`；独立审查会话异步审查开放 PR 或其合并后的固定 commit，
   不再是每个 work-unit 的前置等待门。审查结束后审查者立即在 PR 和关联 Issue 各追加一条 append-only `Audit result`
   （被审 PR 存在时评论 PR，同时评论关联 Issue；仅有 commit 时评论关联 Issue），即使没有 finding。reviewer 的

@@ -136,11 +136,15 @@
   non-applicable 后，主会话暂停该 head 的写入，固定
   `Issue/PR + head SHA + scope + commands + full-gate evidence + acceptance gate`，
   对照规范、ADR、计划、fixture、调用方、diff 和实际验证 artifact 做 domain-matched 检查。
+- 主会话在 domain-matched 检查后，还必须对同一固定快照运行 Codex review（`/codex:review`，等价于 codex-companion
+  的 `review` 子命令），覆盖与 Primary audit 相同的 diff/scope。Codex review verdict 为 `approve` 且没有未解决的
+  critical/high finding 时，Primary audit 才可记为 `pass`；`needs-attention` 或有效 critical/high finding 必须修复
+  或路由 residual 并追加 superseding audit，不得把 Codex review 缺失或未通过写成通过。
 - 主会话必须在关联 Issue 和 PR（若存在）分别追加一条 `## Primary audit result`。消息包含 Target、Head SHA、Scope、
-  Commands、Full-gate evidence、Verdict、Findings、Gate impact、Limitations 和 Next；它不包含 reviewer-only
+  Commands、Codex review、Full-gate evidence、Verdict、Findings、Gate impact、Limitations 和 Next；它不包含 reviewer-only
   `Advisories`，并与 reviewer 的 `## Audit result` 明确区分。
-- `pass` 只表示当前固定快照没有未解决的 Critical/Important finding，适用 gate 已实际通过，且没有越权语义选择；
-  通过后主会话可以 Ready、merge 并继续 frontier，不等待 reviewer。
+- `pass` 只表示当前固定快照没有未解决的 Critical/Important finding，适用 gate 已实际通过，Codex review 已通过，
+  且没有越权语义选择；通过后主会话可以 Ready、merge 并继续 frontier，不等待 reviewer。
 - Rust/build/dependency/test/executable-fixture 或 `.github/workflows/full-gate.yml` 实现变更的 Full-gate evidence 必须包含 workflow/run URL、run ID、event、
   精确 `headSha` 和 `success` conclusion。纯文档或非构建元数据写 `non-applicable` 及理由；缺失、运行中、失败、
   SHA 不匹配或 GitHub 不可确认时，verdict 只能是 `blocked` 或 `needs-info`。
@@ -220,6 +224,7 @@ MD060 通过写入临时 `.markdownlint.jsonc` 配置文件豁免，该文件不
 - Head SHA: <sha>
 - Scope: <fixed scope>
 - Commands: <command> -> <passed/failed/skipped and actual result>
+- Codex review: <verdict approve/needs-attention + unaddressed critical/high findings, or non-applicable with reason>
 - Full-gate evidence: <workflow/run URL + run ID + event + exact head SHA + conclusion, or non-applicable with reason>
 - Verdict: pass / blocked / needs-info
 - Findings: none / <finding list with severity>
