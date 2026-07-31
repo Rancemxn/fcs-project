@@ -333,6 +333,9 @@ subagent。内部 subagent 不是独立交付角色，最多用于只读研究�
 Issue/PR、review、`gh pr ready` 或 merge；主会话统一审查共享工作区、验证和交付。审查会话与主会话
 使用不同的 loop 和独立 worktree，不以 subagent 代替。
 
+- 主会话遇到解决不了、诊断受阻或需要独立意见的问题时主动询问 Codex（`/codex:review`、`codex:rescue` 或
+  codex-companion），不限制等待时间，不以 Codex 慢为理由绕过或伪造结果。Codex 输出是协作证据，不获得规范权威。
+
 ## Session Handoff: Independent Review
 
 - **Trigger:** 非机械实现 PR 准备 Ready/merge，stage baseline 建立或重开、规范重新 Frozen、stage 完成，
