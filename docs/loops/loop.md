@@ -144,11 +144,13 @@
   或按 finding 路由）；Codex `medium`/`low` 对应仓库 `Minor`（不阻塞 pass，但必须记录并只能按 Minor 延期规则
   处理）。pass 只取决于是否有未解决的 critical/high finding；`needs-attention` verdict 若只含 medium/low finding
   不阻塞 pass，有未解决 critical/high 时 Primary audit 的 verdict 只能是 `blocked`。
-- Codex review 的可执行契约：主会话用 codex-companion 的 `review` 子命令（等价 `/codex:review`）对固定 head 的
-  diff 运行，输出结构化 verdict（`approve`/`needs-attention`）与 findings（severity
-  `critical`/`high`/`medium`/`low` + file + line range）。`Primary audit result` 的 `Codex review` 字段记录实际
-  verdict 和未解决的 critical/high finding。Codex review 对每个非机械 work-unit 都适用，没有 non-applicable
-  例外（这与 Rust gate 的 doc-only non-applicable 例外不同）。
+- Codex review 的可执行契约：主会话用 codex-companion 的 `review` 子命令对固定 head 的 diff 运行，例如
+  `node "<已安装 codex-companion>/scripts/codex-companion.mjs" review --wait --scope branch --base <base-ref>`
+  （等价 `/codex:review --wait --scope branch --base <base-ref>`）。输出为结构化 verdict（`approve`/
+  `needs-attention`）与 findings（severity `critical`/`high`/`medium`/`low` + file + line range + title/body）。
+  `Primary audit result` 的 `Codex review` 字段记录实际命令、base/head SHA、verdict 和未解决的 critical/high
+  finding，并保留 review 输出快照作为可读回的证据。Codex review 对每个非机械 work-unit 都适用，没有
+  non-applicable 例外（这与 Rust gate 的 doc-only non-applicable 例外不同）。
 - 主会话必须在关联 Issue 和 PR（若存在）分别追加一条 `## Primary audit result`。消息包含 Target、Head SHA、Scope、
   Commands、Codex review、Full-gate evidence、Verdict、Findings、Gate impact、Limitations 和 Next；它不包含 reviewer-only
   `Advisories`，并与 reviewer 的 `## Audit result` 明确区分。

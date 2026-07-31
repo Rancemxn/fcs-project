@@ -125,10 +125,10 @@ review-unit 分配并生成后继审查 handoff，不把空 frontier 标记为 `
 
 用户进一步接受：Primary Self-Audit 的 `pass` verdict 增加一个前置条件——主会话在固定快照上运行一次独立的
 Codex review（`/codex:review`，等价于 codex-companion 的 `review` 子命令），覆盖与 Primary audit 相同的
-diff/scope。只有 Codex review verdict 为 `approve` 且没有未解决的 critical/high finding 时，Primary audit 才能
-记为 `pass`；`needs-attention` 或有效 critical/high finding 必须修复或路由 residual 并追加 superseding audit，
-不得把 Codex review 缺失或未通过写成通过。Codex review 证据写入 `Primary audit result` 的 `Codex review` 字段，
-并随 `Review requested` handoff 提供给独立审查会话。
+diff/scope。只有没有未解决的 critical/high finding 时，Primary audit 才能记为 `pass`；有效 critical/high finding
+必须修复或路由 residual 并追加 superseding audit，不得把 Codex review 缺失或未通过写成通过。Codex review
+verdict 为 `needs-attention` 但只含 medium/low finding 时不阻塞 `pass`。Codex review 证据写入 `Primary audit result`
+的 `Codex review` 字段，并随 `Review requested` handoff 提供给独立审查会话。
 
 Codex 严重度映射到仓库 taxonomy：Codex `critical`/`high` 对应仓库 `Critical`/`Important`（阻塞 pass）；Codex
 `medium`/`low` 对应仓库 `Minor`（不阻塞 pass，但必须记录并只能按 Minor 延期规则处理）。该前置条件不改变
