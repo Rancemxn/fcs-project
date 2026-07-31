@@ -122,6 +122,8 @@
   实际编码读取并保留行号，避免 Windows PowerShell 默认编码造成证据误读；需要读多个文件时使用一次批量
   `read`。只有 FastCtx 报告编码不明确时才按其候选显式传入 `encoding`，不得用 `Get-Content`、`type` 或
   `Set-Content` 重写文件来“修复”显示问题。
+- 非必要不得使用 `Get-Content`；本地文件读取、搜索和定位直接使用 FastCtx。确需使用 PowerShell 读取时，
+  必须显式指定并核对编码，避免把编码误读当成文件内容或改写依据。
 
 先用 `eza` 看结构、`fd` 定位范围，再用 `rg` 或 `sg` 缩小目标。阅读实现时同时查看调用方、对应测试和
 相关规范，避免只根据单个匹配结果推断行为。目标项目检查默认排除 `refer/`；只有“阅读路由”
@@ -129,16 +131,17 @@
 
 ## Rust 开发与验证
 
-- 本地工作树临时允许运行 `cargo check` 和 `cargo clippy`（均可带 `--workspace`/`--all-targets`），但都不得带
-  `--release`。这只是加快编译错误与 lint 反馈的开发手段，由用户放开、也可由用户随时撤回并恢复为完全不在
-  本地编译。除此之外仍不运行任何会编译、测试、执行 fuzz 或生成其他 Cargo build artifact 的命令：nextest、
-  `cargo build`/`cargo run`、build script、可执行 fixture 和 fuzz 一律由本仓库
-  `.github/workflows/full-gate.yml` 在 GitHub runner 上执行；本地其余检查仍限于 diff、链接、
-  Markdown/YAML/JSON/schema、格式等静态检查。本地 Clippy 必须使用与 gate 相同的
-  `--workspace --all-targets -- -D warnings`，不得降低告警级别或临时加 `#[allow]` 让本地变绿。本条同样适用于
-  `docs/loops/loop.md` 和 `docs/loops/review-loop.md` 中“本地不运行编译命令”的表述，二者其余的门禁与
-  证据规则不变。
-- 本地 `cargo check` 和 `cargo clippy` 只产生开发反馈，不产生门禁证据：不得写成通过，不得替代任何
+- 本地工作树临时允许运行本地编译、lint 与格式检查：`cargo check`、`cargo clippy`、`cargo build`、`cargo fmt`
+  等（均可带 `--workspace`/`--all-targets`），但都不得带 `--release`。这只是加快编译错误与 lint 反馈的开发
+  手段，由用户放开、也可由用户随时撤回并恢复为完全不在本地编译。本地仍不运行任何测试、fuzz 或执行可执行
+  fixture：`cargo nextest`/`cargo test`、fuzz、`cargo run` 和可执行 fixture 一律由本仓库
+  `.github/workflows/full-gate.yml` 在 GitHub runner 上执行，测试与 fuzz 反馈只来自远端 gate。本地其余检查
+  仍限于 diff、链接、Markdown/YAML/JSON/schema、格式等静态检查。本地 Clippy 必须使用与 gate 相同的
+  `--workspace --all-targets -- -D warnings`，不得降低告警级别或临时加 `#[allow]` 让本地变绿。本条仅适用于
+  主实现会话的本地工作树及主会话明确授权的有界本地草稿；不适用于独立审查会话的 corrective worktree，后者
+  按 `docs/loops/review-loop.md` 保持完全不编译。本条同时更新 `docs/loops/loop.md` 的 Measurement Domain 与
+  `docs/loops/review-loop.md` 的对应表述，二者其余的门禁与证据规则不变。
+- 本地编译、lint 与格式命令只产生开发反馈，不产生门禁证据：不得写成通过，不得替代任何
   full-gate step，不得进入 Primary audit 或 reviewer `Audit result` 的 full-gate evidence，也不改变“适用 gate
   必须由同一 head SHA 的成功 Action run 证明”这条要求。本地 Clippy 通过不代表 gate 的 Clippy step 通过：
   toolchain 版本不同会给出不同 lint 集合。`target/` 是 gitignore 的构建产物，不得进入提交。
@@ -168,7 +171,7 @@
   converter、VM 和旧 bytecode 已不在活动
   workspace。未来跨格式语义变化必须针对 canonical model、ConversionReport、
   round-trip fixture 和 `examples/` 验证，converter 不得直接消费 source AST。
-- 交付说明必须分别列出本地检查（含临时放开的 `cargo check` 和 `cargo clippy`）和远端 full-gate evidence，以及未运行门禁及
+- 交付说明必须分别列出本地检查（含临时放开的本地编译、lint 与格式检查）和远端 full-gate evidence，以及未运行门禁及
   原因。不得将 `queued`、缺失、失败或 non-applicable 写成通过。
 - 使用校验脚本或外部模拟器验证解析逻辑时，先确认校验脚本与模拟器的代码逻辑一致，不能用有问题的校验脚本得出结论。
 - 遇到规范未定义的外部谱面边界时，研究阶段可以记录候选假设，但规范性实现不得发明“通用
