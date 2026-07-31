@@ -530,6 +530,7 @@ mod tests {
     #[test]
     fn semantic_visibility_skips_subtree_before_later_descriptor_errors() {
         let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
         let parent = render
             .nodes
             .iter()
