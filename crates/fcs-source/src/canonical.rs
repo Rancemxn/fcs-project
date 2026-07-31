@@ -745,7 +745,15 @@ impl RenderLowering {
         }
 
         let node_index = self.nodes.len();
-        let document_order = node_index as u32;
+        // document_order is the sibling order within (parent, layer); the Render
+        // loader requires consecutive-from-zero orders per (layer, parent), so
+        // count existing siblings at the same parent level instead of the global
+        // node index.
+        let document_order = self
+            .nodes
+            .iter()
+            .filter(|existing| existing.parent() == parent && existing.layer() == layer_index)
+            .count() as u32;
         self.nodes.push(
             CanonicalRenderNode::new(CanonicalRenderNodeSpec {
                 id: node_id.clone(),
