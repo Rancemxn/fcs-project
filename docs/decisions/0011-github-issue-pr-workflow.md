@@ -120,3 +120,17 @@ review-unit 分配并生成后继审查 handoff，不把空 frontier 标记为 `
 该 amendment 取代第 8 节关于“最多 10 次后返回 `waiting-for-main` residual 并结束 reviewer turn”的表述；其余
 权限、分支隔离、重试、进度消息、规范权威边界和 I10 success signal 保持不变。具体执行契约以本节、`AGENTS.md`、
 `docs/agents/issue-tracker.md`、`docs/loops/loop.md` 和 `docs/loops/review-loop.md` 的一致文本为准。
+
+## 10. 2026-07-31 dated amendment：Primary Self-Audit 增加 Codex review 前置条件
+
+用户进一步接受：Primary Self-Audit 的 `pass` verdict 增加一个前置条件——主会话在固定快照上运行一次独立的
+Codex review（`/codex:review`，等价于 codex-companion 的 `review` 子命令），覆盖与 Primary audit 相同的
+diff/scope。只有 Codex review verdict 为 `approve` 且没有未解决的 critical/high finding 时，Primary audit 才能
+记为 `pass`；`needs-attention` 或有效 critical/high finding 必须修复或路由 residual 并追加 superseding audit，
+不得把 Codex review 缺失或未通过写成通过。Codex review 证据写入 `Primary audit result` 的 `Codex review` 字段，
+并随 `Review requested` handoff 提供给独立审查会话。
+
+Codex 严重度映射到仓库 taxonomy：Codex `critical`/`high` 对应仓库 `Critical`/`Important`（阻塞 pass）；Codex
+`medium`/`low` 对应仓库 `Minor`（不阻塞 pass，但必须记录并只能按 Minor 延期规则处理）。该前置条件不改变
+独立审查会话的角色、权限、budget 或 I10 frontier 闭合要求；Codex review 是主会话自审的一部分，不替代 reviewer
+的异步二审。本节与第 8 节、`AGENTS.md`、`docs/loops/loop.md` 和 `docs/agents/issue-tracker.md` 的一致文本为准。

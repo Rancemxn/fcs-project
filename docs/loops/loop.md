@@ -140,6 +140,10 @@
   的 `review` 子命令），覆盖与 Primary audit 相同的 diff/scope。Codex review verdict 为 `approve` 且没有未解决的
   critical/high finding 时，Primary audit 才可记为 `pass`；`needs-attention` 或有效 critical/high finding 必须修复
   或路由 residual 并追加 superseding audit，不得把 Codex review 缺失或未通过写成通过。
+- Codex 严重度映射到仓库 taxonomy：Codex `critical`/`high` 对应仓库 `Critical`/`Important`（阻塞 pass，直到修复
+  或按 finding 路由）；Codex `medium`/`low` 对应仓库 `Minor`（不阻塞 pass，但必须记录并只能按 Minor 延期规则
+  处理）。verdict `approve` 且无未解决 critical/high 才允许 `pass`；verdict `needs-attention` 或有未解决
+  critical/high 时，Primary audit 的 verdict 只能是 `blocked`。
 - 主会话必须在关联 Issue 和 PR（若存在）分别追加一条 `## Primary audit result`。消息包含 Target、Head SHA、Scope、
   Commands、Codex review、Full-gate evidence、Verdict、Findings、Gate impact、Limitations 和 Next；它不包含 reviewer-only
   `Advisories`，并与 reviewer 的 `## Audit result` 明确区分。

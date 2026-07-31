@@ -93,7 +93,7 @@
   stage gate 和主会话明确发送的 `Review requested`。对明显影响当前 gate、但主会话尚未请求且已经固定的
   PR，可以主动建立审查目标；不审查仍处于写入中的 PR。
 - **Review request:** 主会话在 Primary audit 通过后发送新的 `Review requested`，同时给出 PR number、associated
-  Issue、head SHA、scope、权威条款、commands、full-gate evidence、验收 gate、已知 residual 和是否暂停写入。主会话可以在 reviewer
+  Issue、head SHA、scope、权威条款、commands、Codex review 证据、full-gate evidence、验收 gate、已知 residual 和是否暂停写入。主会话可以在 reviewer
   返回前 Ready/merge；审查会话先验证远端 head SHA 与请求一致，再开始 iteration，并可审查开放 PR 或其合并后的
   固定 commit。
 - **Invalidation:** 后续 push、scope 扩大/改变、验收命令或 gate 变化、依赖 closure 变化都会使旧 verdict
