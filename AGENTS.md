@@ -189,13 +189,6 @@
 
 使用五个 GitHub 状态 label：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human` 和 `wontfix`。一个 open Issue 同时只保留一个状态 label；`bug`、`documentation`、`enhancement`、`specification`、`conformance`、`review-finding`、`workflow` 以及 `severity:critical`、`severity:important`、`severity:minor` 是正交 label。Milestone 用于阶段或工作流分组，不替代状态 label。详见 `docs/agents/triage-labels.md`。
 
-### Codex collaboration
-
-遇到无法独立解决、诊断受阻或需要独立意见的问题（实现、测试、审查、路由、证据缺口）时，主动询问 Codex：
-使用 `/codex:review`（Primary Self-Audit 的 Codex review）、`codex:rescue`（委托排查/修复）或 codex-companion。
-Codex 慢或耗时不是放弃、绕过或伪造结果的理由；等待其完成，不限制等待时间。Codex 输出是协作证据，不获得
-规范权威，也不替代 Primary Self-Audit 或独立 reviewer 的 verdict。
-
 ### GitHub delivery workflow
 
 - 只读检查使用 `gh issue list/view`、`gh pr list/view/diff/checks` 和 `gh api`。创建、编辑、评论、关闭、push、review 或 merge 是外部状态变更，只在用户明确要求对应工作流时执行。
@@ -220,13 +213,10 @@ Codex 慢或耗时不是放弃、绕过或伪造结果的理由；等待其完�
   会话的工作树、活动实现分支和 `main`。
 - 主会话在每个非机械实现 work-unit 的适用同 SHA GitHub full gate 成功后直接执行 Primary Self-Audit，不调用
   subagent。它必须固定 `Issue/PR 或 commit + head SHA + scope + commands + full-gate evidence + acceptance gate`，
-  并对该固定快照运行 Codex review（`/codex:review`，等价于 codex-companion 的 `review` 子命令）；没有未解决的
-  critical/high finding 是 Primary audit 记为 `pass` 的必要前置条件（verdict `needs-attention` 但只含 medium/low
-  finding 不阻塞 `pass`）。
-  随后在 PR（若存在）和关联 Issue 各追加一条
+  并在 PR（若存在）和关联 Issue 各追加一条
   `Primary audit result`；只有 `pass` 且无未解决 Critical/Important finding 时，主会话才可 Ready/merge。Primary
-  audit 不是 reviewer 的独立证据，消息包含 Target、Head SHA、Scope、Commands、Codex review、Full-gate evidence、
-  Verdict、Findings、Gate impact、Limitations 和 Next，不包含 `Advisories`，不手写日期、不编辑旧消息。
+  audit 不是 reviewer 的独立证据，消息包含 Target、Head SHA、Scope、Commands、Full-gate evidence、Verdict、
+  Findings、Gate impact、Limitations 和 Next，不包含 `Advisories`，不手写日期、不编辑旧消息。
 - Primary audit 通过后，当前会话发送 `Review requested`；独立审查会话异步审查开放 PR 或其合并后的固定 commit，
   不再是每个 work-unit 的前置等待门。审查结束后审查者立即在 PR 和关联 Issue 各追加一条 append-only `Audit result`
   （被审 PR 存在时评论 PR，同时评论关联 Issue；仅有 commit 时评论关联 Issue），即使没有 finding。reviewer 的

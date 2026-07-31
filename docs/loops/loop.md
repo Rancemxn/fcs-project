@@ -136,29 +136,11 @@
   non-applicable 后，主会话暂停该 head 的写入，固定
   `Issue/PR + head SHA + scope + commands + full-gate evidence + acceptance gate`，
   对照规范、ADR、计划、fixture、调用方、diff 和实际验证 artifact 做 domain-matched 检查。
-- 主会话在 domain-matched 检查后，还必须对同一固定快照运行 Codex review（`/codex:review`，等价于 codex-companion
-  的 `review` 子命令），覆盖与 Primary audit 相同的 diff/scope。没有未解决的 critical/high finding 时，Primary
-  audit 才可记为 `pass`；有效 critical/high finding 必须修复或路由 residual 并追加 superseding audit，不得把
-  Codex review 缺失或未通过写成通过。
-- Codex 严重度映射到仓库 taxonomy：Codex `critical`/`high` 对应仓库 `Critical`/`Important`（阻塞 pass，直到修复
-  或按 finding 路由）；Codex `medium`/`low` 对应仓库 `Minor`（不阻塞 pass，但必须记录并只能按 Minor 延期规则
-  处理）。pass 只取决于是否有未解决的 critical/high finding；`needs-attention` verdict 若只含 medium/low finding
-  不阻塞 pass，有未解决 critical/high 时 Primary audit 的 verdict 只能是 `blocked`。
-- Codex review 的可执行契约：主会话运行 `/codex:review --wait --scope branch --base <固定 base SHA>`（Claude Code
-  的 codex 插件命令，内部解析 codex-companion 路径），等价命令为
-  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review --wait --scope branch --base <固定 base SHA>`。
-  base 必须是不可变 SHA（PR merge-base 或固定 commit），不使用会移动的分支 ref。输出为结构化 verdict（`approve`/
-  `needs-attention`）与 findings（severity `critical`/`high`/`medium`/`low` + file + line range + title/body）。
-  `Primary audit result` 的 `Codex review` 字段记录实际命令、base/head SHA、verdict 和未解决的 critical/high
-  finding，并保留 review 输出快照作为可读回的证据。Codex review 对每个非机械 work-unit 都适用，没有
-  non-applicable 例外（这与 Rust gate 的 doc-only non-applicable 例外不同）；codex 插件不可用时 Primary audit
-  只能是 `blocked`，不得伪造。
 - 主会话必须在关联 Issue 和 PR（若存在）分别追加一条 `## Primary audit result`。消息包含 Target、Head SHA、Scope、
-  Commands、Codex review、Full-gate evidence、Verdict、Findings、Gate impact、Limitations 和 Next；它不包含 reviewer-only
+  Commands、Full-gate evidence、Verdict、Findings、Gate impact、Limitations 和 Next；它不包含 reviewer-only
   `Advisories`，并与 reviewer 的 `## Audit result` 明确区分。
-- `pass` 只表示当前固定快照没有未解决的 Critical/Important finding，适用 gate 已实际通过，Codex review 没有未解决
-  的 critical/high finding（含只含 medium/low finding 的 `needs-attention` verdict），且没有越权语义选择；通过后
-  主会话可以 Ready、merge 并继续 frontier，不等待 reviewer。
+- `pass` 只表示当前固定快照没有未解决的 Critical/Important finding，适用 gate 已实际通过，且没有越权语义选择；
+  通过后主会话可以 Ready、merge 并继续 frontier，不等待 reviewer。
 - Rust/build/dependency/test/executable-fixture 或 `.github/workflows/full-gate.yml` 实现变更的 Full-gate evidence 必须包含 workflow/run URL、run ID、event、
   精确 `headSha` 和 `success` conclusion。纯文档或非构建元数据写 `non-applicable` 及理由；缺失、运行中、失败、
   SHA 不匹配或 GitHub 不可确认时，verdict 只能是 `blocked` 或 `needs-info`。
@@ -172,7 +154,7 @@
 
 - 非机械实现 PR 在进入 Ready 或合并前必须完成 Primary Self-Audit；独立审查会话是异步二审，不再是每个
   work-unit 的前置等待门。主会话在 Primary audit 通过后发送 `Review requested`，固定被审 PR、关联 Issue、head SHA、
-  审查 scope、规范/ADR 条款、复现命令、Codex review 证据、full-gate evidence、已知 residual 和验收 gate，并继续不依赖 reviewer
+  审查 scope、规范/ADR 条款、复现命令、full-gate evidence、已知 residual 和验收 gate，并继续不依赖 reviewer
   即时返回的安全交付。
 - 审查会话的 corrective/read-only worktree 不运行任何编译、测试、fuzz 或生成 Cargo build artifact 的命令；需要
   执行证据时通过 GitHub `.github/workflows/full-gate.yml` 对解析为目标 SHA 的 ref 运行（`workflow_dispatch` 或 PR
@@ -243,7 +225,6 @@ MD060 通过写入临时 `.markdownlint.jsonc` 配置文件豁免，该文件不
 - Head SHA: <sha>
 - Scope: <fixed scope>
 - Commands: <command> -> <passed/failed/skipped and actual result>
-- Codex review: <verdict approve/needs-attention + unaddressed critical/high findings>
 - Full-gate evidence: <workflow/run URL + run ID + event + exact head SHA + conclusion, or non-applicable with reason>
 - Verdict: pass / blocked / needs-info
 - Findings: none / <finding list with severity>
@@ -339,16 +320,13 @@ subagent。内部 subagent 不是独立交付角色，最多用于只读研究�
 Issue/PR、review、`gh pr ready` 或 merge；主会话统一审查共享工作区、验证和交付。审查会话与主会话
 使用不同的 loop 和独立 worktree，不以 subagent 代替。
 
-- 主会话遇到解决不了、诊断受阻或需要独立意见的问题时主动询问 Codex（`/codex:review`、`codex:rescue` 或
-  codex-companion），不限制等待时间，不以 Codex 慢为理由绕过或伪造结果。Codex 输出是协作证据，不获得规范权威。
-
 ## Session Handoff: Independent Review
 
 - **Trigger:** 非机械实现 PR 准备 Ready/merge，stage baseline 建立或重开、规范重新 Frozen、stage 完成，
   或重大 binary/conversion/render contract 与实现准备通过 gate。
 - **Role capability:** 未参与被审修改的独立审查会话；权限和审查 loop 见 `docs/loops/review-loop.md`。
 - **Input contract:** 主会话提供有限 scope、权威条款、固定 `Issue/PR 或 commit + head SHA`、验收项、复现命令、
-  Codex review 证据、full-gate evidence、已知 residual 和禁止依赖的实现假设。被审快照写入必须暂停。
+  full-gate evidence、已知 residual 和禁止依赖的实现假设。被审快照写入必须暂停。
 - **Output contract:** 审查会话在被审 PR（若存在）和关联 Issue 立即追加 append-only `Audit result`；每项 finding 含
   severity、位置、违反条款、可复现 artifact、影响、owner/disposition 和是否阻塞当前 gate。零 finding
   也必须给出范围、命令、artifact、限制和 Next。

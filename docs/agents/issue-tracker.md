@@ -171,9 +171,8 @@ PR is Ready or merged, the primary session records `Primary audit result` on the
 the primary may continue to Ready/merge after a passing Primary audit without waiting for the reviewer. It then posts
 `Review requested`; after the fixed snapshot is audited, the review session immediately appends one `Audit result` comment
 to the reviewed PR and associated Issue, even when there are no findings. Primary messages include Target, Head SHA,
-Scope, Commands, Codex review, Full-gate evidence, Verdict, Findings, Gate impact, Limitations, and Next.
-`Codex review` is primary-only. Reviewer messages include the same fields except `Codex review`, plus Root cause,
-Corrective action, Corrective PR, Regression evidence, Advisories, and Worktree. `Advisories`
+Scope, Commands, Full-gate evidence, Verdict, Findings, Gate impact, Limitations, and Next. Reviewer messages include
+those fields plus Root cause, Corrective action, Corrective PR, Regression evidence, Advisories, and Worktree. `Advisories`
 is reviewer-only. Do not hand-write dates or edit old messages.
 A later push, scope, command, or acceptance change invalidates the affected audit; append a superseding/re-review message and
 audit the new SHA.
