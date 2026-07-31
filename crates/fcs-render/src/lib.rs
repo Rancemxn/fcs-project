@@ -504,12 +504,19 @@ mod tests {
         let paint = render.nodes[rect_index]
             .fill_paint
             .expect("fixture Rect paint");
-        let color_descriptor = match render.paints[paint as usize].data {
-            PaintData::Solid { color } => color,
+        // Fixture solid paints share one color descriptor; poison a Rect-only
+        // descriptor so the half-open-end query proves the inactive subtree is
+        // skipped without tripping another still-active solid paint.
+        let poisoned = render.core.descriptors.len() as u32;
+        render.core.descriptors.push(PropertyDescriptor {
+            property_type: ValueType::Color,
+            domain: render.core.descriptors[2].domain,
+            kind: DescriptorKind::Constant(u32::MAX),
+        });
+        match &mut render.paints[paint as usize].data {
+            PaintData::Solid { color } => *color = poisoned,
             _ => panic!("fixture Rect uses a solid paint"),
-        };
-        render.core.descriptors[color_descriptor as usize].kind =
-            DescriptorKind::Constant(u32::MAX);
+        }
         assert!(
             !evaluate_semantic_draw_list_at(&render, 1.0)
                 .expect("half-open end query")
