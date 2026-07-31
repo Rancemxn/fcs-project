@@ -3,10 +3,11 @@ use fcs_model::{
     CanonicalExpressionDag, CanonicalExpressionOpcode, CanonicalExpressionType,
     CanonicalExpressionValue, CanonicalJudgeShape, CanonicalNoteKind, CanonicalNoteScorePolicy,
     CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalRenderGeometryData,
-    CanonicalRenderPaintData, CanonicalRenderScene, CanonicalRequiredExtension,
-    CanonicalResourceKind, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
-    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget,
-    CanonicalTrackValue, CanonicalValue, CanonicalValueType, DistributionMetadata,
+    CanonicalRenderNodeKind, CanonicalRenderPaintData, CanonicalRenderScene,
+    CanonicalRequiredExtension, CanonicalResourceKind, CanonicalTrack, CanonicalTrackBlend,
+    CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment,
+    CanonicalTrackTarget, CanonicalTrackValue, CanonicalValue, CanonicalValueType,
+    DistributionMetadata,
 };
 use fcs_runtime::EasingId;
 use sha2::{Digest, Sha256};
@@ -2299,7 +2300,18 @@ fn assemble_package(
     }
     let mut strings = string_table_values(resources, &notes, extensions, fidelity);
     if render.is_some() {
-        strings.extend(["originDescriptor", "sizeDescriptor"]);
+        strings.extend([
+            "centerDescriptor",
+            "endDescriptor",
+            "originDescriptor",
+            "radiusDescriptor",
+            "radiusXDescriptor",
+            "radiusYDescriptor",
+            "radiiDescriptors",
+            "rotationDescriptor",
+            "sizeDescriptor",
+            "startDescriptor",
+        ]);
         strings.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
         strings.dedup();
     }
@@ -2368,6 +2380,61 @@ impl Section {
     }
 }
 
+fn render_node_order(
+    scene: &CanonicalRenderScene,
+    layer_order: &[usize],
+) -> (Vec<usize>, Vec<(u32, u32)>) {
+    let mut children = vec![Vec::new(); scene.nodes().len()];
+    for (index, node) in scene.nodes().iter().enumerate() {
+        if let Some(parent) = node.parent() {
+            children[parent].push(index);
+        }
+    }
+
+    let mut order = Vec::with_capacity(scene.nodes().len());
+    let mut root_ranges = Vec::with_capacity(layer_order.len());
+    for &source_layer in layer_order {
+        let mut roots = scene.layers()[source_layer].roots().to_vec();
+        sort_render_siblings(scene, &mut roots);
+        let first = order.len();
+        order.extend(roots.iter().copied());
+        for root in roots.iter().copied() {
+            append_render_children(scene, &children, root, &mut order);
+        }
+        root_ranges.push(if roots.is_empty() {
+            (NULL_INDEX, 0)
+        } else {
+            (first as u32, roots.len() as u32)
+        });
+    }
+    (order, root_ranges)
+}
+
+fn append_render_children(
+    scene: &CanonicalRenderScene,
+    children: &[Vec<usize>],
+    node: usize,
+    order: &mut Vec<usize>,
+) {
+    let mut child_indices = children[node].clone();
+    sort_render_siblings(scene, &mut child_indices);
+    for child in child_indices {
+        order.push(child);
+        append_render_children(scene, children, child, order);
+    }
+}
+
+fn sort_render_siblings(scene: &CanonicalRenderScene, siblings: &mut [usize]) {
+    siblings.sort_by(|left, right| {
+        let left = &scene.nodes()[*left];
+        let right = &scene.nodes()[*right];
+        left.z_order()
+            .cmp(&right.z_order())
+            .then(left.document_order().cmp(&right.document_order()))
+            .then(left.id().value().cmp(&right.id().value()))
+    });
+}
+
 fn render_section(
     scene: &CanonicalRenderScene,
     descriptor_indices: &[u32],
@@ -2380,7 +2447,7 @@ fn render_section(
     {
         return Err(FcbcError::new(
             "fcbc.render-unsupported",
-            "product Render writer currently supports only Rect + solid scenes",
+            "product Render writer currently supports only solid fill scenes",
         ));
     }
     let descriptor = |index: usize| {
@@ -2390,6 +2457,13 @@ fn render_section(
                 format!("Render descriptor {index} is not encoded in Core"),
             )
         })
+    };
+    let descriptor_array = |indices: &[usize]| {
+        indices
+            .iter()
+            .map(|index| descriptor(*index).map(|value| value_int(i64::from(value))))
+            .collect::<FcbcResult<Vec<_>>>()
+            .map(|values| value_array(2, values))
     };
     let layer_order = scene.layer_draw_order();
     let mut encoded_layer = vec![0u32; scene.layers().len()];
@@ -2409,25 +2483,10 @@ fn render_section(
         paint_indices[*paint] = index as u32;
     }
 
-    let mut roots = Vec::<(usize, usize)>::new();
-    let mut layer_root_ranges = vec![(NULL_INDEX, 0u32); layer_order.len()];
-    for (encoded, source_layer) in layer_order.iter().enumerate() {
-        let mut layer_roots = scene.layers()[*source_layer].roots().to_vec();
-        layer_roots.sort_by(|left, right| {
-            let left = &scene.nodes()[*left];
-            let right = &scene.nodes()[*right];
-            left.z_order()
-                .cmp(&right.z_order())
-                .then(left.document_order().cmp(&right.document_order()))
-                .then(left.id().value().cmp(&right.id().value()))
-        });
-        let first = roots.len();
-        roots.extend(layer_roots.into_iter().map(|node| (*source_layer, node)));
-        layer_root_ranges[encoded] = if roots.len() == first {
-            (NULL_INDEX, 0)
-        } else {
-            (first as u32, (roots.len() - first) as u32)
-        };
+    let (node_order, layer_root_ranges) = render_node_order(scene, &layer_order);
+    let mut encoded_node = vec![NULL_INDEX; scene.nodes().len()];
+    for (encoded, source) in node_order.iter().enumerate() {
+        encoded_node[*source] = encoded as u32;
     }
 
     let mut payload = Vec::new();
@@ -2460,27 +2519,46 @@ fn render_section(
         put_u32(&mut record_payload, root_count);
         payload.extend_from_slice(&record(record_payload));
     }
-    for (source_layer, node_index) in &roots {
-        let node = &scene.nodes()[*node_index];
-        if node.parent().is_some() || node.kind() != fcs_model::CanonicalRenderNodeKind::Rect {
+    for source_node in &node_order {
+        let node = &scene.nodes()[*source_node];
+        if !matches!(
+            node.kind(),
+            CanonicalRenderNodeKind::Group
+                | CanonicalRenderNodeKind::Rect
+                | CanonicalRenderNodeKind::RoundedRect
+                | CanonicalRenderNodeKind::Circle
+                | CanonicalRenderNodeKind::Ellipse
+        ) {
             return Err(FcbcError::new(
                 "fcbc.render-unsupported",
-                "product Render writer currently supports root Rect nodes only",
+                "product Render writer currently supports Group and four solid fill geometries",
             ));
         }
-        let geometry = node.geometry().ok_or_else(|| {
-            FcbcError::new("fcbc.dangling-reference", "Render Rect has no geometry")
-        })?;
-        let paint = node.fill_paint().ok_or_else(|| {
-            FcbcError::new("fcbc.dangling-reference", "Render Rect has no fill paint")
-        })?;
+        let geometry = node.geometry().map(|index| geometry_indices[index]);
+        let paint = node.fill_paint().map(|index| paint_indices[index]);
+        if node.kind() != CanonicalRenderNodeKind::Group && (geometry.is_none() || paint.is_none())
+        {
+            return Err(FcbcError::new(
+                "fcbc.dangling-reference",
+                "Render fill geometry has no geometry or fill paint",
+            ));
+        }
         let attachment_id = node.attachment().target().map_or(0, |id| id.value());
+        let active = node.active();
+        let flags = u16::from(active.unbounded_before())
+            | (u16::from(active.unbounded_after()) << 1)
+            | (u16::from(node.isolate()) << 2)
+            | (u16::from(node.follow_hidden_attachment()) << 3);
         let mut record_payload = Vec::new();
         put_u64(&mut record_payload, node.id().value());
         put_u16(&mut record_payload, node.kind().ordinal());
-        put_u16(&mut record_payload, 0b11 | (u16::from(node.isolate()) << 2));
-        put_u32(&mut record_payload, NULL_INDEX);
-        put_u32(&mut record_payload, encoded_layer[*source_layer]);
+        put_u16(&mut record_payload, flags);
+        put_u32(
+            &mut record_payload,
+            node.parent()
+                .map_or(NULL_INDEX, |parent| encoded_node[parent]),
+        );
+        put_u32(&mut record_payload, encoded_layer[node.layer()]);
         put_u32(&mut record_payload, node.document_order());
         put_i32(&mut record_payload, node.z_order());
         put_u16(&mut record_payload, node.attachment().ordinal());
@@ -2494,8 +2572,8 @@ fn render_section(
         put_u32(&mut record_payload, descriptor(node.scale())?);
         put_u32(&mut record_payload, descriptor(node.opacity())?);
         put_u32(&mut record_payload, descriptor(node.visibility())?);
-        put_u32(&mut record_payload, geometry_indices[geometry]);
-        put_u32(&mut record_payload, paint_indices[paint]);
+        put_u32(&mut record_payload, geometry.unwrap_or(NULL_INDEX));
+        put_u32(&mut record_payload, paint.unwrap_or(NULL_INDEX));
         put_u32(&mut record_payload, NULL_INDEX);
         put_u32(&mut record_payload, NULL_INDEX);
         put_u16(&mut record_payload, node.composite().ordinal());
@@ -2505,22 +2583,78 @@ fn render_section(
     }
     for geometry_index in &geometry_order {
         let geometry = &scene.geometries()[*geometry_index];
-        let CanonicalRenderGeometryData::Rect { origin, size } = geometry.data() else {
-            return Err(FcbcError::new(
-                "fcbc.render-unsupported",
-                "Render geometry is not a Rect",
-            ));
+        let fields = match geometry.data() {
+            CanonicalRenderGeometryData::Rect { origin, size } => value_object(
+                &[
+                    (
+                        "originDescriptor",
+                        value_int(i64::from(descriptor(*origin)?)),
+                    ),
+                    ("sizeDescriptor", value_int(i64::from(descriptor(*size)?))),
+                ],
+                strings,
+            ),
+            CanonicalRenderGeometryData::RoundedRect {
+                origin,
+                size,
+                radii,
+            } => value_object(
+                &[
+                    (
+                        "originDescriptor",
+                        value_int(i64::from(descriptor(*origin)?)),
+                    ),
+                    ("sizeDescriptor", value_int(i64::from(descriptor(*size)?))),
+                    ("radiiDescriptors", descriptor_array(radii)?),
+                ],
+                strings,
+            ),
+            CanonicalRenderGeometryData::Circle { center, radius } => value_object(
+                &[
+                    (
+                        "centerDescriptor",
+                        value_int(i64::from(descriptor(*center)?)),
+                    ),
+                    (
+                        "radiusDescriptor",
+                        value_int(i64::from(descriptor(*radius)?)),
+                    ),
+                ],
+                strings,
+            ),
+            CanonicalRenderGeometryData::Ellipse {
+                center,
+                radius_x,
+                radius_y,
+                rotation,
+            } => value_object(
+                &[
+                    (
+                        "centerDescriptor",
+                        value_int(i64::from(descriptor(*center)?)),
+                    ),
+                    (
+                        "radiusXDescriptor",
+                        value_int(i64::from(descriptor(*radius_x)?)),
+                    ),
+                    (
+                        "radiusYDescriptor",
+                        value_int(i64::from(descriptor(*radius_y)?)),
+                    ),
+                    (
+                        "rotationDescriptor",
+                        value_int(i64::from(descriptor(*rotation)?)),
+                    ),
+                ],
+                strings,
+            ),
+            _ => {
+                return Err(FcbcError::new(
+                    "fcbc.render-unsupported",
+                    "product Render writer does not support this geometry",
+                ));
+            }
         };
-        let fields = value_object(
-            &[
-                (
-                    "originDescriptor",
-                    value_int(i64::from(descriptor(*origin)?)),
-                ),
-                ("sizeDescriptor", value_int(i64::from(descriptor(*size)?))),
-            ],
-            strings,
-        );
         let mut record_payload = Vec::new();
         put_u64(&mut record_payload, geometry.id().value());
         put_u16(&mut record_payload, geometry.kind().ordinal());

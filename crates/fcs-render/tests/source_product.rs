@@ -90,3 +90,76 @@ fn solid_rect_source_reaches_product_render_loader() {
     });
     assert_eq!(load_render(&malformed), Err("render.invalid-reference"));
 }
+
+#[test]
+fn nested_group_and_solid_shapes_reach_product_render_loader() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport {
+        width: 4px;
+        height: 4px;
+        colorSpace: "linear-srgb";
+    }
+    layer main {
+        pass: "overlay";
+        space: "screen";
+        children {
+            group container {
+                children {
+                    rect full {
+                        origin: vec2(-2px, -2px);
+                        size: vec2(4px, 4px);
+                        fill: solid(#FF0000FF);
+                    }
+                    roundedRect card {
+                        origin: vec2(-1px, -1px);
+                        size: vec2(2px, 2px);
+                        radius: 0.5px;
+                        fill: solid(#00FF00FF);
+                    }
+                    circle dot {
+                        center: vec2(0px, 0px);
+                        radius: 1px;
+                        fill: solid(#0000FFFF);
+                    }
+                    ellipse oval {
+                        center: vec2(0px, 0px);
+                        radiusX: 1px;
+                        radiusY: 0.5px;
+                        rotation: 0rad;
+                        fill: solid(#FFFFFFFF);
+                    }
+                }
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("nested Render source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| panic!("nested Render lowering failed: {diagnostics:?}"));
+    let bytes = write_from_compilation(&compilation).expect("nested Render FCBC writing");
+    let render = load_render(&bytes).expect("nested product Render loader");
+
+    assert_eq!(render.nodes.len(), 5);
+    assert_eq!(render.nodes[0].kind, NodeKind::Group);
+    assert_eq!(render.nodes[1].kind, NodeKind::Rect);
+    assert_eq!(render.nodes[2].kind, NodeKind::RoundedRect);
+    assert_eq!(render.nodes[3].kind, NodeKind::Circle);
+    assert_eq!(render.nodes[4].kind, NodeKind::Ellipse);
+    assert!(render.nodes[1..].iter().all(|node| node.parent == Some(0)));
+    assert_eq!(render.geometries.len(), 4);
+    assert_eq!(render.paints.len(), 4);
+    assert_eq!(render.layers[0].first_root, 0);
+    assert_eq!(render.layers[0].root_count, 1);
+}
