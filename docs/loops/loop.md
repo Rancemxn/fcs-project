@@ -137,13 +137,13 @@
   `Issue/PR + head SHA + scope + commands + full-gate evidence + acceptance gate`，
   对照规范、ADR、计划、fixture、调用方、diff 和实际验证 artifact 做 domain-matched 检查。
 - 主会话在 domain-matched 检查后，还必须对同一固定快照运行 Codex review（`/codex:review`，等价于 codex-companion
-  的 `review` 子命令），覆盖与 Primary audit 相同的 diff/scope。Codex review verdict 为 `approve` 且没有未解决的
-  critical/high finding 时，Primary audit 才可记为 `pass`；`needs-attention` 或有效 critical/high finding 必须修复
-  或路由 residual 并追加 superseding audit，不得把 Codex review 缺失或未通过写成通过。
+  的 `review` 子命令），覆盖与 Primary audit 相同的 diff/scope。没有未解决的 critical/high finding 时，Primary
+  audit 才可记为 `pass`；有效 critical/high finding 必须修复或路由 residual 并追加 superseding audit，不得把
+  Codex review 缺失或未通过写成通过。
 - Codex 严重度映射到仓库 taxonomy：Codex `critical`/`high` 对应仓库 `Critical`/`Important`（阻塞 pass，直到修复
   或按 finding 路由）；Codex `medium`/`low` 对应仓库 `Minor`（不阻塞 pass，但必须记录并只能按 Minor 延期规则
-  处理）。verdict `approve` 且无未解决 critical/high 才允许 `pass`；verdict `needs-attention` 或有未解决
-  critical/high 时，Primary audit 的 verdict 只能是 `blocked`。
+  处理）。pass 只取决于是否有未解决的 critical/high finding；`needs-attention` verdict 若只含 medium/low finding
+  不阻塞 pass，有未解决 critical/high 时 Primary audit 的 verdict 只能是 `blocked`。
 - Codex review 的可执行契约：主会话用 codex-companion 的 `review` 子命令（等价 `/codex:review`）对固定 head 的
   diff 运行，输出结构化 verdict（`approve`/`needs-attention`）与 findings（severity
   `critical`/`high`/`medium`/`low` + file + line range）。`Primary audit result` 的 `Codex review` 字段记录实际
@@ -342,7 +342,7 @@ Issue/PR、review、`gh pr ready` 或 merge；主会话统一审查共享工作�
   或重大 binary/conversion/render contract 与实现准备通过 gate。
 - **Role capability:** 未参与被审修改的独立审查会话；权限和审查 loop 见 `docs/loops/review-loop.md`。
 - **Input contract:** 主会话提供有限 scope、权威条款、固定 `Issue/PR 或 commit + head SHA`、验收项、复现命令、
-  full-gate evidence、已知 residual 和禁止依赖的实现假设。被审快照写入必须暂停。
+  Codex review 证据、full-gate evidence、已知 residual 和禁止依赖的实现假设。被审快照写入必须暂停。
 - **Output contract:** 审查会话在被审 PR（若存在）和关联 Issue 立即追加 append-only `Audit result`；每项 finding 含
   severity、位置、违反条款、可复现 artifact、影响、owner/disposition 和是否阻塞当前 gate。零 finding
   也必须给出范围、命令、artifact、限制和 Next。
