@@ -1,6 +1,6 @@
 # FCS 5 规范—实现—测试矩阵
 
-状态日期：2026-07-29
+状态日期：2026-08-01
 
 本矩阵记录权威规范与参考实现之间的可审计关系。它不定义格式语义；发生冲突时以
 `fcs.md`、`fcbc.md`、`fcs-render.md`、`fcs-conversion.md` 和绑定 conformance corpus 为准。
@@ -142,6 +142,19 @@ keeping I4 stage completion open:
   randomized/property closure is recorded in the runtime-property delta above;
   exact-head gate evidence and DAG/Piecewise integration remain stage-scoped,
   while I4.8 independent reference cross-checks remain in the evidence set.
+
+## Bounded Render Image product delta
+
+The product path now has a bounded CanonicalCompilation to FCBC RenderSection to
+Render-loader handoff for root Rect and Image nodes. Image resource stable IDs,
+canonical image/texture metadata, opaque ResourceData, destination/source
+descriptor arrays, and the final sampling enum are encoded and validated by the
+product path; the source-side canonical and product source integration lanes
+(`canonical_chart::canonical_render_image_binds_resource_and_rect_descriptors`,
+`source_product::image_source_reaches_product_render_loader_with_resource_metadata`)
+bind the image resource and metadata. The full Render scene, semantic, raster,
+and executable conformance closure remains partial under #295, and this delta
+does not change the I9/I10 or five-domain Frozen claims.
 
 ## I0 更新规则
 

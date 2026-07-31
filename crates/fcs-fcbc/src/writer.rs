@@ -2196,6 +2196,7 @@ struct ResourceFixture<'a> {
     id: u64,
     kind: u16,
     media_type: &'a str,
+    metadata: &'a CanonicalObject,
     content_sha256: [u8; 32],
     bytes: &'a [u8],
 }
@@ -2303,7 +2304,7 @@ fn assemble_package(
         strings.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
         strings.dedup();
     }
-    let (resource_records, resource_data) = resource_sections(resources, &strings);
+    let (resource_records, resource_data) = resource_sections(resources, &strings)?;
     let fidelity_section = fidelity
         .map(|metadata| fidelity_section(metadata, &strings))
         .transpose()?;
@@ -2311,7 +2312,7 @@ fn assemble_package(
         feature_flags |= crate::FeatureFlags::HAS_FIDELITY;
     }
     let render_section = render
-        .map(|scene| render_section(scene, &descriptor_indices, &strings))
+        .map(|scene| render_section(scene, &descriptor_indices, &strings, resources))
         .transpose()?;
     if render_section.is_some() {
         feature_flags |= crate::FeatureFlags::HAS_RENDER;
@@ -2372,6 +2373,7 @@ fn render_section(
     scene: &CanonicalRenderScene,
     descriptor_indices: &[u32],
     strings: &[&str],
+    resources: &[ResourceFixture<'_>],
 ) -> FcbcResult<Vec<u8>> {
     if scene.paths().iter().next().is_some()
         || scene.strokes().iter().next().is_some()
@@ -2380,7 +2382,7 @@ fn render_section(
     {
         return Err(FcbcError::new(
             "fcbc.render-unsupported",
-            "product Render writer currently supports only Rect + solid scenes",
+            "product Render writer currently supports only root Rect and Image scenes",
         ));
     }
     let descriptor = |index: usize| {
@@ -2462,18 +2464,38 @@ fn render_section(
     }
     for (source_layer, node_index) in &roots {
         let node = &scene.nodes()[*node_index];
-        if node.parent().is_some() || node.kind() != fcs_model::CanonicalRenderNodeKind::Rect {
+        if node.parent().is_some()
+            || !matches!(
+                node.kind(),
+                fcs_model::CanonicalRenderNodeKind::Rect
+                    | fcs_model::CanonicalRenderNodeKind::Image
+            )
+        {
             return Err(FcbcError::new(
                 "fcbc.render-unsupported",
-                "product Render writer currently supports root Rect nodes only",
+                "product Render writer currently supports root Rect and Image nodes only",
             ));
         }
         let geometry = node.geometry().ok_or_else(|| {
-            FcbcError::new("fcbc.dangling-reference", "Render Rect has no geometry")
+            FcbcError::new("fcbc.dangling-reference", "Render node has no geometry")
         })?;
-        let paint = node.fill_paint().ok_or_else(|| {
-            FcbcError::new("fcbc.dangling-reference", "Render Rect has no fill paint")
-        })?;
+        let paint = match node.kind() {
+            fcs_model::CanonicalRenderNodeKind::Rect => {
+                Some(node.fill_paint().ok_or_else(|| {
+                    FcbcError::new("fcbc.dangling-reference", "Render Rect has no fill paint")
+                })?)
+            }
+            fcs_model::CanonicalRenderNodeKind::Image => {
+                if node.fill_paint().is_some() || node.stroke().is_some() {
+                    return Err(FcbcError::new(
+                        "fcbc.render-unsupported",
+                        "Render Image cannot carry fill or stroke",
+                    ));
+                }
+                None
+            }
+            _ => unreachable!("unsupported Render node kind was rejected above"),
+        };
         let attachment_id = node.attachment().target().map_or(0, |id| id.value());
         let mut record_payload = Vec::new();
         put_u64(&mut record_payload, node.id().value());
@@ -2495,7 +2517,10 @@ fn render_section(
         put_u32(&mut record_payload, descriptor(node.opacity())?);
         put_u32(&mut record_payload, descriptor(node.visibility())?);
         put_u32(&mut record_payload, geometry_indices[geometry]);
-        put_u32(&mut record_payload, paint_indices[paint]);
+        put_u32(
+            &mut record_payload,
+            paint.map_or(NULL_INDEX, |paint| paint_indices[paint]),
+        );
         put_u32(&mut record_payload, NULL_INDEX);
         put_u32(&mut record_payload, NULL_INDEX);
         put_u16(&mut record_payload, node.composite().ordinal());
@@ -2505,22 +2530,63 @@ fn render_section(
     }
     for geometry_index in &geometry_order {
         let geometry = &scene.geometries()[*geometry_index];
-        let CanonicalRenderGeometryData::Rect { origin, size } = geometry.data() else {
-            return Err(FcbcError::new(
-                "fcbc.render-unsupported",
-                "Render geometry is not a Rect",
-            ));
+        let fields = match geometry.data() {
+            CanonicalRenderGeometryData::Rect { origin, size } => value_object(
+                &[
+                    (
+                        "originDescriptor",
+                        value_int(i64::from(descriptor(*origin)?)),
+                    ),
+                    ("sizeDescriptor", value_int(i64::from(descriptor(*size)?))),
+                ],
+                strings,
+            ),
+            CanonicalRenderGeometryData::Image {
+                resource,
+                destination,
+                source,
+                sampling,
+            } => {
+                let resource_id = resource.value();
+                let resource = resources
+                    .iter()
+                    .find(|candidate| candidate.id == resource_id)
+                    .ok_or_else(|| {
+                        FcbcError::new(
+                            "fcbc.render-resource-not-found",
+                            format!("Render Image references resource {resource_id}"),
+                        )
+                    })?;
+                if !matches!(resource.kind, 2 | 4) {
+                    return Err(FcbcError::new(
+                        "fcbc.render-resource-type-mismatch",
+                        "Render Image requires an image or texture resource",
+                    ));
+                }
+                let descriptors = |values: &[usize]| {
+                    values
+                        .iter()
+                        .map(|index| descriptor(*index).map(|value| value_int(i64::from(value))))
+                        .collect::<FcbcResult<Vec<_>>>()
+                        .map(|values| value_array(2, values))
+                };
+                let mut fields = vec![
+                    ("resourceId", value_resource(resource_id)),
+                    ("destinationDescriptors", descriptors(destination)?),
+                ];
+                if let Some(source) = source {
+                    fields.push(("sourceDescriptors", descriptors(source)?));
+                }
+                fields.push(("sampling", value_int(i64::from(sampling.ordinal()))));
+                value_object(&fields, strings)
+            }
+            _ => {
+                return Err(FcbcError::new(
+                    "fcbc.render-unsupported",
+                    "Render geometry is not supported by the product writer",
+                ));
+            }
         };
-        let fields = value_object(
-            &[
-                (
-                    "originDescriptor",
-                    value_int(i64::from(descriptor(*origin)?)),
-                ),
-                ("sizeDescriptor", value_int(i64::from(descriptor(*size)?))),
-            ],
-            strings,
-        );
         let mut record_payload = Vec::new();
         put_u64(&mut record_payload, geometry.id().value());
         put_u16(&mut record_payload, geometry.kind().ordinal());
@@ -2795,6 +2861,7 @@ fn native_resources(compilation: &CanonicalCompilation) -> FcbcResult<Vec<Resour
                     CanonicalResourceKind::Binary => 7,
                 },
                 media_type: resource.media_type(),
+                metadata: resource.metadata(),
                 content_sha256: bundled.content_sha256().as_bytes(),
                 bytes: bundled.bytes(),
             }
@@ -3312,7 +3379,10 @@ fn string_table_values<'a>(
             }
         }
     }
-    strings.extend(resources.iter().map(|resource| resource.media_type));
+    for resource in resources {
+        strings.push(resource.media_type);
+        collect_canonical_object_strings(resource.metadata, &mut strings);
+    }
     strings.extend(
         notes
             .iter()
@@ -3682,6 +3752,10 @@ fn value_int(value_: i64) -> Vec<u8> {
     value(2, value_.to_le_bytes().to_vec())
 }
 
+fn value_resource(id: u64) -> Vec<u8> {
+    value(11, id.to_le_bytes().to_vec())
+}
+
 fn value_finite_scalar(tag: u8, value_: f64) -> FcbcResult<Vec<u8>> {
     if !value_.is_finite() {
         return Err(FcbcError::new(
@@ -3730,7 +3804,10 @@ fn string_table_section(strings: &[&str]) -> Vec<u8> {
     payload
 }
 
-fn resource_sections(resources: &[ResourceFixture<'_>], strings: &[&str]) -> (Vec<u8>, Vec<u8>) {
+fn resource_sections(
+    resources: &[ResourceFixture<'_>],
+    strings: &[&str],
+) -> FcbcResult<(Vec<u8>, Vec<u8>)> {
     let mut records = Vec::new();
     let mut data = Vec::new();
     put_u32(&mut records, resources.len() as u32);
@@ -3749,10 +3826,10 @@ fn resource_sections(resources: &[ResourceFixture<'_>], strings: &[&str]) -> (Ve
         put_u64(&mut payload, data_offset);
         put_u64(&mut payload, resource.bytes.len() as u64);
         payload.extend_from_slice(&counted_bytes(&resource.content_sha256));
-        payload.extend_from_slice(&empty_object());
+        payload.extend_from_slice(&canonical_object_value(resource.metadata, strings)?);
         records.extend_from_slice(&record(payload));
     }
-    (records, data)
+    Ok((records, data))
 }
 
 fn constant_pool_section(constants: &[Constant]) -> Vec<u8> {

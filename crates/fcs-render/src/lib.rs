@@ -14,7 +14,9 @@ pub use assets::{
     decode_font_with_limits, decode_image, decode_image_with_limits, encode_test_png,
     encode_test_webp, shape_simple_ltr, shape_simple_ltr_with_limits,
 };
-pub use loader::{DecodedRenderChart, NodeKind, load_render, load_render_with_limits};
+pub use loader::{
+    DecodedRenderChart, GeometryData, NodeKind, load_render, load_render_with_limits,
+};
 pub use semantic::{
     DrawOp, evaluate_semantic_draw_list, rasterize_solid_rgba8, rasterize_solid_rgba8_with_limits,
 };

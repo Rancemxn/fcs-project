@@ -1,9 +1,11 @@
+use std::path::Path;
+
 use fcs_fcbc::write_from_compilation;
 use fcs_source::ResourceLimits;
 use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
 
-use fcs_render::{NodeKind, load_render};
+use fcs_render::{GeometryData, NodeKind, load_render};
 
 fn u32_at(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("u32"))
@@ -89,4 +91,82 @@ fn solid_rect_source_reaches_product_render_loader() {
         section[node + 88..node + 92].copy_from_slice(&u32::MAX.to_le_bytes());
     });
     assert_eq!(load_render(&malformed), Err("render.invalid-reference"));
+}
+
+#[test]
+fn image_source_reaches_product_render_loader_with_resource_metadata() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+resources {
+    image sprite {
+        source: "assets/fcs-test-rgba8.png";
+        hash: "sha256:a108791d9edc1d9c37644a45ce29d4a20e479711db97da85375b82924e8fa22";
+        mediaType: "image/png";
+        colorSpace: "srgb";
+        alpha: "straight";
+        sampling: "linear";
+    }
+}
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport {
+        width: 4px;
+        height: 4px;
+        colorSpace: "linear-srgb";
+    }
+    layer main {
+        pass: "overlay";
+        children {
+            image spriteNode {
+                resource: @sprite;
+                destination.origin: vec2(-2px, -2px);
+                destination.size: vec2(4px, 4px);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("Image Render source parses");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/conformance/render");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            &workspace,
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| panic!("Image canonical lowering failed: {diagnostics:?}"));
+
+    let bytes = write_from_compilation(&compilation).expect("Image Render FCBC writing");
+    let render = load_render(&bytes).expect("Image product Render loader");
+
+    assert_eq!(render.viewport_width, 4.0);
+    assert_eq!(render.viewport_height, 4.0);
+    assert_eq!(render.nodes.len(), 1);
+    assert_eq!(render.nodes[0].kind, NodeKind::Image);
+    assert_eq!(render.nodes[0].fill_paint, None);
+    assert_eq!(render.geometries.len(), 1);
+    let GeometryData::Image {
+        resource_id,
+        destination,
+        source: source_rect,
+        sampling,
+    } = &render.geometries[0].data
+    else {
+        panic!("expected Image geometry");
+    };
+    assert_eq!(destination.len(), 4);
+    assert!(source_rect.is_none());
+    assert_eq!(*sampling, 2);
+    assert_eq!(render.resources.len(), 1);
+    assert_eq!(render.resources[0].id, *resource_id);
+    assert_eq!(render.resources[0].kind, 2);
+    assert_eq!(render.resources[0].media_type, "image/png");
+    assert_eq!(
+        render.resources[0].data.as_slice(),
+        include_bytes!("../../../docs/conformance/render/assets/fcs-test-rgba8.png")
+    );
+    assert!(render.decoded_images.contains_key(resource_id));
 }

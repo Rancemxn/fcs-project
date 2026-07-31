@@ -1,4 +1,7 @@
-use fcs_model::{CanonicalProfile, CanonicalProfileFeature, CanonicalValue};
+use fcs_model::{
+    CanonicalImageSampling, CanonicalProfile, CanonicalProfileFeature, CanonicalRenderGeometryData,
+    CanonicalRenderNodeKind, CanonicalValue, EntityKind,
+};
 use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
 
@@ -81,6 +84,68 @@ tempoMap { 0beat -> 120bpm; }
     );
 
     assert_eq!(first, reordered);
+}
+
+#[test]
+fn canonical_render_image_binds_resource_and_rect_descriptors() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+resources {
+    image sprite {
+        source: "assets/sprite.png";
+        mediaType: "image/png";
+        colorSpace: "srgb";
+        alpha: "straight";
+        sampling: "linear";
+    }
+}
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 4px; height: 4px; colorSpace: "linear-srgb"; }
+    layer main {
+        children {
+            image spriteNode {
+                resource: @sprite;
+                destination.origin: vec2(0px, 0px);
+                destination.size: vec2(4px, 4px);
+                sourceRect.origin: vec2(0.0, 0.0);
+                sourceRect.size: vec2(2.0, 2.0);
+                sampling: "nearest";
+            }
+        }
+    }
+}
+"#;
+    let chart = parse_document(source)
+        .into_result()
+        .expect("source should parse")
+        .canonical_chart_with_source(source, CompileTimeLimits::default())
+        .unwrap_or_else(|diagnostics| panic!("Render canonical lowering failed: {diagnostics:?}"));
+    let scene = chart.render().expect("canonical Render scene");
+
+    assert_eq!(scene.nodes()[0].kind(), CanonicalRenderNodeKind::Image);
+    let CanonicalRenderGeometryData::Image {
+        resource,
+        destination,
+        source,
+        sampling,
+    } = scene.geometries()[0].data()
+    else {
+        panic!("expected canonical Image geometry");
+    };
+    assert_eq!(resource.namespace(), EntityKind::Resource);
+    assert_eq!(destination.len(), 4);
+    assert_eq!(source.as_ref().map(|values| values.len()), Some(4));
+    assert_eq!(*sampling, CanonicalImageSampling::Nearest);
+    let roots = chart.descriptors().expect("Render descriptors").roots();
+    assert!(roots.iter().any(|root| {
+        root.target_path() == "render.geometry.destination.width"
+            && root.owner() == scene.geometries()[0].id().value()
+    }));
+    assert!(roots.iter().any(|root| {
+        root.target_path() == "render.geometry.source.height"
+            && root.owner() == scene.geometries()[0].id().value()
+    }));
 }
 
 #[test]
