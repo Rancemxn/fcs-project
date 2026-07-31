@@ -21,11 +21,20 @@ pub struct DrawOp {
     pub z_order: i32,
     pub document_order: u32,
     pub fill_rgba: Option<[f64; 4]>,
+    pub image: Option<ImageDrawOp>,
     pub opacity: f64,
     pub world_matrix: [f64; 9],
     pub composite: u16,
     pub clip_chain: Vec<u64>,
     pub bounds: [f64; 4],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImageDrawOp {
+    pub resource_id: u64,
+    pub destination: [f64; 4],
+    pub source: [f64; 4],
+    pub sampling: u16,
 }
 
 struct SubtreeState {
@@ -65,6 +74,9 @@ enum LocalShape {
         radius_x: f64,
         radius_y: f64,
         rotation: f64,
+    },
+    Image {
+        bounds: [f64; 4],
     },
 }
 
@@ -248,7 +260,7 @@ fn emit_draw_subtree(
             },
         );
     }
-    let (fill_rgba, bounds) = if node.kind.is_drawable() {
+    let (fill_rgba, bounds, image) = if node.kind.is_drawable() {
         let geometry = geometry_evaluation(
             chart,
             node.geometry_ref,
@@ -277,9 +289,9 @@ fn emit_draw_subtree(
             )?,
             None => None,
         };
-        (fill_rgba, geometry.world_bounds)
+        (fill_rgba, geometry.world_bounds, geometry.image)
     } else {
-        (None, [0.0; 4])
+        (None, [0.0; 4], None)
     };
     let opacity = query_opacity(chart, node, chart_time, attachment.environment)?;
     let effective_opacity = inherited_opacity * opacity;
@@ -294,6 +306,7 @@ fn emit_draw_subtree(
             z_order: node.z_order,
             document_order: node.document_order,
             fill_rgba,
+            image,
             opacity: effective_opacity,
             world_matrix,
             composite: node.composite,
@@ -818,8 +831,14 @@ struct RasterShape {
 struct RasterOp {
     shape: RasterShape,
     clips: Vec<RasterShape>,
-    source: [f64; 4],
+    source: RasterSource,
+    opacity: f64,
     composite: u16,
+}
+
+enum RasterSource {
+    Solid([f64; 4]),
+    Image(ImageDrawOp),
 }
 
 fn raster_shape(shape: EvaluatedShape) -> RasterShape {
@@ -853,13 +872,13 @@ fn inverse_affine(matrix: [f64; 9]) -> Option<[f64; 9]> {
 }
 
 fn raster_shape_contains(shape: RasterShape, point: [f64; 2]) -> bool {
-    let Some(inverse_world) = shape.inverse_world else {
-        return false;
-    };
-    let Ok([x, y]) = transform_point(inverse_world, point) else {
-        return false;
-    };
-    local_shape_contains(shape.shape, [x, y])
+    raster_shape_local_point(shape, point)
+        .is_some_and(|local| local_shape_contains(shape.shape, local))
+}
+
+fn raster_shape_local_point(shape: RasterShape, point: [f64; 2]) -> Option<[f64; 2]> {
+    let inverse_world = shape.inverse_world?;
+    transform_point(inverse_world, point).ok()
 }
 
 fn local_shape_contains(shape: LocalShape, point: [f64; 2]) -> bool {
@@ -886,6 +905,14 @@ fn local_shape_contains(shape: LocalShape, point: [f64; 2]) -> bool {
             radius_y,
             rotation,
         } => ellipse_contains(center, radius_x, radius_y, rotation, point),
+        LocalShape::Image { bounds } => {
+            bounds[2] > bounds[0]
+                && bounds[3] > bounds[1]
+                && point[0] >= bounds[0]
+                && point[0] < bounds[2]
+                && point[1] >= bounds[1]
+                && point[1] < bounds[3]
+        }
     }
 }
 
@@ -1061,14 +1088,15 @@ pub fn rasterize_solid_rgba8_with_limits_at(
     for op in &scene.ops {
         if !matches!(
             op.kind,
-            NodeKind::Rect | NodeKind::RoundedRect | NodeKind::Circle | NodeKind::Ellipse
+            NodeKind::Rect
+                | NodeKind::RoundedRect
+                | NodeKind::Circle
+                | NodeKind::Ellipse
+                | NodeKind::Image
         ) {
             continue;
         }
-        let Some(fill) = op.fill_rgba else {
-            continue;
-        };
-        if fill.iter().any(|value| !value.is_finite()) || !op.opacity.is_finite() {
+        if !op.opacity.is_finite() {
             return Err("render.invalid-descriptor");
         }
         if !matches!(op.composite, 1..=5) {
@@ -1077,6 +1105,23 @@ pub fn rasterize_solid_rgba8_with_limits_at(
         let Some(shape) = scene.shapes.get(&op.node_id).copied() else {
             continue;
         };
+        let source = if op.kind == NodeKind::Image {
+            RasterSource::Image(op.image.ok_or("render.invalid-geometry")?)
+        } else {
+            let Some(fill) = op.fill_rgba else {
+                continue;
+            };
+            if fill.iter().any(|value| !value.is_finite()) {
+                return Err("render.invalid-descriptor");
+            }
+            let alpha = fill[3].clamp(0.0, 1.0);
+            RasterSource::Solid([
+                fill[0].clamp(0.0, 1.0) * alpha,
+                fill[1].clamp(0.0, 1.0) * alpha,
+                fill[2].clamp(0.0, 1.0) * alpha,
+                alpha,
+            ])
+        };
         let mut clips = Vec::new();
         for clip_id in &op.clip_chain {
             let clip = scene.clips.get(clip_id).ok_or("render.invalid-reference")?;
@@ -1084,16 +1129,11 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                 clips.push(raster_shape(shape));
             }
         }
-        let alpha = (fill[3].clamp(0.0, 1.0) * op.opacity).clamp(0.0, 1.0);
         raster_ops.push(RasterOp {
             shape: raster_shape(shape),
             clips,
-            source: [
-                fill[0].clamp(0.0, 1.0) * alpha,
-                fill[1].clamp(0.0, 1.0) * alpha,
-                fill[2].clamp(0.0, 1.0) * alpha,
-                alpha,
-            ],
+            source,
+            opacity: op.opacity,
             composite: op.composite,
         });
     }
@@ -1121,13 +1161,21 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                     let point = [logical_x, logical_y];
                     let mut sample = [0.0; 4];
                     for op in &raster_ops {
-                        if raster_shape_contains(op.shape, point)
-                            && op
+                        let Some(local_point) = raster_shape_local_point(op.shape, point) else {
+                            continue;
+                        };
+                        if !local_shape_contains(op.shape.shape, local_point)
+                            || !op
                                 .clips
                                 .iter()
                                 .all(|clip| raster_shape_contains(*clip, point))
                         {
-                            composite_premultiplied(&mut sample, op.source, op.composite)?;
+                            continue;
+                        }
+                        if let Some(source) =
+                            raster_source_at(chart, &op.source, local_point, op.opacity)?
+                        {
+                            composite_premultiplied(&mut sample, source, op.composite)?;
                         }
                     }
                     for component in 0..4 {
@@ -1154,6 +1202,116 @@ pub fn rasterize_solid_rgba8_with_limits_at(
         }
     }
     Ok(out)
+}
+
+fn raster_source_at(
+    chart: &DecodedRenderChart,
+    source: &RasterSource,
+    local_point: [f64; 2],
+    opacity: f64,
+) -> Result<Option<[f64; 4]>, &'static str> {
+    let mut value = match source {
+        RasterSource::Solid(value) => *value,
+        RasterSource::Image(image) => {
+            let Some(value) = sample_image(chart, *image, local_point)? else {
+                return Ok(None);
+            };
+            value
+        }
+    };
+    for component in &mut value {
+        *component *= opacity;
+    }
+    Ok(Some(value))
+}
+
+fn sample_image(
+    chart: &DecodedRenderChart,
+    image: ImageDrawOp,
+    point: [f64; 2],
+) -> Result<Option<[f64; 4]>, &'static str> {
+    let [x, y, width, height] = image.destination;
+    if width == 0.0
+        || height == 0.0
+        || image.source[2] == 0.0
+        || image.source[3] == 0.0
+        || point[0] < x
+        || point[0] >= x + width
+        || point[1] < y
+        || point[1] >= y + height
+    {
+        return Ok(None);
+    }
+    let u = (point[0] - x) / width;
+    let v = (point[1] - y) / height;
+    let source_x = image.source[0] + (u * image.source[2]);
+    let source_y = image.source[1] + ((1.0 - v) * image.source[3]);
+    let decoded = chart
+        .decoded_images
+        .get(&image.resource_id)
+        .ok_or("render.resource-not-found")?;
+    match image.sampling {
+        1 => {
+            let x_range = source_texel_range(image.source[0], image.source[2], decoded.width)?;
+            let y_range = source_texel_range(image.source[1], image.source[3], decoded.height)?;
+            Ok(Some(image_texel(
+                decoded,
+                (source_x.floor() as i64).clamp(i64::from(x_range.0), i64::from(x_range.1)) as u32,
+                (source_y.floor() as i64).clamp(i64::from(y_range.0), i64::from(y_range.1)) as u32,
+            )))
+        }
+        2 => {
+            let (x0, x1, tx) =
+                linear_axis(source_x, image.source[0], image.source[2], decoded.width)?;
+            let (y0, y1, ty) =
+                linear_axis(source_y, image.source[1], image.source[3], decoded.height)?;
+            let top_left = image_texel(decoded, x0, y0);
+            let top_right = image_texel(decoded, x1, y0);
+            let bottom_left = image_texel(decoded, x0, y1);
+            let bottom_right = image_texel(decoded, x1, y1);
+            let mut value = [0.0; 4];
+            for component in 0..4 {
+                let top = top_left[component] + (top_right[component] - top_left[component]) * tx;
+                let bottom = bottom_left[component]
+                    + (bottom_right[component] - bottom_left[component]) * tx;
+                value[component] = top + (bottom - top) * ty;
+            }
+            Ok(Some(value))
+        }
+        _ => Err("render.invalid-geometry"),
+    }
+}
+
+fn source_texel_range(origin: f64, size: f64, dimension: u32) -> Result<(u32, u32), &'static str> {
+    if dimension == 0 || size <= 0.0 {
+        return Err("render.invalid-geometry");
+    }
+    let first = (origin - 0.5).ceil().max(0.0) as u32;
+    let last = (origin + size - 0.5).floor().min(f64::from(dimension - 1)) as u32;
+    (first <= last)
+        .then_some((first, last))
+        .ok_or("render.invalid-geometry")
+}
+
+fn linear_axis(
+    coordinate: f64,
+    origin: f64,
+    size: f64,
+    dimension: u32,
+) -> Result<(u32, u32, f64), &'static str> {
+    let (first, last) = source_texel_range(origin, size, dimension)?;
+    let fractional = coordinate - 0.5;
+    let raw_base = fractional.floor() as i64;
+    let fraction = (fractional - raw_base as f64).clamp(0.0, 1.0);
+    let first = i64::from(first);
+    let last = i64::from(last);
+    let base = raw_base.clamp(first, last) as u32;
+    let next = raw_base.saturating_add(1).clamp(first, last) as u32;
+    Ok((base, next, fraction))
+}
+
+fn image_texel(image: &crate::assets::DecodedImage, x: u32, y: u32) -> [f64; 4] {
+    image.linear_premultiplied[(y as usize * image.width as usize) + x as usize]
 }
 
 fn encode_srgb(value: f64) -> f64 {
@@ -1204,6 +1362,7 @@ fn paint_rgba(
 struct GeometryEvaluation {
     world_bounds: [f64; 4],
     shape: Option<LocalShape>,
+    image: Option<ImageDrawOp>,
 }
 
 fn geometry_evaluation(
@@ -1217,12 +1376,13 @@ fn geometry_evaluation(
         return Ok(GeometryEvaluation {
             world_bounds: [0.0, 0.0, 0.0, 0.0],
             shape: None,
+            image: None,
         });
     };
     let Some(geometry) = chart.geometries.get(index as usize) else {
         return Err("render.invalid-reference");
     };
-    let (local_bounds, shape) = match &geometry.data {
+    let (local_bounds, shape, image) = match &geometry.data {
         GeometryData::Rect { origin, size } => {
             let [x, y] = query_vec2_in(
                 chart,
@@ -1243,6 +1403,7 @@ fn geometry_evaluation(
                 Some(LocalShape::Rect {
                     bounds: [x, y, right, bottom],
                 }),
+                None,
             )
         }
         GeometryData::RoundedRect {
@@ -1288,6 +1449,7 @@ fn geometry_evaluation(
                     bounds: [x, y, right, top],
                     radii: values,
                 }),
+                None,
             )
         }
         GeometryData::Circle { center, radius } => {
@@ -1309,7 +1471,7 @@ fn geometry_evaluation(
                 center[0] + radius,
                 center[1] + radius,
             ];
-            (bounds, Some(LocalShape::Circle { center, radius }))
+            (bounds, Some(LocalShape::Circle { center, radius }), None)
         }
         GeometryData::Ellipse {
             center,
@@ -1350,17 +1512,114 @@ fn geometry_evaluation(
                     radius_y,
                     rotation,
                 }),
+                None,
+            )
+        }
+        GeometryData::Image {
+            resource_id,
+            destination,
+            source,
+            sampling,
+        } => {
+            let image = chart
+                .decoded_images
+                .get(resource_id)
+                .ok_or("render.resource-not-found")?;
+            let mut values = [0.0; 4];
+            for (value, descriptor) in values.iter_mut().zip(destination) {
+                *value = query_scalar_in(
+                    chart,
+                    *descriptor,
+                    chart_time,
+                    ValueType::Length,
+                    environment,
+                )?;
+            }
+            let [x, y, width, height] = values;
+            let right = x + width;
+            let top = y + height;
+            if width < 0.0 || height < 0.0 || !right.is_finite() || !top.is_finite() {
+                return Err("render.invalid-geometry");
+            }
+            let source = if let Some(descriptors) = source {
+                let mut values = [0.0; 4];
+                for (value, descriptor) in values.iter_mut().zip(descriptors) {
+                    *value = query_scalar_in(
+                        chart,
+                        *descriptor,
+                        chart_time,
+                        ValueType::Float,
+                        environment,
+                    )?;
+                }
+                values
+            } else {
+                [0.0, 0.0, f64::from(image.width), f64::from(image.height)]
+            };
+            validate_source_rect(source, image.width, image.height)?;
+            let bounds = [x, y, right, top];
+            (
+                bounds,
+                Some(LocalShape::Image { bounds }),
+                Some(ImageDrawOp {
+                    resource_id: *resource_id,
+                    destination: values,
+                    source,
+                    sampling: *sampling,
+                }),
             )
         }
         _ => (
             [0.0, 0.0, chart.viewport_width, chart.viewport_height],
+            None,
             None,
         ),
     };
     Ok(GeometryEvaluation {
         world_bounds: transformed_bounds(world_matrix, local_bounds)?,
         shape,
+        image,
     })
+}
+
+fn validate_source_rect(
+    source: [f64; 4],
+    image_width: u32,
+    image_height: u32,
+) -> Result<(), &'static str> {
+    let [x, y, width, height] = source;
+    let right = x + width;
+    let bottom = y + height;
+    if x < 0.0
+        || y < 0.0
+        || width < 0.0
+        || height < 0.0
+        || !right.is_finite()
+        || !bottom.is_finite()
+        || right > f64::from(image_width)
+        || bottom > f64::from(image_height)
+    {
+        return Err("render.invalid-geometry");
+    }
+    if width > 0.0
+        && height > 0.0
+        && (!source_axis_has_texel_center(x, width, image_width)
+            || !source_axis_has_texel_center(y, height, image_height))
+    {
+        return Err("render.invalid-geometry");
+    }
+    Ok(())
+}
+
+fn source_axis_has_texel_center(origin: f64, size: f64, dimension: u32) -> bool {
+    if dimension == 0 {
+        return false;
+    }
+    let first = (origin - 0.5).ceil().max(0.0);
+    let last = (origin + size - 0.5)
+        .floor()
+        .min(f64::from(dimension.saturating_sub(1)));
+    first <= last
 }
 
 fn rounded_rect_scale(width: f64, height: f64, radii: [f64; 4]) -> f64 {
@@ -1376,4 +1635,20 @@ fn rounded_rect_scale(width: f64, height: f64, radii: [f64; 4]) -> f64 {
         }
     }
     scale.clamp(0.0, 1.0)
+}
+
+#[cfg(test)]
+mod image_sampling_tests {
+    use super::linear_axis;
+
+    #[test]
+    fn linear_taps_clamp_independently_at_source_edges() {
+        let (left, next_left, left_fraction) = linear_axis(0.1, 0.0, 2.0, 2).unwrap();
+        assert_eq!((left, next_left), (0, 0));
+        assert!((left_fraction - 0.6).abs() < 1e-12);
+
+        let (right, next_right, right_fraction) = linear_axis(2.0, 0.0, 2.0, 2).unwrap();
+        assert_eq!((right, next_right), (1, 1));
+        assert!((right_fraction - 0.5).abs() < 1e-12);
+    }
 }

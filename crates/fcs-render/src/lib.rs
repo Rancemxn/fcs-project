@@ -18,8 +18,8 @@ pub use loader::{
     DecodedRenderChart, GeometryData, NodeKind, load_render, load_render_with_limits,
 };
 pub use semantic::{
-    DrawOp, evaluate_semantic_draw_list, evaluate_semantic_draw_list_at, rasterize_solid_rgba8,
-    rasterize_solid_rgba8_at, rasterize_solid_rgba8_with_limits,
+    DrawOp, ImageDrawOp, evaluate_semantic_draw_list, evaluate_semantic_draw_list_at,
+    rasterize_solid_rgba8, rasterize_solid_rgba8_at, rasterize_solid_rgba8_with_limits,
     rasterize_solid_rgba8_with_limits_at,
 };
 pub use writer::{
@@ -834,6 +834,133 @@ mod tests {
 
         assert_eq!(image.composite, image_node.composite);
         assert_eq!(image.clip_chain, vec![clip_id]);
+    }
+
+    #[test]
+    fn image_geometry_exposes_sampling_and_rasterizes_decoded_pixels() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
+        render.viewport_width = 4.0;
+        render.viewport_height = 4.0;
+        render.viewport_color_space = 1;
+
+        let image_index = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::Image)
+            .expect("fixture Image");
+        let hidden = add_descriptor_constant(&mut render, RuntimeValue::Bool(false));
+        let visible = add_descriptor_constant(&mut render, RuntimeValue::Bool(true));
+        let zero_position = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [0.0, 0.0],
+            },
+        );
+        let zero_angle = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Angle,
+                value: 0.0,
+            },
+        );
+        let unit_scale = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Float,
+                value: [1.0, 1.0],
+            },
+        );
+        let opaque = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 1.0,
+            },
+        );
+        for node in &mut render.nodes {
+            node.visibility_descriptor = hidden;
+            node.position_descriptor = zero_position;
+            node.origin_descriptor = zero_position;
+            node.rotation_descriptor = zero_angle;
+            node.scale_descriptor = unit_scale;
+            node.opacity_descriptor = opaque;
+            node.clip_ref = None;
+        }
+        let mut current = Some(image_index);
+        while let Some(index) = current {
+            render.nodes[index].visibility_descriptor = visible;
+            current = render.nodes[index].parent.map(|parent| parent as usize);
+        }
+
+        let x = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: -2.0,
+            },
+        );
+        let y = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: -2.0,
+            },
+        );
+        let width = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 4.0,
+            },
+        );
+        let height = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 4.0,
+            },
+        );
+        let geometry_index = render.nodes[image_index]
+            .geometry_ref
+            .expect("image geometry") as usize;
+        let (resource_id, sampling) = match render.geometries[geometry_index].data {
+            GeometryData::Image {
+                resource_id,
+                sampling,
+                ..
+            } => (resource_id, sampling),
+            _ => panic!("fixture geometry is not Image"),
+        };
+        render.geometries[geometry_index].data = GeometryData::Image {
+            resource_id,
+            destination: [x, y, width, height],
+            source: None,
+            sampling,
+        };
+
+        let image = evaluate_semantic_draw_list_at(&render, 0.0)
+            .expect("semantic query")
+            .into_iter()
+            .find(|op| op.node_id == render.nodes[image_index].id)
+            .expect("Image draw op")
+            .image
+            .expect("image semantic payload");
+        assert_eq!(image.resource_id, resource_id);
+        assert_eq!(image.destination, [-2.0, -2.0, 4.0, 4.0]);
+        assert_eq!(image.source, [0.0, 0.0, 2.0, 2.0]);
+        assert_eq!(image.sampling, 1);
+
+        assert_eq!(
+            rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("image raster"),
+            vec![
+                255, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 255, 0, 0, 255,
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255,
+                255, 255, 0, 255, 255, 255, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255, 255, 255, 0,
+                255, 255, 255, 0, 255,
+            ]
+        );
     }
 
     #[test]

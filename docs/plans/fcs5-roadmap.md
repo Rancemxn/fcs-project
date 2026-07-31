@@ -761,3 +761,6 @@ git diff --check
   license declaration, the five candidate version domains, FCBC container profiles, the Render manifest, and the
   checked-in Conversion profile registry; final artifact-content, executable cross-domain, matrix, and re-freeze
   obligations remain open under #296.
+  The current Render product delta also exposes Image DrawOps and bounded nearest/linear decoded-image sampling
+  with source-rect validation and premultiplied compositing; full Image source lowering, broader Render geometry,
+  paint/resource semantics, and semantic/raster conformance remain open under #295.
