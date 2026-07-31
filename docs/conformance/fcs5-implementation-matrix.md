@@ -152,7 +152,9 @@ descriptor arrays, and the final sampling enum are encoded and validated by the
 product path; the source-side canonical and product source integration lanes
 (`canonical_chart::canonical_render_image_binds_resource_and_rect_descriptors`,
 `source_product::image_source_reaches_product_render_loader_with_resource_metadata`)
-bind the image resource and metadata. The full Render scene, semantic, raster,
+bind the image resource and metadata; the same source fixture now reaches a
+semantic Image DrawOp and a non-empty RGBA raster through the product loader.
+The full Render scene, semantic, raster,
 and executable conformance closure remains partial under #295, and this delta
 does not change the I9/I10 or five-domain Frozen claims.
 

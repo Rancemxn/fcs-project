@@ -5,7 +5,9 @@ use fcs_source::ResourceLimits;
 use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
 
-use fcs_render::{GeometryData, NodeKind, load_render};
+use fcs_render::{
+    GeometryData, NodeKind, evaluate_semantic_draw_list_at, load_render, rasterize_solid_rgba8_at,
+};
 
 fn u32_at(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("u32"))
@@ -169,4 +171,19 @@ render profile 1.0.0 {
         include_bytes!("../../../docs/conformance/render/assets/fcs-test-rgba8.png")
     );
     assert!(render.decoded_images.contains_key(resource_id));
+
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0)
+        .expect("Image semantic evaluation")
+        .into_iter()
+        .next()
+        .expect("Image draw op");
+    let image = draw.image.expect("Image draw payload");
+    assert_eq!(image.resource_id, *resource_id);
+    assert_eq!(image.destination, [-2.0, -2.0, 4.0, 4.0]);
+    assert_eq!(image.source, [0.0, 0.0, 2.0, 2.0]);
+    assert_eq!(image.sampling, 2);
+
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Image rasterization");
+    assert_eq!(pixels.len(), 4 * 4 * 4);
+    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
 }
