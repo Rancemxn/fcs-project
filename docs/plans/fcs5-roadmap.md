@@ -757,3 +757,7 @@ git diff --check
   Bounded child #432 adds an explicit finite external JSON container-nesting limit to `ImportLimits`, preserves the
   default `parse_json_document` entry point, and reports the first rejected depth as typed `max_json_depth`
   evidence before recursive lossless materialization; broader #294/#295/#296 and I10 closure remain open.
+  Bounded child #452 binds the unpublished local RC distribution inventory to workspace package metadata, the MIT
+  license declaration, the five candidate version domains, FCBC container profiles, the Render manifest, and the
+  checked-in Conversion profile registry; final artifact-content, executable cross-domain, matrix, and re-freeze
+  obligations remain open under #296.
