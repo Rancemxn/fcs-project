@@ -144,6 +144,11 @@
   或按 finding 路由）；Codex `medium`/`low` 对应仓库 `Minor`（不阻塞 pass，但必须记录并只能按 Minor 延期规则
   处理）。verdict `approve` 且无未解决 critical/high 才允许 `pass`；verdict `needs-attention` 或有未解决
   critical/high 时，Primary audit 的 verdict 只能是 `blocked`。
+- Codex review 的可执行契约：主会话用 codex-companion 的 `review` 子命令（等价 `/codex:review`）对固定 head 的
+  diff 运行，输出结构化 verdict（`approve`/`needs-attention`）与 findings（severity
+  `critical`/`high`/`medium`/`low` + file + line range）。`Primary audit result` 的 `Codex review` 字段记录实际
+  verdict 和未解决的 critical/high finding。Codex review 对每个非机械 work-unit 都适用，没有 non-applicable
+  例外（这与 Rust gate 的 doc-only non-applicable 例外不同）。
 - 主会话必须在关联 Issue 和 PR（若存在）分别追加一条 `## Primary audit result`。消息包含 Target、Head SHA、Scope、
   Commands、Codex review、Full-gate evidence、Verdict、Findings、Gate impact、Limitations 和 Next；它不包含 reviewer-only
   `Advisories`，并与 reviewer 的 `## Audit result` 明确区分。
@@ -162,8 +167,12 @@
 
 - 非机械实现 PR 在进入 Ready 或合并前必须完成 Primary Self-Audit；独立审查会话是异步二审，不再是每个
   work-unit 的前置等待门。主会话在 Primary audit 通过后发送 `Review requested`，固定被审 PR、关联 Issue、head SHA、
-  审查 scope、规范/ADR 条款、复现命令、full-gate evidence、已知 residual 和验收 gate，并继续不依赖 reviewer
+  审查 scope、规范/ADR 条款、复现命令、Codex review 证据、full-gate evidence、已知 residual 和验收 gate，并继续不依赖 reviewer
   即时返回的安全交付。
+- 审查会话的 corrective/read-only worktree 不运行任何编译、测试、fuzz 或生成 Cargo build artifact 的命令；需要
+  执行证据时通过 GitHub `.github/workflows/full-gate.yml` 对解析为目标 SHA 的 ref 运行（`workflow_dispatch` 或 PR
+  run），不在本地跑测试或逐次烧 gate 迭代；审查的 test/conformance 证据只来自同 SHA full-gate run。主会话的本地
+  Rust 验证反馈同样只走 full gate，不把本地编译/lint 当作测试证据。
 - 审查期间若 head SHA、scope、验收命令或依赖证据变化，原审查立即失效；当前会话必须追加新的
   `Review requested`，审查会话必须追加 `superseding/re-review` 说明并以新快照重新开始。旧评论和
   finding 不得被编辑或静默覆盖。
@@ -228,7 +237,7 @@ MD060 通过写入临时 `.markdownlint.jsonc` 配置文件豁免，该文件不
 - Head SHA: <sha>
 - Scope: <fixed scope>
 - Commands: <command> -> <passed/failed/skipped and actual result>
-- Codex review: <verdict approve/needs-attention + unaddressed critical/high findings, or non-applicable with reason>
+- Codex review: <verdict approve/needs-attention + unaddressed critical/high findings>
 - Full-gate evidence: <workflow/run URL + run ID + event + exact head SHA + conclusion, or non-applicable with reason>
 - Verdict: pass / blocked / needs-info
 - Findings: none / <finding list with severity>
