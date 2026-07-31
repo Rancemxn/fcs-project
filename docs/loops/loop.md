@@ -144,18 +144,21 @@
   或按 finding 路由）；Codex `medium`/`low` 对应仓库 `Minor`（不阻塞 pass，但必须记录并只能按 Minor 延期规则
   处理）。pass 只取决于是否有未解决的 critical/high finding；`needs-attention` verdict 若只含 medium/low finding
   不阻塞 pass，有未解决 critical/high 时 Primary audit 的 verdict 只能是 `blocked`。
-- Codex review 的可执行契约：主会话用 codex-companion 的 `review` 子命令对固定 head 的 diff 运行，例如
-  `node "<已安装 codex-companion>/scripts/codex-companion.mjs" review --wait --scope branch --base <base-ref>`
-  （等价 `/codex:review --wait --scope branch --base <base-ref>`）。输出为结构化 verdict（`approve`/
+- Codex review 的可执行契约：主会话运行 `/codex:review --wait --scope branch --base <固定 base SHA>`（Claude Code
+  的 codex 插件命令，内部解析 codex-companion 路径），等价命令为
+  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review --wait --scope branch --base <固定 base SHA>`。
+  base 必须是不可变 SHA（PR merge-base 或固定 commit），不使用会移动的分支 ref。输出为结构化 verdict（`approve`/
   `needs-attention`）与 findings（severity `critical`/`high`/`medium`/`low` + file + line range + title/body）。
   `Primary audit result` 的 `Codex review` 字段记录实际命令、base/head SHA、verdict 和未解决的 critical/high
   finding，并保留 review 输出快照作为可读回的证据。Codex review 对每个非机械 work-unit 都适用，没有
-  non-applicable 例外（这与 Rust gate 的 doc-only non-applicable 例外不同）。
+  non-applicable 例外（这与 Rust gate 的 doc-only non-applicable 例外不同）；codex 插件不可用时 Primary audit
+  只能是 `blocked`，不得伪造。
 - 主会话必须在关联 Issue 和 PR（若存在）分别追加一条 `## Primary audit result`。消息包含 Target、Head SHA、Scope、
   Commands、Codex review、Full-gate evidence、Verdict、Findings、Gate impact、Limitations 和 Next；它不包含 reviewer-only
   `Advisories`，并与 reviewer 的 `## Audit result` 明确区分。
-- `pass` 只表示当前固定快照没有未解决的 Critical/Important finding，适用 gate 已实际通过，Codex review 已通过，
-  且没有越权语义选择；通过后主会话可以 Ready、merge 并继续 frontier，不等待 reviewer。
+- `pass` 只表示当前固定快照没有未解决的 Critical/Important finding，适用 gate 已实际通过，Codex review 没有未解决
+  的 critical/high finding（含只含 medium/low finding 的 `needs-attention` verdict），且没有越权语义选择；通过后
+  主会话可以 Ready、merge 并继续 frontier，不等待 reviewer。
 - Rust/build/dependency/test/executable-fixture 或 `.github/workflows/full-gate.yml` 实现变更的 Full-gate evidence 必须包含 workflow/run URL、run ID、event、
   精确 `headSha` 和 `success` conclusion。纯文档或非构建元数据写 `non-applicable` 及理由；缺失、运行中、失败、
   SHA 不匹配或 GitHub 不可确认时，verdict 只能是 `blocked` 或 `needs-info`。
@@ -173,8 +176,9 @@
   即时返回的安全交付。
 - 审查会话的 corrective/read-only worktree 不运行任何编译、测试、fuzz 或生成 Cargo build artifact 的命令；需要
   执行证据时通过 GitHub `.github/workflows/full-gate.yml` 对解析为目标 SHA 的 ref 运行（`workflow_dispatch` 或 PR
-  run），不在本地跑测试或逐次烧 gate 迭代；审查的 test/conformance 证据只来自同 SHA full-gate run。主会话的本地
-  Rust 验证反馈同样只走 full gate，不把本地编译/lint 当作测试证据。
+  run），不在本地跑测试或逐次烧 gate 迭代；审查的 test/conformance 证据只来自同 SHA full-gate run。主会话本地
+  允许的编译/lint/格式命令只作开发反馈（见 `AGENTS.md` 的 Rust 开发与验证），test/conformance 证据仍只来自
+  full gate。
 - 审查期间若 head SHA、scope、验收命令或依赖证据变化，原审查立即失效；当前会话必须追加新的
   `Review requested`，审查会话必须追加 `superseding/re-review` 说明并以新快照重新开始。旧评论和
   finding 不得被编辑或静默覆盖。
