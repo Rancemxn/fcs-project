@@ -473,6 +473,7 @@ mod tests {
     #[test]
     fn semantic_query_honors_active_half_open_interval() {
         let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
         let root_index = render
             .nodes
             .iter_mut()
@@ -915,6 +916,7 @@ mod tests {
     #[test]
     fn semantic_query_reports_opacity_bounds_and_exposes_effective_value() {
         let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
         let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("semantic query");
         let rect = draw
             .iter()
