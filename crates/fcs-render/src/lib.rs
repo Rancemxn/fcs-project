@@ -230,9 +230,20 @@ mod tests {
     }
 
     fn set_full_viewport_rect(render: &mut DecodedRenderChart) {
+        // Descriptor 2 is the shared origin/size root for the fixture's Rect,
+        // RoundedRect, Circle, and Ellipse geometries. Give the Rect dedicated
+        // origin/size descriptors and leave descriptor 2 at a valid zero so the
+        // other solid geometries stay evaluable instead of going negative.
         set_descriptor_constant(
             render,
             2,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [0.0, 0.0],
+            },
+        );
+        let origin = add_descriptor_constant(
+            render,
             RuntimeValue::Vec2 {
                 ty: ValueType::Vec2Length,
                 value: [-6.0, -6.0],
@@ -247,11 +258,12 @@ mod tests {
         );
         for geometry in &mut render.geometries {
             if let GeometryData::Rect {
-                origin,
+                origin: rect_origin,
                 size: rect_size,
             } = &mut geometry.data
-                && *origin == 2
+                && *rect_origin == 2
             {
+                *rect_origin = origin;
                 *rect_size = size;
             }
         }
