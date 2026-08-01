@@ -70,19 +70,59 @@ fn crc32_iso_hdlc(bytes: &[u8]) -> u32 {
     !crc
 }
 
-fn mutate_render_section(mut bytes: Vec<u8>, mutate: impl FnOnce(&mut [u8])) -> Vec<u8> {
+fn mutate_section(
+    mut bytes: Vec<u8>,
+    section_type: u32,
+    mutate: impl FnOnce(&mut [u8]),
+) -> Vec<u8> {
     let section_count = u32_at(&bytes, 36) as usize;
     let table_offset = u64_at(&bytes, 40) as usize;
     let entry = (0..section_count)
         .map(|index| table_offset + index * 40)
-        .find(|entry| u32_at(&bytes, *entry) == 14)
-        .expect("Render section entry");
+        .find(|entry| u32_at(&bytes, *entry) == section_type)
+        .expect("section entry");
     let offset = u64_at(&bytes, entry + 16) as usize;
     let length = u64_at(&bytes, entry + 24) as usize;
     mutate(&mut bytes[offset..offset + length]);
     let checksum = crc32_iso_hdlc(&bytes[offset..offset + length]);
     bytes[entry + 32..entry + 36].copy_from_slice(&checksum.to_le_bytes());
     bytes
+}
+
+fn mutate_render_section(bytes: Vec<u8>, mutate: impl FnOnce(&mut [u8])) -> Vec<u8> {
+    mutate_section(bytes, 14, mutate)
+}
+
+#[test]
+fn independent_core_loader_checks_resource_coverage_before_hash() {
+    let bytes = mutate_section(generated_fixture(), 6, |section| {
+        let count = u32_at(section, 0) as usize;
+        let mut record_offset = 4;
+        let mut data_length_offset = None;
+        for _ in 0..count {
+            let record_length = u32_at(section, record_offset) as usize;
+            assert!(
+                record_length >= 44,
+                "resource record must contain data length"
+            );
+            data_length_offset = Some(record_offset + 36);
+            record_offset += record_length;
+        }
+        assert_eq!(
+            record_offset,
+            section.len(),
+            "resource records must cover section"
+        );
+        let data_length_offset = data_length_offset.expect("fixture must contain resources");
+        let data_length = u64_at(section, data_length_offset);
+        assert!(data_length > 0, "fixture resource must contain data");
+        section[data_length_offset..data_length_offset + 8]
+            .copy_from_slice(&(data_length - 1).to_le_bytes());
+    });
+    assert_eq!(
+        fcbc_reference_loader::load(&bytes),
+        Err("fcbc.invalid-resource-data")
+    );
 }
 
 fn first_node_record_offset(section: &[u8]) -> usize {
