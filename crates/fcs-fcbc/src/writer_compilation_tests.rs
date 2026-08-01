@@ -198,6 +198,24 @@ collections { notes { flick { id: "f"; line: @main; gameplay.time: 1s; }; } }
 }
 
 #[test]
+fn note_records_are_sorted_by_numeric_time() {
+    let bytes = compile(
+        r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections { notes {
+    tap { id: "later"; line: @main; gameplay.time: -1s; };
+    tap { id: "earlier"; line: @main; gameplay.time: -2s; };
+} }
+"#,
+    );
+    let decoded = crate::load_chart(&bytes).expect("chart must load");
+    let times: Vec<f64> = decoded.notes.iter().map(|note| note.time).collect();
+    assert_eq!(times, vec![-2.0, -1.0]);
+}
+
+#[test]
 fn write_from_compilation_round_trips_through_product_load() {
     let workspace = tempdir().unwrap();
     let source = r#"#fcs 5.0.0
