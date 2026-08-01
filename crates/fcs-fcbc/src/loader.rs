@@ -248,11 +248,31 @@ pub enum DecodedNoteScorePolicy {
     Custom(String),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum DecodedValue {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    String(String),
+    Time(f64),
+    Beat { numerator: i64, denominator: i64 },
+    Length(f64),
+    Angle(f64),
+    Color([f64; 4]),
+    ResourceRef(u64),
+    ContributorRef(u64),
+    Vec2 { element_tag: u8, values: [f64; 2] },
+    Array { element_tag: u8, values: Vec<Self> },
+    Object(Vec<(String, Self)>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct ExtensionRecord {
     pub namespace: String,
     pub version: (u16, u16, u16),
     pub flags: u16,
+    pub payload: DecodedValue,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -310,8 +330,13 @@ struct RawSection {
 #[derive(Clone, Debug)]
 struct ParsedValue {
     tag: u8,
+    boolean: Option<bool>,
+    integer: Option<i64>,
+    beat: Option<(i64, i64)>,
+    reference: Option<u64>,
     string_ref: Option<u32>,
     scalar: Option<f64>,
+    color: Option<[f64; 4]>,
     vec2: Option<(u8, [f64; 2])>,
     array_element_tag: Option<u8>,
     array: Vec<ParsedValue>,
@@ -458,6 +483,7 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
     }
     let mut resources = parse_resources(section_payload(bytes, &section_map, 6)?, &strings)?;
     validate_resource_data(section_payload(bytes, &section_map, 20)?, &mut resources)?;
+    validate_extension_references(&extensions, &resources, &contributor_ids)?;
     parse_sync(section_payload(bytes, &section_map, 7)?, &resources)?;
     let tempo_points = parse_tempo(section_payload(bytes, &section_map, 8)?)?;
     let lines = parse_lines(section_payload(bytes, &section_map, 9)?, &strings)?;
@@ -1225,17 +1251,50 @@ fn parse_extensions(
             return Err("fcbc.invalid-record");
         }
         prior_key = Some(key);
-        if parse_value(&mut record, strings.len())?.tag != 14 {
+        let payload = parse_value(&mut record, strings.len())?;
+        if payload.tag != 14 {
             return Err("fcbc.invalid-record");
         }
         extensions.push(ExtensionRecord {
             namespace,
             version,
             flags,
+            payload: decode_value(&payload, strings)?,
         });
     }
     cursor.finish()?;
     Ok(extensions)
+}
+
+fn validate_extension_references(
+    extensions: &[ExtensionRecord],
+    resources: &[ResourceRecord],
+    contributors: &BTreeSet<u64>,
+) -> Result<(), &'static str> {
+    fn validate_value(
+        value: &DecodedValue,
+        resource_ids: &BTreeSet<u64>,
+        contributor_ids: &BTreeSet<u64>,
+    ) -> Result<(), &'static str> {
+        match value {
+            DecodedValue::ResourceRef(id) if resource_ids.contains(id) => Ok(()),
+            DecodedValue::ResourceRef(_) => Err("fcbc.dangling-reference"),
+            DecodedValue::ContributorRef(id) if contributor_ids.contains(id) => Ok(()),
+            DecodedValue::ContributorRef(_) => Err("fcbc.dangling-reference"),
+            DecodedValue::Array { values, .. } => values
+                .iter()
+                .try_for_each(|value| validate_value(value, resource_ids, contributor_ids)),
+            DecodedValue::Object(fields) => fields
+                .iter()
+                .try_for_each(|(_, value)| validate_value(value, resource_ids, contributor_ids)),
+            _ => Ok(()),
+        }
+    }
+
+    let resource_ids = resources.iter().map(|resource| resource.id).collect();
+    extensions
+        .iter()
+        .try_for_each(|extension| validate_value(&extension.payload, &resource_ids, contributors))
 }
 
 fn parse_resources(bytes: &[u8], strings: &[String]) -> Result<Vec<ResourceRecord>, &'static str> {
@@ -3123,6 +3182,83 @@ const MAX_CUSTOM_VALUE_DEPTH: usize = 32;
 /// the explicit validation stack can grow without bound.
 const MAX_VALIDATOR_DEPTH: usize = 1024;
 
+fn decode_value(value: &ParsedValue, strings: &[String]) -> Result<DecodedValue, &'static str> {
+    match value.tag {
+        0 => Ok(DecodedValue::Null),
+        1 => Ok(DecodedValue::Bool(
+            value.boolean.ok_or("fcbc.invalid-record")?,
+        )),
+        2 => Ok(DecodedValue::Int(
+            value.integer.ok_or("fcbc.invalid-record")?,
+        )),
+        3 => Ok(DecodedValue::Float(
+            value.scalar.ok_or("fcbc.invalid-record")?,
+        )),
+        4 => Ok(DecodedValue::String(
+            strings
+                .get(value.string_ref.ok_or("fcbc.invalid-record")? as usize)
+                .ok_or("fcbc.dangling-reference")?
+                .clone(),
+        )),
+        5 => Ok(DecodedValue::Time(
+            value.scalar.ok_or("fcbc.invalid-record")?,
+        )),
+        6 => {
+            let (numerator, denominator) = value.beat.ok_or("fcbc.invalid-record")?;
+            Ok(DecodedValue::Beat {
+                numerator,
+                denominator,
+            })
+        }
+        7 => Ok(DecodedValue::Length(
+            value.scalar.ok_or("fcbc.invalid-record")?,
+        )),
+        8 => Ok(DecodedValue::Angle(
+            value.scalar.ok_or("fcbc.invalid-record")?,
+        )),
+        9 => Ok(DecodedValue::Color(
+            value.color.ok_or("fcbc.invalid-record")?,
+        )),
+        10 => {
+            let (element_tag, values) = value.vec2.ok_or("fcbc.invalid-record")?;
+            Ok(DecodedValue::Vec2 {
+                element_tag,
+                values,
+            })
+        }
+        11 => Ok(DecodedValue::ResourceRef(
+            value.reference.ok_or("fcbc.invalid-record")?,
+        )),
+        12 => Ok(DecodedValue::ContributorRef(
+            value.reference.ok_or("fcbc.invalid-record")?,
+        )),
+        13 => Ok(DecodedValue::Array {
+            element_tag: value.array_element_tag.ok_or("fcbc.invalid-record")?,
+            values: value
+                .array
+                .iter()
+                .map(|value| decode_value(value, strings))
+                .collect::<Result<Vec<_>, _>>()?,
+        }),
+        14 => Ok(DecodedValue::Object(
+            value
+                .fields
+                .iter()
+                .map(|(key, value)| {
+                    Ok((
+                        strings
+                            .get(*key as usize)
+                            .ok_or("fcbc.dangling-reference")?
+                            .clone(),
+                        decode_value(value, strings)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, &'static str>>()?,
+        )),
+        _ => Err("fcbc.invalid-record"),
+    }
+}
+
 fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedValue, &'static str> {
     parse_value_at_depth(cursor, string_count, 0)
 }
@@ -3147,8 +3283,13 @@ fn parse_value_at_depth(
     let mut value = Cursor::new(payload, "fcbc.invalid-record");
     let mut parsed = ParsedValue {
         tag,
+        boolean: None,
+        integer: None,
+        beat: None,
+        reference: None,
         string_ref: None,
         scalar: None,
+        color: None,
         vec2: None,
         array_element_tag: None,
         array: Vec::new(),
@@ -3157,13 +3298,15 @@ fn parse_value_at_depth(
     match tag {
         0 => {}
         1 => {
-            if value.u8()? > 1 {
+            let boolean = value.u8()?;
+            if boolean > 1 {
                 return Err("fcbc.invalid-record");
             }
             value.zeroes(7)?;
+            parsed.boolean = Some(boolean == 1);
         }
         2 => {
-            value.i64()?;
+            parsed.integer = Some(value.i64()?);
         }
         3 | 5 | 7 | 8 => {
             parsed.scalar = Some(value.f64()?);
@@ -3175,27 +3318,25 @@ fn parse_value_at_depth(
             parsed.string_ref = Some(reference);
         }
         6 => {
-            value.i64()?;
-            if value.i64()? <= 0 {
+            let numerator = value.i64()?;
+            let denominator = value.i64()?;
+            if denominator <= 0 {
                 return Err("fcbc.invalid-record");
             }
+            parsed.beat = Some((numerator, denominator));
         }
         9 => {
-            for _ in 0..4 {
-                value.f64()?;
-            }
+            parsed.color = Some([value.f64()?, value.f64()?, value.f64()?, value.f64()?]);
         }
         10 => {
             let element_tag = value.u8()?;
             value.zeroes(7)?;
             let first = parse_scalar_value(&mut value, element_tag)?;
             let second = parse_scalar_value(&mut value, element_tag)?;
-            if element_tag == 7 {
-                parsed.vec2 = Some((element_tag, [first, second]));
-            }
+            parsed.vec2 = Some((element_tag, [first, second]));
         }
         11 | 12 => {
-            value.u64()?;
+            parsed.reference = Some(value.u64()?);
         }
         13 => {
             let element_tag = value.u8()?;

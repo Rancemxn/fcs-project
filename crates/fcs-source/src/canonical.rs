@@ -22,8 +22,9 @@ use fcs_model::{
 
 use crate::ast::{
     Definition, Document, DocumentProfile, ExtensionRequirement, FieldPath, MetaBlock,
-    ProfileFeature, RenderBodyItem, RenderItem, ResourceKind, SchemaField, SchemaValue,
-    SourceExpression, SourceLiteral, SourceSpan, SyncBlock, TopLevelBlockKind, TypedValue,
+    OrderedObject, ProfileFeature, RenderBodyItem, RenderItem, ResourceKind, SchemaField,
+    SchemaValue, SourceExpression, SourceLiteral, SourceSpan, SyncBlock, TopLevelBlockKind,
+    TypedValue,
 };
 use crate::custom::CustomValueLimits;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLabel, DiagnosticStage};
@@ -117,19 +118,7 @@ impl Document {
         let scroll = self.canonical_scroll_set_for_graph(&time_map, &lines)?;
         let source_version = CanonicalSourceVersion::new(self.source_version.to_string())
             .map_err(|error| vec![chart_diagnostic(error, self.format.span)])?;
-        let required_extensions = self
-            .extensions
-            .iter()
-            .flat_map(|block| &block.declarations)
-            .filter(|declaration| declaration.requirement == ExtensionRequirement::Required)
-            .map(|declaration| {
-                CanonicalRequiredExtension::new(
-                    declaration.header.namespace.clone(),
-                    declaration.header.version.to_string(),
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| vec![chart_diagnostic(error, self.format.span)])?;
+        let required_extensions = lower_required_extensions(self)?;
 
         let chart = CanonicalChart::new(
             source_version,
@@ -1565,6 +1554,92 @@ fn chart_diagnostic(error: CanonicalChartError, span: SourceSpan) -> Diagnostic 
         error.to_string(),
         span,
     )
+}
+
+fn lower_required_extensions(
+    document: &Document,
+) -> Result<Vec<CanonicalRequiredExtension>, Vec<Diagnostic>> {
+    let contributors = contributor_names(document.contributors.as_ref());
+    let resources = resource_kinds(document.resources.as_ref());
+    let mut diagnostics = Vec::new();
+    let mut extensions = Vec::new();
+    for declaration in document
+        .extensions
+        .iter()
+        .flat_map(|block| &block.declarations)
+        .filter(|declaration| declaration.requirement == ExtensionRequirement::Required)
+    {
+        let Some(payload) = lower_ordered_object(
+            &declaration.payload,
+            document.definitions.as_ref(),
+            &contributors,
+            &resources,
+            CustomValueLimits::default(),
+            &mut diagnostics,
+        ) else {
+            continue;
+        };
+        match CanonicalRequiredExtension::with_payload(
+            declaration.header.namespace.clone(),
+            declaration.header.version.to_string(),
+            payload,
+        ) {
+            Ok(extension) => extensions.push(extension),
+            Err(error) => diagnostics.push(chart_diagnostic(error, declaration.span)),
+        }
+    }
+    diagnostics.sort_by(|left, right| {
+        left.primary_span()
+            .start
+            .cmp(&right.primary_span().start)
+            .then_with(|| left.primary_span().end.cmp(&right.primary_span().end))
+            .then_with(|| left.code().cmp(&right.code()))
+    });
+    if diagnostics.is_empty() {
+        Ok(extensions)
+    } else {
+        Err(diagnostics)
+    }
+}
+
+fn lower_ordered_object(
+    object: &OrderedObject,
+    definitions: Option<&crate::ast::DefinitionsBlock>,
+    contributors: &BTreeSet<String>,
+    resources: &BTreeMap<String, ResourceKind>,
+    limits: CustomValueLimits,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<CanonicalObject> {
+    let raw = RawValue::Object(
+        object
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                lower_expression(&entry.value, definitions, &mut Vec::new(), diagnostics).map(
+                    |value| RawObjectEntry {
+                        key: entry.key.clone(),
+                        key_span: entry.key_span,
+                        value,
+                    },
+                )
+            })
+            .collect(),
+    );
+    let mut total_bytes = 0;
+    match resolve_raw(
+        raw,
+        &Expected::Object,
+        contributors,
+        resources,
+        limits,
+        diagnostics,
+        1,
+        &mut total_bytes,
+        object.span,
+    )? {
+        CanonicalValue::Object(value) => Some(value),
+        _ => None,
+    }
 }
 
 fn lower_document(

@@ -8,7 +8,7 @@ use std::fmt;
 
 use crate::{
     CanonicalDescriptorTable, CanonicalLineGraph, CanonicalMetadata, CanonicalNoteSet,
-    CanonicalRenderScene, CanonicalScrollSet, CanonicalTrackSet, ChartTimeMap,
+    CanonicalObject, CanonicalRenderScene, CanonicalScrollSet, CanonicalTrackSet, ChartTimeMap,
 };
 
 /// The profile declared by a canonical chart's source format envelope.
@@ -52,17 +52,30 @@ impl fmt::Display for CanonicalSourceVersion {
     }
 }
 
-/// A required execution extension identity carried by the canonical chart.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// A required execution extension and its canonical typed payload.
+#[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalRequiredExtension {
     namespace: String,
     version: String,
+    payload: CanonicalObject,
 }
 
 impl CanonicalRequiredExtension {
     pub fn new(
         namespace: impl Into<String>,
         version: impl Into<String>,
+    ) -> Result<Self, CanonicalChartError> {
+        Self::with_payload(
+            namespace,
+            version,
+            CanonicalObject::new(Vec::new()).expect("empty object has no duplicate keys"),
+        )
+    }
+
+    pub fn with_payload(
+        namespace: impl Into<String>,
+        version: impl Into<String>,
+        payload: CanonicalObject,
     ) -> Result<Self, CanonicalChartError> {
         let namespace = namespace.into();
         let version = version.into();
@@ -72,7 +85,11 @@ impl CanonicalRequiredExtension {
         if version.is_empty() {
             return Err(CanonicalChartError::EmptyExtensionVersion);
         }
-        Ok(Self { namespace, version })
+        Ok(Self {
+            namespace,
+            version,
+            payload,
+        })
     }
 
     pub fn namespace(&self) -> &str {
@@ -81,6 +98,10 @@ impl CanonicalRequiredExtension {
 
     pub fn version(&self) -> &str {
         &self.version
+    }
+
+    pub const fn payload(&self) -> &CanonicalObject {
+        &self.payload
     }
 }
 
