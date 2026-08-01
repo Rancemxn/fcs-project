@@ -402,6 +402,9 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
     parse_sync(section_payload(bytes, &section_map, 7)?, &resources)?;
     let tempo_points = parse_tempo(section_payload(bytes, &section_map, 8)?)?;
     let lines = parse_lines(section_payload(bytes, &section_map, 9)?, &strings)?;
+    if (feature_flags & (1 << 8) != 0) != lines.iter().any(|line| line.line_flags & 1 != 0) {
+        return Err("fcbc.invalid-header");
+    }
     let notes = parse_notes(section_payload(bytes, &section_map, 10)?, &strings)?;
     let descriptors = parse_tracks(section_payload(bytes, &section_map, 11)?)?;
     let expressions = parse_expressions(section_payload(bytes, &section_map, 12)?)?;
