@@ -908,7 +908,6 @@ fn appendix_a_fixture_expands_four_notes_at_exact_beats_and_eliminates_authoring
         "presentation.xOffset",
         "presentation.yOffset",
         "render.enabled",
-        "zOrder",
     ];
     assert_eq!(expected_times.len(), expanded_notes.len());
     for (entity, expected_time) in expanded_notes.iter().zip(expected_times) {
