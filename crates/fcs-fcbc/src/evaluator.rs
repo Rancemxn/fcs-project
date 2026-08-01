@@ -24,6 +24,31 @@ impl EvaluationEnvironment {
             p: 0.0,
         }
     }
+
+    pub fn at_chart_time(chart: &DecodedChart, s: f64) -> Result<Self, &'static str> {
+        Ok(Self {
+            s,
+            b: chart_beat_at_time(chart, s)?,
+            q: 0.0,
+            d: 0.0,
+            p: 0.0,
+        })
+    }
+}
+
+pub fn chart_beat_at_time(chart: &DecodedChart, chart_time: f64) -> Result<f64, &'static str> {
+    if !chart_time.is_finite() {
+        return Err(EXECUTION_ERROR);
+    }
+    let first = chart.tempo_points.first().ok_or(EXECUTION_ERROR)?;
+    let point = chart
+        .tempo_points
+        .iter()
+        .rfind(|point| point.chart_time <= chart_time)
+        .unwrap_or(first);
+    let beat = (point.beat_numerator as f64 / point.beat_denominator as f64)
+        + ((chart_time - point.chart_time) * point.bpm) / 60.0;
+    beat.is_finite().then_some(beat).ok_or(EXECUTION_ERROR)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -97,13 +122,13 @@ pub fn query_distance(
                 chart,
                 line.scroll_speed_descriptor,
                 time,
-                EvaluationEnvironment::at_time(time),
+                EvaluationEnvironment::at_chart_time(chart, time)?,
             )?;
             let tempo = query_descriptor(
                 chart,
                 line.scroll_tempo_descriptor,
                 time,
-                EvaluationEnvironment::at_time(time),
+                EvaluationEnvironment::at_chart_time(chart, time)?,
             )?;
             let integrand = scalar_payload(&speed.value)? * scalar_payload(&tempo.value)? / 60.0;
             let mut floor_position =
@@ -1105,7 +1130,7 @@ fn integrate_scroll_product(
                 chart,
                 tempo_descriptor,
                 midpoint,
-                EvaluationEnvironment::at_time(midpoint),
+                EvaluationEnvironment::at_chart_time(chart, midpoint)?,
             )?
             .value,
         )?;
@@ -1209,5 +1234,16 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn chart_time_environment_uses_global_chart_beat() {
+        let mut chart = crate::load_chart(&crate::write_nonempty_execution()).unwrap();
+        chart.tempo_points[0].bpm = 120.0;
+
+        let environment = EvaluationEnvironment::at_chart_time(&chart, 1.0).unwrap();
+
+        assert_eq!(environment.s, 1.0);
+        assert_eq!(environment.b, 2.0);
     }
 }
