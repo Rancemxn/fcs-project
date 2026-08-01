@@ -133,9 +133,10 @@
 
 - 本地工作树临时允许运行本地编译、lint 与格式检查：`cargo check`、`cargo clippy`、`cargo build`、`cargo fmt`
   等（均可带 `--workspace`/`--all-targets`），但都不得带 `--release`。这只是加快编译错误与 lint 反馈的开发
-  手段，由用户放开、也可由用户随时撤回并恢复为完全不在本地编译。本地仍不运行任何测试、fuzz 或执行可执行
-  fixture：`cargo nextest`/`cargo test`、fuzz、`cargo run` 和可执行 fixture 一律由本仓库
-  `.github/workflows/full-gate.yml` 在 GitHub runner 上执行，测试与 fuzz 反馈只来自远端 gate。本地其余检查
+  手段，由用户放开、也可由用户随时撤回并恢复为完全不在本地编译。本地工作树仍不运行任何测试、fuzz 或
+  执行可执行 fixture；用户决定当前 I10 工作的完整 Full Gate 直接在该 GitHub Codespace 执行（见下方
+  “Codespace Full Gate”），GitHub runner 的 `.github/workflows/full-gate.yml` 仍是 PR/merge 的 required
+  gate。本地其余检查
   仍限于 diff、链接、Markdown/YAML/JSON/schema、格式等静态检查。本地 Clippy 必须使用与 gate 相同的
   `--workspace --all-targets -- -D warnings`，不得降低告警级别或临时加 `#[allow]` 让本地变绿。本条仅适用于
   主实现会话的本地工作树及主会话明确授权的有界本地草稿；不适用于独立审查会话的 corrective worktree，后者
@@ -145,19 +146,39 @@
   full-gate step，不得进入 Primary audit 或 reviewer `Audit result` 的 full-gate evidence，也不改变“适用 gate
   必须由同一 head SHA 的成功 Action run 证明”这条要求。本地 Clippy 通过不代表 gate 的 Clippy step 通过：
   toolchain 版本不同会给出不同 lint 集合。`target/` 是 gitignore 的构建产物，不得进入提交。
-- 第一个需要 Rust 门禁反馈的完整 SHA 必须推送到 draft PR；后续每个需要反馈的修改检查点都以新 SHA
-  触发 `pull_request` full gate。没有可用 PR run 时，可以对解析为目标 SHA 的 branch/tag ref 使用
-  `workflow_dispatch`，但必须回读并确认 run 的 `headSha` 与目标 SHA 完全一致。
+- 第一个需要 Rust 门禁反馈的完整 SHA 可以直接在该 GitHub Codespace 同步并执行完整 Full Gate，也可以推送到
+  draft PR 触发 `pull_request` full gate；用户已决定当前 I10 工作以 Codespace 直接执行为主。Codespace 执行前必须
+  `git fetch origin` 并 checkout 到与目标 SHA 完全一致的 ref，执行后回读并确认 `git rev-parse HEAD` 与目标 SHA
+  完全一致。没有可用 Codespace 或 PR run 时，可以对解析为目标 SHA 的 branch/tag ref 使用 `workflow_dispatch`，
+  但必须回读并确认 run 的 `headSha` 与目标 SHA 完全一致。
 - full gate 使用 cargo-nextest 而不是普通 `cargo test`，并且不使用 `--release`。其 Rust 检查顺序是：
 
   ```text
+  cargo fetch --locked
+  cargo fetch --locked --manifest-path fuzz/Cargo.toml
+  cargo metadata --locked --offline --no-deps --format-version 1
+  cargo metadata --locked --offline --manifest-path fuzz/Cargo.toml --no-deps --format-version 1
+  cargo tree --locked --offline --manifest-path fuzz/Cargo.toml -i fcs-model
+  cargo tree --locked --offline --manifest-path fuzz/Cargo.toml -i sha2
+  cargo tree --workspace --locked --offline -d
   cargo fmt --all -- --check
   cargo clippy --workspace --all-targets -- -D warnings
   cargo nextest run --workspace
+  scripts/fcs5-fuzz-smoke.sh bounded   # FCS_FUZZ_RUNS=1024
+  git diff --check
+  test -z "$(git status --porcelain=v1 --untracked-files=all)"
   ```
 
   workflow 还必须执行 ADR 0013 固定的 locked dependency、bounded fuzz、diff 和 clean-worktree gate。
-  不得用本地结果、cache 命中、部分 job 或旧 SHA 的 run 替代它。
+  不得用本地结果、cache 命中、部分 job 或旧 SHA 的 run 替代它。Codespace 直接执行时，以上序列必须在目标
+  SHA 的干净 checkout 上从头跑到尾，任一步失败即该 SHA gate 失败，重新同步到新 SHA 后重跑。
+- Codespace Full Gate：用户已打开 GitHub Codespace（`sturdy-potato-r4w5wrwjjq672p4xx`，仓库位于
+  `/workspaces/fcs-project`）作为当前 I10 工作的直接 Full Gate 执行环境；GitHub Actions 监督往返太慢。
+  执行步骤：`gh codespace ssh --codespace sturdy-potato-r4w5wrwjjq672p4xx --command "..."` 进入后先
+  `git fetch origin`，checkout 到目标 SHA（如 `git checkout -B codex/i10-final-assembly origin/codex/i10-final-assembly`），
+  确认 `git rev-parse HEAD`，再按上方完整命令序列执行，并记录 exit code 与输出。Codespace 与 GitHub runner
+  一样只认精确 head SHA；同序列成功且 SHA 匹配的 Codespace 执行可以作为该 SHA 的 full-gate evidence，
+  与 `.github/workflows/full-gate.yml` 的 PR run 等价。
 - 适用时，Primary audit 只接受同一 head SHA 的成功 run，并记录 workflow/run URL、run ID、event、`headSha` 和
   conclusion。`queued`/`in_progress`、缺失、失败或 SHA 不匹配都不能写成通过；GitHub 暂时不可用时只能继续
   不依赖远端结果的静态工作，不得 Ready 或 merge。
