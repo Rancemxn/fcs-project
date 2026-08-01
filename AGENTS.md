@@ -174,9 +174,10 @@
   SHA 的干净 checkout 上从头跑到尾，任一步失败即该 SHA gate 失败，重新同步到新 SHA 后重跑。
 - Codespace Full Gate：用户已打开 GitHub Codespace（`sturdy-potato-r4w5wrwjjq672p4xx`，仓库位于
   `/workspaces/fcs-project`）作为当前 I10 工作的直接 Full Gate 执行环境；GitHub Actions 监督往返太慢。
-  执行步骤：`gh codespace ssh --codespace sturdy-potato-r4w5wrwjjq672p4xx --command "..."` 进入后先
-  `git fetch origin`，checkout 到目标 SHA（如 `git checkout -B codex/i10-final-assembly origin/codex/i10-final-assembly`），
-  确认 `git rev-parse HEAD`，再按上方完整命令序列执行，并记录 exit code 与输出。Codespace 与 GitHub runner
+  执行步骤：`gh codespace ssh --codespace sturdy-potato-r4w5wrwjjq672p4xx -- '<remote script>'` 进入后，远程脚本首行必须
+  `export PATH="$HOME/.cargo/bin:$PATH"`（非交互 SSH 不保证加载 Cargo 用户 bin 路径），再执行 `git fetch origin`，
+  checkout 到目标 SHA（如 `git checkout -B codex/i10-final-assembly origin/codex/i10-final-assembly`），确认
+  `git rev-parse HEAD`，再按上方完整命令序列执行，并记录 exit code 与输出。Codespace 与 GitHub runner
   一样只认精确 head SHA；同序列成功且 SHA 匹配的 Codespace 执行可以作为该 SHA 的 full-gate evidence，
   与 `.github/workflows/full-gate.yml` 的 PR run 等价。
 - 适用时，Primary audit 只接受同一 head SHA 的成功 run，并记录 workflow/run URL、run ID、event、`headSha` 和
