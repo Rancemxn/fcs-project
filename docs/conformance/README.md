@@ -30,16 +30,19 @@ I4.9 adds the bounded deterministic runtime-property lane documented in
 does not add manifest fixtures.
 
 S15 FCBC/Execution ABI closure 把 root `candidate_baseline` 更新为
-`2026-07-15-s15-cross-spec-closure`，并引入 FCBC manifest schema 2。当前两个 FCBC golden 都固定
+`2026-07-15-s15-cross-spec-closure`，并引入 FCBC manifest schema 2。当前三个 FCBC golden 都固定
 14 个 required section（原 1–13 加 ResourceData 20）和 `chart_count=1`：
 
 - `minimal-runtime`：864 bytes、Resources count=0、ResourceData length=0；
 - `embedded-resource`：1021 bytes，内嵌 29-byte opaque binary resource，固定 resource ID、原始
-  payload、offset/length、CRC-32/ISO-HDLC 和 SHA-256。
+  payload、offset/length、CRC-32/ISO-HDLC 和 SHA-256；
+- `nonempty-execution`：3432 bytes、strict-runtime profile，带固定 execution vector。
 
 最小向量有 11 个 header/section/profile mutation，resource 向量有 2 个在重新计算 section CRC 后
-才能到达的 resource hash/coverage mutation。它们是规范候选 corpus，不表示活动 workspace 已有
-FCBC loader；当前 Rust test 只强类型加载 manifest、解码 hex 并检查 framing/path/patch integrity。
+才能到达的 resource hash/coverage mutation。它们仍是规范候选 corpus，不代表 Frozen；当前
+`fcs-fcbc` loader/mutation tests 和 CLI `inspect` product lane 分别提供 domain 与产品入口证据，
+其中 CLI 对三个 golden 强制执行 Core load。最终同 SHA Full Gate、独立复审和五域 re-freeze 仍是
+I10 门槛。
 
 Conformance runner 必须：
 
@@ -77,8 +80,11 @@ conversion/public-fixtures/ I6.7 可执行公开 importer fixtures + expected re
 conversion/profiles/        各 profile 的完整、逐文件 hash-bound descriptor
 ```
 
-Render manifest schema 2 在原 semantic/raster `fixture` 之外增加 `source_fixture`，其
-`expect`/`diagnostic` 规则与 FCS source manifest 一致。
+Render manifest schema 3 在原 semantic/raster `fixture` 之外增加 `source_fixture`，其
+`expect`/`diagnostic` 规则与 FCS source manifest 一致，并增加 semantic-only `binding_fixture`。
+`fcs-render` domain tests 执行 source-to-Render/semantic/raster 与 resource-boundary 证据；CLI
+product lane 通过 `check`、`compile`、`inspect --render` 覆盖声明的 source、compile 和 binding
+入口，但不替代 manifest 的 semantic/raster oracle。
 
 S15 resource closure 又在同一候选 schema 2 增加一个 semantic-only `binding_fixture`：source 与
 29-byte opaque asset 必须位于声明的 workspace root，预期固定 canonical resource ID/hash、FCBC
@@ -90,8 +96,16 @@ Registry 明确分离 parser dialect、profile selection mode、semantic profile
 per-Line/first-Line BPM 和 v1 520/530、RPE divide/multiply/ignore bpmfactor 与 speed/layer/default、PEC
 direct Beat/150–175ms/cv/Note-X/Line-X；`pec.time.tick2048` 被列为 forbidden rule。Selection vectors
 覆盖 explicit、declared、canonical-equivalent、configured-default、Repair 不得消歧和 strict target
-profile required。当前 Rust test 只验证 TOML schema、path、hash、ID/version 与跨引用，不代表
-converter 或 canonical round-trip 已实现。
+profile required。Registry/schema tests 负责契约完整性；`fcs-conversion::fixture_lane` 执行六个公开
+import fixture 及声明的 export/reparse target，CLI product lane 再通过 `report`/`convert` 复现公开
+入口。它们仍是候选证据，不替代同 SHA Full Gate、独立复审或 Frozen。
 
 `.hex` 文件只包含 ASCII lowercase hex 和换行。Reader 必须先移除 ASCII whitespace，再每两位
 解码一个 byte。
+
+I10 product-entry, domain, property, fuzz, CLI, and distribution evidence is
+indexed in [`fcs5-i10-evidence-ledger.md`](fcs5-i10-evidence-ledger.md). The
+unpublished distribution inventory at `fcs5/distribution.toml` is checked against
+Cargo package listings and UTF-8 inputs by the CLI distribution test; this remains
+candidate evidence pending the exact final-SHA Full Gate, independent review, and
+five-domain re-freeze.

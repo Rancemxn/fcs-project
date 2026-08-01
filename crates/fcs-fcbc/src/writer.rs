@@ -2300,7 +2300,21 @@ fn assemble_package(
     }
     let mut strings = string_table_values(resources, &notes, extensions, fidelity);
     if render.is_some() {
-        strings.extend(["originDescriptor", "sizeDescriptor"]);
+        strings.extend([
+            "centerDescriptor",
+            "destinationDescriptors",
+            "originDescriptor",
+            "pointDescriptors",
+            "radiusDescriptor",
+            "radiusXDescriptor",
+            "radiusYDescriptor",
+            "radiiDescriptors",
+            "resourceId",
+            "rotationDescriptor",
+            "sampling",
+            "sizeDescriptor",
+            "sourceDescriptors",
+        ]);
         strings.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
         strings.dedup();
     }
@@ -2369,6 +2383,23 @@ impl Section {
     }
 }
 
+fn append_render_subtree(scene: &CanonicalRenderScene, parent: usize, order: &mut Vec<usize>) {
+    let mut children: Vec<usize> = scene
+        .nodes()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| (node.parent() == Some(parent)).then_some(index))
+        .collect();
+    children.sort_by_key(|index| {
+        let node = &scene.nodes()[*index];
+        (node.z_order(), node.document_order(), node.id().value())
+    });
+    for child in children {
+        order.push(child);
+        append_render_subtree(scene, child, order);
+    }
+}
+
 fn render_section(
     scene: &CanonicalRenderScene,
     descriptor_indices: &[u32],
@@ -2432,6 +2463,23 @@ fn render_section(
         };
     }
 
+    // Roots are contiguous at the front of the table. Descendants then use a
+    // preorder walk with the same sibling key the loader validates.
+    let mut node_order: Vec<usize> = roots.iter().map(|(_, node)| *node).collect();
+    for (_, root) in &roots {
+        append_render_subtree(scene, *root, &mut node_order);
+    }
+    if node_order.len() != scene.nodes().len() {
+        return Err(FcbcError::new(
+            "fcbc.dangling-reference",
+            "Render node order does not cover the canonical scene",
+        ));
+    }
+    let mut encoded_nodes = vec![NULL_INDEX; scene.nodes().len()];
+    for (encoded, source_node) in node_order.iter().enumerate() {
+        encoded_nodes[*source_node] = encoded as u32;
+    }
+
     let mut payload = Vec::new();
     put_u16(&mut payload, 1);
     put_u16(&mut payload, 0);
@@ -2462,29 +2510,36 @@ fn render_section(
         put_u32(&mut record_payload, root_count);
         payload.extend_from_slice(&record(record_payload));
     }
-    for (source_layer, node_index) in &roots {
-        let node = &scene.nodes()[*node_index];
-        if node.parent().is_some()
-            || !matches!(
-                node.kind(),
-                fcs_model::CanonicalRenderNodeKind::Rect
-                    | fcs_model::CanonicalRenderNodeKind::Image
+    for source_node in &node_order {
+        let node = &scene.nodes()[*source_node];
+        let encoded_layer_index = *encoded_layer.get(node.layer()).ok_or_else(|| {
+            FcbcError::new(
+                "fcbc.dangling-reference",
+                "Render node references a missing layer",
             )
-        {
-            return Err(FcbcError::new(
-                "fcbc.render-unsupported",
-                "product Render writer currently supports root Rect and Image nodes only",
-            ));
-        }
-        let geometry = node.geometry().ok_or_else(|| {
-            FcbcError::new("fcbc.dangling-reference", "Render node has no geometry")
         })?;
+        let parent = match node.parent() {
+            Some(parent) => *encoded_nodes.get(parent).ok_or_else(|| {
+                FcbcError::new(
+                    "fcbc.dangling-reference",
+                    "Render node references a missing parent",
+                )
+            })?,
+            None => NULL_INDEX,
+        };
+        let geometry = node.geometry();
         let paint = match node.kind() {
-            fcs_model::CanonicalRenderNodeKind::Rect => {
+            fcs_model::CanonicalRenderNodeKind::Rect
+            | fcs_model::CanonicalRenderNodeKind::RoundedRect
+            | fcs_model::CanonicalRenderNodeKind::Circle
+            | fcs_model::CanonicalRenderNodeKind::Ellipse
+            | fcs_model::CanonicalRenderNodeKind::Polyline
+            | fcs_model::CanonicalRenderNodeKind::Polygon => {
                 Some(node.fill_paint().ok_or_else(|| {
                     FcbcError::new("fcbc.dangling-reference", "Render Rect has no fill paint")
                 })?)
             }
+            fcs_model::CanonicalRenderNodeKind::Group => None,
             fcs_model::CanonicalRenderNodeKind::Image => {
                 if node.fill_paint().is_some() || node.stroke().is_some() {
                     return Err(FcbcError::new(
@@ -2494,15 +2549,47 @@ fn render_section(
                 }
                 None
             }
-            _ => unreachable!("unsupported Render node kind was rejected above"),
+            _ => {
+                return Err(FcbcError::new(
+                    "fcbc.render-unsupported",
+                    "product Render writer does not support this node kind",
+                ));
+            }
         };
+        let geometry = geometry
+            .map(|geometry| {
+                geometry_indices.get(geometry).copied().ok_or_else(|| {
+                    FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render node references a missing geometry",
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(NULL_INDEX);
+        let paint = paint
+            .map(|paint| {
+                paint_indices.get(paint).copied().ok_or_else(|| {
+                    FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render node references a missing paint",
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(NULL_INDEX);
         let attachment_id = node.attachment().target().map_or(0, |id| id.value());
+        let active = node.active();
+        let flags = u16::from(active.unbounded_before())
+            | (u16::from(active.unbounded_after()) << 1)
+            | (u16::from(node.isolate()) << 2)
+            | (u16::from(node.follow_hidden_attachment()) << 3);
         let mut record_payload = Vec::new();
         put_u64(&mut record_payload, node.id().value());
         put_u16(&mut record_payload, node.kind().ordinal());
-        put_u16(&mut record_payload, 0b11 | (u16::from(node.isolate()) << 2));
-        put_u32(&mut record_payload, NULL_INDEX);
-        put_u32(&mut record_payload, encoded_layer[*source_layer]);
+        put_u16(&mut record_payload, flags);
+        put_u32(&mut record_payload, parent);
+        put_u32(&mut record_payload, encoded_layer_index);
         put_u32(&mut record_payload, node.document_order());
         put_i32(&mut record_payload, node.z_order());
         put_u16(&mut record_payload, node.attachment().ordinal());
@@ -2516,11 +2603,8 @@ fn render_section(
         put_u32(&mut record_payload, descriptor(node.scale())?);
         put_u32(&mut record_payload, descriptor(node.opacity())?);
         put_u32(&mut record_payload, descriptor(node.visibility())?);
-        put_u32(&mut record_payload, geometry_indices[geometry]);
-        put_u32(
-            &mut record_payload,
-            paint.map_or(NULL_INDEX, |paint| paint_indices[paint]),
-        );
+        put_u32(&mut record_payload, geometry);
+        put_u32(&mut record_payload, paint);
         put_u32(&mut record_payload, NULL_INDEX);
         put_u32(&mut record_payload, NULL_INDEX);
         put_u16(&mut record_payload, node.composite().ordinal());
@@ -2530,6 +2614,13 @@ fn render_section(
     }
     for geometry_index in &geometry_order {
         let geometry = &scene.geometries()[*geometry_index];
+        let descriptor_array = |values: &[usize]| -> FcbcResult<Vec<u8>> {
+            let values = values
+                .iter()
+                .map(|index| descriptor(*index).map(|value| value_int(i64::from(value))))
+                .collect::<FcbcResult<Vec<_>>>()?;
+            Ok(value_array(2, values))
+        };
         let fields = match geometry.data() {
             CanonicalRenderGeometryData::Rect { origin, size } => value_object(
                 &[
@@ -2541,6 +2632,64 @@ fn render_section(
                 ],
                 strings,
             ),
+            CanonicalRenderGeometryData::RoundedRect {
+                origin,
+                size,
+                radii,
+            } => value_object(
+                &[
+                    (
+                        "originDescriptor",
+                        value_int(i64::from(descriptor(*origin)?)),
+                    ),
+                    ("sizeDescriptor", value_int(i64::from(descriptor(*size)?))),
+                    ("radiiDescriptors", descriptor_array(radii)?),
+                ],
+                strings,
+            ),
+            CanonicalRenderGeometryData::Circle { center, radius } => value_object(
+                &[
+                    (
+                        "centerDescriptor",
+                        value_int(i64::from(descriptor(*center)?)),
+                    ),
+                    (
+                        "radiusDescriptor",
+                        value_int(i64::from(descriptor(*radius)?)),
+                    ),
+                ],
+                strings,
+            ),
+            CanonicalRenderGeometryData::Ellipse {
+                center,
+                radius_x,
+                radius_y,
+                rotation,
+            } => value_object(
+                &[
+                    (
+                        "centerDescriptor",
+                        value_int(i64::from(descriptor(*center)?)),
+                    ),
+                    (
+                        "radiusXDescriptor",
+                        value_int(i64::from(descriptor(*radius_x)?)),
+                    ),
+                    (
+                        "radiusYDescriptor",
+                        value_int(i64::from(descriptor(*radius_y)?)),
+                    ),
+                    (
+                        "rotationDescriptor",
+                        value_int(i64::from(descriptor(*rotation)?)),
+                    ),
+                ],
+                strings,
+            ),
+            CanonicalRenderGeometryData::Polyline { points }
+            | CanonicalRenderGeometryData::Polygon { points } => {
+                value_object(&[("pointDescriptors", descriptor_array(points)?)], strings)
+            }
             CanonicalRenderGeometryData::Image {
                 resource,
                 destination,
@@ -2563,19 +2712,12 @@ fn render_section(
                         "Render Image requires an image or texture resource",
                     ));
                 }
-                let descriptors = |values: &[usize]| {
-                    values
-                        .iter()
-                        .map(|index| descriptor(*index).map(|value| value_int(i64::from(value))))
-                        .collect::<FcbcResult<Vec<_>>>()
-                        .map(|values| value_array(2, values))
-                };
                 let mut fields = vec![
                     ("resourceId", value_resource(resource_id)),
-                    ("destinationDescriptors", descriptors(destination)?),
+                    ("destinationDescriptors", descriptor_array(destination)?),
                 ];
                 if let Some(source) = source {
-                    fields.push(("sourceDescriptors", descriptors(source)?));
+                    fields.push(("sourceDescriptors", descriptor_array(source)?));
                 }
                 fields.push(("sampling", value_int(i64::from(sampling.ordinal()))));
                 value_object(&fields, strings)

@@ -17,7 +17,7 @@ use fcs_model::{
     CanonicalRenderPaintData, CanonicalRenderPass, CanonicalRenderScene, CanonicalRenderSceneSpec,
     CanonicalRequiredExtension, CanonicalResource, CanonicalResourceKind, CanonicalSourceVersion,
     CanonicalSync, CanonicalTextualId, CanonicalValue, CanonicalValueType, CanonicalViewport,
-    DeclaredSha256, DistributionMetadata, EntityKind, StableId, StableIdRegistry,
+    ChartTimeMap, DeclaredSha256, DistributionMetadata, EntityKind, StableId, StableIdRegistry,
 };
 
 use crate::ast::{
@@ -162,8 +162,12 @@ impl Document {
             return Ok(chart);
         };
         let scene = crate::parser::parse_render_scene(source, block).into_result()?;
-        let (mut render, render_descriptors) =
-            lower_render_scene(&scene, chart.metadata().resources(), self.format.span)?;
+        let (mut render, render_descriptors) = lower_render_scene(
+            &scene,
+            chart.metadata().resources(),
+            chart.time_map(),
+            self.format.span,
+        )?;
         let (descriptors, mapping) =
             merge_render_descriptors(chart.descriptors(), &render_descriptors, self.format.span)?;
         render
@@ -462,6 +466,98 @@ fn render_int(value: TypedValue, span: SourceSpan) -> Result<i32, Diagnostic> {
     }
 }
 
+fn render_float(value: TypedValue, span: SourceSpan) -> Result<f64, Diagnostic> {
+    match value {
+        TypedValue::Float(value) if value.is_finite() => Ok(value),
+        other => Err(render_error(
+            format!("expected finite float, found {}", other.ty()),
+            span,
+        )),
+    }
+}
+
+fn render_bool(value: TypedValue, span: SourceSpan) -> Result<bool, Diagnostic> {
+    match value {
+        TypedValue::Bool(value) => Ok(value),
+        other => Err(render_error(
+            format!("expected bool, found {}", other.ty()),
+            span,
+        )),
+    }
+}
+
+fn render_active_interval(
+    items: &[RenderBodyItem],
+    time_map: &ChartTimeMap,
+) -> Result<CanonicalActiveInterval, Diagnostic> {
+    let Some(field) = render_body_field(items, "active") else {
+        return Ok(CanonicalActiveInterval::unbounded());
+    };
+    let SchemaValue::Interval { start, end, .. } = &field.value else {
+        return Err(render_error(
+            "Render active must use a half-open interval",
+            field.span,
+        ));
+    };
+    let start = crate::elaborator::evaluate_metadata_expression(start, None)?;
+    let end = crate::elaborator::evaluate_metadata_expression(end, None)?;
+    let (start, end) = match (start, end) {
+        (TypedValue::Beat(start), TypedValue::Beat(end)) => (
+            time_map
+                .chart_time(
+                    CanonicalBeat::new(start.numerator(), start.denominator())
+                        .map_err(|_| render_error("Render active beat is invalid", field.span))?,
+                )
+                .map_err(|error| render_error(error.to_string(), field.span))?
+                .chart_time_seconds(),
+            time_map
+                .chart_time(
+                    CanonicalBeat::new(end.numerator(), end.denominator())
+                        .map_err(|_| render_error("Render active beat is invalid", field.span))?,
+                )
+                .map_err(|error| render_error(error.to_string(), field.span))?
+                .chart_time_seconds(),
+        ),
+        (TypedValue::Time(start), TypedValue::Time(end)) => (start, end),
+        _ => {
+            return Err(render_error(
+                "Render active endpoints must both be time or both be beat",
+                field.span,
+            ));
+        }
+    };
+    CanonicalActiveInterval::bounded(start, end)
+        .map_err(|error| render_error(format!("{error:?}"), field.span))
+}
+
+fn render_angle(value: TypedValue, span: SourceSpan) -> Result<f64, Diagnostic> {
+    match value {
+        TypedValue::Angle(value) if value.is_finite() => Ok(value),
+        other => Err(render_error(
+            format!("expected finite angle, found {}", other.ty()),
+            span,
+        )),
+    }
+}
+
+fn render_composite(
+    value: TypedValue,
+    span: SourceSpan,
+) -> Result<CanonicalRenderComposite, Diagnostic> {
+    let value = render_string(value, span)?;
+    match value.as_str() {
+        "sourceOver" => Ok(CanonicalRenderComposite::SourceOver),
+        "copy" => Ok(CanonicalRenderComposite::Copy),
+        "add" => Ok(CanonicalRenderComposite::Add),
+        "multiply" => Ok(CanonicalRenderComposite::Multiply),
+        "screen" => Ok(CanonicalRenderComposite::Screen),
+        _ => Err(render_error(
+            format!("unsupported Render composite {value}"),
+            span,
+        )),
+    }
+}
+
 fn render_descriptor_value(
     value: TypedValue,
 ) -> Result<(CanonicalExpressionType, CanonicalExpressionValue), Diagnostic> {
@@ -505,9 +601,648 @@ fn render_stable_id(
         .map_err(|error| render_error(error.to_string(), span))
 }
 
+struct RenderLowerer<'a> {
+    resources: &'a BTreeMap<String, CanonicalResource>,
+    time_map: &'a ChartTimeMap,
+    span: SourceSpan,
+    descriptors: Vec<CanonicalPropertyDescriptor>,
+    descriptor_values: Vec<(CanonicalExpressionType, CanonicalExpressionValue)>,
+    registry: StableIdRegistry,
+    resource_ids: BTreeMap<String, StableId>,
+    nodes: Vec<CanonicalRenderNode>,
+    geometries: Vec<CanonicalRenderGeometry>,
+    paints: Vec<CanonicalRenderPaint>,
+    descriptor_roots: Vec<(String, u64, usize)>,
+}
+
+impl<'a> RenderLowerer<'a> {
+    fn new(
+        resources: &'a BTreeMap<String, CanonicalResource>,
+        time_map: &'a ChartTimeMap,
+        span: SourceSpan,
+    ) -> Self {
+        Self {
+            resources,
+            time_map,
+            span,
+            descriptors: Vec::new(),
+            descriptor_values: Vec::new(),
+            registry: StableIdRegistry::new(),
+            resource_ids: BTreeMap::new(),
+            nodes: Vec::new(),
+            geometries: Vec::new(),
+            paints: Vec::new(),
+            descriptor_roots: Vec::new(),
+        }
+    }
+
+    fn descriptor(&mut self, value: TypedValue) -> Result<usize, Diagnostic> {
+        let (ty, canonical) = render_descriptor_value(value)?;
+        let index = self.descriptors.len();
+        self.descriptors.push(
+            CanonicalPropertyDescriptor::new(
+                ty.clone(),
+                CanonicalDescriptorDomain::new(None, None, false).expect("unbounded domain"),
+                CanonicalDescriptorKind::Constant(canonical.clone()),
+            )
+            .map_err(|error| render_error(error.to_string(), self.span))?,
+        );
+        self.descriptor_values.push((ty, canonical));
+        Ok(index)
+    }
+
+    fn stable_id(
+        &mut self,
+        kind: EntityKind,
+        textual: String,
+        span: SourceSpan,
+    ) -> Result<StableId, Diagnostic> {
+        render_stable_id(&mut self.registry, kind, textual, span)
+    }
+
+    fn add_descriptor_root(&mut self, path: &str, owner: u64, descriptor: usize) {
+        self.descriptor_roots
+            .push((path.to_owned(), owner, descriptor));
+    }
+
+    fn add_node_roots(&mut self, id: &StableId, descriptors: [usize; 6]) {
+        let owner = id.value();
+        for (path, descriptor) in [
+            "render.node.position",
+            "render.node.origin",
+            "render.node.rotation",
+            "render.node.scale",
+            "render.node.opacity",
+            "render.node.visibility",
+        ]
+        .into_iter()
+        .zip(descriptors)
+        {
+            self.add_descriptor_root(path, owner, descriptor);
+        }
+    }
+
+    fn add_geometry_roots(&mut self, geometry: &CanonicalRenderGeometry) {
+        let owner = geometry.id().value();
+        match geometry.data() {
+            CanonicalRenderGeometryData::Rect { origin, size }
+            | CanonicalRenderGeometryData::RoundedRect { origin, size, .. } => {
+                self.add_descriptor_root("render.geometry.origin", owner, *origin);
+                self.add_descriptor_root("render.geometry.size", owner, *size);
+                if let CanonicalRenderGeometryData::RoundedRect { radii, .. } = geometry.data() {
+                    for (index, descriptor) in radii.iter().enumerate() {
+                        self.add_descriptor_root(
+                            &format!("render.geometry.radiiDescriptors[{index}]"),
+                            owner,
+                            *descriptor,
+                        );
+                    }
+                }
+            }
+            CanonicalRenderGeometryData::Circle { center, radius } => {
+                self.add_descriptor_root("render.geometry.center", owner, *center);
+                self.add_descriptor_root("render.geometry.radius", owner, *radius);
+            }
+            CanonicalRenderGeometryData::Ellipse {
+                center,
+                radius_x,
+                radius_y,
+                rotation,
+            } => {
+                self.add_descriptor_root("render.geometry.center", owner, *center);
+                self.add_descriptor_root("render.geometry.radiusX", owner, *radius_x);
+                self.add_descriptor_root("render.geometry.radiusY", owner, *radius_y);
+                self.add_descriptor_root("render.geometry.rotation", owner, *rotation);
+            }
+            CanonicalRenderGeometryData::Line { start, end } => {
+                self.add_descriptor_root("render.geometry.start", owner, *start);
+                self.add_descriptor_root("render.geometry.end", owner, *end);
+            }
+            CanonicalRenderGeometryData::Polyline { points }
+            | CanonicalRenderGeometryData::Polygon { points } => {
+                for (index, descriptor) in points.iter().enumerate() {
+                    self.add_descriptor_root(
+                        &format!("render.geometry.pointDescriptors[{index}]"),
+                        owner,
+                        *descriptor,
+                    );
+                }
+            }
+            CanonicalRenderGeometryData::Image {
+                destination,
+                source,
+                ..
+            } => {
+                for (name, descriptor) in [
+                    ("x", destination[0]),
+                    ("y", destination[1]),
+                    ("width", destination[2]),
+                    ("height", destination[3]),
+                ] {
+                    self.add_descriptor_root(
+                        &format!("render.geometry.destination.{name}"),
+                        owner,
+                        descriptor,
+                    );
+                }
+                if let Some(source) = source {
+                    for (name, descriptor) in [
+                        ("x", source[0]),
+                        ("y", source[1]),
+                        ("width", source[2]),
+                        ("height", source[3]),
+                    ] {
+                        self.add_descriptor_root(
+                            &format!("render.geometry.source.{name}"),
+                            owner,
+                            descriptor,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn add_solid_paint(
+        &mut self,
+        node_path: &str,
+        node: &crate::ast::RenderNodeDeclaration,
+    ) -> Result<CanonicalRenderPaint, Diagnostic> {
+        let field = render_body_field(&node.items, "fill")
+            .ok_or_else(|| render_error("drawable Render node requires fill", node.span))?;
+        let TypedValue::Color(color) = render_paint_color(field)? else {
+            return Err(render_error("solid paint requires a color", field.span));
+        };
+        let color = self.descriptor(TypedValue::Color(color))?;
+        let id = self.stable_id(
+            EntityKind::RenderPaint,
+            format!("{node_path}/fill"),
+            field.span,
+        )?;
+        CanonicalRenderPaint::new(id, CanonicalRenderPaintData::Solid { color })
+            .map_err(|error| render_error(format!("{error:?}"), node.span))
+    }
+}
+
+impl<'a> RenderLowerer<'a> {
+    fn lower_node(
+        &mut self,
+        node: &crate::ast::RenderNodeDeclaration,
+        layer_index: usize,
+        attachment: &CanonicalRenderAttachment,
+        parent: Option<usize>,
+        document_order: u32,
+        node_path: &str,
+    ) -> Result<usize, Diagnostic> {
+        let node_id =
+            self.stable_id(EntityKind::RenderNode, node_path.to_owned(), node.name_span)?;
+        let zero_length_vec = || {
+            TypedValue::vec2(TypedValue::Length(0.0), TypedValue::Length(0.0))
+                .expect("homogeneous length vector")
+        };
+        let one_float_vec = || {
+            TypedValue::vec2(TypedValue::Float(1.0), TypedValue::Float(1.0))
+                .expect("homogeneous float vector")
+        };
+        let position = self.descriptor(render_body_value_or(
+            &node.items,
+            "position",
+            zero_length_vec(),
+            Ok::<_, Diagnostic>,
+        )?)?;
+        let origin_value =
+            render_body_value_or(&node.items, "origin", zero_length_vec(), |value| {
+                Ok::<_, Diagnostic>(value)
+            })?;
+        let origin = self.descriptor(origin_value)?;
+        let rotation = self.descriptor(TypedValue::Angle(render_body_value_or(
+            &node.items,
+            "rotation",
+            0.0,
+            |value| render_angle(value, node.span),
+        )?))?;
+        let scale = self.descriptor(render_body_value_or(
+            &node.items,
+            "scale",
+            one_float_vec(),
+            Ok::<_, Diagnostic>,
+        )?)?;
+        let opacity_value = render_body_value_or(&node.items, "opacity", 1.0, |value| {
+            render_float(value, node.span)
+        })?;
+        if !(0.0..=1.0).contains(&opacity_value) {
+            return Err(render_error(
+                "Render opacity must be within [0, 1]",
+                render_body_field(&node.items, "opacity").map_or(node.span, |field| field.span),
+            ));
+        }
+        let opacity = self.descriptor(TypedValue::Float(opacity_value))?;
+        let visibility = self.descriptor(TypedValue::Bool(render_body_value_or(
+            &node.items,
+            "visibility",
+            true,
+            |value| render_bool(value, node.span),
+        )?))?;
+        let z_order = render_body_value_or(&node.items, "zOrder", 0, |value| {
+            render_int(value, node.span)
+        })?;
+        let isolate = render_body_value_or(&node.items, "isolate", false, |value| {
+            render_bool(value, node.span)
+        })?;
+        let follow_hidden_attachment =
+            render_body_value_or(&node.items, "followHiddenAttachment", false, |value| {
+                render_bool(value, node.span)
+            })?;
+        let composite = render_body_value_or(
+            &node.items,
+            "composite",
+            CanonicalRenderComposite::SourceOver,
+            |value| render_composite(value, node.span),
+        )?;
+        let active = render_active_interval(&node.items, self.time_map)?;
+
+        let (geometry_data, paint) = match node.kind {
+            CanonicalRenderNodeKind::Group => (None, None),
+            CanonicalRenderNodeKind::Rect => {
+                let size_field = render_body_field(&node.items, "size")
+                    .ok_or_else(|| render_error("Rect requires size", node.span))?;
+                let size = render_vec2_length(render_value(size_field)?, size_field.span)?;
+                if size.iter().any(|value| *value < 0.0) {
+                    return Err(render_error(
+                        "Rect size must be non-negative",
+                        size_field.span,
+                    ));
+                }
+                (
+                    Some(CanonicalRenderGeometryData::Rect {
+                        origin,
+                        size: self.descriptor(
+                            TypedValue::vec2(
+                                TypedValue::Length(size[0]),
+                                TypedValue::Length(size[1]),
+                            )
+                            .expect("homogeneous length vector"),
+                        )?,
+                    }),
+                    Some(self.add_solid_paint(node_path, node)?),
+                )
+            }
+            CanonicalRenderNodeKind::RoundedRect => {
+                let size_field = render_body_field(&node.items, "size")
+                    .ok_or_else(|| render_error("RoundedRect requires size", node.span))?;
+                let size = render_vec2_length(render_value(size_field)?, size_field.span)?;
+                if size.iter().any(|value| *value < 0.0) {
+                    return Err(render_error(
+                        "RoundedRect size must be non-negative",
+                        size_field.span,
+                    ));
+                }
+                let radius_field = render_body_field(&node.items, "radius")
+                    .ok_or_else(|| render_error("RoundedRect requires radius", node.span))?;
+                let radius = render_length(render_value(radius_field)?, radius_field.span)?;
+                if radius < 0.0 {
+                    return Err(render_error(
+                        "RoundedRect radius must be non-negative",
+                        radius_field.span,
+                    ));
+                }
+                let size = self.descriptor(
+                    TypedValue::vec2(TypedValue::Length(size[0]), TypedValue::Length(size[1]))
+                        .expect("homogeneous length vector"),
+                )?;
+                let radius = self.descriptor(TypedValue::Length(radius))?;
+                (
+                    Some(CanonicalRenderGeometryData::RoundedRect {
+                        origin,
+                        size,
+                        radii: [radius; 4],
+                    }),
+                    Some(self.add_solid_paint(node_path, node)?),
+                )
+            }
+            CanonicalRenderNodeKind::Circle => {
+                let center = self.descriptor(render_body_value_or(
+                    &node.items,
+                    "center",
+                    zero_length_vec(),
+                    Ok::<_, Diagnostic>,
+                )?)?;
+                let radius_field = render_body_field(&node.items, "radius")
+                    .ok_or_else(|| render_error("Circle requires radius", node.span))?;
+                let radius = render_length(render_value(radius_field)?, radius_field.span)?;
+                if radius < 0.0 {
+                    return Err(render_error(
+                        "Circle radius must be non-negative",
+                        radius_field.span,
+                    ));
+                }
+                (
+                    Some(CanonicalRenderGeometryData::Circle {
+                        center,
+                        radius: self.descriptor(TypedValue::Length(radius))?,
+                    }),
+                    Some(self.add_solid_paint(node_path, node)?),
+                )
+            }
+            CanonicalRenderNodeKind::Ellipse => {
+                let center = self.descriptor(render_body_value_or(
+                    &node.items,
+                    "center",
+                    zero_length_vec(),
+                    Ok::<_, Diagnostic>,
+                )?)?;
+                let radius_x_field = render_body_field(&node.items, "radiusX")
+                    .ok_or_else(|| render_error("Ellipse requires radiusX", node.span))?;
+                let radius_y_field = render_body_field(&node.items, "radiusY")
+                    .ok_or_else(|| render_error("Ellipse requires radiusY", node.span))?;
+                let radius_x = render_length(render_value(radius_x_field)?, radius_x_field.span)?;
+                let radius_y = render_length(render_value(radius_y_field)?, radius_y_field.span)?;
+                if radius_x < 0.0 || radius_y < 0.0 {
+                    return Err(render_error(
+                        "Ellipse radii must be non-negative",
+                        node.span,
+                    ));
+                }
+                (
+                    Some(CanonicalRenderGeometryData::Ellipse {
+                        center,
+                        radius_x: self.descriptor(TypedValue::Length(radius_x))?,
+                        radius_y: self.descriptor(TypedValue::Length(radius_y))?,
+                        rotation,
+                    }),
+                    Some(self.add_solid_paint(node_path, node)?),
+                )
+            }
+            CanonicalRenderNodeKind::Polyline => {
+                let points_field = render_body_field(&node.items, "points")
+                    .ok_or_else(|| render_error("Polyline requires points", node.span))?;
+                let points = render_value(points_field)?;
+                let TypedValue::Array { values, .. } = points else {
+                    return Err(render_error(
+                        "Polyline points must be an array of vec2<length>",
+                        points_field.span,
+                    ));
+                };
+                let points = values
+                    .into_iter()
+                    .map(|value| {
+                        let [x, y] = render_vec2_length(value, points_field.span)?;
+                        self.descriptor(
+                            TypedValue::vec2(TypedValue::Length(x), TypedValue::Length(y))
+                                .expect("homogeneous length vector"),
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                (
+                    Some(CanonicalRenderGeometryData::Polyline { points }),
+                    Some(self.add_solid_paint(node_path, node)?),
+                )
+            }
+            CanonicalRenderNodeKind::Polygon => {
+                let points_field = render_body_field(&node.items, "points")
+                    .ok_or_else(|| render_error("Polygon requires points", node.span))?;
+                let points = render_value(points_field)?;
+                let TypedValue::Array { values, .. } = points else {
+                    return Err(render_error(
+                        "Polygon points must be an array of vec2<length>",
+                        points_field.span,
+                    ));
+                };
+                let points = values
+                    .into_iter()
+                    .map(|value| {
+                        let [x, y] = render_vec2_length(value, points_field.span)?;
+                        self.descriptor(
+                            TypedValue::vec2(TypedValue::Length(x), TypedValue::Length(y))
+                                .expect("homogeneous length vector"),
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                (
+                    Some(CanonicalRenderGeometryData::Polygon { points }),
+                    Some(self.add_solid_paint(node_path, node)?),
+                )
+            }
+            CanonicalRenderNodeKind::Image => {
+                let resource_field = render_body_field(&node.items, "resource")
+                    .ok_or_else(|| render_error("Image requires resource", node.span))?;
+                let resource_name = match render_value(resource_field)? {
+                    TypedValue::Line(name) => name,
+                    other => {
+                        return Err(render_error(
+                            format!("Image resource must be a reference, found {}", other.ty()),
+                            resource_field.span,
+                        ));
+                    }
+                };
+                let resource = self.resources.get(&resource_name).ok_or_else(|| {
+                    render_error(
+                        format!("Image references unknown resource {resource_name}"),
+                        resource_field.span,
+                    )
+                })?;
+                if !matches!(
+                    resource.kind(),
+                    CanonicalResourceKind::Image | CanonicalResourceKind::Texture
+                ) {
+                    return Err(render_error(
+                        format!("Image resource {resource_name} is not image/texture"),
+                        resource_field.span,
+                    ));
+                }
+                let resource_id = if let Some(id) = self.resource_ids.get(&resource_name) {
+                    id.clone()
+                } else {
+                    let id = self.stable_id(
+                        EntityKind::Resource,
+                        resource_name.clone(),
+                        resource_field.span,
+                    )?;
+                    self.resource_ids.insert(resource_name.clone(), id.clone());
+                    id
+                };
+                let sampling = match render_body_field(&node.items, "sampling") {
+                    Some(field) => render_image_sampling(render_value(field)?, field.span)?,
+                    None => match resource.metadata().get("sampling") {
+                        Some(CanonicalValue::String(value)) => render_image_sampling(
+                            TypedValue::String(value.clone()),
+                            resource_field.span,
+                        )?,
+                        _ => {
+                            return Err(render_error(
+                                "image resource metadata lacks sampling",
+                                resource_field.span,
+                            ));
+                        }
+                    },
+                };
+                let destination_origin_field = render_body_field(&node.items, "destination.origin")
+                    .ok_or_else(|| render_error("Image requires destination.origin", node.span))?;
+                let destination_origin = render_vec2_length(
+                    render_value(destination_origin_field)?,
+                    destination_origin_field.span,
+                )?;
+                let destination_size_field = render_body_field(&node.items, "destination.size")
+                    .ok_or_else(|| render_error("Image requires destination.size", node.span))?;
+                let destination_size = render_vec2_length(
+                    render_value(destination_size_field)?,
+                    destination_size_field.span,
+                )?;
+                if destination_size.iter().any(|value| *value < 0.0) {
+                    return Err(render_error(
+                        "Image destination.size must be non-negative",
+                        destination_size_field.span,
+                    ));
+                }
+                let source_origin_field = render_body_field(&node.items, "sourceRect.origin");
+                let source_size_field = render_body_field(&node.items, "sourceRect.size");
+                if source_origin_field.is_some() != source_size_field.is_some() {
+                    return Err(render_error(
+                        "Image sourceRect.origin and sourceRect.size must be paired",
+                        node.span,
+                    ));
+                }
+                let source = match (source_origin_field, source_size_field) {
+                    (Some(origin_field), Some(size_field)) => {
+                        let source_origin =
+                            render_vec2_float(render_value(origin_field)?, origin_field.span)?;
+                        let source_size =
+                            render_vec2_float(render_value(size_field)?, size_field.span)?;
+                        if source_origin.iter().any(|value| *value < 0.0)
+                            || source_size.iter().any(|value| *value < 0.0)
+                        {
+                            return Err(render_error(
+                                "Image sourceRect origin and size must be non-negative",
+                                node.span,
+                            ));
+                        }
+                        Some([
+                            self.descriptor(TypedValue::Float(source_origin[0]))?,
+                            self.descriptor(TypedValue::Float(source_origin[1]))?,
+                            self.descriptor(TypedValue::Float(source_size[0]))?,
+                            self.descriptor(TypedValue::Float(source_size[1]))?,
+                        ])
+                    }
+                    (None, None) => None,
+                    _ => unreachable!("paired sourceRect fields were checked"),
+                };
+                let destination = [
+                    self.descriptor(TypedValue::Length(destination_origin[0]))?,
+                    self.descriptor(TypedValue::Length(destination_origin[1]))?,
+                    self.descriptor(TypedValue::Length(destination_size[0]))?,
+                    self.descriptor(TypedValue::Length(destination_size[1]))?,
+                ];
+                (
+                    Some(CanonicalRenderGeometryData::Image {
+                        resource: resource_id,
+                        destination,
+                        source,
+                        sampling,
+                    }),
+                    None,
+                )
+            }
+            other => {
+                return Err(render_error(
+                    format!("product Render lowering does not support {:?} nodes", other),
+                    node.span,
+                ));
+            }
+        };
+
+        let geometry = geometry_data
+            .map(|data| {
+                let id = self.stable_id(
+                    EntityKind::RenderGeometry,
+                    format!("{node_path}/geometry"),
+                    node.span,
+                )?;
+                CanonicalRenderGeometry::new(id, data)
+                    .map_err(|error| render_error(format!("{error:?}"), node.span))
+            })
+            .transpose()?;
+        let geometry_index = geometry.as_ref().map(|_| self.geometries.len());
+        let fill_paint = paint.map(|paint| {
+            let index = self.paints.len();
+            self.paints.push(paint);
+            index
+        });
+        let node_index = self.nodes.len();
+        let canonical_node = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+            id: node_id.clone(),
+            kind: node.kind,
+            parent,
+            layer: layer_index,
+            document_order,
+            z_order,
+            attachment: attachment.clone(),
+            active,
+            isolate,
+            follow_hidden_attachment,
+            position,
+            origin,
+            rotation,
+            scale,
+            opacity,
+            visibility,
+            geometry: geometry_index,
+            fill_paint,
+            stroke: None,
+            clip: None,
+            composite,
+        })
+        .map_err(|error| render_error(format!("{error:?}"), node.span))?;
+        self.nodes.push(canonical_node);
+        self.add_node_roots(
+            &node_id,
+            [position, origin, rotation, scale, opacity, visibility],
+        );
+        if let Some(geometry) = geometry {
+            self.add_geometry_roots(&geometry);
+            self.geometries.push(geometry);
+        }
+        if let Some(paint_index) = fill_paint {
+            let color = match self.paints[paint_index].data() {
+                CanonicalRenderPaintData::Solid { color } => *color,
+                _ => unreachable!("bounded Render lowering only creates solid paint"),
+            };
+            self.add_descriptor_root(
+                "render.paint.color",
+                self.paints[paint_index].id().value(),
+                color,
+            );
+        }
+
+        if let Some(children) = node.items.iter().find_map(|item| match item {
+            RenderBodyItem::Children(children) => Some(&children.items),
+            _ => None,
+        }) {
+            for (child_order, item) in children.iter().enumerate() {
+                let RenderItem::Node(child) = item else {
+                    return Err(render_error(
+                        "Render children must contain concrete nodes",
+                        item.span(),
+                    ));
+                };
+                self.lower_node(
+                    child,
+                    layer_index,
+                    attachment,
+                    Some(node_index),
+                    child_order as u32,
+                    &format!("{node_path}/{}", child.name),
+                )?;
+            }
+        }
+        Ok(node_index)
+    }
+}
+
 fn lower_render_scene(
     scene: &crate::ast::RenderScene,
     resources: &BTreeMap<String, CanonicalResource>,
+    time_map: &ChartTimeMap,
     span: SourceSpan,
 ) -> Result<(CanonicalRenderScene, CanonicalDescriptorTable), Vec<Diagnostic>> {
     let result = (|| {
@@ -534,35 +1269,8 @@ fn lower_render_scene(
                 ));
             }
         };
-
-        let mut descriptors = Vec::<CanonicalPropertyDescriptor>::new();
-        let mut descriptor_values =
-            Vec::<(CanonicalExpressionType, CanonicalExpressionValue)>::new();
-        let descriptor = |value: TypedValue,
-                          descriptors: &mut Vec<CanonicalPropertyDescriptor>,
-                          values: &mut Vec<(CanonicalExpressionType, CanonicalExpressionValue)>|
-         -> Result<usize, Diagnostic> {
-            let (ty, canonical) = render_descriptor_value(value)?;
-            let index = descriptors.len();
-            descriptors.push(
-                CanonicalPropertyDescriptor::new(
-                    ty.clone(),
-                    CanonicalDescriptorDomain::new(None, None, false).expect("unbounded domain"),
-                    CanonicalDescriptorKind::Constant(canonical.clone()),
-                )
-                .map_err(|error| render_error(error.to_string(), span))?,
-            );
-            values.push((ty, canonical));
-            Ok(index)
-        };
-        let mut registry = StableIdRegistry::new();
-        let mut resource_ids = BTreeMap::<String, StableId>::new();
+        let mut lowerer = RenderLowerer::new(resources, time_map, span);
         let mut layers = Vec::new();
-        let mut nodes = Vec::new();
-        let mut geometries = Vec::new();
-        let mut paints = Vec::new();
-        let mut descriptor_roots = Vec::<(String, u64, usize)>::new();
-
         for (layer_index, layer) in scene.layers.iter().enumerate() {
             let pass = render_body_field(&layer.items, "pass")
                 .ok_or_else(|| render_error("Render layer requires pass", layer.span))
@@ -590,458 +1298,49 @@ fn lower_render_scene(
                         ));
                     }
                 };
-            let layer_id = render_stable_id(
-                &mut registry,
+            let layer_id = lowerer.stable_id(
                 EntityKind::RenderLayer,
                 format!("layer/{}", layer.name),
                 layer.name_span,
             )?;
             let mut roots = Vec::new();
-            let children = layer.items.iter().find_map(|item| match item {
+            if let Some(children) = layer.items.iter().find_map(|item| match item {
                 RenderBodyItem::Children(children) => Some(&children.items),
                 _ => None,
-            });
-            let Some(children) = children else {
-                layers.push(
-                    CanonicalRenderLayer::new(layer_id, pass, z_order, layer_index as u32, roots)
-                        .map_err(|error| render_error(format!("{error:?}"), layer.span))?,
-                );
-                continue;
-            };
-            for (document_order, item) in children.iter().enumerate() {
-                let RenderItem::Node(node) = item else {
-                    return Err(render_error(
-                        "Render children must contain concrete nodes",
-                        item.span(),
-                    ));
-                };
-                if !matches!(
-                    node.kind,
-                    CanonicalRenderNodeKind::Rect | CanonicalRenderNodeKind::Image
-                ) {
-                    return Err(render_error(
-                        "product Render lowering currently supports Rect and Image",
-                        node.span,
-                    ));
+            }) {
+                for (document_order, item) in children.iter().enumerate() {
+                    let RenderItem::Node(node) = item else {
+                        return Err(render_error(
+                            "Render children must contain concrete nodes",
+                            item.span(),
+                        ));
+                    };
+                    roots.push(lowerer.lower_node(
+                        node,
+                        layer_index,
+                        &attachment,
+                        None,
+                        document_order as u32,
+                        &format!("layer/{}/{}", layer.name, node.name),
+                    )?);
                 }
-                let node_path = format!("layer/{}/{}", layer.name, node.name);
-                let node_id = render_stable_id(
-                    &mut registry,
-                    EntityKind::RenderNode,
-                    node_path.clone(),
-                    node.name_span,
-                )?;
-                let origin = render_body_value_or(
-                    &node.items,
-                    "origin",
-                    TypedValue::vec2(TypedValue::Length(0.0), TypedValue::Length(0.0))
-                        .expect("vec2"),
-                    Ok,
-                )
-                .and_then(|value| render_vec2_length(value, node.span))?;
-                let (geometry_data, origin_descriptor, paint) = match node.kind {
-                    CanonicalRenderNodeKind::Rect => {
-                        let size_field = render_body_field(&node.items, "size")
-                            .ok_or_else(|| render_error("Rect requires size", node.span))?;
-                        let size = render_vec2_length(render_value(size_field)?, size_field.span)?;
-                        let fill_field = render_body_field(&node.items, "fill")
-                            .ok_or_else(|| render_error("Rect requires fill", node.span))?;
-                        let TypedValue::Color(color) = render_paint_color(fill_field)? else {
-                            return Err(render_error(
-                                "solid paint requires a color",
-                                fill_field.span,
-                            ));
-                        };
-                        let solid_color = descriptor(
-                            TypedValue::Color(color),
-                            &mut descriptors,
-                            &mut descriptor_values,
-                        )?;
-                        let origin_descriptor = descriptor(
-                            TypedValue::vec2(
-                                TypedValue::Length(origin[0]),
-                                TypedValue::Length(origin[1]),
-                            )
-                            .expect("vec2"),
-                            &mut descriptors,
-                            &mut descriptor_values,
-                        )?;
-                        let size_descriptor = descriptor(
-                            TypedValue::vec2(
-                                TypedValue::Length(size[0]),
-                                TypedValue::Length(size[1]),
-                            )
-                            .expect("vec2"),
-                            &mut descriptors,
-                            &mut descriptor_values,
-                        )?;
-                        let paint_id = render_stable_id(
-                            &mut registry,
-                            EntityKind::RenderPaint,
-                            format!("{node_path}/fill"),
-                            node.span,
-                        )?;
-                        let paint = CanonicalRenderPaint::new(
-                            paint_id,
-                            CanonicalRenderPaintData::Solid { color: solid_color },
-                        )
-                        .map_err(|error| render_error(format!("{error:?}"), node.span))?;
-                        (
-                            CanonicalRenderGeometryData::Rect {
-                                origin: origin_descriptor,
-                                size: size_descriptor,
-                            },
-                            origin_descriptor,
-                            Some(paint),
-                        )
-                    }
-                    CanonicalRenderNodeKind::Image => {
-                        let resource_field = render_body_field(&node.items, "resource")
-                            .ok_or_else(|| render_error("Image requires resource", node.span))?;
-                        let resource_name = match render_value(resource_field)? {
-                            TypedValue::Line(name) => name,
-                            other => {
-                                return Err(render_error(
-                                    format!(
-                                        "Image resource must be a reference, found {}",
-                                        other.ty()
-                                    ),
-                                    resource_field.span,
-                                ));
-                            }
-                        };
-                        let resource = resources.get(&resource_name).ok_or_else(|| {
-                            render_error(
-                                format!("Image references unknown resource {resource_name}"),
-                                resource_field.span,
-                            )
-                        })?;
-                        if !matches!(
-                            resource.kind(),
-                            CanonicalResourceKind::Image | CanonicalResourceKind::Texture
-                        ) {
-                            return Err(render_error(
-                                format!("Image resource {resource_name} is not image/texture"),
-                                resource_field.span,
-                            ));
-                        }
-                        let resource_id = if let Some(id) = resource_ids.get(&resource_name) {
-                            id.clone()
-                        } else {
-                            let id = render_stable_id(
-                                &mut registry,
-                                EntityKind::Resource,
-                                resource_name.clone(),
-                                resource_field.span,
-                            )?;
-                            resource_ids.insert(resource_name.clone(), id.clone());
-                            id
-                        };
-                        let sampling = match render_body_field(&node.items, "sampling") {
-                            Some(field) => render_image_sampling(render_value(field)?, field.span)?,
-                            None => match resource.metadata().get("sampling") {
-                                Some(CanonicalValue::String(value)) => render_image_sampling(
-                                    TypedValue::String(value.clone()),
-                                    resource_field.span,
-                                )?,
-                                _ => {
-                                    return Err(render_error(
-                                        "image resource metadata lacks sampling",
-                                        resource_field.span,
-                                    ));
-                                }
-                            },
-                        };
-                        let destination_origin_field =
-                            render_body_field(&node.items, "destination.origin").ok_or_else(
-                                || render_error("Image requires destination.origin", node.span),
-                            )?;
-                        let destination_origin = render_vec2_length(
-                            render_value(destination_origin_field)?,
-                            destination_origin_field.span,
-                        )?;
-                        let destination_size_field =
-                            render_body_field(&node.items, "destination.size").ok_or_else(
-                                || render_error("Image requires destination.size", node.span),
-                            )?;
-                        let destination_size = render_vec2_length(
-                            render_value(destination_size_field)?,
-                            destination_size_field.span,
-                        )?;
-                        if destination_size.iter().any(|value| *value < 0.0) {
-                            return Err(render_error(
-                                "Image destination.size must be non-negative",
-                                destination_size_field.span,
-                            ));
-                        }
-                        let source_origin_field =
-                            render_body_field(&node.items, "sourceRect.origin");
-                        let source_size_field = render_body_field(&node.items, "sourceRect.size");
-                        if source_origin_field.is_some() != source_size_field.is_some() {
-                            return Err(render_error(
-                                "Image sourceRect.origin and sourceRect.size must be paired",
-                                node.span,
-                            ));
-                        }
-                        let source = match (source_origin_field, source_size_field) {
-                            (Some(origin_field), Some(size_field)) => {
-                                let source_origin = render_vec2_float(
-                                    render_value(origin_field)?,
-                                    origin_field.span,
-                                )?;
-                                let source_size =
-                                    render_vec2_float(render_value(size_field)?, size_field.span)?;
-                                if source_origin.iter().any(|value| *value < 0.0)
-                                    || source_size.iter().any(|value| *value < 0.0)
-                                {
-                                    return Err(render_error(
-                                        "Image sourceRect origin and size must be non-negative",
-                                        node.span,
-                                    ));
-                                }
-                                Some([
-                                    descriptor(
-                                        TypedValue::Float(source_origin[0]),
-                                        &mut descriptors,
-                                        &mut descriptor_values,
-                                    )?,
-                                    descriptor(
-                                        TypedValue::Float(source_origin[1]),
-                                        &mut descriptors,
-                                        &mut descriptor_values,
-                                    )?,
-                                    descriptor(
-                                        TypedValue::Float(source_size[0]),
-                                        &mut descriptors,
-                                        &mut descriptor_values,
-                                    )?,
-                                    descriptor(
-                                        TypedValue::Float(source_size[1]),
-                                        &mut descriptors,
-                                        &mut descriptor_values,
-                                    )?,
-                                ])
-                            }
-                            (None, None) => None,
-                            _ => unreachable!("paired sourceRect fields were checked"),
-                        };
-                        let destination = [
-                            descriptor(
-                                TypedValue::Length(destination_origin[0]),
-                                &mut descriptors,
-                                &mut descriptor_values,
-                            )?,
-                            descriptor(
-                                TypedValue::Length(destination_origin[1]),
-                                &mut descriptors,
-                                &mut descriptor_values,
-                            )?,
-                            descriptor(
-                                TypedValue::Length(destination_size[0]),
-                                &mut descriptors,
-                                &mut descriptor_values,
-                            )?,
-                            descriptor(
-                                TypedValue::Length(destination_size[1]),
-                                &mut descriptors,
-                                &mut descriptor_values,
-                            )?,
-                        ];
-                        let origin_descriptor = descriptor(
-                            TypedValue::vec2(
-                                TypedValue::Length(origin[0]),
-                                TypedValue::Length(origin[1]),
-                            )
-                            .expect("vec2"),
-                            &mut descriptors,
-                            &mut descriptor_values,
-                        )?;
-                        (
-                            CanonicalRenderGeometryData::Image {
-                                resource: resource_id,
-                                destination,
-                                source,
-                                sampling,
-                            },
-                            origin_descriptor,
-                            None,
-                        )
-                    }
-                    _ => unreachable!("unsupported Render node kind was rejected above"),
-                };
-                let position = descriptor(
-                    TypedValue::vec2(TypedValue::Length(0.0), TypedValue::Length(0.0))
-                        .expect("vec2"),
-                    &mut descriptors,
-                    &mut descriptor_values,
-                )?;
-                let rotation = descriptor(
-                    TypedValue::Angle(0.0),
-                    &mut descriptors,
-                    &mut descriptor_values,
-                )?;
-                let scale = descriptor(
-                    TypedValue::vec2(TypedValue::Float(1.0), TypedValue::Float(1.0)).expect("vec2"),
-                    &mut descriptors,
-                    &mut descriptor_values,
-                )?;
-                let opacity = descriptor(
-                    TypedValue::Float(1.0),
-                    &mut descriptors,
-                    &mut descriptor_values,
-                )?;
-                let visibility = descriptor(
-                    TypedValue::Bool(true),
-                    &mut descriptors,
-                    &mut descriptor_values,
-                )?;
-                let geometry_id = render_stable_id(
-                    &mut registry,
-                    EntityKind::RenderGeometry,
-                    format!("{node_path}/geometry"),
-                    node.span,
-                )?;
-                let geometry = CanonicalRenderGeometry::new(geometry_id.clone(), geometry_data)
-                    .map_err(|error| render_error(format!("{error:?}"), node.span))?;
-                let fill_paint = paint.as_ref().map(|_| paints.len());
-                let node = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
-                    id: node_id.clone(),
-                    kind: node.kind,
-                    parent: None,
-                    layer: layer_index,
-                    document_order: document_order as u32,
-                    z_order: 0,
-                    attachment: attachment.clone(),
-                    active: CanonicalActiveInterval::unbounded(),
-                    isolate: false,
-                    follow_hidden_attachment: false,
-                    position,
-                    origin: origin_descriptor,
-                    rotation,
-                    scale,
-                    opacity,
-                    visibility,
-                    geometry: Some(geometries.len()),
-                    fill_paint,
-                    stroke: None,
-                    clip: None,
-                    composite: CanonicalRenderComposite::SourceOver,
-                })
-                .map_err(|error| render_error(format!("{error:?}"), node.span))?;
-                roots.push(nodes.len());
-                nodes.push(node);
-                match geometry.data() {
-                    CanonicalRenderGeometryData::Rect { origin, size } => {
-                        descriptor_roots.extend([
-                            (
-                                "render.geometry.origin".to_owned(),
-                                geometry_id.value(),
-                                *origin,
-                            ),
-                            (
-                                "render.geometry.size".to_owned(),
-                                geometry_id.value(),
-                                *size,
-                            ),
-                        ]);
-                    }
-                    CanonicalRenderGeometryData::Image {
-                        destination,
-                        source,
-                        ..
-                    } => {
-                        descriptor_roots.extend([
-                            (
-                                "render.geometry.destination.x".to_owned(),
-                                geometry_id.value(),
-                                destination[0],
-                            ),
-                            (
-                                "render.geometry.destination.y".to_owned(),
-                                geometry_id.value(),
-                                destination[1],
-                            ),
-                            (
-                                "render.geometry.destination.width".to_owned(),
-                                geometry_id.value(),
-                                destination[2],
-                            ),
-                            (
-                                "render.geometry.destination.height".to_owned(),
-                                geometry_id.value(),
-                                destination[3],
-                            ),
-                        ]);
-                        if let Some(source) = source {
-                            descriptor_roots.extend([
-                                (
-                                    "render.geometry.source.x".to_owned(),
-                                    geometry_id.value(),
-                                    source[0],
-                                ),
-                                (
-                                    "render.geometry.source.y".to_owned(),
-                                    geometry_id.value(),
-                                    source[1],
-                                ),
-                                (
-                                    "render.geometry.source.width".to_owned(),
-                                    geometry_id.value(),
-                                    source[2],
-                                ),
-                                (
-                                    "render.geometry.source.height".to_owned(),
-                                    geometry_id.value(),
-                                    source[3],
-                                ),
-                            ]);
-                        }
-                    }
-                    _ => unreachable!("unsupported Render geometry was rejected above"),
-                }
-                geometries.push(geometry);
-                if let Some(paint) = &paint
-                    && let CanonicalRenderPaintData::Solid { color } = paint.data()
-                {
-                    descriptor_roots.push((
-                        "render.paint.color".to_owned(),
-                        paint.id().value(),
-                        *color,
-                    ));
-                }
-                if let Some(paint) = paint {
-                    paints.push(paint);
-                }
-                descriptor_roots.extend([
-                    ("render.node.position".to_owned(), node_id.value(), position),
-                    (
-                        "render.node.origin".to_owned(),
-                        node_id.value(),
-                        origin_descriptor,
-                    ),
-                    ("render.node.rotation".to_owned(), node_id.value(), rotation),
-                    ("render.node.scale".to_owned(), node_id.value(), scale),
-                    ("render.node.opacity".to_owned(), node_id.value(), opacity),
-                    (
-                        "render.node.visibility".to_owned(),
-                        node_id.value(),
-                        visibility,
-                    ),
-                ]);
             }
             layers.push(
                 CanonicalRenderLayer::new(layer_id, pass, z_order, layer_index as u32, roots)
                     .map_err(|error| render_error(format!("{error:?}"), layer.span))?,
             );
         }
-        let roots = descriptor_roots
+
+        let descriptor_roots = lowerer
+            .descriptor_roots
             .into_iter()
             .map(|(target_path, owner, descriptor)| {
                 CanonicalDescriptorRoot::new(target_path, owner, descriptor)
                     .map_err(|error| render_error(format!("{error:?}"), span))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let table = CanonicalDescriptorTable::new(descriptors, roots)
+        let descriptor_values = lowerer.descriptor_values;
+        let table = CanonicalDescriptorTable::new(lowerer.descriptors, descriptor_roots)
             .map_err(|error| render_error(format!("{error:?}"), span))?;
         let mapping = descriptor_values
             .iter()
@@ -1063,10 +1362,10 @@ fn lower_render_scene(
             viewport: CanonicalViewport::new(viewport_width, viewport_height, color_space)
                 .map_err(|error| render_error(format!("{error:?}"), span))?,
             layers,
-            nodes,
-            geometries,
+            nodes: lowerer.nodes,
+            geometries: lowerer.geometries,
             paths: Vec::new(),
-            paints,
+            paints: lowerer.paints,
             strokes: Vec::new(),
             clips: Vec::new(),
             glyph_runs: Vec::new(),

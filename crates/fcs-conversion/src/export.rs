@@ -737,15 +737,6 @@ pub fn format_fcs_source(source: &str) -> Result<String, ExportError> {
                 .unwrap_or_else(|| "formatted source invalid".into());
             ExportError::new("source.invalid", message)
         })?;
-    fcs_source::parser::parse_document(&formatted)
-        .into_result()
-        .map_err(|diagnostics| {
-            let message = diagnostics
-                .first()
-                .map(|diagnostic| format!("{}: {}", diagnostic.code(), diagnostic.message()))
-                .unwrap_or_else(|| "formatted source invalid".into());
-            ExportError::new("source.invalid", message)
-        })?;
     Ok(formatted)
 }
 

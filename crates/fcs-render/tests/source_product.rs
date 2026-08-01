@@ -96,6 +96,173 @@ fn solid_rect_source_reaches_product_render_loader() {
 }
 
 #[test]
+fn nested_shape_source_reaches_product_render_loader() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport {
+        width: 16px;
+        height: 16px;
+        colorSpace: "linear-srgb";
+    }
+    layer main {
+        pass: "overlay";
+        children {
+            group root {
+                children {
+                    circle circleShape {
+                        zOrder: 2;
+                        radius: 2px;
+                        fill: solid(#0000FFFF);
+                    }
+                    roundedRect roundedShape {
+                        zOrder: 0;
+                        size: vec2(6px, 6px);
+                        radius: 1px;
+                        fill: solid(#FF0000FF);
+                    }
+                    ellipse ellipseShape {
+                        zOrder: 1;
+                        radiusX: 3px;
+                        radiusY: 2px;
+                        fill: solid(#00FF00FF);
+                    }
+                }
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("nested Render source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| {
+            panic!("nested Render canonical lowering failed: {diagnostics:?}")
+        });
+
+    let bytes = write_from_compilation(&compilation).expect("nested Render FCBC writing");
+    let render = load_render(&bytes).expect("nested Render product loader");
+
+    assert_eq!(render.layers.len(), 1);
+    assert_eq!(render.layers[0].root_count, 1);
+    assert_eq!(render.nodes.len(), 4);
+    assert_eq!(render.nodes[0].kind, NodeKind::Group);
+    assert_eq!(render.nodes[0].parent, None);
+    assert_eq!(render.nodes[1].kind, NodeKind::RoundedRect);
+    assert_eq!(render.nodes[2].kind, NodeKind::Ellipse);
+    assert_eq!(render.nodes[3].kind, NodeKind::Circle);
+    assert_eq!(render.nodes[1].parent, Some(0));
+    assert_eq!(render.nodes[2].parent, Some(0));
+    assert_eq!(render.nodes[3].parent, Some(0));
+    assert_eq!(render.geometries.len(), 3);
+    assert!(render
+        .geometries
+        .iter()
+        .any(|geometry| matches!(geometry.data, GeometryData::RoundedRect { radii, .. } if radii.len() == 4)));
+    assert!(
+        render
+            .geometries
+            .iter()
+            .any(|geometry| matches!(geometry.data, GeometryData::Circle { .. }))
+    );
+    assert!(
+        render
+            .geometries
+            .iter()
+            .any(|geometry| matches!(geometry.data, GeometryData::Ellipse { .. }))
+    );
+    assert_eq!(render.paints.len(), 3);
+}
+
+#[test]
+fn point_geometry_source_reaches_product_render_loader() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport {
+        width: 16px;
+        height: 16px;
+    }
+    layer main {
+        pass: "overlay";
+        children {
+            polyline trace {
+                zOrder: 0;
+                active: [1beat, 2beat);
+                points: [vec2(-6px, -4px), vec2(0px, 4px), vec2(6px, -4px)];
+                fill: solid(#00FFFFFF);
+            }
+            polygon shard {
+                zOrder: 1;
+                points: [vec2(-2px, -2px), vec2(2px, -2px), vec2(0px, 2px)];
+                fill: solid(#FF00FFFF);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("point geometry source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| {
+            panic!("point geometry canonical lowering failed: {diagnostics:?}")
+        });
+
+    let bytes = write_from_compilation(&compilation).expect("point geometry FCBC writing");
+    let render = load_render(&bytes).expect("point geometry product loader");
+
+    assert_eq!(render.nodes.len(), 2);
+    assert_eq!(render.nodes[0].kind, NodeKind::Polyline);
+    assert_eq!(render.nodes[1].kind, NodeKind::Polygon);
+    assert_eq!(render.nodes[0].flags & 0b11, 0);
+    assert!((render.nodes[0].active_start - 0.5).abs() < f64::EPSILON);
+    assert!((render.nodes[0].active_end - 1.0).abs() < f64::EPSILON);
+    assert_eq!(render.geometries.len(), 2);
+    assert!(render.geometries.iter().any(|geometry| {
+        matches!(geometry.data, GeometryData::Polyline { ref points } if points.len() == 3)
+    }));
+    assert!(render.geometries.iter().any(|geometry| {
+        matches!(geometry.data, GeometryData::Polygon { ref points } if points.len() == 3)
+    }));
+    assert_eq!(render.paints.len(), 2);
+
+    assert_eq!(
+        evaluate_semantic_draw_list_at(&render, 0.25)
+            .expect("inactive polyline is skipped")
+            .len(),
+        1
+    );
+    assert_eq!(
+        evaluate_semantic_draw_list_at(&render, 0.75)
+            .expect("point geometry semantic evaluation")
+            .len(),
+        2
+    );
+    let pixels =
+        rasterize_solid_rgba8_at(&render, 0.75, 16, 16).expect("point geometry rasterization");
+    assert!(
+        pixels.chunks_exact(4).any(|pixel| pixel[3] != 0),
+        "filled point geometry should contribute raster coverage"
+    );
+}
+
+#[test]
 fn image_source_reaches_product_render_loader_with_resource_metadata() {
     let source = r#"#fcs 5.0.0
 format { profile: renderable; }

@@ -50,13 +50,13 @@ struct EvaluatedScene {
     clips: BTreeMap<u64, EvaluatedClip>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct EvaluatedShape {
     shape: LocalShape,
     world_matrix: [f64; 9],
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum LocalShape {
     Rect {
         bounds: [f64; 4],
@@ -75,12 +75,15 @@ enum LocalShape {
         radius_y: f64,
         rotation: f64,
     },
+    Polygon {
+        points: Vec<[f64; 2]>,
+    },
     Image {
         bounds: [f64; 4],
     },
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct EvaluatedClip {
     shape: Option<EvaluatedShape>,
 }
@@ -822,7 +825,7 @@ fn transformed_bounds(matrix: [f64; 9], bounds: [f64; 4]) -> Result<[f64; 4], &'
     Ok(result)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct RasterShape {
     shape: LocalShape,
     inverse_world: Option<[f64; 9]>,
@@ -841,9 +844,9 @@ enum RasterSource {
     Image(ImageDrawOp),
 }
 
-fn raster_shape(shape: EvaluatedShape) -> RasterShape {
+fn raster_shape(shape: &EvaluatedShape) -> RasterShape {
     RasterShape {
-        shape: shape.shape,
+        shape: shape.shape.clone(),
         inverse_world: inverse_affine(shape.world_matrix),
     }
 }
@@ -871,17 +874,17 @@ fn inverse_affine(matrix: [f64; 9]) -> Option<[f64; 9]> {
         .then_some(result)
 }
 
-fn raster_shape_contains(shape: RasterShape, point: [f64; 2]) -> bool {
+fn raster_shape_contains(shape: &RasterShape, point: [f64; 2]) -> bool {
     raster_shape_local_point(shape, point)
-        .is_some_and(|local| local_shape_contains(shape.shape, local))
+        .is_some_and(|local| local_shape_contains(&shape.shape, local))
 }
 
-fn raster_shape_local_point(shape: RasterShape, point: [f64; 2]) -> Option<[f64; 2]> {
+fn raster_shape_local_point(shape: &RasterShape, point: [f64; 2]) -> Option<[f64; 2]> {
     let inverse_world = shape.inverse_world?;
     transform_point(inverse_world, point).ok()
 }
 
-fn local_shape_contains(shape: LocalShape, point: [f64; 2]) -> bool {
+fn local_shape_contains(shape: &LocalShape, point: [f64; 2]) -> bool {
     match shape {
         LocalShape::Rect { bounds } => {
             bounds[2] > bounds[0]
@@ -891,20 +894,21 @@ fn local_shape_contains(shape: LocalShape, point: [f64; 2]) -> bool {
                 && point[1] >= bounds[1]
                 && point[1] <= bounds[3]
         }
-        LocalShape::RoundedRect { bounds, radii } => rounded_rect_contains(bounds, radii, point),
+        LocalShape::RoundedRect { bounds, radii } => rounded_rect_contains(*bounds, *radii, point),
         LocalShape::Circle { center, radius } => {
-            radius > 0.0
+            *radius > 0.0
                 && (point[0] - center[0]).mul_add(
                     point[0] - center[0],
                     (point[1] - center[1]) * (point[1] - center[1]),
-                ) <= radius * radius
+                ) <= *radius * *radius
         }
         LocalShape::Ellipse {
             center,
             radius_x,
             radius_y,
             rotation,
-        } => ellipse_contains(center, radius_x, radius_y, rotation, point),
+        } => ellipse_contains(*center, *radius_x, *radius_y, *rotation, point),
+        LocalShape::Polygon { points } => polygon_contains(points, point),
         LocalShape::Image { bounds } => {
             bounds[2] > bounds[0]
                 && bounds[3] > bounds[1]
@@ -914,6 +918,34 @@ fn local_shape_contains(shape: LocalShape, point: [f64; 2]) -> bool {
                 && point[1] < bounds[3]
         }
     }
+}
+
+fn polygon_contains(points: &[[f64; 2]], point: [f64; 2]) -> bool {
+    if points.len() < 3 {
+        return false;
+    }
+    let mut winding = 0i32;
+    for index in 0..points.len() {
+        let [x0, y0] = points[index];
+        let [x1, y1] = points[(index + 1) % points.len()];
+        let cross = (x1 - x0) * (point[1] - y0) - (point[0] - x0) * (y1 - y0);
+        if cross == 0.0
+            && point[0] >= x0.min(x1)
+            && point[0] <= x0.max(x1)
+            && point[1] >= y0.min(y1)
+            && point[1] <= y0.max(y1)
+        {
+            return true;
+        }
+        if y0 <= point[1] {
+            if y1 > point[1] && cross > 0.0 {
+                winding += 1;
+            }
+        } else if y1 <= point[1] && cross < 0.0 {
+            winding -= 1;
+        }
+    }
+    winding != 0
 }
 
 fn rounded_rect_contains(bounds: [f64; 4], radii: [f64; 4], point: [f64; 2]) -> bool {
@@ -1039,9 +1071,9 @@ fn composite_premultiplied(
 
 /// Rasterize supported solid-fill geometry to tightly packed RGBA8 bytes.
 ///
-/// The Render 1.0 reference sample grid is used for Rect, RoundedRect, Circle,
-/// and Ellipse; other geometry kinds remain semantic-only until their raster
-/// coverage is implemented.
+/// The Render 1.0 reference sample grid is used for solid Rect, RoundedRect,
+/// Circle, Ellipse, Polyline, and Polygon geometry; stroke/path/text coverage
+/// remains outside this bounded solid-fill path.
 pub fn rasterize_solid_rgba8(
     chart: &DecodedRenderChart,
     width: u32,
@@ -1102,7 +1134,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
         if !matches!(op.composite, 1..=5) {
             return Err("render.invalid-composite");
         }
-        let Some(shape) = scene.shapes.get(&op.node_id).copied() else {
+        let Some(shape) = scene.shapes.get(&op.node_id) else {
             continue;
         };
         let source = if op.kind == NodeKind::Image {
@@ -1125,7 +1157,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
         let mut clips = Vec::new();
         for clip_id in &op.clip_chain {
             let clip = scene.clips.get(clip_id).ok_or("render.invalid-reference")?;
-            if let Some(shape) = clip.shape {
+            if let Some(shape) = &clip.shape {
                 clips.push(raster_shape(shape));
             }
         }
@@ -1161,14 +1193,14 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                     let point = [logical_x, logical_y];
                     let mut sample = [0.0; 4];
                     for op in &raster_ops {
-                        let Some(local_point) = raster_shape_local_point(op.shape, point) else {
+                        let Some(local_point) = raster_shape_local_point(&op.shape, point) else {
                             continue;
                         };
-                        if !local_shape_contains(op.shape.shape, local_point)
+                        if !local_shape_contains(&op.shape.shape, local_point)
                             || !op
                                 .clips
                                 .iter()
-                                .all(|clip| raster_shape_contains(*clip, point))
+                                .all(|clip| raster_shape_contains(clip, point))
                         {
                             continue;
                         }
@@ -1514,6 +1546,29 @@ fn geometry_evaluation(
                 }),
                 None,
             )
+        }
+        GeometryData::Polyline { points } | GeometryData::Polygon { points } => {
+            let mut values = Vec::with_capacity(points.len());
+            for descriptor in points {
+                values.push(query_vec2_in(
+                    chart,
+                    *descriptor,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?);
+            }
+            if values.len() < 2 {
+                return Err("render.invalid-geometry");
+            }
+            let mut bounds = [values[0][0], values[0][1], values[0][0], values[0][1]];
+            for [x, y] in values.iter().copied().skip(1) {
+                bounds[0] = bounds[0].min(x);
+                bounds[1] = bounds[1].min(y);
+                bounds[2] = bounds[2].max(x);
+                bounds[3] = bounds[3].max(y);
+            }
+            (bounds, Some(LocalShape::Polygon { points: values }), None)
         }
         GeometryData::Image {
             resource_id,

@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use fcs_fcbc::ContainerProfile;
 use toml::Value;
@@ -36,6 +37,18 @@ fn string(value: &Value, key: &str) -> String {
         .to_owned()
 }
 
+fn package_files(output: &[u8], package: &str) -> Vec<String> {
+    String::from_utf8(output.to_vec())
+        .unwrap_or_else(|error| {
+            panic!("cargo package listed non-UTF-8 files for {package}: {error}")
+        })
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| line.replace('\\', "/"))
+        .collect()
+}
+
 #[test]
 fn inventory_matches_product_metadata_and_registries() {
     let root = root();
@@ -47,20 +60,25 @@ fn inventory_matches_product_metadata_and_registries() {
     let workspace_package = &workspace["workspace"]["package"];
     assert_eq!(string(workspace_package, "version"), "5.0.0");
     assert_eq!(string(workspace_package, "license"), "MIT");
+    assert_eq!(string(workspace_package, "license-file"), "LICENSE");
     assert_eq!(string(&inventory, "workspace_version"), "5.0.0");
     assert_eq!(string(&inventory, "workspace_license"), "MIT");
 
     let members = strings(&workspace["workspace"], "members");
     let inventory_members = strings(&inventory, "workspace_members");
     assert_eq!(inventory_members, members);
-    for member in members {
-        let manifest = read_toml(root.join(&member).join("Cargo.toml"));
+    for member in &members {
+        let manifest = read_toml(root.join(member).join("Cargo.toml"));
         assert_eq!(
             manifest["package"]["version"]["workspace"].as_bool(),
             Some(true)
         );
         assert_eq!(
             manifest["package"]["license"]["workspace"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            manifest["package"]["license-file"]["workspace"].as_bool(),
             Some(true)
         );
     }
@@ -93,6 +111,58 @@ fn inventory_matches_product_metadata_and_registries() {
         );
         path
     };
+
+    let license_path = inventory_path("license_file");
+    let license = fs::read_to_string(&license_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", license_path.display()));
+    assert!(license.starts_with("MIT License\n"));
+    assert!(license.contains("Copyright (c) 2026 FCS contributors"));
+
+    for relative in strings(&inventory, "utf8_paths") {
+        let path = inventory_dir.join(&relative);
+        let bytes = fs::read(&path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+        assert!(
+            std::str::from_utf8(&bytes).is_ok(),
+            "distribution inventory path is not UTF-8: {}",
+            path.display()
+        );
+    }
+
+    let required_packages = inventory["package_required_files"]
+        .as_array()
+        .expect("package_required_files must be an array");
+    let inventory_members: Vec<_> = required_packages
+        .iter()
+        .map(|package| string(package, "member"))
+        .collect();
+    assert_eq!(inventory_members, members);
+    for package in required_packages {
+        let member = string(package, "member");
+        let manifest = read_toml(root.join(&member).join("Cargo.toml"));
+        let package_name = string(&manifest["package"], "name");
+        let output = Command::new("cargo")
+            .arg("package")
+            .arg("-p")
+            .arg(&package_name)
+            .args(["--list", "--allow-dirty", "--no-verify"])
+            .current_dir(&root)
+            .output()
+            .unwrap_or_else(|error| panic!("failed to list package {package_name}: {error}"));
+        assert!(
+            output.status.success(),
+            "cargo package failed for {package_name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let files = package_files(&output.stdout, &package_name);
+        for required in strings(package, "files") {
+            let required = required.replace('\\', "/");
+            assert!(
+                files.iter().any(|file| file == &required),
+                "package {package_name} is missing required file {required}"
+            );
+        }
+    }
 
     let fcbc_manifest = read_toml(inventory_path("fcbc_manifest"));
     assert_eq!(

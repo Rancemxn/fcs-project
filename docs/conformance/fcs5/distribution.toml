@@ -2,6 +2,7 @@ schema_version = 1
 publication = "unpublished"
 workspace_version = "5.0.0"
 workspace_license = "MIT"
+license_file = "../../../LICENSE"
 fcbc_version = "2.0.0"
 execution_abi_version = "1.0.0"
 render_profile_version = "1.0.0"
@@ -24,6 +25,24 @@ root_conformance_manifest = "../manifest.toml"
 fcbc_manifest = "../fcbc/manifest.toml"
 render_manifest = "../render/manifest.toml"
 conversion_profile_registry = "../conversion/profile-registry.toml"
+
+package_required_files = [
+  { member = "crates/fcs-model", files = ["Cargo.toml", "src/lib.rs", "LICENSE"] },
+  { member = "crates/fcs-runtime", files = ["Cargo.toml", "src/lib.rs", "LICENSE"] },
+  { member = "crates/fcs-source", files = ["Cargo.toml", "src/lib.rs", "LICENSE"] },
+  { member = "crates/fcs-conversion", files = ["Cargo.toml", "src/lib.rs", "LICENSE"] },
+  { member = "crates/fcs-fcbc", files = ["Cargo.toml", "src/lib.rs", "LICENSE"] },
+  { member = "crates/fcs-cli", files = ["Cargo.toml", "src/main.rs", "LICENSE"] },
+  { member = "crates/fcs-render", files = ["Cargo.toml", "src/lib.rs", "LICENSE"] },
+]
+
+utf8_paths = [
+  "../../../LICENSE",
+  "../manifest.toml",
+  "manifest.toml",
+  "../render/manifest.toml",
+  "../conversion/profile-registry.toml",
+]
 
 conversion_profiles = [
   "pgr.phira.v1@1.0.0",

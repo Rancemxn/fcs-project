@@ -34,6 +34,187 @@ fn check_accepts_minimal_valid_source() {
 }
 
 #[test]
+fn check_rejects_canonical_profile_errors() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source = root.join("docs/conformance/fcs5/source/invalid/profile-fragment-feature.fcs");
+    let output = bin().arg("check").arg(&source).output().unwrap();
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("profile.requirement-missing"));
+}
+
+#[test]
+fn check_executes_the_canonical_source_fixture_lane() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let conformance = root.join("docs/conformance/fcs5");
+    let manifest: toml::Value = fs::read_to_string(conformance.join("manifest.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    for fixture in manifest["fixture"].as_array().unwrap() {
+        if fixture["stage"].as_str() != Some("canonical") {
+            continue;
+        }
+        let id = fixture["id"].as_str().unwrap();
+        let source = conformance.join(fixture["path"].as_str().unwrap());
+        let mut command = bin();
+        command.arg("check").arg(&source).arg("--json");
+        if let Some(workspace_root) = fixture["workspace_root"].as_str() {
+            command
+                .arg("--resolver-root")
+                .arg(conformance.join(workspace_root));
+        }
+        let output = command.output().unwrap();
+        let expected = fixture["expect"].as_str().unwrap();
+        match expected {
+            "success" => assert!(
+                output.status.success(),
+                "{id}: stderr={}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
+            "error" => {
+                assert_eq!(output.status.code(), Some(3), "{id}");
+                let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+                    .unwrap_or_else(|error| panic!("{id}: invalid JSON diagnostic: {error}"));
+                let codes: Vec<_> = report["diagnostics"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|diagnostic| diagnostic["code"].as_str())
+                    .collect();
+                assert!(
+                    codes.contains(&fixture["diagnostic"].as_str().unwrap()),
+                    "{id}: expected {:?}, got {codes:?}",
+                    fixture["diagnostic"].as_str()
+                );
+            }
+            other => panic!("{id}: unsupported fixture expectation {other}"),
+        }
+    }
+}
+
+#[test]
+fn check_executes_all_repository_fcs_examples() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut examples: Vec<_> = fs::read_dir(root.join("examples/fcs"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("fcs"))
+        .collect();
+    examples.sort();
+    assert!(!examples.is_empty());
+
+    for source in examples {
+        let output = bin()
+            .arg("check")
+            .arg(&source)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}: stderr={}",
+            source.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn compile_executes_successful_canonical_source_fixtures_through_core_load() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let conformance = root.join("docs/conformance/fcs5");
+    let manifest: toml::Value = fs::read_to_string(conformance.join("manifest.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let output_directory = tempfile::tempdir().unwrap();
+
+    for fixture in manifest["fixture"].as_array().unwrap() {
+        if fixture["stage"].as_str() != Some("canonical")
+            || fixture["expect"].as_str() != Some("success")
+        {
+            continue;
+        }
+        let id = fixture["id"].as_str().unwrap();
+        let source = conformance.join(fixture["path"].as_str().unwrap());
+        let output_path = output_directory.path().join(format!("{id}.fcbc"));
+        let mut command = bin();
+        command
+            .arg("compile")
+            .arg(&source)
+            .arg("--output")
+            .arg(&output_path);
+        if let Some(workspace_root) = fixture["workspace_root"].as_str() {
+            command
+                .arg("--resolver-root")
+                .arg(conformance.join(workspace_root));
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{id}: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output_path.is_file(), "{id}: compiler produced no FCBC");
+
+        let inspect = bin()
+            .arg("inspect")
+            .arg(&output_path)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert!(
+            inspect.status.success(),
+            "{id}: inspect stderr={}",
+            String::from_utf8_lossy(&inspect.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+        assert_eq!(report["coreLoaded"], true, "{id}");
+    }
+}
+
+#[test]
+fn check_json_reports_structured_diagnostics() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("invalid.fcs");
+    fs::write(&source, b"not an FCS document\n").unwrap();
+
+    let output = bin()
+        .arg("check")
+        .arg(&source)
+        .arg("--json")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(output.stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["status"], "failed");
+    assert_eq!(report["category"], "source.invalid");
+    let diagnostic = &report["diagnostics"][0];
+    assert!(
+        diagnostic["code"]
+            .as_str()
+            .is_some_and(|code| !code.is_empty())
+    );
+    assert!(
+        diagnostic["stage"]
+            .as_str()
+            .is_some_and(|stage| !stage.is_empty())
+    );
+    assert!(
+        diagnostic["severity"]
+            .as_str()
+            .is_some_and(|severity| !severity.is_empty())
+    );
+    assert!(diagnostic["span"]["start"].is_u64());
+    assert!(diagnostic["span"]["end"].is_u64());
+    assert!(diagnostic["labels"].is_array());
+}
+
+#[test]
 fn inspect_accepts_nonempty_execution_hex() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let hex = root.join("docs/conformance/fcbc/nonempty-execution.hex");
@@ -203,7 +384,18 @@ fn report_runs_public_rpe_and_pec_fixtures() {
             "{format} stderr={}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(String::from_utf8_lossy(&output.stdout).contains("\"status\":\"equivalent\""));
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["status"], "equivalent");
+        assert!(report["report"]["entries"].is_array());
+        assert!(report["report"]["repairs"].is_array());
+        assert!(report["report"]["repairMode"]["enabled"].is_boolean());
+        assert_eq!(
+            report["report"]["entryCount"].as_u64(),
+            report["report"]["entries"]
+                .as_array()
+                .map(Vec::len)
+                .map(|len| len as u64)
+        );
     }
 }
 
@@ -243,6 +435,44 @@ fn convert_exports_public_pgr_fixture_with_explicit_target_capability() {
     assert!(fs::read(&target).unwrap().starts_with(b"{"));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"targetProfile\":\"pgr.phira.v1\""));
+}
+
+#[test]
+fn convert_json_reports_target_export_failure_without_success_output() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let chart =
+        root.join("docs/conformance/conversion/public-fixtures/sources/pgr-minimal.pgr.json");
+    let directory = tempfile::tempdir().unwrap();
+    let output_path = directory.path().join("should-not-exist.pgr.json");
+    let output = bin()
+        .arg("convert")
+        .arg("--format")
+        .arg("pgr")
+        .arg("--profile")
+        .arg("pgr.phira.v1")
+        .arg("--source-floor-scale-px")
+        .arg("120")
+        .arg("--target-profile")
+        .arg("pgr.phira.v1")
+        .arg("--target-capability")
+        .arg("rpe-json")
+        .arg("--target-floor-scale-px")
+        .arg("120")
+        .arg("--output")
+        .arg(&output_path)
+        .arg("--json")
+        .arg(&chart)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+    assert!(output.stderr.is_empty());
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["status"], "failed");
+    assert_eq!(body["category"], "conversion.capability-mismatch");
+    assert!(body["output"].is_null());
+    assert!(body["report"].is_null());
+    assert!(!output_path.exists());
 }
 
 #[test]
@@ -601,4 +831,404 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
     );
     assert!(container.section_types().contains(&16));
     fcs_fcbc::load_chart(&bytes).unwrap();
+}
+
+#[test]
+fn report_executes_every_public_conversion_fixture() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture_root = root.join("docs/conformance/conversion/public-fixtures");
+    let manifest: toml::Value = fs::read_to_string(fixture_root.join("manifest.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    for fixture in manifest["fixture"].as_array().unwrap() {
+        let id = fixture["id"].as_str().unwrap();
+        let format = fixture["format"].as_str().unwrap();
+        let profile = format!(
+            "{}@{}",
+            fixture["profile"].as_str().unwrap(),
+            fixture["profile_version"].as_str().unwrap()
+        );
+        let source = fixture_root.join(fixture["source"].as_str().unwrap());
+        let expected: toml::Value =
+            fs::read_to_string(fixture_root.join(fixture["expected"].as_str().unwrap()))
+                .unwrap()
+                .parse()
+                .unwrap();
+        let mut command = bin();
+        command
+            .arg("report")
+            .arg("--format")
+            .arg(format)
+            .arg("--source-profile")
+            .arg(&profile);
+        if let Some(floor_scale) = fixture["floor_scale_px"].as_str() {
+            command.arg("--source-floor-scale-px").arg(floor_scale);
+        }
+        let output = command.arg(source).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{id}: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|error| panic!("{id}: invalid report JSON: {error}"));
+        assert_eq!(
+            report["status"].as_str(),
+            expected["expected_status"].as_str(),
+            "{id}"
+        );
+        assert_eq!(
+            report["sourceProfile"].as_str(),
+            Some(profile.as_str()),
+            "{id}"
+        );
+        assert_eq!(
+            report["lines"].as_u64(),
+            expected["expected_lines"]
+                .as_integer()
+                .map(|value| value as u64),
+            "{id}"
+        );
+        assert_eq!(
+            report["notes"].as_u64(),
+            expected["expected_notes"]
+                .as_integer()
+                .map(|value| value as u64),
+            "{id}"
+        );
+        if fixture.get("export_reparse").is_none() {
+            let entries = report["report"]["entries"].as_array().unwrap();
+            for category in expected["required_categories"].as_array().unwrap() {
+                let category = category.as_str().unwrap();
+                assert!(
+                    entries
+                        .iter()
+                        .any(|entry| entry["category"].as_str() == Some(category)),
+                    "{id}: missing report category {category}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn convert_executes_every_declared_public_export_reparse_fixture() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture_root = root.join("docs/conformance/conversion/public-fixtures");
+    let manifest: toml::Value = fs::read_to_string(fixture_root.join("manifest.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+
+    for fixture in manifest["fixture"].as_array().unwrap() {
+        let Some(target) = fixture.get("export_reparse") else {
+            continue;
+        };
+        let id = fixture["id"].as_str().unwrap();
+        let format = fixture["format"].as_str().unwrap();
+        let source_profile = format!(
+            "{}@{}",
+            fixture["profile"].as_str().unwrap(),
+            fixture["profile_version"].as_str().unwrap()
+        );
+        let source = fixture_root.join(fixture["source"].as_str().unwrap());
+        let expected: toml::Value =
+            fs::read_to_string(fixture_root.join(fixture["expected"].as_str().unwrap()))
+                .unwrap()
+                .parse()
+                .unwrap();
+        let output_path = directory.path().join(format!("{id}.{format}"));
+        let target_profile = format!(
+            "{}@{}",
+            target["target_profile"].as_str().unwrap(),
+            target["target_profile_version"].as_str().unwrap()
+        );
+        let capability = match format {
+            "pgr" => "pgr-v3",
+            "rpe" => "rpe-json",
+            "pec" => "pec-line",
+            other => panic!("{id}: unsupported fixture format {other}"),
+        };
+        let mut command = bin();
+        command
+            .arg("convert")
+            .arg("--format")
+            .arg(format)
+            .arg("--source-profile")
+            .arg(&source_profile)
+            .arg("--target-profile")
+            .arg(&target_profile)
+            .arg("--target-capability")
+            .arg(capability)
+            .arg("--policy")
+            .arg(target["policy"].as_str().unwrap())
+            .arg("--output")
+            .arg(&output_path)
+            .arg("--json");
+        if let Some(floor_scale) = fixture["floor_scale_px"].as_str() {
+            command.arg("--source-floor-scale-px").arg(floor_scale);
+        }
+        if let Some(floor_scale) = target["floor_scale_px"].as_str() {
+            command.arg("--target-floor-scale-px").arg(floor_scale);
+        }
+        let output = command.arg(source).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{id}: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|error| panic!("{id}: invalid conversion JSON: {error}"));
+        assert_eq!(report["status"], "equivalent", "{id}");
+        assert_eq!(
+            report["sourceProfile"].as_str(),
+            Some(source_profile.as_str()),
+            "{id}"
+        );
+        assert_eq!(
+            report["targetProfile"].as_str(),
+            Some(target_profile.as_str()),
+            "{id}"
+        );
+        assert_eq!(
+            report["lines"].as_u64(),
+            expected["expected_lines"]
+                .as_integer()
+                .map(|value| value as u64),
+            "{id}"
+        );
+        assert_eq!(
+            report["notes"].as_u64(),
+            expected["expected_notes"]
+                .as_integer()
+                .map(|value| value as u64),
+            "{id}"
+        );
+        let entries = report["report"]["entries"].as_array().unwrap();
+        for category in expected["required_categories"].as_array().unwrap() {
+            let category = category.as_str().unwrap();
+            assert!(
+                entries
+                    .iter()
+                    .any(|entry| entry["category"].as_str() == Some(category)),
+                "{id}: missing report category {category}"
+            );
+        }
+        assert!(output_path.is_file(), "{id}: target output was not written");
+    }
+}
+
+#[test]
+fn inspect_executes_every_fcbc_golden_through_core_load() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let conformance = root.join("docs/conformance/fcbc");
+    let manifest: toml::Value = fs::read_to_string(conformance.join("manifest.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    for fixture in manifest["fixture"].as_array().unwrap() {
+        let id = fixture["id"].as_str().unwrap();
+        let golden: toml::Value =
+            fs::read_to_string(conformance.join(fixture["manifest"].as_str().unwrap()))
+                .unwrap()
+                .parse()
+                .unwrap();
+        let hex = conformance.join(golden["path"].as_str().unwrap());
+        let output = bin()
+            .arg("inspect")
+            .arg(hex)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{id}: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|error| panic!("{id}: invalid inspect JSON: {error}"));
+        assert_eq!(report["coreLoaded"], true, "{id}");
+        assert_eq!(
+            report["byteLength"].as_u64(),
+            golden["decoded_length"]
+                .as_integer()
+                .map(|value| value as u64),
+            "{id}"
+        );
+        assert_eq!(report["sha256"].as_str(), golden["sha256"].as_str(), "{id}");
+        assert_eq!(
+            report["profile"].as_str(),
+            golden["container_profile"].as_str(),
+            "{id}"
+        );
+    }
+}
+
+#[test]
+fn render_manifest_source_and_product_paths_are_exercised() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let render = root.join("docs/conformance/render");
+    let manifest: toml::Value = fs::read_to_string(render.join("manifest.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    for fixture in manifest["source_fixture"].as_array().unwrap() {
+        let id = fixture["id"].as_str().unwrap();
+        let source = render.join(fixture["source"].as_str().unwrap());
+        let output = bin()
+            .arg("check")
+            .arg(&source)
+            .arg("--json")
+            .output()
+            .unwrap();
+        match fixture["expect"].as_str().unwrap() {
+            "success" => assert!(output.status.success(), "{id}: check failed"),
+            "error" => {
+                assert_eq!(output.status.code(), Some(3), "{id}");
+                let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                let expected = fixture["diagnostic"].as_str().unwrap();
+                assert!(
+                    report["diagnostics"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|diagnostic| diagnostic["code"] == expected),
+                    "{id}: expected {expected}"
+                );
+            }
+            other => panic!("{id}: unsupported expectation {other}"),
+        }
+    }
+
+    let fixture = &manifest["fixture"].as_array().unwrap()[0];
+    let source = render.join(fixture["source"].as_str().unwrap());
+    let expected: serde_json::Value =
+        fs::read_to_string(render.join(fixture["semantic_expected"].as_str().unwrap()))
+            .unwrap()
+            .parse()
+            .unwrap();
+    let expected_draw_ops = expected["drawOrder"].as_array().unwrap().len() as u64;
+    let directory = tempfile::tempdir().unwrap();
+    let output_path = directory.path().join("render.fcbc");
+    let compile = bin()
+        .arg("compile")
+        .arg(&source)
+        .arg("--output")
+        .arg(&output_path)
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "render fixture: stderr={}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let inspect = bin()
+        .arg("inspect")
+        .arg(&output_path)
+        .arg("--render")
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        inspect.status.success(),
+        "render fixture inspect: stderr={}",
+        String::from_utf8_lossy(&inspect.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert!(report["render"]["layerCount"].as_u64().unwrap() > 0);
+    assert!(report["render"]["nodeCount"].as_u64().unwrap() >= expected_draw_ops);
+    assert_eq!(
+        report["render"]["drawOps"].as_u64(),
+        Some(expected_draw_ops)
+    );
+    assert_eq!(
+        report["render"]["viewport"],
+        serde_json::json!([
+            fixture["width"].as_integer().unwrap(),
+            fixture["height"].as_integer().unwrap()
+        ])
+    );
+
+    let binding = &manifest["binding_fixture"].as_array().unwrap()[0];
+    let binding_expected: serde_json::Value =
+        fs::read_to_string(render.join(binding["semantic_expected"].as_str().unwrap()))
+            .unwrap()
+            .parse()
+            .unwrap();
+    assert_eq!(
+        binding_expected["canonicalResourceId"].as_str(),
+        binding["canonical_resource_id"].as_str()
+    );
+    assert_eq!(
+        binding_expected["contentSha256"].as_str(),
+        binding["content_sha256"].as_str()
+    );
+    assert_eq!(
+        binding_expected["fcbcResourcesSectionType"].as_u64(),
+        binding["fcbc_resources_section_type"]
+            .as_integer()
+            .map(|value| value as u64)
+    );
+    assert_eq!(
+        binding_expected["fcbcResourceDataSectionType"].as_u64(),
+        binding["fcbc_resource_data_section_type"]
+            .as_integer()
+            .map(|value| value as u64)
+    );
+    let binding_asset = render.join(binding["resource_asset"].as_str().unwrap());
+    assert_eq!(
+        fs::metadata(&binding_asset).unwrap().len(),
+        binding["payload_length"].as_integer().unwrap() as u64
+    );
+    let binding_source = render.join(binding["source"].as_str().unwrap());
+    let binding_dir = tempfile::tempdir().unwrap();
+    let binding_output = binding_dir.path().join("resource-image.fcbc");
+    let compile = bin()
+        .arg("compile")
+        .arg(&binding_source)
+        .arg("--resolver-root")
+        .arg(render.join(binding["workspace_root"].as_str().unwrap()))
+        .arg("--output")
+        .arg(&binding_output)
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "render binding: stderr={}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let inspect = bin()
+        .arg("inspect")
+        .arg(&binding_output)
+        .arg("--render")
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        inspect.status.success(),
+        "render binding inspect: stderr={}",
+        String::from_utf8_lossy(&inspect.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert!(report["render"]["nodeCount"].as_u64().unwrap() > 0);
+    assert!(report["render"]["drawOps"].as_u64().unwrap() > 0);
+    let section_types = report["sectionTypes"].as_array().unwrap();
+    for section_type in [
+        binding["fcbc_resources_section_type"].as_integer().unwrap(),
+        binding["fcbc_resource_data_section_type"]
+            .as_integer()
+            .unwrap(),
+    ] {
+        assert!(
+            section_types
+                .iter()
+                .any(|value| value.as_i64() == Some(section_type)),
+            "missing binding section type {section_type}"
+        );
+    }
 }

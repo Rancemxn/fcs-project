@@ -14,6 +14,7 @@ members = [
 version = "5.0.0"
 edition = "2024"
 license = "MIT"
+license-file = "LICENSE"
 
 [workspace.dependencies]
 astro-float = { version = "=0.9.5", default-features = false, features = ["std"] }

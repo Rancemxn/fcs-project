@@ -759,8 +759,25 @@ git diff --check
   evidence before recursive lossless materialization; broader #294/#295/#296 and I10 closure remain open.
   Bounded child #452 binds the unpublished local RC distribution inventory to workspace package metadata, the MIT
   license declaration, the five candidate version domains, FCBC container profiles, the Render manifest, and the
-  checked-in Conversion profile registry; final artifact-content, executable cross-domain, matrix, and re-freeze
-  obligations remain open under #296.
-  The current Render product delta also exposes Image DrawOps and bounded nearest/linear decoded-image sampling
-  with source-rect validation and premultiplied compositing; full Image source lowering, broader Render geometry,
-  paint/resource semantics, and semantic/raster conformance remain open under #295.
+  checked-in Conversion profile registry. Its bounded artifact contract now checks the root license text, all seven
+  Cargo package listings, required packaged paths, and UTF-8 inventory inputs; final executable cross-domain, matrix,
+  Appendix A example mapping, exact-head gate, joint review, and re-freeze obligations remain open under #296.
+  The complete I10 product/domain evidence index is `docs/conformance/fcs5-i10-evidence-ledger.md`; it records
+  runtime/property/fuzz rows as exact-head Full Gate pending and does not promote any version domain to Frozen.
+- The I10 `check` command now reuses `canonical_compilation_with_source`, so a successful check covers
+  profile, elaboration, canonical graph, workspace-resource, and Render-source validation instead of
+  parser syntax alone; its canonical-profile regression and full canonical fixture lane are recorded in
+  the CLI conformance tests, together with executable lanes for every checked-in FCS example and each
+  successful canonical fixture through FCBC Core load. The full source corpus continues to execute
+  through `conformance_manifest` at its declared parse, elaborate, canonical, or evaluate boundary;
+  the CLI lane covers the applicable canonical and example paths. The same suite now drives all six
+  public Conversion import fixtures through `report`, all three manifest-declared export/reparse
+  fixtures through `convert`, all three FCBC goldens through `inspect` and mandatory Core load, and
+  the Render source, canonical compile, and embedded-resource binding paths through `check`, `compile`,
+  and `inspect --render`. These are product-entry evidence only; they do not close final executable
+  cross-domain conformance or the I10 re-freeze gate.
+  The current Render product delta also covers a bounded source -> canonical -> FCBC -> loader -> semantic/raster handoff for
+  root Rect/Image, nested Group/RoundedRect/Circle/Ellipse nodes, solid-fill Polyline/Polygon nodes, and source active intervals
+  lowered to FCBC Node flags, plus Image DrawOps and bounded nearest/linear decoded-image sampling with source-rect validation
+  and premultiplied compositing; source Line stroke lowering, full Path/Text geometry, broader paint/resource semantics,
+  isolated compositing, and semantic/raster conformance remain open under #295.
