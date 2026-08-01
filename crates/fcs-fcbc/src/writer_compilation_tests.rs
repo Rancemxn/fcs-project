@@ -231,6 +231,18 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
 }
 
 #[test]
+fn write_from_compilation_preserves_empty_chart_cardinality() {
+    let bytes = compile(include_str!(
+        "../../../docs/conformance/fcs5/source/valid/minimal-chart.fcs"
+    ));
+    let decoded = crate::load_chart(&bytes).expect("empty chart must load");
+
+    assert!(decoded.lines.is_empty());
+    assert!(decoded.notes.is_empty());
+    assert!(decoded.distances.is_empty());
+}
+
+#[test]
 fn write_from_compilation_preserves_exact_expression_dag() {
     let workspace = tempdir().unwrap();
     let document = parse_document(include_str!(

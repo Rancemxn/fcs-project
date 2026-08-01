@@ -381,13 +381,13 @@ fn query_attachment(
     match node.attachment.kind {
         1 | 2 => Ok(AttachmentState {
             matrix: identity_matrix(),
-            environment: attachment_environment(chart_time, 0.0, 0.0),
+            environment: attachment_environment(chart, chart_time, 0.0, 0.0)?,
         }),
         3 => {
             let (matrix, q) = line_world_matrix(chart, node.attachment.id, chart_time)?;
             Ok(AttachmentState {
                 matrix,
-                environment: attachment_environment(chart_time, q, 0.0),
+                environment: attachment_environment(chart, chart_time, q, 0.0)?,
             })
         }
         4 => {
@@ -404,7 +404,7 @@ fn query_attachment(
                 .find(|line| line.id == note.line_id)
                 .ok_or("render.invalid-reference")?;
             let (line_matrix, q) = line_world_matrix(chart, line.id, chart_time)?;
-            let base_environment = attachment_environment(chart_time, q, 0.0);
+            let base_environment = attachment_environment(chart, chart_time, q, 0.0)?;
             let scroll_factor = query_scalar_in(
                 chart,
                 note.property_descriptors[1],
@@ -418,7 +418,7 @@ fn query_attachment(
             if !distance.is_finite() {
                 return Err("render.invalid-descriptor");
             }
-            let environment = attachment_environment(chart_time, q, distance);
+            let environment = attachment_environment(chart, chart_time, q, distance)?;
             let position_x = query_scalar_in(
                 chart,
                 note.property_descriptors[0],
@@ -450,14 +450,20 @@ fn query_attachment(
     }
 }
 
-fn attachment_environment(chart_time: f64, q: f64, d: f64) -> EvaluationEnvironment {
-    EvaluationEnvironment {
+fn attachment_environment(
+    chart: &DecodedRenderChart,
+    chart_time: f64,
+    q: f64,
+    d: f64,
+) -> Result<EvaluationEnvironment, &'static str> {
+    Ok(EvaluationEnvironment {
         s: chart_time,
-        b: chart_time,
+        b: fcs_fcbc::chart_beat_at_time(&chart.core, chart_time)
+            .map_err(|_| "render.invalid-descriptor")?,
         q,
         d,
         p: 0.0,
-    }
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -502,7 +508,7 @@ fn line_world_matrix(
     for line in chain {
         let q = query_scroll_coordinate(&chart.core, line.scroll_tempo_descriptor, chart_time)
             .map_err(|_| "render.invalid-descriptor")?;
-        let environment = attachment_environment(chart_time, q, 0.0);
+        let environment = attachment_environment(chart, chart_time, q, 0.0)?;
         let local = LineComponents {
             position: query_vec2_in(
                 chart,
@@ -678,7 +684,7 @@ fn query_value(
         chart,
         descriptor,
         chart_time,
-        EvaluationEnvironment::at_time(chart_time),
+        attachment_environment(chart, chart_time, 0.0, 0.0)?,
     )
 }
 
