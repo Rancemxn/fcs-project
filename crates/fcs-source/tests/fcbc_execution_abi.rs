@@ -628,6 +628,33 @@ fn nonempty_execution_mutations_return_stable_categories() {
 }
 
 #[test]
+fn independent_loader_checks_embedded_resource_coverage_before_hash() {
+    let base = suite_base();
+    let mutations: MutationManifest = load_toml(&base.join("embedded-resource-mutations.toml"));
+    let original = decode_hex_file(&base.join(&mutations.base));
+    let mutation = mutations
+        .mutation
+        .iter()
+        .find(|mutation| mutation.id == "resource-data-layout-precedes-hash")
+        .expect("embedded resource fixture must include the layout-before-hash mutation");
+    let mut bytes = original;
+    for patch in &mutation.patch {
+        let replacement = decode_lower_hex(
+            &patch.replace_hex,
+            &format!("mutation {} replacement", mutation.id),
+        );
+        let start = usize::try_from(patch.offset).expect("patch offset must fit usize");
+        let end = start + replacement.len();
+        assert!(end <= bytes.len(), "mutation patch is out of bounds");
+        bytes[start..end].copy_from_slice(&replacement);
+    }
+    assert_eq!(
+        load(&bytes).expect_err("invalid ResourceData layout must be rejected"),
+        "fcbc.invalid-resource-data"
+    );
+}
+
+#[test]
 fn independent_loader_rejects_invalid_sync_preview_bounds() {
     let base = suite_base();
     let (_, golden) = load_suite_and_golden();
