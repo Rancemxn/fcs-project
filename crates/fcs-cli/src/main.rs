@@ -621,12 +621,6 @@ fn cmd_compile(path: &Path, output: Option<&Path>, options: &CompileOptions) -> 
         eprintln!("error: compiled FCBC failed Core load: {error}");
         return ExitCategory::Internal.code();
     }
-    if compilation.chart().render().is_some()
-        && let Err(error) = load_render(&fcbc)
-    {
-        eprintln!("error: compiled FCBC failed Render load: {error}");
-        return ExitCategory::Internal.code();
-    }
     let out_path = output
         .map(PathBuf::from)
         .unwrap_or_else(|| path.with_extension("fcbc"));

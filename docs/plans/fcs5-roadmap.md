@@ -775,8 +775,9 @@ git diff --check
   the CLI lane covers the exhaustive canonical partition and applicable example paths, including the fragment example's format/parser boundary. The same suite now drives all six
   public Conversion import fixtures through `report`, all three manifest-declared export/reparse
   fixtures through `convert`, all three FCBC goldens through `inspect` and declared Core-load success/rejection contracts, and
-  the Render source, canonical compile, and embedded-resource binding paths through `check`, `compile`,
-  and `inspect --render`. These are product-entry evidence only; they do not close final executable
+  the Render source and canonical compile paths through `check` and `compile`, decodable semantic paths
+  through `inspect --render`, and the semantic-only embedded-resource binding through `compile` plus plain
+  `inspect` without media decode. These are product-entry evidence only; they do not close final executable
   cross-domain conformance or the I10 re-freeze gate.
   The current Render product delta also covers a bounded source -> canonical -> FCBC -> loader -> semantic/raster handoff for
   root Rect/Image, nested Group/RoundedRect/Circle/Ellipse nodes, solid-fill Polyline/Polygon nodes, and source active intervals

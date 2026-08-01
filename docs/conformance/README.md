@@ -83,8 +83,9 @@ conversion/profiles/        各 profile 的完整、逐文件 hash-bound descrip
 Render manifest schema 3 在原 semantic/raster `fixture` 之外增加 `source_fixture`，其
 `expect`/`diagnostic` 规则与 FCS source manifest 一致，并增加 semantic-only `binding_fixture`。
 `fcs-render` domain tests 执行 source-to-Render/semantic/raster 与 resource-boundary 证据；CLI
-product lane 通过 `check`、`compile`、`inspect --render` 覆盖声明的 source、compile 和 binding
-入口，但不替代 manifest 的 semantic/raster oracle。
+product lane 通过 `check`、`compile` 覆盖 source/FCBC 路径，使用 `inspect --render` 覆盖可解码的
+Render 语义路径，并用普通 `inspect` 覆盖 semantic-only opaque binding；它不替代 manifest 的
+semantic/raster oracle。
 
 S15 resource closure 又在同一候选 schema 2 增加一个 semantic-only `binding_fixture`：source 与
 29-byte opaque asset 必须位于声明的 workspace root，预期固定 canonical resource ID/hash、FCBC
