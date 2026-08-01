@@ -80,6 +80,8 @@ struct FcbcGoldenManifest {
     resource_count: usize,
     exact_descriptors_only: bool,
     expect: FixtureExpectation,
+    core_expect: FixtureExpectation,
+    core_diagnostic: Option<String>,
     path: String,
     decoded_length: u64,
     sha256: String,
@@ -2123,6 +2125,42 @@ fn manifests_preserve_integrity_invariants() {
         assert_eq!(golden.chart_count, 1);
         assert!(golden.exact_descriptors_only);
         assert_eq!(golden.expect, FixtureExpectation::Success);
+        match golden.core_expect {
+            FixtureExpectation::Success => assert!(
+                golden.core_diagnostic.is_none(),
+                "successful FCBC Core load {} must not name a diagnostic",
+                fixture.id
+            ),
+            FixtureExpectation::Error => {
+                let diagnostic = golden.core_diagnostic.as_deref().unwrap_or_else(|| {
+                    panic!("failed FCBC Core load {} needs a diagnostic", fixture.id)
+                });
+                assert!(
+                    !diagnostic.is_empty(),
+                    "failed FCBC Core load {} needs a nonempty diagnostic",
+                    fixture.id
+                );
+                assert!(
+                    !diagnostic.starts_with("implementation."),
+                    "FCBC fixture {} uses a temporary implementation diagnostic",
+                    fixture.id
+                );
+            }
+        }
+        match fixture.id.as_str() {
+            "minimal-runtime" | "embedded-resource" => {
+                assert_eq!(golden.core_expect, FixtureExpectation::Error);
+                assert_eq!(
+                    golden.core_diagnostic.as_deref(),
+                    Some("fcbc.invalid-tempo")
+                );
+            }
+            "nonempty-execution" => {
+                assert_eq!(golden.core_expect, FixtureExpectation::Success);
+                assert!(golden.core_diagnostic.is_none());
+            }
+            id => panic!("unexpected FCBC fixture ID in golden audit: {id}"),
+        }
         assert_eq!(golden.resource_count, golden.resource.len());
         assert!(is_lower_hex(&golden.sha256, 64));
         if let Some(execution) = &golden.execution {
