@@ -297,6 +297,7 @@ fn write_from_compilation_preserves_empty_chart_cardinality() {
     assert!(decoded.lines.is_empty());
     assert!(decoded.notes.is_empty());
     assert!(decoded.distances.is_empty());
+    assert!(decoded.constants.is_empty());
 }
 
 #[test]
