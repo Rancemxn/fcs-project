@@ -65,7 +65,7 @@ fn inventory_matches_product_metadata_and_registries() {
     let workspace_package = &workspace["workspace"]["package"];
     assert_eq!(string(workspace_package, "version"), "5.0.0");
     assert_eq!(string(workspace_package, "license"), "AGPL-3.0-or-later");
-    assert_eq!(string(workspace_package, "license-file"), "LICENSE");
+    assert!(workspace_package.get("license-file").is_none());
     assert_eq!(string(&inventory, "workspace_version"), "5.0.0");
     assert_eq!(string(&inventory, "workspace_license"), "AGPL-3.0-or-later");
     assert_eq!(
@@ -86,10 +86,7 @@ fn inventory_matches_product_metadata_and_registries() {
             manifest["package"]["license"]["workspace"].as_bool(),
             Some(true)
         );
-        assert_eq!(
-            manifest["package"]["license-file"]["workspace"].as_bool(),
-            Some(true)
-        );
+        assert!(manifest["package"].get("license-file").is_none());
     }
 
     assert_eq!(
