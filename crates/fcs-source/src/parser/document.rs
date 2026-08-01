@@ -453,7 +453,7 @@ where
         .map_with(|_, extra| source_span(extra.span()))
         .then_ignore(just(Token::Keyword(Keyword::Profile)))
         .then(select! { Token::Semver(version) => version })
-        .then(source_group_parser(false))
+        .then(source_group_parser(true))
         .map_with(|((keyword_span, version), payload), extra| RenderBlock {
             version,
             payload,
