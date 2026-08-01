@@ -751,12 +751,21 @@ fn assemble_package(
                 })
             })
         });
+    let needs_default_scroll_speed = matches!(execution_graph, ExecutionGraph::Native { .. })
+        && lines.iter().any(|line| {
+            !tracks.iter().any(|track| {
+                track.line_id == line.id && track.target == CanonicalTrackTarget::ScrollSpeed
+            })
+        });
     let mut constants = match execution_graph {
         ExecutionGraph::Fixture => fixture_constants(),
         ExecutionGraph::Native { .. } => {
             let mut constants = Vec::new();
             if needs_visibility_constants {
                 constants.extend([bool_constant(false), bool_constant(true)]);
+            }
+            if needs_default_scroll_speed {
+                constants.push(float_constant(1.0));
             }
             constants
         }
