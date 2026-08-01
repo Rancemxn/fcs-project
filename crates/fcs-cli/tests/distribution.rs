@@ -13,7 +13,7 @@ fn read_toml(path: impl AsRef<Path>) -> Value {
     let path = path.as_ref();
     let text = fs::read_to_string(path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-    text.parse::<Value>()
+    toml::from_str(&text)
         .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()))
 }
 

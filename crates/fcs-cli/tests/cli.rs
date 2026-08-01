@@ -1653,12 +1653,19 @@ fn render_manifest_source_and_product_paths_are_exercised() {
         report["render"]["drawOps"].as_u64(),
         Some(expected_draw_ops)
     );
+    let viewport = report["render"]["viewport"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{source:?}: missing Render viewport"));
+    assert_eq!(viewport.len(), 2, "{source:?}: Render viewport dimensions");
     assert_eq!(
-        report["render"]["viewport"],
-        serde_json::json!([
-            fixture["width"].as_integer().unwrap(),
-            fixture["height"].as_integer().unwrap()
-        ])
+        viewport[0].as_f64(),
+        Some(fixture["width"].as_integer().unwrap() as f64),
+        "{source:?}: Render viewport width"
+    );
+    assert_eq!(
+        viewport[1].as_f64(),
+        Some(fixture["height"].as_integer().unwrap() as f64),
+        "{source:?}: Render viewport height"
     );
 
     let binding = &manifest["binding_fixture"].as_array().unwrap()[0];
