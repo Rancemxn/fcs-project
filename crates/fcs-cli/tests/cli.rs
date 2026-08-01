@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use fcs_model::{CanonicalContentSha256, EntityKind, derive_stable_id};
 use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
 
@@ -15,6 +16,304 @@ fn load_toml(path: &Path) -> toml::Value {
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
     toml::from_str(&source)
         .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()))
+}
+
+fn decode_hex_file(path: &Path) -> Vec<u8> {
+    let source = fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    decode_hex_string(&source)
+}
+
+fn decode_hex_string(source: &str) -> Vec<u8> {
+    let filtered: String = source
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect();
+    assert!(filtered.len().is_multiple_of(2), "odd hex string length");
+    (0..filtered.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&filtered[index..index + 2], 16).unwrap())
+        .collect()
+}
+
+fn read_slice<'a>(bytes: &'a [u8], offset: &mut usize, length: usize) -> &'a [u8] {
+    let end = offset.checked_add(length).unwrap();
+    let slice = bytes.get(*offset..end).unwrap();
+    *offset = end;
+    slice
+}
+
+fn read_u8(bytes: &[u8], offset: &mut usize) -> u8 {
+    read_slice(bytes, offset, 1)[0]
+}
+
+fn read_u16(bytes: &[u8], offset: &mut usize) -> u16 {
+    u16::from_le_bytes(read_slice(bytes, offset, 2).try_into().unwrap())
+}
+
+fn read_u32(bytes: &[u8], offset: &mut usize) -> u32 {
+    u32::from_le_bytes(read_slice(bytes, offset, 4).try_into().unwrap())
+}
+
+fn read_u64(bytes: &[u8], offset: &mut usize) -> u64 {
+    u64::from_le_bytes(read_slice(bytes, offset, 8).try_into().unwrap())
+}
+
+fn lower_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn fcbc_section_name(section_type: u32) -> &'static str {
+    match section_type {
+        1 => "StringTable",
+        2 => "ConstantPool",
+        3 => "Meta",
+        4 => "Contributors",
+        5 => "Credits",
+        6 => "Resources",
+        7 => "Sync",
+        8 => "TempoMap",
+        9 => "Lines",
+        10 => "Notes",
+        11 => "Tracks",
+        12 => "Expressions",
+        13 => "Distance",
+        14 => "Render",
+        15 => "Extensions",
+        16 => "Fidelity",
+        17 => "ConversionReport",
+        18 => "DistributionMetadata",
+        19 => "Debug",
+        20 => "ResourceData",
+        other => panic!("unsupported FCBC section type {other}"),
+    }
+}
+
+fn fcbc_string(container: &fcs_fcbc::ValidatedContainer, bytes: &[u8], reference: u32) -> String {
+    let table = container.section_payload(bytes, 1).unwrap();
+    let mut offset = 0;
+    let count = read_u32(table, &mut offset) as usize;
+    let offsets = (0..=count)
+        .map(|_| read_u32(table, &mut offset) as usize)
+        .collect::<Vec<_>>();
+    let data = &table[offset..];
+    let start = offsets[reference as usize];
+    let end = offsets[reference as usize + 1];
+    String::from_utf8(data[start..end].to_vec()).unwrap()
+}
+
+fn resource_kind(kind: &str) -> u16 {
+    match kind {
+        "audio" => 1,
+        "image" => 2,
+        "font" => 3,
+        "texture" => 4,
+        "path" => 5,
+        "shader" => 6,
+        "binary" => 7,
+        other => panic!("unsupported FCBC resource kind {other}"),
+    }
+}
+
+fn skip_value(bytes: &[u8], offset: &mut usize) -> u8 {
+    let tag = read_u8(bytes, offset);
+    read_slice(bytes, offset, 3);
+    let payload_length = read_u32(bytes, offset) as usize;
+    read_slice(bytes, offset, payload_length);
+    let padding = (8 - (8 + payload_length) % 8) % 8;
+    read_slice(bytes, offset, padding);
+    tag
+}
+
+fn assert_fcbc_golden_framing(
+    id: &str,
+    golden: &toml::Value,
+    bytes: &[u8],
+    container: &fcs_fcbc::ValidatedContainer,
+) {
+    assert_eq!(golden["expect"].as_str(), Some("success"), "{id}");
+    assert_eq!(
+        container.byte_length as u64,
+        golden["decoded_length"].as_integer().unwrap() as u64,
+        "{id}: decoded length"
+    );
+    assert_eq!(
+        lower_hex(&container.content_sha256),
+        golden["sha256"].as_str().unwrap(),
+        "{id}: file hash"
+    );
+    assert_eq!(
+        container.header.profile.as_str(),
+        golden["container_profile"].as_str().unwrap(),
+        "{id}: profile"
+    );
+    assert_eq!(
+        u32::from(container.header.chart_count),
+        golden["chart_count"].as_integer().unwrap() as u32,
+        "{id}: chart count"
+    );
+
+    let sections = golden["section"].as_array().unwrap();
+    assert_eq!(
+        container.sections.len(),
+        sections.len(),
+        "{id}: section count"
+    );
+    for (entry, expected) in container.sections.iter().zip(sections) {
+        let section_type = expected["type"].as_integer().unwrap() as u32;
+        assert_eq!(entry.section_type, section_type, "{id}: section type");
+        assert_eq!(
+            expected["name"].as_str(),
+            Some(fcbc_section_name(section_type)),
+            "{id}: section name"
+        );
+        assert_eq!(
+            entry.offset,
+            expected["offset"].as_integer().unwrap() as u64,
+            "{id}: section {section_type} offset"
+        );
+        assert_eq!(
+            entry.length,
+            expected["length"].as_integer().unwrap() as u64,
+            "{id}: section {section_type} length"
+        );
+        assert_eq!(
+            format!("{:08x}", entry.checksum),
+            expected["crc32"].as_str().unwrap(),
+            "{id}: section {section_type} checksum"
+        );
+    }
+
+    let resource_section = container.section_payload(bytes, 6).unwrap();
+    let mut offset = 0;
+    let resource_count = read_u32(resource_section, &mut offset) as usize;
+    let expected_resources: &[toml::Value] = golden
+        .get("resource")
+        .and_then(|value| value.as_array())
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    assert_eq!(
+        resource_count,
+        golden["resource_count"].as_integer().unwrap() as usize,
+        "{id}: resource count"
+    );
+    assert_eq!(
+        resource_count,
+        expected_resources.len(),
+        "{id}: resource manifest"
+    );
+
+    let resource_data = container.section_payload(bytes, 20).unwrap();
+    for expected in expected_resources {
+        let record_start = offset;
+        let record_length = read_u32(resource_section, &mut offset) as usize;
+        let record_end = record_start.checked_add(record_length).unwrap();
+        assert_eq!(
+            read_u16(resource_section, &mut offset),
+            1,
+            "{id}: resource version"
+        );
+        assert_eq!(
+            read_u16(resource_section, &mut offset),
+            0,
+            "{id}: resource flags"
+        );
+        let stable_id = read_u64(resource_section, &mut offset);
+        assert_eq!(
+            format!("{stable_id:016x}"),
+            expected["id"].as_str().unwrap(),
+            "{id}: resource id"
+        );
+        assert_eq!(
+            expected["id_namespace"].as_str(),
+            Some(fcs_model::RESOURCE_NAMESPACE),
+            "{id}: resource namespace"
+        );
+        assert_eq!(
+            stable_id,
+            derive_stable_id(
+                EntityKind::Resource,
+                expected["canonical_textual_id"].as_str().unwrap()
+            ),
+            "{id}: derived resource id"
+        );
+        assert_eq!(
+            read_u16(resource_section, &mut offset),
+            resource_kind(expected["kind"].as_str().unwrap()),
+            "{id}: resource kind"
+        );
+        assert_eq!(
+            read_u16(resource_section, &mut offset),
+            0,
+            "{id}: resource reserved flags"
+        );
+        let media_type = fcbc_string(container, bytes, read_u32(resource_section, &mut offset));
+        assert_eq!(
+            media_type,
+            expected["media_type"].as_str().unwrap(),
+            "{id}: resource media type"
+        );
+        assert_eq!(
+            read_u16(resource_section, &mut offset),
+            1,
+            "{id}: resource hash algorithm"
+        );
+        assert_eq!(
+            read_u16(resource_section, &mut offset),
+            0,
+            "{id}: resource hash reserved"
+        );
+        let data_offset = read_u64(resource_section, &mut offset);
+        let data_length = read_u64(resource_section, &mut offset);
+        assert_eq!(
+            data_offset,
+            expected["data_offset"].as_integer().unwrap() as u64,
+            "{id}: resource data offset"
+        );
+        assert_eq!(
+            data_length,
+            expected["data_length"].as_integer().unwrap() as u64,
+            "{id}: resource data length"
+        );
+        let hash_length = read_u32(resource_section, &mut offset) as usize;
+        assert_eq!(hash_length, 32, "{id}: resource hash length");
+        let hash = read_slice(resource_section, &mut offset, hash_length);
+        assert_eq!(
+            lower_hex(hash),
+            expected["sha256"].as_str().unwrap(),
+            "{id}: resource stored hash"
+        );
+        assert_eq!(
+            skip_value(resource_section, &mut offset),
+            14,
+            "{id}: resource metadata"
+        );
+        assert_eq!(offset, record_end, "{id}: resource record length");
+
+        let data_start = data_offset as usize;
+        let data_end = data_start + data_length as usize;
+        let payload = resource_data.get(data_start..data_end).unwrap();
+        let expected_payload = decode_hex_string(expected["payload_hex"].as_str().unwrap());
+        assert_eq!(
+            payload,
+            expected_payload.as_slice(),
+            "{id}: resource payload"
+        );
+        let payload_hash = CanonicalContentSha256::digest(payload).as_bytes();
+        assert_eq!(
+            lower_hex(&payload_hash),
+            expected["sha256"].as_str().unwrap(),
+            "{id}: resource payload hash"
+        );
+    }
+    assert_eq!(
+        offset,
+        resource_section.len(),
+        "{id}: resource section length"
+    );
+    if expected_resources.is_empty() {
+        assert!(resource_data.is_empty(), "{id}: empty resource data");
+    }
 }
 
 const CLI_CHECK_CANONICAL_FIXTURES: &[&str] = &[
@@ -1200,43 +1499,83 @@ fn convert_executes_every_declared_public_export_reparse_fixture() {
 }
 
 #[test]
-fn inspect_executes_every_fcbc_golden_through_core_load() {
+fn inspect_executes_every_fcbc_golden_through_declared_core_contract() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let conformance = root.join("docs/conformance/fcbc");
     let manifest = load_toml(&conformance.join("manifest.toml"));
+    let mut mismatches = Vec::new();
 
     for fixture in manifest["fixture"].as_array().unwrap() {
         let id = fixture["id"].as_str().unwrap();
         let golden = load_toml(&conformance.join(fixture["manifest"].as_str().unwrap()));
         let hex = conformance.join(golden["path"].as_str().unwrap());
+        let bytes = decode_hex_file(&hex);
+        let container = fcs_fcbc::load_container(&bytes)
+            .unwrap_or_else(|error| panic!("{id}: framing failed: {error}"));
+        assert_fcbc_golden_framing(id, &golden, &bytes, &container);
+
         let output = bin()
             .arg("inspect")
-            .arg(hex)
+            .arg(&hex)
             .arg("--json")
             .output()
             .unwrap();
-        assert!(
-            output.status.success(),
-            "{id}: stderr={}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let report: serde_json::Value = serde_json::from_slice(&output.stdout)
-            .unwrap_or_else(|error| panic!("{id}: invalid inspect JSON: {error}"));
-        assert_eq!(report["coreLoaded"], true, "{id}");
-        assert_eq!(
-            report["byteLength"].as_u64(),
-            golden["decoded_length"]
-                .as_integer()
-                .map(|value| value as u64),
-            "{id}"
-        );
-        assert_eq!(report["sha256"].as_str(), golden["sha256"].as_str(), "{id}");
-        assert_eq!(
-            report["profile"].as_str(),
-            golden["container_profile"].as_str(),
-            "{id}"
-        );
+        let expected_core = golden["core_expect"].as_str().unwrap();
+        match expected_core {
+            "success" => {
+                if !output.status.success() {
+                    mismatches.push(format!(
+                        "{id}: expected Core success, exit={:?}, stderr={}",
+                        output.status.code(),
+                        String::from_utf8_lossy(&output.stderr)
+                    ));
+                    continue;
+                }
+                let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+                    .unwrap_or_else(|error| panic!("{id}: invalid inspect JSON: {error}"));
+                if report["coreLoaded"] != true {
+                    mismatches.push(format!(
+                        "{id}: successful inspect did not report coreLoaded=true"
+                    ));
+                }
+                if report["byteLength"].as_u64()
+                    != golden["decoded_length"]
+                        .as_integer()
+                        .map(|value| value as u64)
+                {
+                    mismatches.push(format!("{id}: inspect byteLength disagrees with golden"));
+                }
+                if report["sha256"].as_str() != golden["sha256"].as_str() {
+                    mismatches.push(format!("{id}: inspect sha256 disagrees with golden"));
+                }
+                if report["profile"].as_str() != golden["container_profile"].as_str() {
+                    mismatches.push(format!("{id}: inspect profile disagrees with golden"));
+                }
+            }
+            "error" => {
+                let expected_category = golden["core_diagnostic"].as_str().unwrap();
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if output.status.success()
+                    || output.status.code() != Some(3)
+                    || !stderr.contains(expected_category)
+                    || !output.stdout.is_empty()
+                {
+                    mismatches.push(format!(
+                        "{id}: expected Core error {expected_category}, exit={:?}, stdout={}, stderr={stderr}",
+                        output.status.code(),
+                        String::from_utf8_lossy(&output.stdout)
+                    ));
+                }
+            }
+            other => mismatches.push(format!("{id}: unsupported core_expect {other}")),
+        }
     }
+
+    assert!(
+        mismatches.is_empty(),
+        "FCBC CLI Core contract mismatches:\n{}",
+        mismatches.join("\n")
+    );
 }
 
 #[test]

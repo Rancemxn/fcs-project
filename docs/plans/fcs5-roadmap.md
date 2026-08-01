@@ -774,7 +774,7 @@ git diff --check
   through `conformance_manifest` at its declared parse, elaborate, canonical, or evaluate boundary;
   the CLI lane covers the exhaustive canonical partition and applicable example paths, including the fragment example's format/parser boundary. The same suite now drives all six
   public Conversion import fixtures through `report`, all three manifest-declared export/reparse
-  fixtures through `convert`, all three FCBC goldens through `inspect` and mandatory Core load, and
+  fixtures through `convert`, all three FCBC goldens through `inspect` and declared Core-load success/rejection contracts, and
   the Render source, canonical compile, and embedded-resource binding paths through `check`, `compile`,
   and `inspect --render`. These are product-entry evidence only; they do not close final executable
   cross-domain conformance or the I10 re-freeze gate.
