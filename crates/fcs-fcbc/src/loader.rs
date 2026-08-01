@@ -1555,7 +1555,7 @@ fn parse_notes(
         if id == 0 || !ids.insert(id) {
             return Err("fcbc.duplicate-id");
         }
-        let is_after_prior = prior_sort_key.map_or(true, |prior| match prior.0.total_cmp(&time) {
+        let is_after_prior = prior_sort_key.is_none_or(|prior| match prior.0.total_cmp(&time) {
             std::cmp::Ordering::Less => true,
             std::cmp::Ordering::Equal => {
                 (prior.1, prior.2, prior.3) < (line_id, document_order, id)
