@@ -208,7 +208,10 @@ fn check_executes_manifest_declared_canonical_fixtures() {
         }
         let output = command.output().unwrap();
         let expected = fixture["expect"].as_str().unwrap();
-        let expected_category = fixture["diagnostic"].as_str().unwrap_or("success");
+        let expected_category = fixture
+            .get("diagnostic")
+            .and_then(|value| value.as_str())
+            .unwrap_or("success");
         let report = serde_json::from_slice::<serde_json::Value>(&output.stdout).ok();
         let actual_categories: Vec<_> = report
             .as_ref()
