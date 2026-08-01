@@ -466,40 +466,6 @@ pub fn write_from_compilation_with_profile(
             })
         })
         .collect::<FcbcResult<Vec<_>>>()?;
-    if lines.is_empty() {
-        // Native charts without Lines still need a self-contained Line so Core
-        // section loaders can attach tempo/note graph ownership.
-        lines.push(LineFixture {
-            id: stable_id(b"fcs.line", b"generated/default"),
-            parent_id: 0,
-            document_order: 0,
-            z_order: 0,
-            inherit_flags: 0,
-            line_flags: 0,
-            position: [0.0, 0.0],
-            rotation: 0.0,
-            scale: [1.0, 1.0],
-            alpha: 1.0,
-            transform_origin: [0.0, 0.0],
-            texture_anchor: [0.5, 0.5],
-            distance_index: 0,
-            position_descriptor: 0,
-            rotation_descriptor: 0,
-            scale_descriptor: 0,
-            alpha_descriptor: 0,
-            scroll_tempo_descriptor: 0,
-            speed_descriptor: 0,
-            scroll_tempo: chart
-                .time_map()
-                .segments()
-                .map(|(_, time, bpm)| ScrollTempoPointFixture { time, bpm })
-                .collect(),
-            evaluable_speed: false,
-            floor_scale: 1.0,
-            integration_origin: 0.0,
-            initial_floor: 0.0,
-        });
-    }
     lines.sort_by_key(|line| line.id);
     for (index, line) in lines.iter_mut().enumerate() {
         line.distance_index = index as u32;
