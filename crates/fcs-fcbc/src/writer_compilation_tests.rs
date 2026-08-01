@@ -24,6 +24,45 @@ fn compile(source: &str) -> Vec<u8> {
     write_from_compilation(&compilation).unwrap()
 }
 
+fn assert_runtime_value_bits(actual: crate::RuntimeValue, expected: crate::RuntimeValue) {
+    match (actual, expected) {
+        (
+            crate::RuntimeValue::Scalar {
+                ty: actual_ty,
+                value: actual,
+            },
+            crate::RuntimeValue::Scalar {
+                ty: expected_ty,
+                value: expected,
+            },
+        ) => {
+            assert_eq!(actual_ty, expected_ty);
+            assert_eq!(actual.to_bits(), expected.to_bits());
+        }
+        (crate::RuntimeValue::Color(actual), crate::RuntimeValue::Color(expected)) => {
+            for (actual, expected) in actual.into_iter().zip(expected) {
+                assert_eq!(actual.to_bits(), expected.to_bits());
+            }
+        }
+        (
+            crate::RuntimeValue::Vec2 {
+                ty: actual_ty,
+                value: actual,
+            },
+            crate::RuntimeValue::Vec2 {
+                ty: expected_ty,
+                value: expected,
+            },
+        ) => {
+            assert_eq!(actual_ty, expected_ty);
+            for (actual, expected) in actual.into_iter().zip(expected) {
+                assert_eq!(actual.to_bits(), expected.to_bits());
+            }
+        }
+        (actual, expected) => assert_eq!(actual, expected),
+    }
+}
+
 #[test]
 fn fidelity_profile_encodes_source_free_section_without_changing_execution() {
     let source = r#"#fcs 5.0.0
@@ -323,12 +362,12 @@ fn write_from_compilation_preserves_exact_expression_dag() {
         )
         .expect("encoded alpha query")
         .value;
-        assert_eq!(
+        assert_runtime_value_bits(
             encoded,
             crate::RuntimeValue::Scalar {
                 ty: crate::ValueType::Float,
                 value: canonical,
-            }
+            },
         );
     }
 }
@@ -387,7 +426,7 @@ collections {
         )
         .unwrap()
         .value;
-        assert_eq!(actual, expected);
+        assert_runtime_value_bits(actual, expected);
     }
 }
 
@@ -479,70 +518,70 @@ collections {
         .value
     };
     assert_eq!(note.flags, 0b1);
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(note.property_descriptors[0], 1.0),
         crate::RuntimeValue::Scalar {
             ty: crate::ValueType::Length,
             value: 12.0,
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(note.property_descriptors[1], 1.0),
         crate::RuntimeValue::Scalar {
             ty: crate::ValueType::Float,
             value: 0.5,
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(note.property_descriptors[2], 1.0),
         crate::RuntimeValue::Scalar {
             ty: crate::ValueType::Length,
             value: -2.0,
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(note.property_descriptors[3], 1.0),
         crate::RuntimeValue::Scalar {
             ty: crate::ValueType::Length,
             value: 3.0,
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(note.property_descriptors[4], 1.0),
         crate::RuntimeValue::Scalar {
             ty: crate::ValueType::Float,
             value: 0.25,
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(note.property_descriptors[5], 1.0),
         crate::RuntimeValue::Scalar {
             ty: crate::ValueType::Float,
             value: 2.0,
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(note.property_descriptors[6], 1.0),
         crate::RuntimeValue::Scalar {
             ty: crate::ValueType::Float,
             value: 0.75,
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(note.property_descriptors[7], 1.0),
         crate::RuntimeValue::Scalar {
             ty: crate::ValueType::Angle,
             value: std::f64::consts::FRAC_PI_2,
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(note.property_descriptors[8], 1.0),
         crate::RuntimeValue::Color([
             canonical_color.red(),
             canonical_color.green(),
             canonical_color.blue(),
             canonical_color.alpha(),
-        ])
+        ]),
     );
     assert_eq!(
         evaluate(note.property_descriptors[9], 0.25),
@@ -789,47 +828,47 @@ lines {
         .expect("Line descriptor evaluation")
         .value
     };
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(line.position_descriptor),
         crate::RuntimeValue::Vec2 {
             ty: crate::ValueType::Vec2Length,
             value: [3.0, -4.0],
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(line.rotation_descriptor),
         crate::RuntimeValue::Scalar {
             ty: crate::ValueType::Angle,
             value: std::f64::consts::FRAC_PI_2,
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(line.scale_descriptor),
         crate::RuntimeValue::Vec2 {
             ty: crate::ValueType::Vec2Float,
             value: [0.5, 2.0],
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(line.alpha_descriptor),
         crate::RuntimeValue::Scalar {
             ty: crate::ValueType::Float,
             value: 0.25,
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         decoded.constants[line.transform_origin_constant as usize],
         crate::RuntimeValue::Vec2 {
             ty: crate::ValueType::Vec2Length,
             value: [1.0, 2.0],
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         decoded.constants[line.texture_anchor_constant as usize],
         crate::RuntimeValue::Vec2 {
             ty: crate::ValueType::Vec2Float,
             value: [0.25, 0.75],
-        }
+        },
     );
 }
 
@@ -892,33 +931,33 @@ lines {
         .expect("Line Track evaluation")
         .value
     };
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(line.position_descriptor),
         crate::RuntimeValue::Vec2 {
             ty: crate::ValueType::Vec2Length,
             value: [1.0, 2.0],
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(line.rotation_descriptor),
         crate::RuntimeValue::Scalar {
             ty: crate::ValueType::Angle,
             value: std::f64::consts::FRAC_PI_2,
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(line.scale_descriptor),
         crate::RuntimeValue::Vec2 {
             ty: crate::ValueType::Vec2Float,
             value: [2.0, 3.0],
-        }
+        },
     );
-    assert_eq!(
+    assert_runtime_value_bits(
         evaluate(line.alpha_descriptor),
         crate::RuntimeValue::Scalar {
             ty: crate::ValueType::Float,
             value: 0.5,
-        }
+        },
     );
 }
 
@@ -954,7 +993,7 @@ lines {
     let bytes = write_from_compilation(&compilation).unwrap();
     let decoded = crate::load_chart(&bytes).expect("compiled scroll Track must load");
     let line = decoded.lines.first().expect("main Line");
-    assert_eq!(
+    assert_runtime_value_bits(
         crate::query_descriptor(
             &decoded,
             line.scroll_speed_descriptor,
@@ -966,7 +1005,7 @@ lines {
         crate::RuntimeValue::Scalar {
             ty: crate::ValueType::Float,
             value: 2.0,
-        }
+        },
     );
     let distance = crate::query_distance(&decoded, line.distance_descriptor, 1.0)
         .expect("scroll distance evaluation");
@@ -1038,10 +1077,10 @@ lines {
         value,
     };
 
-    assert_eq!(bpm(explicit, 1.0), scalar(60.0));
-    assert_eq!(bpm(explicit, 2.0), scalar(120.0));
-    assert_eq!(bpm(global, 1.0), scalar(120.0));
-    assert_eq!(bpm(global, 2.0), scalar(240.0));
+    assert_runtime_value_bits(bpm(explicit, 1.0), scalar(60.0));
+    assert_runtime_value_bits(bpm(explicit, 2.0), scalar(120.0));
+    assert_runtime_value_bits(bpm(global, 1.0), scalar(120.0));
+    assert_runtime_value_bits(bpm(global, 2.0), scalar(240.0));
     assert_eq!(
         crate::query_scroll_coordinate(&decoded, explicit.scroll_tempo_descriptor, -1.0),
         Ok(-1.0)
@@ -1115,9 +1154,9 @@ lines {
         ty: crate::ValueType::Float,
         value,
     };
-    assert_eq!(evaluate(-1.0), alpha(1.0));
-    assert_eq!(evaluate(1.0), alpha(0.5));
-    assert_eq!(evaluate(3.0), alpha(0.0));
+    assert_runtime_value_bits(evaluate(-1.0), alpha(1.0));
+    assert_runtime_value_bits(evaluate(1.0), alpha(0.5));
+    assert_runtime_value_bits(evaluate(3.0), alpha(0.0));
 }
 
 #[test]
@@ -1182,11 +1221,11 @@ lines {
         ty: crate::ValueType::Float,
         value,
     };
-    assert_eq!(evaluate(-1.0), alpha(0.25));
-    assert_eq!(evaluate(0.5), alpha(0.625));
-    assert_eq!(evaluate(1.5), alpha(0.0));
-    assert_eq!(evaluate(2.5), alpha(0.375));
-    assert_eq!(evaluate(4.0), alpha(1.0));
+    assert_runtime_value_bits(evaluate(-1.0), alpha(0.25));
+    assert_runtime_value_bits(evaluate(0.5), alpha(0.625));
+    assert_runtime_value_bits(evaluate(1.5), alpha(0.0));
+    assert_runtime_value_bits(evaluate(2.5), alpha(0.375));
+    assert_runtime_value_bits(evaluate(4.0), alpha(1.0));
 }
 
 #[test]
@@ -1237,11 +1276,11 @@ lines {
         ty: crate::ValueType::Float,
         value,
     };
-    assert_eq!(evaluate(-1.0), alpha(0.0));
-    assert_eq!(evaluate(0.5), alpha(0.5));
-    assert_eq!(evaluate(1.5), alpha(0.25));
-    assert_eq!(evaluate(2.5), alpha(0.375));
-    assert_eq!(evaluate(4.0), alpha(0.5));
+    assert_runtime_value_bits(evaluate(-1.0), alpha(0.0));
+    assert_runtime_value_bits(evaluate(0.5), alpha(0.5));
+    assert_runtime_value_bits(evaluate(1.5), alpha(0.25));
+    assert_runtime_value_bits(evaluate(2.5), alpha(0.375));
+    assert_runtime_value_bits(evaluate(4.0), alpha(0.5));
 }
 
 #[test]
@@ -1290,11 +1329,11 @@ lines {
         ty: crate::ValueType::Float,
         value,
     };
-    assert_eq!(evaluate(-1.0), alpha(0.5));
-    assert_eq!(evaluate(0.5), alpha(0.375));
-    assert_eq!(evaluate(1.5), alpha(0.5));
-    assert_eq!(evaluate(2.5), alpha(0.625));
-    assert_eq!(evaluate(4.0), alpha(0.5));
+    assert_runtime_value_bits(evaluate(-1.0), alpha(0.5));
+    assert_runtime_value_bits(evaluate(0.5), alpha(0.375));
+    assert_runtime_value_bits(evaluate(1.5), alpha(0.5));
+    assert_runtime_value_bits(evaluate(2.5), alpha(0.625));
+    assert_runtime_value_bits(evaluate(4.0), alpha(0.5));
 }
 
 #[test]
@@ -1346,10 +1385,10 @@ lines {
         ty: crate::ValueType::Float,
         value,
     };
-    assert_eq!(evaluate(-1.0), alpha(0.8));
-    assert_eq!(evaluate(0.5), alpha(1.0));
-    assert_eq!(evaluate(2.0), alpha(0.4));
-    assert_eq!(evaluate(4.0), alpha(0.0));
+    assert_runtime_value_bits(evaluate(-1.0), alpha(0.8));
+    assert_runtime_value_bits(evaluate(0.5), alpha(1.0));
+    assert_runtime_value_bits(evaluate(2.0), alpha(0.4));
+    assert_runtime_value_bits(evaluate(4.0), alpha(0.0));
 }
 
 #[test]
@@ -1400,8 +1439,8 @@ lines {
         ty: crate::ValueType::Float,
         value,
     };
-    assert_eq!(evaluate(1.0), alpha(0.25));
-    assert_eq!(evaluate(3.0), alpha(0.5));
+    assert_runtime_value_bits(evaluate(1.0), alpha(0.25));
+    assert_runtime_value_bits(evaluate(3.0), alpha(0.5));
 }
 
 #[test]
@@ -1448,14 +1487,14 @@ lines {{
         .expect("alpha easing Track evaluation")
         .value;
         // The shared product runtime proves serialized ID preservation, not independent math.
-        assert_eq!(
+        assert_runtime_value_bits(
             actual,
             crate::RuntimeValue::Scalar {
                 ty: crate::ValueType::Float,
                 value: easing.evaluate(0.5).unwrap(),
             },
             "{}",
-            easing.name()
+            easing.name(),
         );
     }
 }
