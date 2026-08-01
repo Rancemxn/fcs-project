@@ -306,3 +306,88 @@ mod tempo_revalidation_tests {
         assert_eq!(parse_tempo(&bytes).unwrap_err(), "fcbc.invalid-tempo");
     }
 }
+
+mod extension_tests {
+    use super::*;
+
+    fn extension_record(
+        namespace: u32,
+        version: (u16, u16, u16),
+        flags: u16,
+        value_tag: u8,
+        tail: &[u8],
+    ) -> Vec<u8> {
+        let value_payload = if value_tag == 14 {
+            0u32.to_le_bytes().to_vec()
+        } else {
+            Vec::new()
+        };
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&namespace.to_le_bytes());
+        payload.extend_from_slice(&version.0.to_le_bytes());
+        payload.extend_from_slice(&version.1.to_le_bytes());
+        payload.extend_from_slice(&version.2.to_le_bytes());
+        payload.extend_from_slice(&flags.to_le_bytes());
+        payload.extend_from_slice(&[value_tag, 0, 0, 0]);
+        payload.extend_from_slice(&(value_payload.len() as u32).to_le_bytes());
+        payload.extend_from_slice(&value_payload);
+        payload.extend_from_slice(&[0; 4]);
+        payload.extend_from_slice(tail);
+
+        let mut record = Vec::new();
+        record.extend_from_slice(&((payload.len() + 8) as u32).to_le_bytes());
+        record.extend_from_slice(&1u16.to_le_bytes());
+        record.extend_from_slice(&0u16.to_le_bytes());
+        record.extend_from_slice(&payload);
+        record
+    }
+
+    fn extension_section(records: &[Vec<u8>]) -> Vec<u8> {
+        let mut section = Vec::new();
+        section.extend_from_slice(&(records.len() as u32).to_le_bytes());
+        for record in records {
+            section.extend_from_slice(record);
+        }
+        section
+    }
+
+    #[test]
+    fn extension_record_tail_is_skipped_within_its_boundary() {
+        let record = extension_record(0, (1, 2, 3), 1, 14, &[0xaa, 0xbb, 0xcc, 0xdd]);
+        let extensions = parse_extensions(&extension_section(&[record]), &["score.ext".into()])
+            .expect("extension record tail must be skippable");
+        assert_eq!(
+            extensions,
+            vec![ExtensionRecord {
+                namespace: "score.ext".into(),
+                version: (1, 2, 3),
+                flags: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn extension_validation_uses_the_stable_record_category() {
+        let strings = vec!["score.ext".into()];
+        let invalid_flags = extension_record(0, (1, 2, 3), 4, 14, &[]);
+        assert_eq!(
+            parse_extensions(&extension_section(&[invalid_flags]), &strings),
+            Err("fcbc.invalid-record")
+        );
+
+        let invalid_payload = extension_record(0, (1, 2, 3), 1, 0, &[]);
+        assert_eq!(
+            parse_extensions(&extension_section(&[invalid_payload]), &strings),
+            Err("fcbc.invalid-record")
+        );
+
+        let duplicate = extension_record(0, (1, 2, 3), 1, 14, &[]);
+        assert_eq!(
+            parse_extensions(
+                &extension_section(&[duplicate.clone(), duplicate]),
+                &strings
+            ),
+            Err("fcbc.invalid-record")
+        );
+    }
+}

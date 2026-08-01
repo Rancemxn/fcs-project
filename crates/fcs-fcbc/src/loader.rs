@@ -1218,17 +1218,16 @@ fn parse_extensions(
         let version = (record.u16()?, record.u16()?, record.u16()?);
         let flags = record.u16()?;
         if namespace.is_empty() || flags & !0b11 != 0 {
-            return Err("fcbc.invalid-extension");
+            return Err("fcbc.invalid-record");
         }
         let key = (namespace.as_bytes().to_vec(), version);
         if prior_key.as_ref().is_some_and(|prior| prior >= &key) {
-            return Err("fcbc.invalid-extension");
+            return Err("fcbc.invalid-record");
         }
         prior_key = Some(key);
         if parse_value(&mut record, strings.len())?.tag != 14 {
-            return Err("fcbc.invalid-extension");
+            return Err("fcbc.invalid-record");
         }
-        record.finish()?;
         extensions.push(ExtensionRecord {
             namespace,
             version,
