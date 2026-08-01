@@ -760,8 +760,9 @@ git diff --check
   Bounded child #452 binds the unpublished local RC distribution inventory to workspace package metadata, the MIT
   license declaration, the five candidate version domains, FCBC container profiles, the Render manifest, and the
   checked-in Conversion profile registry. Its bounded artifact contract now checks the root license text, all seven
-  Cargo package listings, required packaged paths, and UTF-8 inventory inputs; final executable cross-domain, matrix,
-  Appendix A example mapping, exact-head gate, joint review, and re-freeze obligations remain open under #296.
+  Cargo package listings, required packaged paths, and UTF-8 inventory inputs; the Appendix A example is now
+  manifest-backed with focused elaboration/canonical and CLI canonical/Core-load evidence. Final executable
+  cross-domain, matrix, exact-head gate, joint review, and re-freeze obligations remain open under #296.
   The complete I10 product/domain evidence index is `docs/conformance/fcs5-i10-evidence-ledger.md`; it records
   runtime/property/fuzz rows as exact-head Full Gate pending and does not promote any version domain to Frozen.
 - The I10 `check` command now reuses `canonical_compilation_with_source`, so a successful check covers

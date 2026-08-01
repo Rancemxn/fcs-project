@@ -1,0 +1,42 @@
+#fcs 5.0.0
+
+format { profile: chart; }
+
+meta {
+    title: "FCS 5 Example";
+    chartVersion: "1";
+}
+
+tempoMap {
+    0beat -> 180bpm;
+}
+
+definitions {
+    const STEP: beat = 1beat;
+
+    template Note normalTap(at: beat, x: length, whichLine: Line) {
+        return tap {
+            line: whichLine;
+            gameplay.time: at;
+            gameplay.side: "above";
+            presentation.positionX: x;
+        };
+    }
+}
+
+lines {
+    line main {
+        position: vec2(0px, 0px);
+        rotation: 0deg;
+        floorScale: 120px;
+    }
+}
+
+collections {
+    notes {
+        generate at: beat in 0beat..<4beat step STEP {
+            let x: length = sin(toFloat(index) * pi) * 100px;
+            emit normalTap(at, x, @main);
+        }
+    }
+}

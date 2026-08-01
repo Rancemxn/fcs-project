@@ -1,0 +1,12 @@
+{
+  "noteCount": 4,
+  "times": [
+    { "numerator": 0, "denominator": 1 },
+    { "numerator": 1, "denominator": 1 },
+    { "numerator": 2, "denominator": 1 },
+    { "numerator": 3, "denominator": 1 }
+  ],
+  "forbiddenCanonicalFields": [
+    "sourceText", "workspacePath", "template", "generator", "local", "preserveRawPayload"
+  ]
+}
