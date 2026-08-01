@@ -152,7 +152,7 @@ mod tests {
         .unwrap();
         assert_eq!(manifest.schema_version, 2);
         let base_bytes = decode_hex_file(&base_dir.join(&manifest.base));
-        assert_eq!(manifest.mutation.len(), 2);
+        assert_eq!(manifest.mutation.len(), 3);
         for mutation in &manifest.mutation {
             let bytes = apply_patches(&base_bytes, &mutation.patch);
             let category = match load_chart(&bytes) {

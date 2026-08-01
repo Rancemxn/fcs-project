@@ -1287,7 +1287,7 @@ fn validate_resource_data(
     resources: &mut [ResourceRecord],
 ) -> Result<(), &'static str> {
     let mut cursor = 0usize;
-    for resource in resources {
+    for resource in resources.iter() {
         let expected = align_up_usize(cursor, 8).ok_or("fcbc.invalid-resource-data")?;
         if resource.data_offset != expected as u64 {
             return Err("fcbc.invalid-resource-data");
@@ -1303,6 +1303,22 @@ fn validate_resource_data(
         let end = expected
             .checked_add(length)
             .ok_or("fcbc.invalid-resource-data")?;
+        bytes
+            .get(expected..end)
+            .ok_or("fcbc.invalid-resource-data")?;
+        cursor = end;
+    }
+    if cursor != bytes.len() {
+        return Err("fcbc.invalid-resource-data");
+    }
+    cursor = 0;
+    for resource in resources {
+        let expected = align_up_usize(cursor, 8).ok_or("fcbc.invalid-resource-data")?;
+        let length =
+            usize::try_from(resource.data_length).map_err(|_| "fcbc.invalid-resource-data")?;
+        let end = expected
+            .checked_add(length)
+            .ok_or("fcbc.invalid-resource-data")?;
         let payload = bytes
             .get(expected..end)
             .ok_or("fcbc.invalid-resource-data")?;
@@ -1312,9 +1328,6 @@ fn validate_resource_data(
         }
         resource.bytes = payload.to_vec().into_boxed_slice();
         cursor = end;
-    }
-    if cursor != bytes.len() {
-        return Err("fcbc.invalid-resource-data");
     }
     Ok(())
 }
