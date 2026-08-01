@@ -72,6 +72,7 @@ policy = "strict"
 parser_dialect = "rpe.json.compatible"
 target_profile = "rpe.phira.legacy-speed"
 target_profile_version = "1.0.0"
+floor_scale_px = "120"
 policy = "semantic"
 
 [[fixture]]
