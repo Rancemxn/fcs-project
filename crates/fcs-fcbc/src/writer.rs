@@ -743,7 +743,33 @@ fn assemble_package(
 ) -> FcbcResult<Vec<u8>> {
     let mut lines = lines.to_vec();
     let mut notes = notes.to_vec();
-    let mut constants = fixture_constants();
+    let needs_visibility_constants = matches!(execution_graph, ExecutionGraph::Native { .. })
+        && notes.iter().any(|note| {
+            runtime_descriptors.is_none_or(|table| {
+                !table.roots().iter().any(|root| {
+                    root.target_path() == note_property_path(9) && root.owner() == note.id
+                })
+            })
+        });
+    let needs_default_scroll_speed = matches!(execution_graph, ExecutionGraph::Native { .. })
+        && lines.iter().any(|line| {
+            !tracks.iter().any(|track| {
+                track.line_id == line.id && track.target == CanonicalTrackTarget::ScrollSpeed
+            })
+        });
+    let mut constants = match execution_graph {
+        ExecutionGraph::Fixture => fixture_constants(),
+        ExecutionGraph::Native { .. } => {
+            let mut constants = Vec::new();
+            if needs_visibility_constants {
+                constants.extend([bool_constant(false), bool_constant(true)]);
+            }
+            if needs_default_scroll_speed {
+                constants.push(float_constant(1.0));
+            }
+            constants
+        }
+    };
     if matches!(execution_graph, ExecutionGraph::Native { .. }) {
         for line in &lines {
             constants.extend([
@@ -791,16 +817,23 @@ fn assemble_package(
         (left.tag, left.payload.as_slice()).cmp(&(right.tag, right.payload.as_slice()))
     });
     constants.dedup();
-    let indices = constant_indices(&constants);
     let (track_section, expressions, descriptor_indices) = match execution_graph {
-        ExecutionGraph::Fixture => (
-            tracks_section(&indices),
-            expression_section(&indices),
-            Vec::new(),
-        ),
+        ExecutionGraph::Fixture => {
+            let indices = constant_indices(&constants);
+            (
+                tracks_section(&indices),
+                expression_section(&indices),
+                Vec::new(),
+            )
+        }
         ExecutionGraph::Native { has_notes } => native_tracks_section(
             &constants,
-            &indices,
+            needs_visibility_constants.then(|| {
+                (
+                    find_constant(&constants, &bool_constant(false)),
+                    find_constant(&constants, &bool_constant(true)),
+                )
+            }),
             &mut lines,
             &mut notes,
             tracks,
@@ -2713,7 +2746,7 @@ fn tracks_section(constants: &ConstantIndices) -> Vec<u8> {
 
 fn native_tracks_section(
     constants: &[Constant],
-    indices: &ConstantIndices,
+    visibility_constants: Option<(u32, u32)>,
     lines: &mut [LineFixture],
     notes: &mut [NoteFixture],
     tracks: &[NativeTrackFixture],
@@ -2817,10 +2850,12 @@ fn native_tracks_section(
                         &mut runtime_descriptor_indices,
                     )?
                 } else if property == 9 {
+                    let (false_constant, true_constant) = visibility_constants
+                        .expect("Native Note visibility fallback constants must be seeded");
                     native_note_visibility_descriptor(
                         &mut descriptors,
-                        indices.bool_false,
-                        indices.bool_true,
+                        false_constant,
+                        true_constant,
                         notes[index].visible_from,
                         notes[index].visible_until,
                     )
