@@ -304,7 +304,11 @@ pub struct SectionInfo {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DecodedChart {
     pub container_profile: u8,
+    pub source_fcs_version: (u16, u16, u16),
     pub document_profile: u8,
+    pub document_feature_bits: u32,
+    pub meta: DecodedValue,
+    pub artwork: DecodedValue,
     pub feature_flags: u64,
     pub strings: Vec<String>,
     pub constants: Vec<RuntimeValue>,
@@ -354,7 +358,7 @@ pub struct ResourceRecord {
     pub bytes: Box<[u8]>,
 }
 
-type ParsedContainer = (u8, u64, [Option<u32>; 2], Vec<RawSection>);
+type ParsedContainer = (u8, u64, (u16, u16, u16), [Option<u32>; 2], Vec<RawSection>);
 
 struct Cursor<'a> {
     bytes: &'a [u8],
@@ -453,7 +457,8 @@ pub fn load_chart(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
 
 /// Core product load entry used by tests and internal callers.
 pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
-    let (container_profile, feature_flags, compiler_refs, sections) = parse_container(bytes)?;
+    let (container_profile, feature_flags, source_fcs_version, compiler_refs, sections) =
+        parse_container(bytes)?;
     let section_map: BTreeMap<u32, &RawSection> = sections
         .iter()
         .map(|section| (section.info.section_type, section))
@@ -466,7 +471,8 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
         }
     }
     let constants = parse_constant_pool(section_payload(bytes, &section_map, 2)?)?;
-    let document_profile = parse_meta(section_payload(bytes, &section_map, 3)?, &strings)?;
+    let (document_profile, document_feature_bits, meta, artwork) =
+        parse_meta(section_payload(bytes, &section_map, 3)?, &strings)?;
     let contributor_ids = parse_contributors(section_payload(bytes, &section_map, 4)?, &strings)?;
     parse_credits(
         section_payload(bytes, &section_map, 5)?,
@@ -483,6 +489,8 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
     }
     let mut resources = parse_resources(section_payload(bytes, &section_map, 6)?, &strings)?;
     validate_resource_data(section_payload(bytes, &section_map, 20)?, &mut resources)?;
+    validate_decoded_value_references(&meta, &resources, &contributor_ids)?;
+    validate_artwork(&artwork, &resources)?;
     validate_extension_references(&extensions, &resources, &contributor_ids)?;
     parse_sync(section_payload(bytes, &section_map, 7)?, &resources)?;
     let tempo_points = parse_tempo(section_payload(bytes, &section_map, 8)?)?;
@@ -515,7 +523,11 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
 
     Ok(DecodedChart {
         container_profile,
+        source_fcs_version,
         document_profile,
+        document_feature_bits,
+        meta,
+        artwork,
         feature_flags,
         strings,
         constants,
@@ -713,6 +725,7 @@ fn parse_container(bytes: &[u8]) -> Result<ParsedContainer, &'static str> {
     Ok((
         profile,
         feature_flags,
+        source_version,
         [compiler_id, compiler_version],
         sections,
     ))
@@ -888,7 +901,10 @@ fn parse_runtime_constant(cursor: &mut Cursor<'_>) -> Result<RuntimeValue, &'sta
     Ok(result)
 }
 
-fn parse_meta(bytes: &[u8], strings: &[String]) -> Result<u8, &'static str> {
+fn parse_meta(
+    bytes: &[u8],
+    strings: &[String],
+) -> Result<(u8, u32, DecodedValue, DecodedValue), &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
     let document_profile = cursor.u8()?;
     if !(1..=5).contains(&document_profile) {
@@ -899,13 +915,78 @@ fn parse_meta(bytes: &[u8], strings: &[String]) -> Result<u8, &'static str> {
     if document_features & !0b11 != 0 {
         return Err("fcbc.invalid-record");
     }
+    if !document_features_match_profile(document_profile, document_features) {
+        return Err("fcbc.invalid-record");
+    }
     let meta = parse_value(&mut cursor, strings.len())?;
     let artwork = parse_value(&mut cursor, strings.len())?;
     if meta.tag != 14 || artwork.tag != 14 {
         return Err("fcbc.invalid-record");
     }
+    let meta = decode_value(&meta, strings)?;
+    let artwork = decode_value(&artwork, strings)?;
+    validate_meta(&meta)?;
     cursor.finish()?;
-    Ok(document_profile)
+    Ok((document_profile, document_features, meta, artwork))
+}
+
+fn document_features_match_profile(profile: u8, features: u32) -> bool {
+    match profile {
+        1 => features == 0,
+        2 => features & !0b11 == 0,
+        3 => features & 1 != 0,
+        4 => features & (1 << 1) != 0,
+        5 => features & 0b11 != 0,
+        _ => false,
+    }
+}
+
+const META_KEYS: [&str; 13] = [
+    "title",
+    "subtitle",
+    "alternativeTitles",
+    "chartVersion",
+    "difficulty",
+    "level",
+    "description",
+    "language",
+    "tags",
+    "license",
+    "documentId",
+    "revision",
+    "custom",
+];
+
+fn validate_meta(value: &DecodedValue) -> Result<(), &'static str> {
+    let DecodedValue::Object(fields) = value else {
+        return Err("fcbc.invalid-record");
+    };
+    let mut previous = None;
+    for (key, value) in fields {
+        let index = META_KEYS
+            .iter()
+            .position(|candidate| *candidate == key)
+            .ok_or("fcbc.invalid-record")?;
+        if previous.is_some_and(|previous| previous >= index) {
+            return Err("fcbc.invalid-record");
+        }
+        previous = Some(index);
+        let valid = match key.as_str() {
+            "title" | "subtitle" | "chartVersion" | "difficulty" | "description" | "language"
+            | "license" | "documentId" => matches!(value, DecodedValue::String(_)),
+            "alternativeTitles" | "tags" => {
+                matches!(value, DecodedValue::Array { element_tag: 4, values } if values.iter().all(|value| matches!(value, DecodedValue::String(_))))
+            }
+            "level" => matches!(value, DecodedValue::Float(_)),
+            "revision" => matches!(value, DecodedValue::Int(value) if *value >= 0),
+            "custom" => matches!(value, DecodedValue::Object(_)),
+            _ => false,
+        };
+        if !valid {
+            return Err("fcbc.invalid-record");
+        }
+    }
+    Ok(())
 }
 
 fn parse_fidelity(bytes: &[u8], strings: &[String]) -> Result<(), &'static str> {
@@ -1295,6 +1376,57 @@ fn validate_extension_references(
     extensions
         .iter()
         .try_for_each(|extension| validate_value(&extension.payload, &resource_ids, contributors))
+}
+
+fn validate_decoded_value_references(
+    value: &DecodedValue,
+    resources: &[ResourceRecord],
+    contributors: &BTreeSet<u64>,
+) -> Result<(), &'static str> {
+    let resource_ids: BTreeSet<u64> = resources.iter().map(|resource| resource.id).collect();
+    fn visit(
+        value: &DecodedValue,
+        resource_ids: &BTreeSet<u64>,
+        contributor_ids: &BTreeSet<u64>,
+    ) -> Result<(), &'static str> {
+        match value {
+            DecodedValue::ResourceRef(id) if resource_ids.contains(id) => Ok(()),
+            DecodedValue::ResourceRef(_) => Err("fcbc.dangling-reference"),
+            DecodedValue::ContributorRef(id) if contributor_ids.contains(id) => Ok(()),
+            DecodedValue::ContributorRef(_) => Err("fcbc.dangling-reference"),
+            DecodedValue::Array { values, .. } => values
+                .iter()
+                .try_for_each(|value| visit(value, resource_ids, contributor_ids)),
+            DecodedValue::Object(fields) => fields
+                .iter()
+                .try_for_each(|(_, value)| visit(value, resource_ids, contributor_ids)),
+            _ => Ok(()),
+        }
+    }
+    visit(value, &resource_ids, contributors)
+}
+
+fn validate_artwork(
+    artwork: &DecodedValue,
+    resources: &[ResourceRecord],
+) -> Result<(), &'static str> {
+    let DecodedValue::Object(fields) = artwork else {
+        return Err("fcbc.invalid-record");
+    };
+    match fields.as_slice() {
+        [] => Ok(()),
+        [(key, DecodedValue::ResourceRef(id))] if key == "primary" => {
+            if resources
+                .iter()
+                .any(|resource| resource.id == *id && resource.kind == 2)
+            {
+                Ok(())
+            } else {
+                Err("fcbc.dangling-reference")
+            }
+        }
+        _ => Err("fcbc.invalid-record"),
+    }
 }
 
 fn parse_resources(bytes: &[u8], strings: &[String]) -> Result<Vec<ResourceRecord>, &'static str> {

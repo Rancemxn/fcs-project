@@ -1,12 +1,13 @@
 use fcs_model::{
-    CanonicalCompilation, CanonicalDescriptorKind, CanonicalDescriptorTable,
+    CanonicalChart, CanonicalCompilation, CanonicalDescriptorKind, CanonicalDescriptorTable,
     CanonicalExpressionDag, CanonicalExpressionOpcode, CanonicalExpressionType,
     CanonicalExpressionValue, CanonicalJudgeShape, CanonicalNoteKind, CanonicalNoteScorePolicy,
-    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalRenderGeometryData,
-    CanonicalRenderPaintData, CanonicalRenderScene, CanonicalRequiredExtension,
-    CanonicalResourceKind, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
-    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget,
-    CanonicalTrackValue, CanonicalValue, CanonicalValueType, DistributionMetadata,
+    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalProfile,
+    CanonicalProfileFeature, CanonicalRenderGeometryData, CanonicalRenderPaintData,
+    CanonicalRenderScene, CanonicalRequiredExtension, CanonicalResourceKind, CanonicalTrack,
+    CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece,
+    CanonicalTrackSegment, CanonicalTrackTarget, CanonicalTrackValue, CanonicalValue,
+    CanonicalValueType, DistributionMetadata,
 };
 use fcs_runtime::EasingId;
 use sha2::{Digest, Sha256};
@@ -394,6 +395,7 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         None,
         ContainerProfile::StrictRuntime,
         None,
+        None,
     )
     .expect("the fixed execution fixture is valid")
 }
@@ -688,6 +690,7 @@ pub fn write_from_compilation_with_profile(
         chart.render(),
         profile,
         (profile == ContainerProfile::Fidelity).then_some(compilation.distribution()),
+        Some(chart),
     )
 }
 
@@ -741,6 +744,7 @@ fn assemble_package(
     render: Option<&CanonicalRenderScene>,
     profile: ContainerProfile,
     fidelity: Option<&DistributionMetadata>,
+    chart: Option<&CanonicalChart>,
 ) -> FcbcResult<Vec<u8>> {
     let mut lines = lines.to_vec();
     let mut notes = notes.to_vec();
@@ -857,7 +861,7 @@ fn assemble_package(
             "fidelity profile requires a structured Fidelity section",
         ));
     }
-    let mut strings = string_table_values(resources, &notes, extensions, fidelity);
+    let mut strings = string_table_values(resources, &notes, extensions, fidelity, chart);
     if render.is_some() {
         strings.extend([
             "centerDescriptor",
@@ -894,7 +898,7 @@ fn assemble_package(
     let mut sections = vec![
         Section::new(1, string_table_section(&strings)),
         Section::new(2, constant_pool_section(&constants)),
-        Section::new(3, meta_section()),
+        Section::new(3, meta_section(chart, &strings)?),
         Section::new(4, count_zero_section()),
         Section::new(5, count_zero_section()),
         Section::new(6, resource_records),
@@ -927,7 +931,17 @@ fn assemble_package(
         body_cursor = bytes.len();
     }
 
-    write_header(&mut bytes, sections.len() as u32, feature_flags, profile);
+    let source_version = chart
+        .map(|chart| parse_source_version(chart.source_version().as_str()))
+        .transpose()?
+        .unwrap_or((5, 0, 0));
+    write_header(
+        &mut bytes,
+        sections.len() as u32,
+        feature_flags,
+        profile,
+        source_version,
+    );
     write_section_table(&mut bytes, &sections);
     Ok(bytes)
 }
@@ -2068,6 +2082,7 @@ fn string_table_values<'a>(
     notes: &'a [NoteFixture],
     extensions: &'a [ExtensionFixture],
     fidelity: Option<&'a DistributionMetadata>,
+    chart: Option<&'a CanonicalChart>,
 ) -> Vec<&'a str> {
     let mut strings = vec!["kind", "lineDefault"];
     for note in notes {
@@ -2098,6 +2113,29 @@ fn string_table_values<'a>(
             .iter()
             .map(|extension| extension.namespace.as_str()),
     );
+    if let Some(chart) = chart {
+        strings.extend([
+            "title",
+            "subtitle",
+            "alternativeTitles",
+            "chartVersion",
+            "difficulty",
+            "level",
+            "description",
+            "language",
+            "tags",
+            "license",
+            "documentId",
+            "revision",
+            "custom",
+            "primary",
+        ]);
+        if let Some(meta) = chart.metadata().meta() {
+            for value in meta.values() {
+                collect_canonical_value_strings(value, &mut strings);
+            }
+        }
+    }
     if let Some(fidelity) = fidelity {
         strings.extend([
             "specificationVersion",
@@ -2578,12 +2616,129 @@ fn constant_pool_section(constants: &[Constant]) -> Vec<u8> {
     payload
 }
 
-fn meta_section() -> Vec<u8> {
-    let mut payload = vec![2, 0, 0, 0]; // documentProfile=chart
-    put_u32(&mut payload, 0);
-    payload.extend_from_slice(&empty_object());
-    payload.extend_from_slice(&empty_object());
-    payload
+fn meta_section(chart: Option<&CanonicalChart>, strings: &[&str]) -> FcbcResult<Vec<u8>> {
+    let (document_profile, document_features, meta, artwork) = match chart {
+        Some(chart) => (
+            document_profile(chart.profile()),
+            document_feature_bits(chart.profile(), chart.features()),
+            canonical_meta_value(chart, strings)?,
+            canonical_artwork_value(chart, strings),
+        ),
+        None => (2, 0, empty_object(), empty_object()),
+    };
+    let mut payload = vec![document_profile, 0, 0, 0];
+    put_u32(&mut payload, document_features);
+    payload.extend_from_slice(&meta);
+    payload.extend_from_slice(&artwork);
+    Ok(payload)
+}
+
+const META_KEYS: [&str; 13] = [
+    "title",
+    "subtitle",
+    "alternativeTitles",
+    "chartVersion",
+    "difficulty",
+    "level",
+    "description",
+    "language",
+    "tags",
+    "license",
+    "documentId",
+    "revision",
+    "custom",
+];
+
+fn canonical_meta_value(chart: &CanonicalChart, strings: &[&str]) -> FcbcResult<Vec<u8>> {
+    let Some(meta) = chart.metadata().meta() else {
+        return Ok(empty_object());
+    };
+    if let Some(unknown) = meta.keys().find(|key| !META_KEYS.contains(&key.as_str())) {
+        return Err(FcbcError::new(
+            "fcbc.invalid-record",
+            format!("unsupported canonical meta field {unknown}"),
+        ));
+    }
+    let fields = META_KEYS
+        .iter()
+        .filter_map(|key| meta.get(*key).map(|value| (*key, value)))
+        .map(|(key, value)| Ok((key, canonical_value(value, strings, 0, true)?)))
+        .collect::<FcbcResult<Vec<_>>>()?;
+    Ok(value_object(&fields, strings))
+}
+
+fn canonical_artwork_value(chart: &CanonicalChart, _strings: &[&str]) -> Vec<u8> {
+    let fields = chart
+        .metadata()
+        .artwork()
+        .and_then(|artwork| artwork.primary())
+        .map(|primary| {
+            vec![(
+                "primary",
+                value_resource(stable_id(b"fcs.resource", primary.as_bytes())),
+            )]
+        })
+        .unwrap_or_default();
+    value_object(&fields, _strings)
+}
+
+fn document_profile(profile: CanonicalProfile) -> u8 {
+    match profile {
+        CanonicalProfile::Fragment => 1,
+        CanonicalProfile::Chart => 2,
+        CanonicalProfile::Playable => 3,
+        CanonicalProfile::Renderable => 4,
+        CanonicalProfile::Publishable => 5,
+    }
+}
+
+fn document_feature_bits(
+    profile: CanonicalProfile,
+    features: &std::collections::BTreeSet<CanonicalProfileFeature>,
+) -> u32 {
+    let mut bits = 0;
+    if matches!(profile, CanonicalProfile::Playable) {
+        bits |= 1;
+    }
+    if matches!(profile, CanonicalProfile::Renderable) {
+        bits |= 1 << 1;
+    }
+    if features.contains(&CanonicalProfileFeature::Playable) {
+        bits |= 1;
+    }
+    if features.contains(&CanonicalProfileFeature::Renderable) {
+        bits |= 1 << 1;
+    }
+    bits
+}
+
+fn parse_source_version(value: &str) -> FcbcResult<(u16, u16, u16)> {
+    let mut parts = value.split('.');
+    let components = [parts.next(), parts.next(), parts.next()];
+    if parts.next().is_some() {
+        return Err(FcbcError::new(
+            "fcbc.unsupported-source-version",
+            format!("source FCS version {value} is not three numeric components"),
+        ));
+    }
+    let mut parsed = [0u16; 3];
+    for (index, component) in components.into_iter().enumerate() {
+        parsed[index] = component
+            .and_then(|component| component.parse().ok())
+            .ok_or_else(|| {
+                FcbcError::new(
+                    "fcbc.unsupported-source-version",
+                    format!("source FCS version {value} exceeds the FCBC header width"),
+                )
+            })?;
+    }
+    if parsed[0] != 5 {
+        return Err(FcbcError::new(
+            "fcbc.unsupported-source-version",
+            format!("source FCS major version {} is not supported", parsed[0]),
+        ));
+    }
+    Ok((parsed[0], parsed[1], parsed[2]))
 }
 
 fn count_zero_section() -> Vec<u8> {
@@ -3606,13 +3761,14 @@ fn write_header(
     section_count: u32,
     feature_flags: u64,
     profile: ContainerProfile,
+    source_version: (u16, u16, u16),
 ) {
     bytes[0..4].copy_from_slice(b"FCSB");
     write_u16_at(bytes, 4, 128);
     write_u16_at(bytes, 6, 0);
-    write_u16_at(bytes, 8, 5);
-    write_u16_at(bytes, 10, 0);
-    write_u16_at(bytes, 12, 0);
+    write_u16_at(bytes, 8, source_version.0);
+    write_u16_at(bytes, 10, source_version.1);
+    write_u16_at(bytes, 12, source_version.2);
     write_u16_at(bytes, 14, 2);
     write_u16_at(bytes, 16, 0);
     write_u16_at(bytes, 18, 0);
