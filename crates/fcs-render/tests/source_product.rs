@@ -269,7 +269,7 @@ format { profile: renderable; }
 resources {
     image sprite {
         source: "assets/fcs-test-rgba8.png";
-        hash: "sha256:a108791d9edc1d9c37644a45ce29d4a20e479711db97da85375b82924e8fa22";
+        hash: "sha256:a108791d9edc1d9c37644a45ce29d4a20e479711db97daf85375b82924e8fa22";
         mediaType: "image/png";
         colorSpace: "srgb";
         alpha: "straight";
