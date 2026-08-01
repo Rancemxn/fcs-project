@@ -767,12 +767,12 @@ git diff --check
   runtime/property/fuzz rows as exact-head Full Gate pending and does not promote any version domain to Frozen.
 - The I10 `check` command now reuses `canonical_compilation_with_source`, so a successful check covers
   profile, elaboration, canonical graph, workspace-resource, and Render-source validation instead of
-  parser syntax alone; its canonical-profile regression and applicable canonical fixture lane are recorded in
+  parser syntax alone; its canonical-profile regression and exhaustive manifest-partition fixture lane are recorded in
   the CLI conformance tests, together with the applicable product-boundary lane for every checked-in FCS example
   (`format` plus parser validation for the fragment profile, `check` for complete documents) and
-  each applicable successful canonical fixture through FCBC Core load; `source.valid.profile-publishable-both` remains source-only profile evidence because it intentionally lacks a Render viewport. The full source corpus continues to execute
+  26 canonical fixtures through `check` and 12 successful chart fixtures through `compile`/FCBC Core load; the four source-only canonical fixtures are `source.valid.profile-publishable-both`, `source.valid.contributor-credit-closure`, `source.invalid.resource-hash-mismatch`, and `source.invalid.resource-missing-member`, covered by their profile, contributor/metadata, and resource-bundle domain runners. The full source corpus continues to execute
   through `conformance_manifest` at its declared parse, elaborate, canonical, or evaluate boundary;
-  the CLI lane covers the applicable canonical and example paths, including the fragment example's format/parser boundary. The same suite now drives all six
+  the CLI lane covers the exhaustive canonical partition and applicable example paths, including the fragment example's format/parser boundary. The same suite now drives all six
   public Conversion import fixtures through `report`, all three manifest-declared export/reparse
   fixtures through `convert`, all three FCBC goldens through `inspect` and mandatory Core load, and
   the Render source, canonical compile, and embedded-resource binding paths through `check`, `compile`,

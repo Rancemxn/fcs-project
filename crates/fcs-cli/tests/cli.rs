@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,11 +17,128 @@ fn load_toml(path: &Path) -> toml::Value {
         .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()))
 }
 
-const SOURCE_ONLY_CANONICAL_FIXTURES: &[&str] = &["source.valid.profile-publishable-both"];
+const CLI_CHECK_CANONICAL_FIXTURES: &[&str] = &[
+    "source.valid.minimal-chart",
+    "source.valid.track-boundaries",
+    "source.valid.appendix-a-minimal-complete",
+    "source.valid.time-scroll-note",
+    "source.valid.runtime-choose",
+    "source.valid.canonical-equivalent-direct",
+    "source.valid.canonical-equivalent-template",
+    "source.valid.canonical-id-direct",
+    "source.valid.canonical-id-template",
+    "source.valid.exact-expression-dag",
+    "source.valid.note-policies",
+    "source.valid.metadata-credits-resources-sync",
+    "source.invalid.contributor-missing-name",
+    "source.invalid.credit-duplicate-contributor",
+    "source.invalid.credit-resource-reference",
+    "source.invalid.profile-fragment-feature",
+    "source.invalid.profile-publishable-requirements",
+    "source.invalid.hold-end",
+    "source.invalid.track-overlap",
+    "source.invalid.parent-cycle",
+    "source.invalid.note-policy-disabled-sound",
+    "source.invalid.unknown-resource",
+    "source.invalid.sync-preview-without-audio",
+    "source.invalid.sync-preview-domain",
+    "source.invalid.resource-path-escape",
+    "source.invalid.custom-duplicate-key",
+];
 
-fn is_cli_applicable_canonical_fixture(fixture: &toml::Value) -> bool {
-    fixture["stage"].as_str() == Some("canonical")
-        && !SOURCE_ONLY_CANONICAL_FIXTURES.contains(&fixture["id"].as_str().unwrap())
+const CLI_COMPILE_CANONICAL_FIXTURES: &[&str] = &[
+    "source.valid.minimal-chart",
+    "source.valid.track-boundaries",
+    "source.valid.appendix-a-minimal-complete",
+    "source.valid.time-scroll-note",
+    "source.valid.runtime-choose",
+    "source.valid.canonical-equivalent-direct",
+    "source.valid.canonical-equivalent-template",
+    "source.valid.canonical-id-direct",
+    "source.valid.canonical-id-template",
+    "source.valid.exact-expression-dag",
+    "source.valid.note-policies",
+    "source.valid.metadata-credits-resources-sync",
+];
+
+const SOURCE_ONLY_CANONICAL_FIXTURES: &[&str] = &[
+    "source.valid.profile-publishable-both",
+    "source.valid.contributor-credit-closure",
+    "source.invalid.resource-hash-mismatch",
+    "source.invalid.resource-missing-member",
+];
+
+fn manifest_fixture<'a>(manifest: &'a toml::Value, id: &str) -> &'a toml::Value {
+    manifest["fixture"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|fixture| fixture["id"].as_str() == Some(id))
+        .unwrap_or_else(|| panic!("fixture list contains stale ID {id}"))
+}
+
+fn validate_fixture_list(manifest: &toml::Value, ids: &[&str], label: &str) -> HashSet<String> {
+    let mut listed = HashSet::new();
+    for id in ids {
+        assert!(
+            listed.insert((*id).to_owned()),
+            "{label} lists duplicate fixture {id}"
+        );
+        let fixture = manifest_fixture(manifest, id);
+        assert_eq!(
+            fixture["stage"].as_str(),
+            Some("canonical"),
+            "{label} lists non-canonical fixture {id}"
+        );
+    }
+    listed
+}
+
+fn assert_canonical_fixture_partition(manifest: &toml::Value) {
+    let mut canonical_ids = HashSet::new();
+    for fixture in manifest["fixture"].as_array().unwrap() {
+        if fixture["stage"].as_str() == Some("canonical") {
+            let id = fixture["id"].as_str().unwrap();
+            assert!(
+                canonical_ids.insert(id.to_owned()),
+                "manifest repeats canonical fixture {id}"
+            );
+        }
+    }
+
+    let check_ids = validate_fixture_list(
+        manifest,
+        CLI_CHECK_CANONICAL_FIXTURES,
+        "CLI check canonical fixtures",
+    );
+    let compile_ids = validate_fixture_list(
+        manifest,
+        CLI_COMPILE_CANONICAL_FIXTURES,
+        "CLI compile canonical fixtures",
+    );
+    let source_only_ids = validate_fixture_list(
+        manifest,
+        SOURCE_ONLY_CANONICAL_FIXTURES,
+        "source-only canonical fixtures",
+    );
+
+    assert_eq!(canonical_ids.len(), 30);
+    assert_eq!(check_ids.len(), 26);
+    assert_eq!(compile_ids.len(), 12);
+    assert_eq!(source_only_ids.len(), 4);
+    assert!(check_ids.is_disjoint(&source_only_ids));
+    assert!(compile_ids.is_subset(&check_ids));
+    assert!(compile_ids.iter().all(|id| {
+        manifest_fixture(manifest, id.as_str())["expect"].as_str() == Some("success")
+    }));
+
+    let mut partition = check_ids.clone();
+    partition.extend(source_only_ids);
+    assert_eq!(partition, canonical_ids);
+}
+
+fn is_listed_canonical_fixture(fixture: &toml::Value, ids: &[&str]) -> bool {
+    fixture["stage"].as_str() == Some("canonical") && ids.contains(&fixture["id"].as_str().unwrap())
 }
 
 #[test]
@@ -58,13 +176,21 @@ fn check_rejects_canonical_profile_errors() {
 }
 
 #[test]
-fn check_executes_the_applicable_canonical_source_fixture_lane() {
+fn canonical_fixture_product_partition_is_exhaustive() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let conformance = root.join("docs/conformance/fcs5");
+    let manifest = load_toml(&conformance.join("manifest.toml"));
+    assert_canonical_fixture_partition(&manifest);
+}
+
+#[test]
+fn check_executes_manifest_declared_canonical_fixtures() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let conformance = root.join("docs/conformance/fcs5");
     let manifest = load_toml(&conformance.join("manifest.toml"));
 
     for fixture in manifest["fixture"].as_array().unwrap() {
-        if !is_cli_applicable_canonical_fixture(fixture) {
+        if !is_listed_canonical_fixture(fixture, CLI_CHECK_CANONICAL_FIXTURES) {
             continue;
         }
         let id = fixture["id"].as_str().unwrap();
@@ -154,16 +280,14 @@ fn repository_fcs_examples_execute_at_their_applicable_product_boundaries() {
 }
 
 #[test]
-fn compile_executes_applicable_successful_canonical_source_fixtures_through_core_load() {
+fn compile_executes_manifest_declared_canonical_fixtures_through_core_load() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let conformance = root.join("docs/conformance/fcs5");
     let manifest = load_toml(&conformance.join("manifest.toml"));
     let output_directory = tempfile::tempdir().unwrap();
 
     for fixture in manifest["fixture"].as_array().unwrap() {
-        if !is_cli_applicable_canonical_fixture(fixture)
-            || fixture["expect"].as_str() != Some("success")
-        {
+        if !is_listed_canonical_fixture(fixture, CLI_COMPILE_CANONICAL_FIXTURES) {
             continue;
         }
         let id = fixture["id"].as_str().unwrap();
