@@ -406,3 +406,30 @@ Critical 0、Important 0、Minor 0；Render normative RNR gate 由
 visibility EnvB golden 仍是 I7/RC artifact blocker，完整 Render semantic/raster/mutation artifact 仍是
 I9 blocker，二者均不改变 I1 source parser contract。第 7.3 项的完整 executable blocker和五域 Draft
 状态不因此关闭或提升。
+
+## 17. 2026-08-01 dated amendment：I10 re-freeze
+
+I10 assembly（PR #453）已合并为 `b9af1f8a724ae518ce0b0b200c59561eaaa17518`（head
+`3cbc001`），同 SHA Full Gate run `30694250501` 成功。I10.1–I10.7 交付与可执行 conformance
+闭合：six-command CLI、canonical/example/Conversion/FCBC Core-load/Render product-entry lanes、
+FCS Appendix A minimal-complete fixture、AGPL-3.0-or-later + DCO unpublished distribution
+inventory、53-entry FCS corpus、evidence ledger 与 matrix/roadmap 更新。Primary Self-Audit
+pass（无未关闭 Critical/Important）；corrective issues #294、#295、#448、#452 已关闭；
+#449（superseded）与 #300（错误证据键映射）已关闭。五域候选 bytes 的 SHA-256 与重新 Frozen
+决定记录在 `docs/specifications/governance.md` 第 2 节 Re-freeze record。
+
+历史结论保持不变：本 amendment 不回溯修改第 1–16 节的候选自检、失败复审或 blocker ledger；
+那些记录仍是其写入时刻的审计事实。后续独立复审若对 re-freeze 后 hash 发现新 finding，按
+governance“未公开候选版本撤回 Frozen”条款处理。
+
+## 18. 2026-08-01 dated amendment：post-merge review correction
+
+第 17 节记录的是 I10 assembly 后的 re-freeze 准备事实，不是已满足治理条件的最终 Frozen
+决定。合并后的独立复审发现 #455（空 chart 被 FCBC writer 注入 Line）和 #456（FCBC/Render
+环境把 `chartBeat` 等同于 `chartTime`）。corrective PR #457 已合并为
+`b8182f81f7d939086bb5700adc376bb64cef5a30`，#455/#456 已关闭；merge-SHA Full Gate
+`30705343128` 成功，但合并后的独立 re-review 尚未完成。
+
+因此当前五域状态仍以 `docs/specifications/governance.md` 第 2 节的 Draft 为准。第 17 节的
+候选 hash、I10 assembly 和当时的 gate 结果保持为历史证据；最终 re-freeze 必须在 corrective
+closure 后的独立复审和用户确认完成后重新记录。
