@@ -3,6 +3,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crc::{CRC_32_ISO_HDLC, Crc};
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 
@@ -251,6 +252,32 @@ fn sha256_lower(bytes: &[u8]) -> String {
         write!(output, "{byte:02x}").expect("writing to String cannot fail");
     }
     output
+}
+
+fn patch_sync_preview(
+    bytes: &mut [u8],
+    golden: &GoldenManifest,
+    primary_audio: u64,
+    preview_start: f64,
+    preview_end: f64,
+) {
+    let section_index = golden
+        .section
+        .iter()
+        .position(|section| section.r#type == 7)
+        .expect("golden must contain Sync");
+    let section = &golden.section[section_index];
+    let payload_start = section.offset as usize;
+    let payload_end = payload_start + section.length as usize;
+    bytes[payload_start + 8..payload_start + 16].copy_from_slice(&primary_audio.to_le_bytes());
+    bytes[payload_start + 24] = 1;
+    bytes[payload_start + 32..payload_start + 40].copy_from_slice(&preview_start.to_le_bytes());
+    bytes[payload_start + 40..payload_start + 48].copy_from_slice(&preview_end.to_le_bytes());
+
+    let crc = Crc::<u32>::new(&CRC_32_ISO_HDLC);
+    let entry_start = 128 + section_index * 40;
+    let checksum = crc.checksum(&bytes[payload_start..payload_end]);
+    bytes[entry_start + 32..entry_start + 36].copy_from_slice(&checksum.to_le_bytes());
 }
 
 fn bits(source: &str) -> u64 {
@@ -596,6 +623,25 @@ fn nonempty_execution_mutations_return_stable_categories() {
             mutation.diagnostic,
             "{}",
             mutation.id
+        );
+    }
+}
+
+#[test]
+fn independent_loader_rejects_invalid_sync_preview_bounds() {
+    let base = suite_base();
+    let (_, golden) = load_suite_and_golden();
+    let original = decode_hex_file(&base.join(&golden.path));
+
+    for (id, preview_start, preview_end) in
+        [("negative-start", -1.0, 1.0), ("empty-preview", 1.0, 1.0)]
+    {
+        let mut bytes = original.clone();
+        patch_sync_preview(&mut bytes, &golden, 1, preview_start, preview_end);
+        assert_eq!(
+            load(&bytes).expect_err("invalid Sync preview must be rejected"),
+            "fcbc.invalid-record",
+            "{id}"
         );
     }
 }
