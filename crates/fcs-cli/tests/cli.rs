@@ -16,6 +16,13 @@ fn load_toml(path: &Path) -> toml::Value {
         .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()))
 }
 
+const SOURCE_ONLY_CANONICAL_FIXTURES: &[&str] = &["source.valid.profile-publishable-both"];
+
+fn is_cli_applicable_canonical_fixture(fixture: &toml::Value) -> bool {
+    fixture["stage"].as_str() == Some("canonical")
+        && !SOURCE_ONLY_CANONICAL_FIXTURES.contains(&fixture["id"].as_str().unwrap())
+}
+
 #[test]
 fn version_reports_workspace_version() {
     let output = bin().arg("--version").output().unwrap();
@@ -51,13 +58,13 @@ fn check_rejects_canonical_profile_errors() {
 }
 
 #[test]
-fn check_executes_the_canonical_source_fixture_lane() {
+fn check_executes_the_applicable_canonical_source_fixture_lane() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let conformance = root.join("docs/conformance/fcs5");
     let manifest = load_toml(&conformance.join("manifest.toml"));
 
     for fixture in manifest["fixture"].as_array().unwrap() {
-        if fixture["stage"].as_str() != Some("canonical") {
+        if !is_cli_applicable_canonical_fixture(fixture) {
             continue;
         }
         let id = fixture["id"].as_str().unwrap();
@@ -77,7 +84,8 @@ fn check_executes_the_canonical_source_fixture_lane() {
         match expected {
             "success" => assert!(
                 output.status.success(),
-                "{id}: stderr={}",
+                "{id}: stdout={} stderr={}",
+                String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             ),
             "error" => {
@@ -146,14 +154,14 @@ fn repository_fcs_examples_execute_at_their_applicable_product_boundaries() {
 }
 
 #[test]
-fn compile_executes_successful_canonical_source_fixtures_through_core_load() {
+fn compile_executes_applicable_successful_canonical_source_fixtures_through_core_load() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let conformance = root.join("docs/conformance/fcs5");
     let manifest = load_toml(&conformance.join("manifest.toml"));
     let output_directory = tempfile::tempdir().unwrap();
 
     for fixture in manifest["fixture"].as_array().unwrap() {
-        if fixture["stage"].as_str() != Some("canonical")
+        if !is_cli_applicable_canonical_fixture(fixture)
             || fixture["expect"].as_str() != Some("success")
         {
             continue;
