@@ -958,7 +958,9 @@ fn parse_sync(bytes: &[u8], resources: &[ResourceRecord]) -> Result<(), &'static
     if has_preview == 0 && (preview_start.to_bits() != 0 || preview_end.to_bits() != 0) {
         return Err("fcbc.invalid-record");
     }
-    if has_preview == 1 && preview_end < preview_start {
+    if has_preview == 1
+        && (preview_start < 0.0 || preview_end <= preview_start || primary_audio == 0)
+    {
         return Err("fcbc.invalid-record");
     }
     if primary_audio != 0
