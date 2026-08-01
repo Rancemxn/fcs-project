@@ -34,11 +34,34 @@ Accepted ADR 与现行规范发生实质冲突时，必须重开受影响的规�
 
 | 规范 | 候选版本 | 状态 |
 |---|---:|---|
-| FCS Core Source Specification | 5.0.0 | Draft（2026-07-22；I10 executable closure and final joint review remain open） |
-| FCBC Container Format | 2.0.0 | Draft（2026-07-22；native CanonicalCompilation handoff, descriptor lowering, and ResourceData remain open） |
-| FCS Execution ABI | 1.0.0 | Draft（2026-07-22；native Core load and execution closure remain open） |
-| FCS Render Profile | 1.0.0 | Draft（2026-07-22；canonical Render product and semantic/raster closure remain open） |
-| FCS Conversion Specification | 1.0.0 | Draft（2026-07-22；typed capabilities and canonical target reparse remain open） |
+| FCS Core Source Specification | 5.0.0 | Frozen（2026-08-01；I10 assembly merged as `b9af1f8`，full-gate run 30694250501 success） |
+| FCBC Container Format | 2.0.0 | Frozen（2026-08-01；I10 assembly merged as `b9af1f8`，full-gate run 30694250501 success） |
+| FCS Execution ABI | 1.0.0 | Frozen（2026-08-01；I10 assembly merged as `b9af1f8`，full-gate run 30694250501 success） |
+| FCS Render Profile | 1.0.0 | Frozen（2026-08-01；I10 assembly merged as `b9af1f8`，full-gate run 30694250501 success） |
+| FCS Conversion Specification | 1.0.0 | Frozen（2026-08-01；I10 assembly merged as `b9af1f8`，full-gate run 30694250501 success） |
+
+### 2.0 Re-freeze record（2026-08-01）
+
+I10 assembly（PR #453，merged as `b9af1f8a724ae518ce0b0b200c59561eaaa17518`，head
+`3cbc001`）闭合了全部 I10.1–I10.7 交付与可执行 conformance：同 SHA Full Gate run
+`30694250501` 成功（locked dependency、rustfmt、clippy `-D warnings`、workspace nextest、
+bounded fuzz smoke `FCS_FUZZ_RUNS=1024`、diff 与 clean-worktree gate）；Primary
+Self-Audit pass 且无未关闭 Critical/Important finding；corrective issues #294、#295、
+#448、#452 已关闭；PR #449（superseded）与 #300（证据键映射错误）已关闭。
+
+五域候选 bytes 在 re-freeze 时的 SHA-256：
+
+| 文件 | SHA-256 |
+|---|---|
+| `docs/specifications/fcs.md` | `dc3de8c2939c11561d81ed0710129aff1e6b862686564e39c7cba7f6d9c15594` |
+| `docs/specifications/fcbc.md` | `0a6c1b203cb895bf66fcb65c1fb824d276e3aa89d60453faf34b0fd0f41be32d` |
+| `docs/specifications/fcs-render.md` | `c879e9eeb68a8376ff5d06d43a03d7b631ef729e116630a71f84c31ef529c02f` |
+| `docs/specifications/fcs-conversion.md` | `3dacf2b6ebf4e4d1013ab1f1d7b2b3f4ed363d38a2f40f9466b9f6c1ddf75bc7` |
+| `docs/specifications/governance.md` | `44dd05f06b4864ae6693944c329e72730b3de0e35b5a2efeff9ea570c94d474e`（re-freeze 前） |
+
+五域状态在 2026-08-01 重新标记 Frozen。若后续独立复审或用户确认发现新问题，按
+“未公开候选版本撤回 Frozen”条款处理；旧 Draft 记录与 2026-07-22 状态注释保留为历史审计
+事实。
 
 Draft/Reviewed/Frozen 是仓库发布状态，不写入 FCS 或 FCBC 的 SemVer 字段。Frozen 只表示
 规范文本和绑定 conformance baseline 已稳定；参考实现仍必须逐项通过 conformance 后才能宣称
