@@ -331,6 +331,7 @@ mod extension_tests {
         payload.extend_from_slice(&[value_tag, 0, 0, 0]);
         payload.extend_from_slice(&(value_payload.len() as u32).to_le_bytes());
         payload.extend_from_slice(&value_payload);
+        payload.extend_from_slice(&[0; 4]);
         payload.extend_from_slice(tail);
 
         let mut record = Vec::new();
