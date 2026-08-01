@@ -1039,7 +1039,10 @@ fn report_executes_every_public_conversion_fixture() {
             .arg(format)
             .arg("--source-profile")
             .arg(&profile);
-        if let Some(floor_scale) = fixture["floor_scale_px"].as_str() {
+        if let Some(floor_scale) = fixture
+            .get("floor_scale_px")
+            .and_then(|value| value.as_str())
+        {
             command.arg("--source-floor-scale-px").arg(floor_scale);
         }
         let output = command.arg(source).output().unwrap();
@@ -1137,10 +1140,16 @@ fn convert_executes_every_declared_public_export_reparse_fixture() {
             .arg("--output")
             .arg(&output_path)
             .arg("--json");
-        if let Some(floor_scale) = fixture["floor_scale_px"].as_str() {
+        if let Some(floor_scale) = fixture
+            .get("floor_scale_px")
+            .and_then(|value| value.as_str())
+        {
             command.arg("--source-floor-scale-px").arg(floor_scale);
         }
-        if let Some(floor_scale) = target["floor_scale_px"].as_str() {
+        if let Some(floor_scale) = target
+            .get("floor_scale_px")
+            .and_then(|value| value.as_str())
+        {
             command.arg("--target-floor-scale-px").arg(floor_scale);
         }
         let output = command.arg(source).output().unwrap();
