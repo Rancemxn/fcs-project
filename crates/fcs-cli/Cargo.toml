@@ -2,7 +2,6 @@
 name = "fcs-cli"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 license-file.workspace = true
 description = "FCS product CLI for check, format, compile, inspect, convert, and report"
 default-run = "fcs"

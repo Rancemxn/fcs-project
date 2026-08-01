@@ -64,7 +64,7 @@ fn inventory_matches_product_metadata_and_registries() {
     let workspace = read_toml(root.join("Cargo.toml"));
     let workspace_package = &workspace["workspace"]["package"];
     assert_eq!(string(workspace_package, "version"), "5.0.0");
-    assert_eq!(string(workspace_package, "license"), "AGPL-3.0-or-later");
+    assert!(workspace_package.get("license").is_none());
     assert_eq!(string(workspace_package, "license-file"), "LICENSE");
     assert_eq!(string(&inventory, "workspace_version"), "5.0.0");
     assert_eq!(string(&inventory, "workspace_license"), "AGPL-3.0-or-later");
@@ -82,10 +82,7 @@ fn inventory_matches_product_metadata_and_registries() {
             manifest["package"]["version"]["workspace"].as_bool(),
             Some(true)
         );
-        assert_eq!(
-            manifest["package"]["license"]["workspace"].as_bool(),
-            Some(true)
-        );
+        assert!(manifest["package"].get("license").is_none());
         assert_eq!(
             manifest["package"]["license-file"]["workspace"].as_bool(),
             Some(true)
