@@ -633,18 +633,11 @@ pub fn write_from_compilation_with_profile(
         })
         .collect::<FcbcResult<Vec<_>>>()?;
     notes.sort_by(|left, right| {
-        (
-            left.time.to_bits(),
-            left.line_id,
-            left.document_order,
-            left.id,
-        )
-            .cmp(&(
-                right.time.to_bits(),
-                right.line_id,
-                right.document_order,
-                right.id,
-            ))
+        left.time
+            .total_cmp(&right.time)
+            .then_with(|| left.line_id.cmp(&right.line_id))
+            .then_with(|| left.document_order.cmp(&right.document_order))
+            .then_with(|| left.id.cmp(&right.id))
     });
 
     let tempo: Vec<(i64, i64, f64, f64, u32)> = chart

@@ -1541,7 +1541,7 @@ fn parse_notes(
     let count = limited_count(cursor.u32()?)?;
     let mut notes = Vec::with_capacity(count);
     let mut ids = BTreeSet::new();
-    let mut prior_sort_key: Option<(u64, u64, u32, u64)> = None;
+    let mut prior_sort_key: Option<(f64, u64, u32, u64)> = None;
     for _ in 0..count {
         let mut record = take_record(&mut cursor)?;
         let id = record.u64()?;
@@ -1555,11 +1555,17 @@ fn parse_notes(
         if id == 0 || !ids.insert(id) {
             return Err("fcbc.duplicate-id");
         }
-        let sort_key = (time.to_bits(), line_id, document_order, id);
-        if prior_sort_key.is_some_and(|prior| prior >= sort_key) {
+        let is_after_prior = prior_sort_key.map_or(true, |prior| match prior.0.total_cmp(&time) {
+            std::cmp::Ordering::Less => true,
+            std::cmp::Ordering::Equal => {
+                (prior.1, prior.2, prior.3) < (line_id, document_order, id)
+            }
+            std::cmp::Ordering::Greater => false,
+        });
+        if !is_after_prior {
             return Err("fcbc.invalid-note");
         }
-        prior_sort_key = Some(sort_key);
+        prior_sort_key = Some((time, line_id, document_order, id));
         if !(1..=4).contains(&kind) || !(1..=2).contains(&side) || flags & !0b111 != 0 {
             return Err("fcbc.invalid-note");
         }
