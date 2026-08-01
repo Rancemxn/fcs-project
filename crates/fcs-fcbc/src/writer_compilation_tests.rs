@@ -296,7 +296,15 @@ format { profile: chart; }
 meta {
     title: "Round-trip";
     level: 12.5;
-    custom: { "first": true, "second": "value" };
+    custom: { "first": true, "person": @alice, "second": "value" };
+}
+contributors {
+    person alice {
+        name: "Alice";
+        aliases: ["A"];
+        identifiers: { "musicbrainz": "mbid", "local": "alice" };
+    }
+    person bob { name: "Bob"; }
 }
 resources { image cover { source: "cover.png"; mediaType: "image/png"; } }
 artwork { primary: @cover; }
@@ -328,6 +336,13 @@ tempoMap { 0beat -> 120bpm; }
                 "custom".into(),
                 crate::DecodedValue::Object(vec![
                     ("first".into(), crate::DecodedValue::Bool(true)),
+                    (
+                        "person".into(),
+                        crate::DecodedValue::ContributorRef(stable_id(
+                            b"fcs.contributor",
+                            b"alice",
+                        )),
+                    ),
                     ("second".into(), crate::DecodedValue::String("value".into())),
                 ]),
             ),
@@ -340,6 +355,30 @@ tempoMap { 0beat -> 120bpm; }
             crate::DecodedValue::ResourceRef(stable_id(b"fcs.resource", b"cover")),
         ),])
     );
+    let mut expected_contributors = vec![
+        crate::DecodedContributor {
+            id: stable_id(b"fcs.contributor", b"alice"),
+            name: "Alice".into(),
+            aliases: vec!["A".into()],
+            identifiers: crate::DecodedValue::Object(vec![
+                (
+                    "musicbrainz".into(),
+                    crate::DecodedValue::String("mbid".into()),
+                ),
+                ("local".into(), crate::DecodedValue::String("alice".into())),
+            ]),
+            custom: crate::DecodedValue::Object(Vec::new()),
+        },
+        crate::DecodedContributor {
+            id: stable_id(b"fcs.contributor", b"bob"),
+            name: "Bob".into(),
+            aliases: Vec::new(),
+            identifiers: crate::DecodedValue::Object(Vec::new()),
+            custom: crate::DecodedValue::Object(Vec::new()),
+        },
+    ];
+    expected_contributors.sort_by_key(|contributor| contributor.id);
+    assert_eq!(decoded.contributors, expected_contributors);
 }
 
 #[test]

@@ -1,13 +1,13 @@
 use fcs_model::{
-    CanonicalChart, CanonicalCompilation, CanonicalDescriptorKind, CanonicalDescriptorTable,
-    CanonicalExpressionDag, CanonicalExpressionOpcode, CanonicalExpressionType,
-    CanonicalExpressionValue, CanonicalJudgeShape, CanonicalNoteKind, CanonicalNoteScorePolicy,
-    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalProfile,
-    CanonicalProfileFeature, CanonicalRenderGeometryData, CanonicalRenderPaintData,
-    CanonicalRenderScene, CanonicalRequiredExtension, CanonicalResourceKind, CanonicalTrack,
-    CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece,
-    CanonicalTrackSegment, CanonicalTrackTarget, CanonicalTrackValue, CanonicalValue,
-    CanonicalValueType, DistributionMetadata,
+    CanonicalChart, CanonicalCompilation, CanonicalContributor, CanonicalDescriptorKind,
+    CanonicalDescriptorTable, CanonicalExpressionDag, CanonicalExpressionOpcode,
+    CanonicalExpressionType, CanonicalExpressionValue, CanonicalJudgeShape, CanonicalNoteKind,
+    CanonicalNoteScorePolicy, CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject,
+    CanonicalProfile, CanonicalProfileFeature, CanonicalRenderGeometryData,
+    CanonicalRenderPaintData, CanonicalRenderScene, CanonicalRequiredExtension,
+    CanonicalResourceKind, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
+    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget,
+    CanonicalTrackValue, CanonicalValue, CanonicalValueType, DistributionMetadata,
 };
 use fcs_runtime::EasingId;
 use sha2::{Digest, Sha256};
@@ -135,6 +135,12 @@ struct ExtensionFixture<'a> {
     namespace: String,
     version: (u16, u16, u16),
     payload: &'a CanonicalObject,
+}
+
+#[derive(Clone, Copy)]
+struct ContributorFixture<'a> {
+    id: u64,
+    contributor: &'a CanonicalContributor,
 }
 
 #[derive(Clone)]
@@ -396,6 +402,7 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         ContainerProfile::StrictRuntime,
         None,
         None,
+        &[],
     )
     .expect("the fixed execution fixture is valid")
 }
@@ -673,6 +680,7 @@ pub fn write_from_compilation_with_profile(
         .unwrap_or(0.0);
 
     let resources = native_resources(compilation)?;
+    let contributors = native_contributors(chart)?;
     let extensions = native_extensions(chart.required_extensions())?;
 
     assemble_package(
@@ -691,6 +699,7 @@ pub fn write_from_compilation_with_profile(
         profile,
         (profile == ContainerProfile::Fidelity).then_some(compilation.distribution()),
         Some(chart),
+        &contributors,
     )
 }
 
@@ -745,6 +754,7 @@ fn assemble_package(
     profile: ContainerProfile,
     fidelity: Option<&DistributionMetadata>,
     chart: Option<&CanonicalChart>,
+    contributors: &[ContributorFixture<'_>],
 ) -> FcbcResult<Vec<u8>> {
     let mut lines = lines.to_vec();
     let mut notes = notes.to_vec();
@@ -861,7 +871,12 @@ fn assemble_package(
             "fidelity profile requires a structured Fidelity section",
         ));
     }
-    let mut strings = string_table_values(resources, &notes, extensions, fidelity, chart);
+    let contributor_ids = contributors
+        .iter()
+        .map(|contributor| contributor.id)
+        .collect();
+    let mut strings =
+        string_table_values(resources, &notes, extensions, fidelity, chart, contributors);
     if render.is_some() {
         strings.extend([
             "centerDescriptor",
@@ -898,8 +913,8 @@ fn assemble_package(
     let mut sections = vec![
         Section::new(1, string_table_section(&strings)),
         Section::new(2, constant_pool_section(&constants)),
-        Section::new(3, meta_section(chart, &strings)?),
-        Section::new(4, count_zero_section()),
+        Section::new(3, meta_section(chart, &strings, &contributor_ids)?),
+        Section::new(4, contributors_section(contributors, &strings)?),
         Section::new(5, count_zero_section()),
         Section::new(6, resource_records),
         Section::new(7, sync_section_with_offset(audio_offset)),
@@ -914,7 +929,10 @@ fn assemble_package(
         sections.push(Section::new(14, render_section));
     }
     if !extensions.is_empty() {
-        sections.push(Section::new(15, extensions_section(extensions, &strings)?));
+        sections.push(Section::new(
+            15,
+            extensions_section(extensions, &strings, &contributor_ids)?,
+        ));
     }
     if let Some(fidelity_section) = fidelity_section {
         sections.push(Section::new(16, fidelity_section));
@@ -1594,6 +1612,28 @@ fn native_resources(compilation: &CanonicalCompilation) -> FcbcResult<Vec<Resour
     Ok(resources)
 }
 
+fn native_contributors(chart: &CanonicalChart) -> FcbcResult<Vec<ContributorFixture<'_>>> {
+    let mut contributors: Vec<_> = chart
+        .metadata()
+        .contributors()
+        .values()
+        .map(|contributor| ContributorFixture {
+            id: stable_id(b"fcs.contributor", contributor.id().as_bytes()),
+            contributor,
+        })
+        .collect();
+    contributors.sort_by_key(|contributor| contributor.id);
+    if contributors.iter().any(|contributor| contributor.id == 0)
+        || contributors.windows(2).any(|pair| pair[0].id == pair[1].id)
+    {
+        return Err(FcbcError::new(
+            "fcbc.duplicate-id",
+            "canonical contributor IDs collide in FCBC stable-ID space",
+        ));
+    }
+    Ok(contributors)
+}
+
 fn native_extensions<'a>(
     extensions: &'a [CanonicalRequiredExtension],
 ) -> FcbcResult<Vec<ExtensionFixture<'a>>> {
@@ -2083,6 +2123,7 @@ fn string_table_values<'a>(
     extensions: &'a [ExtensionFixture],
     fidelity: Option<&'a DistributionMetadata>,
     chart: Option<&'a CanonicalChart>,
+    contributors: &[ContributorFixture<'a>],
 ) -> Vec<&'a str> {
     let mut strings = vec!["kind", "lineDefault"];
     for note in notes {
@@ -2102,6 +2143,11 @@ fn string_table_values<'a>(
     }
     for extension in extensions {
         collect_canonical_object_strings(extension.payload, &mut strings);
+    }
+    for contributor in contributors {
+        strings.push(contributor.contributor.name());
+        strings.extend(contributor.contributor.aliases().iter().map(String::as_str));
+        collect_canonical_object_strings(contributor.contributor.identifiers(), &mut strings);
     }
     strings.extend(
         notes
@@ -2390,20 +2436,27 @@ fn fidelity_fact_value(
 }
 
 fn canonical_object_value(object: &CanonicalObject, strings: &[&str]) -> FcbcResult<Vec<u8>> {
-    canonical_object_value_with_references(object, strings, false)
+    canonical_object_value_with_references(
+        object,
+        strings,
+        false,
+        &std::collections::BTreeSet::new(),
+    )
 }
 
 fn canonical_extension_object_value(
     object: &CanonicalObject,
     strings: &[&str],
+    contributor_ids: &std::collections::BTreeSet<u64>,
 ) -> FcbcResult<Vec<u8>> {
-    canonical_object_value_with_references(object, strings, true)
+    canonical_object_value_with_references(object, strings, true, contributor_ids)
 }
 
 fn canonical_object_value_with_references(
     object: &CanonicalObject,
     strings: &[&str],
     allow_references: bool,
+    contributor_ids: &std::collections::BTreeSet<u64>,
 ) -> FcbcResult<Vec<u8>> {
     let fields = object
         .entries()
@@ -2411,7 +2464,7 @@ fn canonical_object_value_with_references(
         .map(|entry| {
             Ok((
                 entry.key(),
-                canonical_value(entry.value(), strings, 0, allow_references)?,
+                canonical_value(entry.value(), strings, 0, allow_references, contributor_ids)?,
             ))
         })
         .collect::<FcbcResult<Vec<_>>>()?;
@@ -2423,6 +2476,7 @@ fn canonical_value(
     strings: &[&str],
     depth: usize,
     allow_references: bool,
+    contributor_ids: &std::collections::BTreeSet<u64>,
 ) -> FcbcResult<Vec<u8>> {
     if depth > 32 {
         return Err(FcbcError::new(
@@ -2460,10 +2514,17 @@ fn canonical_value(
         CanonicalValue::ResourceReference(value_) if allow_references => Ok(value_resource(
             stable_id(b"fcs.resource", value_.as_bytes()),
         )),
-        CanonicalValue::ContributorReference(_) if allow_references => Err(FcbcError::new(
-            "fcbc.unsupported-required-extension",
-            "required extension contributor references require contributor records",
-        )),
+        CanonicalValue::ContributorReference(value_) if allow_references => {
+            let id = stable_id(b"fcs.contributor", value_.as_bytes());
+            if contributor_ids.contains(&id) {
+                Ok(value_contributor(id))
+            } else {
+                Err(FcbcError::new(
+                    "fcbc.dangling-reference",
+                    "canonical value references a missing contributor",
+                ))
+            }
+        }
         CanonicalValue::ResourceReference(_) | CanonicalValue::ContributorReference(_) => {
             Err(FcbcError::new(
                 "fcbc.invalid-fidelity",
@@ -2477,7 +2538,15 @@ fn canonical_value(
             let tag = canonical_value_type_tag(element_type)?;
             let values = values
                 .iter()
-                .map(|value_| canonical_value(value_, strings, depth + 1, allow_references))
+                .map(|value_| {
+                    canonical_value(
+                        value_,
+                        strings,
+                        depth + 1,
+                        allow_references,
+                        contributor_ids,
+                    )
+                })
                 .collect::<FcbcResult<Vec<_>>>()?;
             Ok(value_array(tag, values))
         }
@@ -2488,7 +2557,13 @@ fn canonical_value(
                 .map(|entry| {
                     Ok((
                         entry.key(),
-                        canonical_value(entry.value(), strings, depth + 1, allow_references)?,
+                        canonical_value(
+                            entry.value(),
+                            strings,
+                            depth + 1,
+                            allow_references,
+                            contributor_ids,
+                        )?,
                     ))
                 })
                 .collect::<FcbcResult<Vec<_>>>()?;
@@ -2529,6 +2604,10 @@ fn value_int(value_: i64) -> Vec<u8> {
 
 fn value_resource(id: u64) -> Vec<u8> {
     value(11, id.to_le_bytes().to_vec())
+}
+
+fn value_contributor(id: u64) -> Vec<u8> {
+    value(12, id.to_le_bytes().to_vec())
 }
 
 fn value_finite_scalar(tag: u8, value_: f64) -> FcbcResult<Vec<u8>> {
@@ -2607,6 +2686,33 @@ fn resource_sections(
     Ok((records, data))
 }
 
+fn contributors_section(
+    contributors: &[ContributorFixture<'_>],
+    strings: &[&str],
+) -> FcbcResult<Vec<u8>> {
+    let mut section = Vec::new();
+    put_u32(&mut section, contributors.len() as u32);
+    for contributor in contributors {
+        let mut payload = Vec::new();
+        put_u64(&mut payload, contributor.id);
+        put_u32(
+            &mut payload,
+            string_index(strings, contributor.contributor.name()),
+        );
+        put_u32(&mut payload, contributor.contributor.aliases().len() as u32);
+        for alias in contributor.contributor.aliases() {
+            put_u32(&mut payload, string_index(strings, alias));
+        }
+        payload.extend_from_slice(&canonical_object_value(
+            contributor.contributor.identifiers(),
+            strings,
+        )?);
+        payload.extend_from_slice(&empty_object());
+        section.extend_from_slice(&record(payload));
+    }
+    Ok(section)
+}
+
 fn constant_pool_section(constants: &[Constant]) -> Vec<u8> {
     let mut payload = Vec::new();
     put_u32(&mut payload, constants.len() as u32);
@@ -2616,12 +2722,16 @@ fn constant_pool_section(constants: &[Constant]) -> Vec<u8> {
     payload
 }
 
-fn meta_section(chart: Option<&CanonicalChart>, strings: &[&str]) -> FcbcResult<Vec<u8>> {
+fn meta_section(
+    chart: Option<&CanonicalChart>,
+    strings: &[&str],
+    contributor_ids: &std::collections::BTreeSet<u64>,
+) -> FcbcResult<Vec<u8>> {
     let (document_profile, document_features, meta, artwork) = match chart {
         Some(chart) => (
             document_profile(chart.profile()),
             document_feature_bits(chart.profile(), chart.features()),
-            canonical_meta_value(chart, strings)?,
+            canonical_meta_value(chart, strings, contributor_ids)?,
             canonical_artwork_value(chart, strings),
         ),
         None => (2, 0, empty_object(), empty_object()),
@@ -2649,7 +2759,11 @@ const META_KEYS: [&str; 13] = [
     "custom",
 ];
 
-fn canonical_meta_value(chart: &CanonicalChart, strings: &[&str]) -> FcbcResult<Vec<u8>> {
+fn canonical_meta_value(
+    chart: &CanonicalChart,
+    strings: &[&str],
+    contributor_ids: &std::collections::BTreeSet<u64>,
+) -> FcbcResult<Vec<u8>> {
     let Some(meta) = chart.metadata().meta() else {
         return Ok(empty_object());
     };
@@ -2662,7 +2776,12 @@ fn canonical_meta_value(chart: &CanonicalChart, strings: &[&str]) -> FcbcResult<
     let fields = META_KEYS
         .iter()
         .filter_map(|key| meta.get(*key).map(|value| (*key, value)))
-        .map(|(key, value)| Ok((key, canonical_value(value, strings, 0, true)?)))
+        .map(|(key, value)| {
+            Ok((
+                key,
+                canonical_value(value, strings, 0, true, contributor_ids)?,
+            ))
+        })
         .collect::<FcbcResult<Vec<_>>>()?;
     Ok(value_object(&fields, strings))
 }
@@ -2897,6 +3016,7 @@ fn value_vec2_length(value_: [f64; 2]) -> Vec<u8> {
 fn extensions_section(
     extensions: &[ExtensionFixture<'_>],
     strings: &[&str],
+    contributor_ids: &std::collections::BTreeSet<u64>,
 ) -> FcbcResult<Vec<u8>> {
     let mut section = Vec::new();
     put_u32(&mut section, extensions.len() as u32);
@@ -2910,6 +3030,7 @@ fn extensions_section(
         payload.extend_from_slice(&canonical_extension_object_value(
             extension.payload,
             strings,
+            contributor_ids,
         )?);
         section.extend_from_slice(&record(payload));
     }

@@ -276,6 +276,15 @@ pub struct ExtensionRecord {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct DecodedContributor {
+    pub id: u64,
+    pub name: String,
+    pub aliases: Vec<String>,
+    pub identifiers: DecodedValue,
+    pub custom: DecodedValue,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct NoteRecord {
     pub id: u64,
     pub line_id: u64,
@@ -309,6 +318,7 @@ pub struct DecodedChart {
     pub document_feature_bits: u32,
     pub meta: DecodedValue,
     pub artwork: DecodedValue,
+    pub contributors: Vec<DecodedContributor>,
     pub feature_flags: u64,
     pub strings: Vec<String>,
     pub constants: Vec<RuntimeValue>,
@@ -473,7 +483,11 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
     let constants = parse_constant_pool(section_payload(bytes, &section_map, 2)?)?;
     let (document_profile, document_feature_bits, meta, artwork) =
         parse_meta(section_payload(bytes, &section_map, 3)?, &strings)?;
-    let contributor_ids = parse_contributors(section_payload(bytes, &section_map, 4)?, &strings)?;
+    let contributors = parse_contributors(section_payload(bytes, &section_map, 4)?, &strings)?;
+    let contributor_ids = contributors
+        .iter()
+        .map(|contributor| contributor.id)
+        .collect();
     parse_credits(
         section_payload(bytes, &section_map, 5)?,
         &strings,
@@ -490,6 +504,10 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
     let mut resources = parse_resources(section_payload(bytes, &section_map, 6)?, &strings)?;
     validate_resource_data(section_payload(bytes, &section_map, 20)?, &mut resources)?;
     validate_decoded_value_references(&meta, &resources, &contributor_ids)?;
+    for contributor in &contributors {
+        validate_string_object(&contributor.identifiers)?;
+        validate_decoded_value_references(&contributor.custom, &resources, &contributor_ids)?;
+    }
     validate_artwork(&artwork, &resources)?;
     validate_extension_references(&extensions, &resources, &contributor_ids)?;
     parse_sync(section_payload(bytes, &section_map, 7)?, &resources)?;
@@ -528,6 +546,7 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
         document_feature_bits,
         meta,
         artwork,
+        contributors,
         feature_flags,
         strings,
         constants,
@@ -1238,9 +1257,13 @@ fn is_sha256_digest(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
-fn parse_contributors(bytes: &[u8], strings: &[String]) -> Result<BTreeSet<u64>, &'static str> {
+fn parse_contributors(
+    bytes: &[u8],
+    strings: &[String],
+) -> Result<Vec<DecodedContributor>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
     let count = limited_count(cursor.u32()?)?;
+    let mut contributors = Vec::with_capacity(count);
     let mut ids = BTreeSet::new();
     let mut prior_id = None;
     for _ in 0..count {
@@ -1250,23 +1273,53 @@ fn parse_contributors(bytes: &[u8], strings: &[String]) -> Result<BTreeSet<u64>,
             return Err("fcbc.duplicate-id");
         }
         prior_id = Some(id);
-        let name = record.u32()?;
-        check_string_ref(name, strings.len())?;
-        if strings[name as usize].is_empty() {
+        let name = strings
+            .get(record.u32()? as usize)
+            .ok_or("fcbc.dangling-reference")?
+            .clone();
+        if name.is_empty() {
             return Err("fcbc.invalid-record");
         }
         let alias_count = limited_count(record.u32()?)?;
+        let mut aliases = Vec::with_capacity(alias_count);
         for _ in 0..alias_count {
-            check_string_ref(record.u32()?, strings.len())?;
+            aliases.push(
+                strings
+                    .get(record.u32()? as usize)
+                    .ok_or("fcbc.dangling-reference")?
+                    .clone(),
+            );
         }
-        if parse_value(&mut record, strings.len())?.tag != 14
-            || parse_value(&mut record, strings.len())?.tag != 14
+        let identifiers = decode_value(&parse_value(&mut record, strings.len())?, strings)?;
+        let custom = decode_value(&parse_value(&mut record, strings.len())?, strings)?;
+        if !matches!(&identifiers, DecodedValue::Object(_))
+            || !matches!(&custom, DecodedValue::Object(_))
         {
             return Err("fcbc.invalid-record");
         }
+        contributors.push(DecodedContributor {
+            id,
+            name,
+            aliases,
+            identifiers,
+            custom,
+        });
     }
     cursor.finish()?;
-    Ok(ids)
+    Ok(contributors)
+}
+
+fn validate_string_object(value: &DecodedValue) -> Result<(), &'static str> {
+    let DecodedValue::Object(fields) = value else {
+        return Err("fcbc.invalid-record");
+    };
+    let mut keys = BTreeSet::new();
+    for (key, value) in fields {
+        if !keys.insert(key.as_str()) || !matches!(value, DecodedValue::String(_)) {
+            return Err("fcbc.invalid-record");
+        }
+    }
+    Ok(())
 }
 
 fn parse_credits(
