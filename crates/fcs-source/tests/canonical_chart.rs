@@ -103,6 +103,7 @@ tempoMap { 0beat -> 120bpm; }
 render profile 1.0.0 {
     viewport { width: 4px; height: 4px; colorSpace: "linear-srgb"; }
     layer main {
+        pass: "overlay";
         children {
             image spriteNode {
                 resource: @sprite;
