@@ -2971,7 +2971,10 @@ fn resolve_reference(
                 ));
             } else {
                 diagnostics.push(canonical_diagnostic(
-                    DiagnosticCode::NAME_UNKNOWN,
+                    match kind {
+                        Some(ReferenceKind::Resource) => DiagnosticCode::RESOURCE_UNKNOWN_REFERENCE,
+                        Some(ReferenceKind::Contributor) | None => DiagnosticCode::NAME_UNKNOWN,
+                    },
                     format!("unknown metadata reference @{name}"),
                     span,
                 ));

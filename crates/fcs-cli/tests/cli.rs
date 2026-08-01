@@ -189,6 +189,7 @@ fn check_executes_manifest_declared_canonical_fixtures() {
     let conformance = root.join("docs/conformance/fcs5");
     let manifest = load_toml(&conformance.join("manifest.toml"));
 
+    let mut mismatches = Vec::new();
     for fixture in manifest["fixture"].as_array().unwrap() {
         if !is_listed_canonical_fixture(fixture, CLI_CHECK_CANONICAL_FIXTURES) {
             continue;
@@ -207,32 +208,55 @@ fn check_executes_manifest_declared_canonical_fixtures() {
         }
         let output = command.output().unwrap();
         let expected = fixture["expect"].as_str().unwrap();
-        match expected {
-            "success" => assert!(
-                output.status.success(),
-                "{id}: stdout={} stderr={}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            ),
-            "error" => {
-                assert_eq!(output.status.code(), Some(3), "{id}");
-                let report: serde_json::Value = serde_json::from_slice(&output.stdout)
-                    .unwrap_or_else(|error| panic!("{id}: invalid JSON diagnostic: {error}"));
-                let codes: Vec<_> = report["diagnostics"]
-                    .as_array()
-                    .unwrap()
+        let expected_category = fixture["diagnostic"].as_str().unwrap_or("success");
+        let report = serde_json::from_slice::<serde_json::Value>(&output.stdout).ok();
+        let actual_categories: Vec<_> = report
+            .as_ref()
+            .and_then(|report| report["diagnostics"].as_array())
+            .map(|diagnostics| {
+                diagnostics
                     .iter()
                     .filter_map(|diagnostic| diagnostic["code"].as_str())
-                    .collect();
-                assert!(
-                    codes.contains(&fixture["diagnostic"].as_str().unwrap()),
-                    "{id}: expected {:?}, got {codes:?}",
-                    fixture["diagnostic"].as_str()
-                );
+                    .collect()
+            })
+            .unwrap_or_default();
+        let actual_category = if actual_categories.is_empty() {
+            if output.status.success() {
+                "success".to_owned()
+            } else {
+                "<none>".to_owned()
             }
-            other => panic!("{id}: unsupported fixture expectation {other}"),
+        } else {
+            actual_categories.join(",")
+        };
+        let status_matches = match expected {
+            "success" => output.status.success(),
+            "error" => output.status.code() == Some(3),
+            other => {
+                mismatches.push(format!(
+                    "{id}: unsupported expectation {other}; expected category {expected_category}, actual category {actual_category}, stdout={}, stderr={}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+                continue;
+            }
+        };
+        let category_matches =
+            expected == "success" || actual_categories.contains(&expected_category);
+        if !status_matches || !category_matches {
+            mismatches.push(format!(
+                "{id}: expected status/category {expected:?}/{expected_category}, actual status/category {:?}/{actual_category}, stdout={}, stderr={}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
     }
+    assert!(
+        mismatches.is_empty(),
+        "canonical CLI fixture mismatches:\n{}",
+        mismatches.join("\n")
+    );
 }
 
 #[test]

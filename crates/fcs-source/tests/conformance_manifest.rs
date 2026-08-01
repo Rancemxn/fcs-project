@@ -1309,6 +1309,33 @@ fn i5_contributor_credit_fixtures_execute_at_the_canonical_boundary() {
 }
 
 #[test]
+fn i5_unknown_texture_fixture_executes_at_the_canonical_chart_boundary() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+    let invalid = fixture(&fcs, "source.invalid.unknown-resource");
+    assert_eq!(invalid.stage, FixtureStage::Canonical);
+    assert_eq!(invalid.expect, FixtureExpectation::Error);
+    let source = fs::read_to_string(fcs_base.join(&invalid.path))
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", invalid.path));
+    let diagnostics = parse_document(&source)
+        .into_result()
+        .unwrap_or_else(|errors| panic!("{} must parse: {errors:?}", invalid.id))
+        .canonical_chart(fixture_limits(invalid))
+        .expect_err("unknown presentation texture must fail canonical chart lowering");
+    assert_eq!(
+        diagnostics[0].code().as_str(),
+        invalid
+            .diagnostic
+            .as_deref()
+            .expect("unknown texture fixture binds a diagnostic")
+    );
+    assert_eq!(diagnostics[0].stage(), DiagnosticStage::Canonical);
+    assert!(diagnostics[0].primary_span().end <= source.len());
+    assert!(source.is_char_boundary(diagnostics[0].primary_span().start));
+    assert!(source.is_char_boundary(diagnostics[0].primary_span().end));
+}
+
+#[test]
 fn i5_resource_fixtures_execute_at_the_workspace_bundle_boundary() {
     let (_, fcs) = load_manifests();
     let fcs_base = repository_root().join("docs/conformance/fcs5");

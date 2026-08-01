@@ -172,7 +172,7 @@ fn lower_note(
         }
     };
 
-    let presentation = lower_presentation(entity, time_map, diagnostics)?;
+    let presentation = lower_presentation(document, entity, time_map, diagnostics)?;
     CanonicalNote::new(id, kind, document_order, gameplay, presentation)
         .map_err(|error| {
             diagnostics.push(note_diagnostic(error, entity.span()));
@@ -422,6 +422,7 @@ fn lower_score_policy(
 }
 
 fn lower_presentation(
+    document: &ExpandedSourceDocument,
     entity: &ExpandedEntity,
     time_map: &ChartTimeMap,
     diagnostics: &mut Vec<Diagnostic>,
@@ -450,7 +451,7 @@ fn lower_presentation(
         },
         None => CanonicalColor::rgba(255, 255, 255, 255),
     };
-    let texture = optional_string(entity, "presentation.texture", diagnostics)?;
+    let texture = texture_field(document, entity, diagnostics)?;
     let render_enabled = bool_field(entity, "render.enabled", true, diagnostics)?;
     let visible_from = time_from_field(
         entity,
@@ -484,6 +485,41 @@ fn lower_presentation(
         Ok(presentation) => Some(presentation),
         Err(error) => {
             diagnostics.push(note_diagnostic(error, entity.span()));
+            None
+        }
+    }
+}
+
+fn texture_field(
+    document: &ExpandedSourceDocument,
+    entity: &ExpandedEntity,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<Option<String>> {
+    let Some(texture) = optional_string(entity, "presentation.texture", diagnostics)? else {
+        return Some(None);
+    };
+    match document.resource_kind(&texture) {
+        Some(crate::ast::ResourceKind::Image | crate::ast::ResourceKind::Texture) => {
+            Some(Some(texture))
+        }
+        Some(_) => {
+            diagnostics.push(Diagnostic::new(
+                DiagnosticCode::RESOURCE_TYPE_MISMATCH,
+                DiagnosticStage::Canonical,
+                format!(
+                    "presentation.texture {texture} must reference an image or texture resource"
+                ),
+                field_span(entity, "presentation.texture"),
+            ));
+            None
+        }
+        None => {
+            diagnostics.push(Diagnostic::new(
+                DiagnosticCode::RESOURCE_UNKNOWN_REFERENCE,
+                DiagnosticStage::Canonical,
+                format!("unknown presentation.texture {texture}"),
+                field_span(entity, "presentation.texture"),
+            ));
             None
         }
     }

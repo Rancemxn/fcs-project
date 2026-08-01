@@ -771,8 +771,11 @@ impl<'a> StaticEntityValidator<'a> {
                     span: field.value.span(),
                 });
             }
-            let is_resource_reference = path == "gameplay.soundResource"
-                && matches!(field.value, SourceExpression::Reference { .. });
+            let is_resource_reference =
+                matches!(
+                    field_schema.constraint(),
+                    Some(FieldConstraint::ResourceReference)
+                ) && matches!(field.value, SourceExpression::Reference { .. });
             let expected = field_schema.expected_type();
             let runtime_scope;
             let expression_scope = if has_runtime_environment {
@@ -1724,12 +1727,8 @@ impl<'a> ExpansionContext<'a> {
                         field: path.clone(),
                         span: field.path.span,
                     })?;
-            let (value, runtime_expression) = self.evaluate_field_value(
-                &path,
-                &field.value,
-                field_schema.expected_type(),
-                bindings,
-            )?;
+            let (value, runtime_expression) =
+                self.evaluate_field_value(&field.value, field_schema, bindings)?;
             validate_field_type(field_schema, &value, field.value.span())?;
             entity.replace_field(match runtime_expression {
                 Some(expression) => ExpandedField::runtime(path, value, expression, field.span),
@@ -1764,12 +1763,8 @@ impl<'a> ExpansionContext<'a> {
                         field: path.clone(),
                         span: field.path.span,
                     })?;
-            let (value, runtime_expression) = self.evaluate_field_value(
-                &path,
-                &field.value,
-                field_schema.expected_type(),
-                bindings,
-            )?;
+            let (value, runtime_expression) =
+                self.evaluate_field_value(&field.value, field_schema, bindings)?;
             validate_field_type(field_schema, &value, field.value.span())?;
             result.insert(
                 path.clone(),
@@ -1784,12 +1779,12 @@ impl<'a> ExpansionContext<'a> {
 
     fn evaluate_field_value(
         &self,
-        path: &str,
         expression: &SourceExpression,
-        expected: Option<&Type>,
+        field: &crate::schema::FieldSchema,
         bindings: &BTreeMap<String, TypedValue>,
     ) -> Result<(TypedValue, Option<fcs_model::CanonicalExpressionDag>), Diagnostic> {
-        if path == "gameplay.soundResource"
+        let expected = field.expected_type();
+        if matches!(field.constraint(), Some(FieldConstraint::ResourceReference))
             && let SourceExpression::Reference { name, .. } = expression
         {
             return Ok((TypedValue::String(name.clone()), None));
@@ -1830,7 +1825,8 @@ impl<'a> ExpansionContext<'a> {
                     });
                 }
                 Ok((
-                    runtime_base_value(path, runtime_expression.result_type()).ok_or(error)?,
+                    runtime_base_value(&field.path, runtime_expression.result_type())
+                        .ok_or(error)?,
                     Some(runtime_expression),
                 ))
             }
