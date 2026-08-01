@@ -573,7 +573,7 @@ fn parse_container(bytes: &[u8]) -> Result<ParsedContainer, &'static str> {
     }
 
     let mut table = Cursor::new(&bytes[table_start..table_end], "fcbc.section-table-bounds");
-    let mut sections = Vec::with_capacity(section_count);
+    let mut sections = Vec::new();
     let mut prior_key = None;
     let mut seen_types = BTreeSet::new();
     for _ in 0..section_count {
@@ -739,7 +739,7 @@ fn section_slice<'a>(bytes: &'a [u8], section: &RawSection) -> Result<&'a [u8], 
 fn parse_string_table(bytes: &[u8]) -> Result<Vec<String>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-string-table");
     let count = limited_count(cursor.u32()?)?;
-    let mut offsets = Vec::with_capacity(count + 1);
+    let mut offsets = Vec::new();
     for _ in 0..=count {
         offsets.push(cursor.u32()? as usize);
     }
@@ -748,7 +748,7 @@ fn parse_string_table(bytes: &[u8]) -> Result<Vec<String>, &'static str> {
     }
     let utf8_length = *offsets.last().ok_or("fcbc.invalid-string-table")?;
     let utf8 = cursor.take(utf8_length)?;
-    let mut strings = Vec::with_capacity(count);
+    let mut strings = Vec::new();
     for pair in offsets.windows(2) {
         let value = std::str::from_utf8(&utf8[pair[0]..pair[1]])
             .map_err(|_| "fcbc.invalid-string-table")?;
@@ -772,7 +772,7 @@ fn parse_string_table(bytes: &[u8]) -> Result<Vec<String>, &'static str> {
 fn parse_constant_pool(bytes: &[u8]) -> Result<Vec<RuntimeValue>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
     let count = limited_count(cursor.u32()?)?;
-    let mut constants = Vec::with_capacity(count);
+    let mut constants = Vec::new();
     let mut prior_encoding: Option<Vec<u8>> = None;
     for _ in 0..count {
         let start = cursor.position;
@@ -1207,7 +1207,7 @@ fn parse_extensions(
 ) -> Result<Vec<ExtensionRecord>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
     let count = limited_count(cursor.u32()?)?;
-    let mut extensions = Vec::with_capacity(count);
+    let mut extensions = Vec::new();
     let mut prior_key: Option<(Vec<u8>, (u16, u16, u16))> = None;
     for _ in 0..count {
         let mut record = take_record(&mut cursor)?;
@@ -1241,7 +1241,7 @@ fn parse_extensions(
 fn parse_resources(bytes: &[u8], strings: &[String]) -> Result<Vec<ResourceRecord>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
     let count = limited_count(cursor.u32()?)?;
-    let mut resources = Vec::with_capacity(count);
+    let mut resources = Vec::new();
     let mut prior_id = None;
     for _ in 0..count {
         let mut record = take_record(&mut cursor)?;
@@ -1366,7 +1366,7 @@ fn parse_tempo(bytes: &[u8]) -> Result<Vec<TempoPoint>, &'static str> {
     if count == 0 {
         return Err("fcbc.invalid-tempo");
     }
-    let mut points = Vec::with_capacity(count);
+    let mut points = Vec::new();
     for _ in 0..count {
         let point = TempoPoint {
             beat_numerator: cursor.i64()?,
@@ -1501,7 +1501,7 @@ fn split_integer(value: i128) -> (f64, f64) {
 fn parse_lines(bytes: &[u8], strings: &[String]) -> Result<Vec<LineRecord>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
     let count = limited_count(cursor.u32()?)?;
-    let mut lines = Vec::with_capacity(count);
+    let mut lines = Vec::new();
     let mut prior_id = None;
     for _ in 0..count {
         let mut record = take_record(&mut cursor)?;
@@ -1554,7 +1554,7 @@ fn parse_notes(
 ) -> Result<Vec<NoteRecord>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
     let count = limited_count(cursor.u32()?)?;
-    let mut notes = Vec::with_capacity(count);
+    let mut notes = Vec::new();
     let mut ids = BTreeSet::new();
     let mut prior_sort_key: Option<(f64, u64, u32, u64)> = None;
     for _ in 0..count {
@@ -1675,7 +1675,7 @@ fn parse_notes(
 fn parse_tracks(bytes: &[u8]) -> Result<Vec<PropertyDescriptor>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
     let count = limited_count(cursor.u32()?)?;
-    let mut descriptors = Vec::with_capacity(count);
+    let mut descriptors = Vec::new();
     for _ in 0..count {
         let mut record = take_record(&mut cursor)?;
         let property_type = ValueType::from_abi(record.u8()?)?;
@@ -1694,7 +1694,7 @@ fn parse_tracks(bytes: &[u8]) -> Result<Vec<PropertyDescriptor>, &'static str> {
                 if segment_count == 0 {
                     return Err("fcbc.invalid-track");
                 }
-                let mut segments = Vec::with_capacity(segment_count);
+                let mut segments = Vec::new();
                 for _ in 0..segment_count {
                     segments.push(Segment {
                         start: record.f64()?,
@@ -1714,7 +1714,7 @@ fn parse_tracks(bytes: &[u8]) -> Result<Vec<PropertyDescriptor>, &'static str> {
                 if piece_count == 0 {
                     return Err("fcbc.invalid-track");
                 }
-                let mut pieces = Vec::with_capacity(piece_count);
+                let mut pieces = Vec::new();
                 for _ in 0..piece_count {
                     pieces.push(Piece {
                         start: record.f64()?,
@@ -1742,7 +1742,7 @@ fn parse_tracks(bytes: &[u8]) -> Result<Vec<PropertyDescriptor>, &'static str> {
 fn parse_expressions(bytes: &[u8]) -> Result<Vec<ExpressionNode>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-expression");
     let count = limited_count(cursor.u32()?)?;
-    let mut expressions = Vec::with_capacity(count);
+    let mut expressions = Vec::new();
     for _ in 0..count {
         expressions.push(ExpressionNode {
             opcode: cursor.u16()?,
@@ -1760,7 +1760,7 @@ fn parse_expressions(bytes: &[u8]) -> Result<Vec<ExpressionNode>, &'static str> 
 fn parse_distances(bytes: &[u8]) -> Result<Vec<DistanceDescriptor>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
     let count = limited_count(cursor.u32()?)?;
-    let mut distances = Vec::with_capacity(count);
+    let mut distances = Vec::new();
     for _ in 0..count {
         let mut record = take_record(&mut cursor)?;
         let line_id = record.u64()?;
@@ -1791,7 +1791,7 @@ fn parse_distances(bytes: &[u8]) -> Result<Vec<DistanceDescriptor>, &'static str
             domain_end,
             "fcbc.invalid-distance",
         )?;
-        let mut boundaries = Vec::with_capacity(boundary_count);
+        let mut boundaries = Vec::new();
         for _ in 0..boundary_count {
             boundaries.push(record.f64()?);
         }
