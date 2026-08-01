@@ -288,6 +288,61 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
 }
 
 #[test]
+fn write_from_compilation_preserves_source_version_meta_and_artwork() {
+    let workspace = tempdir().unwrap();
+    fs::write(workspace.path().join("cover.png"), b"opaque cover").unwrap();
+    let source = r#"#fcs 5.0.1
+format { profile: chart; }
+meta {
+    title: "Round-trip";
+    level: 12.5;
+    custom: { "first": true, "second": "value" };
+}
+resources { image cover { source: "cover.png"; mediaType: "image/png"; } }
+artwork { primary: @cover; }
+tempoMap { 0beat -> 120bpm; }
+"#;
+    let document = parse_document(source).into_result().unwrap();
+    let compilation = document
+        .canonical_compilation(
+            CompileTimeLimits::default(),
+            workspace.path(),
+            ResourceLimits::default(),
+        )
+        .unwrap();
+
+    let bytes = write_from_compilation(&compilation).unwrap();
+    let decoded = crate::load_chart(&bytes).expect("metadata-bearing chart must load");
+    assert_eq!(decoded.source_fcs_version, (5, 0, 1));
+    assert_eq!(decoded.document_profile, 2);
+    assert_eq!(decoded.document_feature_bits, 0);
+    assert_eq!(
+        decoded.meta,
+        crate::DecodedValue::Object(vec![
+            (
+                "title".into(),
+                crate::DecodedValue::String("Round-trip".into())
+            ),
+            ("level".into(), crate::DecodedValue::Float(12.5)),
+            (
+                "custom".into(),
+                crate::DecodedValue::Object(vec![
+                    ("first".into(), crate::DecodedValue::Bool(true)),
+                    ("second".into(), crate::DecodedValue::String("value".into())),
+                ]),
+            ),
+        ])
+    );
+    assert_eq!(
+        decoded.artwork,
+        crate::DecodedValue::Object(vec![(
+            "primary".into(),
+            crate::DecodedValue::ResourceRef(stable_id(b"fcs.resource", b"cover")),
+        ),])
+    );
+}
+
+#[test]
 fn write_from_compilation_preserves_empty_chart_cardinality() {
     let bytes = compile(include_str!(
         "../../../docs/conformance/fcs5/source/valid/minimal-chart.fcs"

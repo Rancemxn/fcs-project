@@ -1798,8 +1798,14 @@ fn lower_meta(
             block.span,
         ));
     }
-    if let Some(CanonicalValue::Int(level)) = values.remove("level") {
-        values.insert("level".into(), CanonicalValue::Float(level as f64));
+    match values.remove("level") {
+        Some(CanonicalValue::Int(level)) => {
+            values.insert("level".into(), CanonicalValue::Float(level as f64));
+        }
+        Some(level) => {
+            values.insert("level".into(), level);
+        }
+        None => {}
     }
     Some(values)
 }
