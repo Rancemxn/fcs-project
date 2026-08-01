@@ -1124,6 +1124,8 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                 | NodeKind::RoundedRect
                 | NodeKind::Circle
                 | NodeKind::Ellipse
+                | NodeKind::Polyline
+                | NodeKind::Polygon
                 | NodeKind::Image
         ) {
             continue;
