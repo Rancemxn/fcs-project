@@ -249,7 +249,7 @@
 
 ### Personal engineering skills
 
-本仓库只使用 `~/.codex/skills` 中的最小个人 skill 集合：`diagnose`、`tdd`、`zoom-out`、`grill-me`、`grill-with-docs`、`improve-codebase-architecture` 和 `agent-loop`。它们是协作流程和推理纪律，不是 FCS、FCBC、Render 或 Conversion 规范的替代品；skill 的建议与本文件、根规范、治理文件或 Accepted ADR 冲突时，必须按“资料职责、权威与冲突处理”中的流程处理，不能直接以 skill 的默认做法覆盖项目约束。
+本仓库只使用最小个人 skill 集合：`diagnose`、`tdd`、`zoom-out`、`grill-me`、`grill-with-docs`、`improve-codebase-architecture` 和 `agent-loop`。它们是协作流程和推理纪律，不是 FCS、FCBC、Render 或 Conversion 规范的替代品；skill 的建议与本文件、根规范、治理文件或 Accepted ADR 冲突时，必须按“资料职责、权威与冲突处理”中的流程处理，不能直接以 skill 的默认做法覆盖项目约束。
 
 #### 调用时机
 
@@ -289,3 +289,20 @@
 workspace 结构和现有依赖作出结论。不要仅凭记忆推荐版本、API 或配置方式。
 
 如果 `tavily_hikari` 出现问题，要在回复中提醒用户；通常继续使用已有仓库信息、官方资料或其他可靠来源完成对话，不必因此中断，除非用户明确要求必须依赖 `tavily_hikari` 或要求停止。
+
+<!-- fastctx:begin -->
+
+## 本地文件查阅
+
+如需读取、搜索和查找本地文件，请优先使用 FastCtx MCP 工具——`mcp__fastctx__read`、`mcp__fastctx__grep`、`mcp__fastctx__glob`——而不是 `cat`/`Get-Content`、`rg`/`findstr`/`Select-String` 或 `dir`/`ls -R`。只读取任务需要的内容。当需要多个文件时，请在单次 `read` 调用中以 `files=[{"path": ...}, ...]` 的形式传入，而非每个文件单独调用一次。请使用绝对路径。每个结果的最后一行会显示 `Complete` 或 `Partial`——仅当出现 `Partial` 备注时，才使用其提供的精确参数继续操作。
+
+切勿将 `read_mcp_resource`、`list_mcp_resources` 或 `list_mcp_resource_templates` 指向 `fastctx` 服务：FastCtx 提供的是工具（tools），而非 MCP 资源，因此上述调用必定失败。请使用 `mcp__fastctx__read` 加绝对路径来读取本地文件——切勿使用 `file://` URI。
+
+### 批量替换
+
+使用 `mcp__fastctx__replace` 进行跨文件的机械查找与替换。它会保留每个文件的编码和换行符，支持试运行预览，并在写入前拒绝并发更改。对于生成的内容、语义重写或小型本地编辑，请使用 `apply_patch`。
+
+### 命令执行
+
+协作会话中的 Cargo、Git、GitHub CLI 和其他 shell 命令统一通过 `fastctx_run` 的登录 shell 执行；这里的 `fastctx_run` 是执行环境约束，不改变仓库脚本中的 Bash 语言、shebang 或代码块语义。
+<!-- fastctx:end -->
