@@ -920,9 +920,30 @@ fn validate_resource_data(bytes: &[u8], resources: &[ResourceRecord]) -> Result<
         if resource.data_offset != expected as u64 {
             return Err("fcbc.invalid-resource-data");
         }
-        if bytes[cursor..expected].iter().any(|byte| *byte != 0) {
+        if bytes
+            .get(cursor..expected)
+            .ok_or("fcbc.invalid-resource-data")?
+            .iter()
+            .any(|byte| *byte != 0)
+        {
             return Err("fcbc.invalid-resource-data");
         }
+        let length =
+            usize::try_from(resource.data_length).map_err(|_| "fcbc.invalid-resource-data")?;
+        let end = expected
+            .checked_add(length)
+            .ok_or("fcbc.invalid-resource-data")?;
+        bytes
+            .get(expected..end)
+            .ok_or("fcbc.invalid-resource-data")?;
+        cursor = end;
+    }
+    if cursor != bytes.len() {
+        return Err("fcbc.invalid-resource-data");
+    }
+    cursor = 0;
+    for resource in resources {
+        let expected = align_up_usize(cursor, 8).ok_or("fcbc.invalid-resource-data")?;
         let length =
             usize::try_from(resource.data_length).map_err(|_| "fcbc.invalid-resource-data")?;
         let end = expected
@@ -936,9 +957,6 @@ fn validate_resource_data(bytes: &[u8], resources: &[ResourceRecord]) -> Result<
             return Err("fcbc.resource-hash-mismatch");
         }
         cursor = end;
-    }
-    if cursor != bytes.len() {
-        return Err("fcbc.invalid-resource-data");
     }
     Ok(())
 }
