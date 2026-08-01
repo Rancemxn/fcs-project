@@ -78,6 +78,7 @@ pub fn chart_value(chart: &CanonicalChart) -> Value {
                 object([
                     ("namespace", string(extension.namespace())),
                     ("version", string(extension.version())),
+                    ("payload", canonical_object_entries(extension.payload())),
                 ])
             })),
         ),

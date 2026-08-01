@@ -130,9 +130,10 @@ enum JudgeShapeFixture {
 }
 
 #[derive(Clone)]
-struct ExtensionFixture {
+struct ExtensionFixture<'a> {
     namespace: String,
     version: (u16, u16, u16),
+    payload: &'a CanonicalObject,
 }
 
 #[derive(Clone)]
@@ -734,7 +735,7 @@ fn assemble_package(
     audio_offset: f64,
     resources: &[ResourceFixture<'_>],
     tracks: &[NativeTrackFixture],
-    extensions: &[ExtensionFixture],
+    extensions: &[ExtensionFixture<'_>],
     execution_graph: ExecutionGraph,
     runtime_descriptors: Option<&CanonicalDescriptorTable>,
     render: Option<&CanonicalRenderScene>,
@@ -909,7 +910,7 @@ fn assemble_package(
         sections.push(Section::new(14, render_section));
     }
     if !extensions.is_empty() {
-        sections.push(Section::new(15, extensions_section(extensions, &strings)));
+        sections.push(Section::new(15, extensions_section(extensions, &strings)?));
     }
     if let Some(fidelity_section) = fidelity_section {
         sections.push(Section::new(16, fidelity_section));
@@ -1579,9 +1580,9 @@ fn native_resources(compilation: &CanonicalCompilation) -> FcbcResult<Vec<Resour
     Ok(resources)
 }
 
-fn native_extensions(
-    extensions: &[CanonicalRequiredExtension],
-) -> FcbcResult<Vec<ExtensionFixture>> {
+fn native_extensions<'a>(
+    extensions: &'a [CanonicalRequiredExtension],
+) -> FcbcResult<Vec<ExtensionFixture<'a>>> {
     let mut lowered = Vec::with_capacity(extensions.len());
     for extension in extensions {
         let mut components = extension.version().split('.');
@@ -1606,6 +1607,7 @@ fn native_extensions(
         lowered.push(ExtensionFixture {
             namespace: extension.namespace().to_owned(),
             version: (version.0.unwrap(), version.1.unwrap(), version.2.unwrap()),
+            payload: extension.payload(),
         });
     }
     lowered.sort_by(|left, right| {
@@ -2083,6 +2085,9 @@ fn string_table_values<'a>(
         strings.push(resource.media_type);
         collect_canonical_object_strings(resource.metadata, &mut strings);
     }
+    for extension in extensions {
+        collect_canonical_object_strings(extension.payload, &mut strings);
+    }
     strings.extend(
         notes
             .iter()
@@ -2347,15 +2352,40 @@ fn fidelity_fact_value(
 }
 
 fn canonical_object_value(object: &CanonicalObject, strings: &[&str]) -> FcbcResult<Vec<u8>> {
+    canonical_object_value_with_references(object, strings, false)
+}
+
+fn canonical_extension_object_value(
+    object: &CanonicalObject,
+    strings: &[&str],
+) -> FcbcResult<Vec<u8>> {
+    canonical_object_value_with_references(object, strings, true)
+}
+
+fn canonical_object_value_with_references(
+    object: &CanonicalObject,
+    strings: &[&str],
+    allow_references: bool,
+) -> FcbcResult<Vec<u8>> {
     let fields = object
         .entries()
         .iter()
-        .map(|entry| Ok((entry.key(), canonical_value(entry.value(), strings, 0)?)))
+        .map(|entry| {
+            Ok((
+                entry.key(),
+                canonical_value(entry.value(), strings, 0, allow_references)?,
+            ))
+        })
         .collect::<FcbcResult<Vec<_>>>()?;
     Ok(value_object(&fields, strings))
 }
 
-fn canonical_value(value_: &CanonicalValue, strings: &[&str], depth: usize) -> FcbcResult<Vec<u8>> {
+fn canonical_value(
+    value_: &CanonicalValue,
+    strings: &[&str],
+    depth: usize,
+    allow_references: bool,
+) -> FcbcResult<Vec<u8>> {
     if depth > 32 {
         return Err(FcbcError::new(
             "fcbc.limit-exceeded",
@@ -2389,6 +2419,13 @@ fn canonical_value(value_: &CanonicalValue, strings: &[&str], depth: usize) -> F
             }
             Ok(value(9, payload))
         }
+        CanonicalValue::ResourceReference(value_) if allow_references => Ok(value_resource(
+            stable_id(b"fcs.resource", value_.as_bytes()),
+        )),
+        CanonicalValue::ContributorReference(_) if allow_references => Err(FcbcError::new(
+            "fcbc.unsupported-required-extension",
+            "required extension contributor references require contributor records",
+        )),
         CanonicalValue::ResourceReference(_) | CanonicalValue::ContributorReference(_) => {
             Err(FcbcError::new(
                 "fcbc.invalid-fidelity",
@@ -2402,7 +2439,7 @@ fn canonical_value(value_: &CanonicalValue, strings: &[&str], depth: usize) -> F
             let tag = canonical_value_type_tag(element_type)?;
             let values = values
                 .iter()
-                .map(|value_| canonical_value(value_, strings, depth + 1))
+                .map(|value_| canonical_value(value_, strings, depth + 1, allow_references))
                 .collect::<FcbcResult<Vec<_>>>()?;
             Ok(value_array(tag, values))
         }
@@ -2413,7 +2450,7 @@ fn canonical_value(value_: &CanonicalValue, strings: &[&str], depth: usize) -> F
                 .map(|entry| {
                     Ok((
                         entry.key(),
-                        canonical_value(entry.value(), strings, depth + 1)?,
+                        canonical_value(entry.value(), strings, depth + 1, allow_references)?,
                     ))
                 })
                 .collect::<FcbcResult<Vec<_>>>()?;
@@ -2702,7 +2739,10 @@ fn value_vec2_length(value_: [f64; 2]) -> Vec<u8> {
     value(10, payload)
 }
 
-fn extensions_section(extensions: &[ExtensionFixture], strings: &[&str]) -> Vec<u8> {
+fn extensions_section(
+    extensions: &[ExtensionFixture<'_>],
+    strings: &[&str],
+) -> FcbcResult<Vec<u8>> {
     let mut section = Vec::new();
     put_u32(&mut section, extensions.len() as u32);
     for extension in extensions {
@@ -2712,10 +2752,13 @@ fn extensions_section(extensions: &[ExtensionFixture], strings: &[&str]) -> Vec<
         put_u16(&mut payload, extension.version.1);
         put_u16(&mut payload, extension.version.2);
         put_u16(&mut payload, 1); // required
-        payload.extend_from_slice(&empty_object());
+        payload.extend_from_slice(&canonical_extension_object_value(
+            extension.payload,
+            strings,
+        )?);
         section.extend_from_slice(&record(payload));
     }
-    section
+    Ok(section)
 }
 
 fn tracks_section(constants: &ConstantIndices) -> Vec<u8> {

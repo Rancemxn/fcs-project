@@ -27,7 +27,7 @@ resources {
     }
 }
 sync { primaryAudio: @song; audioOffset: 0s; }
-extensions { extension("org.test.chart", 1.0.0) required { "mode": "test", } }
+extensions { extension("org.test.chart", 1.0.0) required { "mode": "test", "enabled": true, } }
 tempoMap { 0beat -> 120bpm; }
 lines {
     line main {
@@ -62,6 +62,16 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
     let extension = chart.required_extensions().first().unwrap();
     assert_eq!(extension.namespace(), "org.test.chart");
     assert_eq!(extension.version(), "1.0.0");
+    assert_eq!(extension.payload().entries()[0].key(), "mode");
+    assert_eq!(
+        extension.payload().entries()[0].value(),
+        &CanonicalValue::String("test".into())
+    );
+    assert_eq!(extension.payload().entries()[1].key(), "enabled");
+    assert_eq!(
+        extension.payload().entries()[1].value(),
+        &CanonicalValue::Bool(true)
+    );
 }
 
 #[test]

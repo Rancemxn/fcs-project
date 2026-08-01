@@ -134,6 +134,12 @@ lines { line main {} }
             .and_then(Value::as_str),
         Some("1.0.0")
     );
+    assert_eq!(
+        extensions
+            .pointer("/requiredExtensions/0/payload/0/key")
+            .and_then(Value::as_str),
+        Some("mode")
+    );
 }
 
 #[test]

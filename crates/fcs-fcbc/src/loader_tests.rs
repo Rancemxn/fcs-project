@@ -362,6 +362,7 @@ mod extension_tests {
                 namespace: "score.ext".into(),
                 version: (1, 2, 3),
                 flags: 1,
+                payload: DecodedValue::Object(Vec::new()),
             }]
         );
     }

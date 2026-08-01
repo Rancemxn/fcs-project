@@ -641,7 +641,7 @@ collections {
     }
 }
 extensions {
-    extension("score.ext", 1.2.3) required { "mode": "test", }
+    extension("score.ext", 1.2.3) required { "mode": "test", "enabled": true, }
 }
 "#;
     let document = parse_document(source).into_result().unwrap();
@@ -662,6 +662,10 @@ extensions {
             namespace: "score.ext".into(),
             version: (1, 2, 3),
             flags: 1,
+            payload: crate::DecodedValue::Object(vec![
+                ("mode".into(), crate::DecodedValue::String("test".into())),
+                ("enabled".into(), crate::DecodedValue::Bool(true)),
+            ]),
         }]
     );
 
