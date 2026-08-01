@@ -1,7 +1,7 @@
 //! Product FCS Render Profile surface (I9).
 //!
 //! Owns RenderSection product load/write, semantic draw-list evaluation, solid
-//! reference raster, and restricted fixture asset codecs. Realtime GPU backends
+//! reference raster for core fill geometries, and restricted fixture asset codecs. Realtime GPU backends
 //! remain post-RC.
 
 mod assets;
@@ -14,9 +14,13 @@ pub use assets::{
     decode_font_with_limits, decode_image, decode_image_with_limits, encode_test_png,
     encode_test_webp, shape_simple_ltr, shape_simple_ltr_with_limits,
 };
-pub use loader::{DecodedRenderChart, NodeKind, load_render, load_render_with_limits};
+pub use loader::{
+    DecodedRenderChart, GeometryData, NodeKind, load_render, load_render_with_limits,
+};
 pub use semantic::{
-    DrawOp, evaluate_semantic_draw_list, rasterize_solid_rgba8, rasterize_solid_rgba8_with_limits,
+    DrawOp, ImageDrawOp, evaluate_semantic_draw_list, evaluate_semantic_draw_list_at,
+    rasterize_solid_rgba8, rasterize_solid_rgba8_at, rasterize_solid_rgba8_with_limits,
+    rasterize_solid_rgba8_with_limits_at,
 };
 pub use writer::{
     ANALYTIC_NOTE_TEXT_ID, FONT_RESOURCE_TEXT_ID, MALFORMED_RESOURCE_TEXT_ID, PNG_RESOURCE_TEXT_ID,
@@ -141,9 +145,10 @@ mod tests {
 
     use super::*;
     use crate::assets::PNG_PIXELS;
-    use crate::loader::{GeometryData, PaintData};
+    use crate::loader::{Attachment, GeometryData, PaintData, PaintRecord};
     use fcs_fcbc::{
-        DescriptorKind, PropertyDescriptor, RuntimeValue, ValueType, write_nonempty_execution,
+        DescriptorKind, PropertyDescriptor, RuntimeValue, Segment, ValueType,
+        write_nonempty_execution,
     };
     use image::{ColorType, ImageEncoder, codecs::png::PngEncoder};
 
@@ -186,10 +191,61 @@ mod tests {
         descriptor
     }
 
+    fn add_descriptor_segment_points(
+        render: &mut DecodedRenderChart,
+        start: RuntimeValue,
+        end: RuntimeValue,
+    ) -> u32 {
+        let start_constant = render.core.constants.len() as u32;
+        let property_type = start.value_type();
+        render.core.constants.push(start);
+        let end_constant = render.core.constants.len() as u32;
+        render.core.constants.push(end);
+        let descriptor = render.core.descriptors.len() as u32;
+        render.core.descriptors.push(PropertyDescriptor {
+            property_type,
+            domain: render.core.descriptors[2].domain,
+            kind: DescriptorKind::SegmentTrack(vec![
+                Segment {
+                    start: 0.0,
+                    end: 0.0,
+                    interpolation: 1,
+                    easing: 0,
+                    flags: 1,
+                    start_constant,
+                    end_constant: start_constant,
+                    bezier: [0.0; 4],
+                },
+                Segment {
+                    start: 1.0,
+                    end: 1.0,
+                    interpolation: 1,
+                    easing: 0,
+                    flags: 1,
+                    start_constant: end_constant,
+                    end_constant,
+                    bezier: [0.0; 4],
+                },
+            ]),
+        });
+        descriptor
+    }
+
     fn set_full_viewport_rect(render: &mut DecodedRenderChart) {
+        // Descriptor 2 is the shared origin/size root for the fixture's Rect,
+        // RoundedRect, Circle, and Ellipse geometries. Give the Rect dedicated
+        // origin/size descriptors and leave descriptor 2 at a valid zero so the
+        // other solid geometries stay evaluable instead of going negative.
         set_descriptor_constant(
             render,
             2,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [0.0, 0.0],
+            },
+        );
+        let origin = add_descriptor_constant(
+            render,
             RuntimeValue::Vec2 {
                 ty: ValueType::Vec2Length,
                 value: [-6.0, -6.0],
@@ -204,14 +260,149 @@ mod tests {
         );
         for geometry in &mut render.geometries {
             if let GeometryData::Rect {
-                origin,
+                origin: rect_origin,
                 size: rect_size,
             } = &mut geometry.data
-                && *origin == 2
+                && *rect_origin == 2
             {
+                *rect_origin = origin;
                 *rect_size = size;
             }
         }
+    }
+
+    fn make_world_attached(render: &mut DecodedRenderChart) {
+        for node in &mut render.nodes {
+            node.attachment = Attachment { kind: 1, id: 0 };
+        }
+    }
+
+    fn isolate_solid_shape(render: &mut DecodedRenderChart, kind: NodeKind) {
+        make_world_attached(render);
+        render.viewport_width = 4.0;
+        render.viewport_height = 4.0;
+        render.viewport_color_space = 1;
+
+        let hidden = add_descriptor_constant(render, RuntimeValue::Bool(false));
+        let visible = add_descriptor_constant(render, RuntimeValue::Bool(true));
+        let zero_position = add_descriptor_constant(
+            render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [0.0, 0.0],
+            },
+        );
+        let zero_angle = add_descriptor_constant(
+            render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Angle,
+                value: 0.0,
+            },
+        );
+        let unit_scale = add_descriptor_constant(
+            render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Float,
+                value: [1.0, 1.0],
+            },
+        );
+        let opaque = add_descriptor_constant(
+            render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 1.0,
+            },
+        );
+
+        for node in &mut render.nodes {
+            node.visibility_descriptor = hidden;
+        }
+        let target = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == kind)
+            .expect("fixture shape node");
+        let mut current = Some(target);
+        while let Some(index) = current {
+            let node = &mut render.nodes[index];
+            node.visibility_descriptor = visible;
+            node.position_descriptor = zero_position;
+            node.origin_descriptor = zero_position;
+            node.rotation_descriptor = zero_angle;
+            node.scale_descriptor = unit_scale;
+            node.opacity_descriptor = opaque;
+            current = node.parent.map(|parent| parent as usize);
+        }
+
+        let geometry_index = render.nodes[target]
+            .geometry_ref
+            .expect("fixture shape geometry") as usize;
+        let center = add_descriptor_constant(
+            render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [0.0, 0.0],
+            },
+        );
+        let radius = add_descriptor_constant(
+            render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 2.0,
+            },
+        );
+        let radius_y = add_descriptor_constant(
+            render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 1.0,
+            },
+        );
+        let angle = add_descriptor_constant(
+            render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Angle,
+                value: 0.0,
+            },
+        );
+        render.geometries[geometry_index].data = match kind {
+            NodeKind::RoundedRect => {
+                let origin = add_descriptor_constant(
+                    render,
+                    RuntimeValue::Vec2 {
+                        ty: ValueType::Vec2Length,
+                        value: [-2.0, -2.0],
+                    },
+                );
+                let size = add_descriptor_constant(
+                    render,
+                    RuntimeValue::Vec2 {
+                        ty: ValueType::Vec2Length,
+                        value: [4.0, 4.0],
+                    },
+                );
+                GeometryData::RoundedRect {
+                    origin,
+                    size,
+                    radii: [radius; 4],
+                }
+            }
+            NodeKind::Circle => GeometryData::Circle { center, radius },
+            NodeKind::Ellipse => GeometryData::Ellipse {
+                center,
+                radius_x: radius,
+                radius_y,
+                rotation: angle,
+            },
+            _ => panic!("test helper only configures core fill shapes"),
+        };
+        let color = add_descriptor_constant(render, RuntimeValue::Color([1.0, 1.0, 1.0, 1.0]));
+        let paint = render.paints.len() as u32;
+        render.paints.push(PaintRecord {
+            id: u64::MAX - u64::from(kind as u16),
+            data: PaintData::Solid { color },
+        });
+        render.nodes[target].fill_paint = Some(paint);
     }
 
     fn u32_at(bytes: &[u8], offset: usize) -> u32 {
@@ -294,6 +485,735 @@ mod tests {
     }
 
     #[test]
+    fn semantic_query_honors_active_half_open_interval() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
+        let root_index = render
+            .nodes
+            .iter_mut()
+            .position(|node| node.parent.is_none() && node.kind == NodeKind::Group)
+            .expect("fixture root");
+        let root = &mut render.nodes[root_index];
+        root.flags &= !0b11;
+        root.active_start = 0.0;
+        root.active_end = 1.0;
+        let rect_id = render
+            .nodes
+            .iter()
+            .find(|node| node.parent == Some(root_index as u32) && node.kind == NodeKind::Rect)
+            .expect("fixture root descendant")
+            .id;
+
+        assert!(
+            evaluate_semantic_draw_list_at(&render, 0.999)
+                .expect("active query")
+                .iter()
+                .any(|op| op.node_id == rect_id)
+        );
+        let rect_index = render
+            .nodes
+            .iter()
+            .position(|node| node.id == rect_id)
+            .expect("fixture Rect node");
+        let paint = render.nodes[rect_index]
+            .fill_paint
+            .expect("fixture Rect paint");
+        // Fixture solid paints share one color descriptor; poison a Rect-only
+        // descriptor so the half-open-end query proves the inactive subtree is
+        // skipped without tripping another still-active solid paint.
+        let poisoned = render.core.descriptors.len() as u32;
+        render.core.descriptors.push(PropertyDescriptor {
+            property_type: ValueType::Color,
+            domain: render.core.descriptors[2].domain,
+            kind: DescriptorKind::Constant(u32::MAX),
+        });
+        match &mut render.paints[paint as usize].data {
+            PaintData::Solid { color } => *color = poisoned,
+            _ => panic!("fixture Rect uses a solid paint"),
+        }
+        assert!(
+            !evaluate_semantic_draw_list_at(&render, 1.0)
+                .expect("half-open end query")
+                .iter()
+                .any(|op| op.node_id == rect_id)
+        );
+    }
+
+    #[test]
+    fn semantic_visibility_skips_subtree_before_later_descriptor_errors() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
+        let parent = render
+            .nodes
+            .iter()
+            .position(|node| node.parent.is_none() && node.kind == NodeKind::Group)
+            .expect("fixture parent");
+        let visibility_descriptor = add_descriptor_segment_points(
+            &mut render,
+            RuntimeValue::Bool(false),
+            RuntimeValue::Bool(true),
+        );
+        render.nodes[parent].visibility_descriptor = visibility_descriptor;
+        let child = render
+            .nodes
+            .iter()
+            .position(|node| node.parent == Some(parent as u32))
+            .expect("fixture child");
+        let child_id = render.nodes[child].id;
+        assert!(
+            !evaluate_semantic_draw_list_at(&render, 0.0)
+                .expect("hidden query")
+                .iter()
+                .any(|op| op.node_id == child_id)
+        );
+        assert!(
+            evaluate_semantic_draw_list_at(&render, 1.0)
+                .expect("visible query")
+                .iter()
+                .any(|op| op.node_id == child_id)
+        );
+        let paint = render.nodes[child].fill_paint.expect("fixture child paint");
+        // Fixture solid paints share one color descriptor; poison a child-only
+        // descriptor so the hidden-subtree query proves the subtree is skipped
+        // while later active roots stay queryable without tripping shared paint.
+        let poisoned = render.core.descriptors.len() as u32;
+        render.core.descriptors.push(PropertyDescriptor {
+            property_type: ValueType::Color,
+            domain: render.core.descriptors[2].domain,
+            kind: DescriptorKind::Constant(u32::MAX),
+        });
+        match &mut render.paints[paint as usize].data {
+            PaintData::Solid { color } => *color = poisoned,
+            _ => panic!("fixture child uses a solid paint"),
+        }
+
+        let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("invisible subtree query");
+        assert!(!draw.is_empty(), "later root remains queryable");
+        assert!(!draw.iter().any(|op| op.node_id == child_id));
+    }
+
+    #[test]
+    fn semantic_note_attachment_gate_short_circuits_subtree() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        let parent = render
+            .nodes
+            .iter()
+            .position(|node| {
+                node.parent.is_none() && node.kind == NodeKind::Group && node.attachment.kind == 4
+            })
+            .expect("fixture Note-attached Group");
+        let note_id = render.nodes[parent].attachment.id;
+        let note_index = render
+            .core
+            .notes
+            .iter()
+            .position(|note| note.id == note_id)
+            .expect("fixture attachment Note");
+        let child = render
+            .nodes
+            .iter()
+            .position(|node| node.parent == Some(parent as u32))
+            .expect("fixture Note-attached child");
+        let child_id = render.nodes[child].id;
+        let parent_id = render.nodes[parent].id;
+        for node in &mut render.nodes {
+            if node.parent.is_none() && node.id != parent_id {
+                node.flags = 0;
+                node.active_start = 0.0;
+                node.active_end = 0.0;
+            }
+        }
+
+        let dynamic_visibility = add_descriptor_segment_points(
+            &mut render,
+            RuntimeValue::Bool(false),
+            RuntimeValue::Bool(true),
+        );
+        render.core.notes[note_index].property_descriptors[9] = dynamic_visibility;
+        assert!(
+            !evaluate_semantic_draw_list_at(&render, 0.0)
+                .expect("hidden attachment query")
+                .iter()
+                .any(|op| op.node_id == child_id)
+        );
+        assert!(
+            evaluate_semantic_draw_list_at(&render, 1.0)
+                .expect("visible attachment query")
+                .iter()
+                .any(|op| op.node_id == child_id)
+        );
+
+        let paint = render.nodes[child].fill_paint.expect("fixture child paint");
+        let color_descriptor = match render.paints[paint as usize].data {
+            PaintData::Solid { color } => color,
+            _ => panic!("fixture child uses a solid paint"),
+        };
+        render.core.descriptors[color_descriptor as usize].kind =
+            DescriptorKind::Constant(u32::MAX);
+        let draw = evaluate_semantic_draw_list_at(&render, 0.0)
+            .expect("hidden attachment skips child descriptor failure");
+        assert!(!draw.iter().any(|op| op.node_id == child_id));
+
+        render.core.notes[note_index].flags &= !(1 << 1);
+        assert!(
+            !evaluate_semantic_draw_list_at(&render, 1.0)
+                .expect("static render gate query")
+                .iter()
+                .any(|op| op.node_id == child_id)
+        );
+    }
+
+    #[test]
+    fn semantic_query_evaluates_geometry_and_solid_paint_at_query_time() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
+        let rect_index = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::Rect)
+            .expect("fixture Rect node");
+        render.viewport_width = 1.0;
+        render.viewport_height = 1.0;
+        let mut active_nodes = vec![rect_index];
+        let mut current = Some(rect_index);
+        while let Some(index) = current {
+            active_nodes.push(index);
+            current = render.nodes[index].parent.map(|parent| parent as usize);
+        }
+        for (index, node) in render.nodes.iter_mut().enumerate() {
+            if !active_nodes.contains(&index) {
+                node.flags = 0;
+                node.active_start = 0.0;
+                node.active_end = 0.0;
+            }
+        }
+
+        let dynamic_origin = add_descriptor_segment_points(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [-0.5, -0.5],
+            },
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [1.0, 2.0],
+            },
+        );
+        let dynamic_size = add_descriptor_segment_points(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [1.0, 1.0],
+            },
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [3.0, 4.0],
+            },
+        );
+        let geometry = render.nodes[rect_index]
+            .geometry_ref
+            .expect("fixture Rect geometry");
+        match &mut render.geometries[geometry as usize].data {
+            GeometryData::Rect { origin, size } => {
+                *origin = dynamic_origin;
+                *size = dynamic_size;
+            }
+            _ => panic!("fixture Rect geometry kind changed"),
+        }
+
+        let dynamic_color = add_descriptor_segment_points(
+            &mut render,
+            RuntimeValue::Color([1.0, 0.0, 0.0, 1.0]),
+            RuntimeValue::Color([0.0, 1.0, 0.0, 0.5]),
+        );
+        let paint = render.nodes[rect_index]
+            .fill_paint
+            .expect("fixture Rect paint");
+        match &mut render.paints[paint as usize].data {
+            PaintData::Solid { color } => *color = dynamic_color,
+            _ => panic!("fixture Rect uses a solid paint"),
+        }
+
+        let at_start = evaluate_semantic_draw_list_at(&render, 0.0)
+            .expect("query at start")
+            .into_iter()
+            .find(|op| op.node_id == render.nodes[rect_index].id)
+            .expect("Rect at start");
+        assert_eq!(at_start.bounds, [-0.5, -0.5, 0.5, 0.5]);
+        assert_eq!(at_start.fill_rgba, Some([1.0, 0.0, 0.0, 1.0]));
+
+        let at_end = evaluate_semantic_draw_list_at(&render, 1.0)
+            .expect("query at end")
+            .into_iter()
+            .find(|op| op.node_id == render.nodes[rect_index].id)
+            .expect("Rect at end");
+        assert_eq!(at_end.bounds, [1.0, 2.0, 4.0, 6.0]);
+        assert_eq!(at_end.fill_rgba, Some([0.0, 1.0, 0.0, 0.5]));
+
+        let start_pixels =
+            rasterize_solid_rgba8_at(&render, 0.0, 1, 1).expect("raster query at start");
+        let end_pixels = rasterize_solid_rgba8_at(&render, 1.0, 1, 1).expect("raster query at end");
+        assert_eq!(start_pixels[3], 255);
+        assert_eq!(end_pixels[3], 0);
+    }
+
+    #[test]
+    fn semantic_query_propagates_node_transform_into_world_bounds() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
+        let rect_index = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::Rect)
+            .expect("fixture Rect node");
+        let rect_id = render.nodes[rect_index].id;
+        let dynamic_position = add_descriptor_segment_points(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [0.0, 0.0],
+            },
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [2.0, 3.0],
+            },
+        );
+        render.nodes[rect_index].position_descriptor = dynamic_position;
+
+        let at_start = evaluate_semantic_draw_list_at(&render, 0.0)
+            .expect("query at start")
+            .into_iter()
+            .find(|op| op.node_id == rect_id)
+            .expect("Rect at start");
+        let at_end = evaluate_semantic_draw_list_at(&render, 1.0)
+            .expect("query at end")
+            .into_iter()
+            .find(|op| op.node_id == rect_id)
+            .expect("Rect at end");
+
+        assert_eq!(
+            at_start.world_matrix,
+            [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        );
+        assert_eq!(
+            at_end.world_matrix,
+            [1.0, 0.0, 2.0, 0.0, 1.0, 3.0, 0.0, 0.0, 1.0]
+        );
+        assert_eq!(
+            at_end.bounds,
+            [
+                at_start.bounds[0] + 2.0,
+                at_start.bounds[1] + 3.0,
+                at_start.bounds[2] + 2.0,
+                at_start.bounds[3] + 3.0,
+            ]
+        );
+    }
+
+    #[test]
+    fn semantic_draw_ops_preserve_composite_and_inherited_clip_chain() {
+        let render = load_render(&render_fixture()).expect("render load");
+        let clip_group = render
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::ClipGroup)
+            .expect("fixture ClipGroup");
+        let clip = clip_group.clip_ref.expect("fixture ClipGroup clip");
+        let clip_id = render.clips[clip as usize].id;
+        let image_node = render
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Image)
+            .expect("fixture Image");
+        let image_id = image_node.id;
+        let image = evaluate_semantic_draw_list_at(&render, 0.0)
+            .expect("semantic query")
+            .into_iter()
+            .find(|op| op.node_id == image_id)
+            .expect("Image draw op");
+
+        assert_eq!(image.composite, image_node.composite);
+        assert_eq!(image.clip_chain, vec![clip_id]);
+    }
+
+    #[test]
+    fn image_geometry_exposes_sampling_and_rasterizes_decoded_pixels() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
+        render.viewport_width = 4.0;
+        render.viewport_height = 4.0;
+        render.viewport_color_space = 1;
+
+        let image_index = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::Image)
+            .expect("fixture Image");
+        let hidden = add_descriptor_constant(&mut render, RuntimeValue::Bool(false));
+        let visible = add_descriptor_constant(&mut render, RuntimeValue::Bool(true));
+        let zero_position = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [0.0, 0.0],
+            },
+        );
+        let zero_angle = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Angle,
+                value: 0.0,
+            },
+        );
+        let unit_scale = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Float,
+                value: [1.0, 1.0],
+            },
+        );
+        let opaque = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 1.0,
+            },
+        );
+        for node in &mut render.nodes {
+            node.visibility_descriptor = hidden;
+            node.position_descriptor = zero_position;
+            node.origin_descriptor = zero_position;
+            node.rotation_descriptor = zero_angle;
+            node.scale_descriptor = unit_scale;
+            node.opacity_descriptor = opaque;
+            node.clip_ref = None;
+        }
+        let mut current = Some(image_index);
+        while let Some(index) = current {
+            render.nodes[index].visibility_descriptor = visible;
+            current = render.nodes[index].parent.map(|parent| parent as usize);
+        }
+
+        let x = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: -2.0,
+            },
+        );
+        let y = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: -2.0,
+            },
+        );
+        let width = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 4.0,
+            },
+        );
+        let height = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 4.0,
+            },
+        );
+        let geometry_index = render.nodes[image_index]
+            .geometry_ref
+            .expect("image geometry") as usize;
+        let (resource_id, sampling) = match render.geometries[geometry_index].data {
+            GeometryData::Image {
+                resource_id,
+                sampling,
+                ..
+            } => (resource_id, sampling),
+            _ => panic!("fixture geometry is not Image"),
+        };
+        render.geometries[geometry_index].data = GeometryData::Image {
+            resource_id,
+            destination: [x, y, width, height],
+            source: None,
+            sampling,
+        };
+
+        let image = evaluate_semantic_draw_list_at(&render, 0.0)
+            .expect("semantic query")
+            .into_iter()
+            .find(|op| op.node_id == render.nodes[image_index].id)
+            .expect("Image draw op")
+            .image
+            .expect("image semantic payload");
+        assert_eq!(image.resource_id, resource_id);
+        assert_eq!(image.destination, [-2.0, -2.0, 4.0, 4.0]);
+        assert_eq!(image.source, [0.0, 0.0, 2.0, 2.0]);
+        assert_eq!(image.sampling, 1);
+
+        assert_eq!(
+            rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("image raster"),
+            vec![
+                255, 0, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 255, 0, 0, 255,
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255,
+                255, 255, 0, 255, 255, 255, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255, 255, 255, 0,
+                255, 255, 255, 0, 255,
+            ]
+        );
+    }
+
+    #[test]
+    fn semantic_query_evaluates_core_line_and_note_attachment_matrix() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        let root = render
+            .nodes
+            .iter()
+            .find(|node| node.parent.is_none() && node.attachment.kind == 4)
+            .expect("Note-attached root");
+        let note_index = render
+            .core
+            .notes
+            .iter()
+            .position(|note| note.id == root.attachment.id)
+            .expect("attachment Note");
+        let line_id = render.core.notes[note_index].line_id;
+        let line_index = render
+            .core
+            .lines
+            .iter()
+            .position(|line| line.id == line_id)
+            .expect("attachment Line");
+        let position = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [2.0, 3.0],
+            },
+        );
+        let scale = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Float,
+                value: [2.0, 3.0],
+            },
+        );
+        let speed = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 1.0,
+            },
+        );
+        let tempo = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 60.0,
+            },
+        );
+        let line = &mut render.core.lines[line_index];
+        line.position_descriptor = position;
+        line.scale_descriptor = scale;
+        line.scroll_speed_descriptor = speed;
+        line.scroll_tempo_descriptor = tempo;
+        line.floor_scale = 1.0;
+        line.integration_origin = 0.0;
+        line.initial_floor_position = 0.0;
+        let distance = line.distance_descriptor as usize;
+        render.core.distances[distance].scroll_speed_descriptor = speed;
+        render.core.distances[distance].integration_origin = 0.0;
+        render.core.distances[distance].initial_floor_position = 0.0;
+        render.core.distances[distance].classification =
+            fcs_fcbc::DistanceClassification::PortableAnalytic;
+        render.core.notes[note_index].time = 1.0;
+
+        let rect_id = render
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Rect)
+            .expect("fixture Rect")
+            .id;
+        let rect = evaluate_semantic_draw_list_at(&render, 0.0)
+            .expect("attachment query")
+            .into_iter()
+            .find(|op| op.node_id == rect_id)
+            .expect("Rect draw op");
+        assert_eq!(
+            rect.world_matrix,
+            [2.0, 0.0, 4.0, 0.0, 3.0, 6.0, 0.0, 0.0, 1.0]
+        );
+
+        for node in &mut render.nodes {
+            node.attachment = Attachment {
+                kind: 3,
+                id: line_id,
+            };
+        }
+        let line_rect = evaluate_semantic_draw_list_at(&render, 0.0)
+            .expect("Line attachment query")
+            .into_iter()
+            .find(|op| op.node_id == rect_id)
+            .expect("Line-attached Rect draw op");
+        assert_eq!(
+            line_rect.world_matrix,
+            [2.0, 0.0, 2.0, 0.0, 3.0, 3.0, 0.0, 0.0, 1.0]
+        );
+    }
+
+    #[test]
+    fn semantic_query_reports_opacity_bounds_and_exposes_effective_value() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
+        let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("semantic query");
+        let rect = draw
+            .iter()
+            .find(|op| op.kind == NodeKind::Rect)
+            .expect("fixture Rect");
+        assert_eq!(rect.opacity, 1.0);
+
+        let rect_index = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::Rect)
+            .expect("fixture Rect node");
+        let opacity_descriptor = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 0.5,
+            },
+        );
+        render.nodes[rect_index].opacity_descriptor = opacity_descriptor;
+        let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("opacity query");
+        assert_eq!(
+            draw.iter()
+                .find(|op| op.kind == NodeKind::Rect)
+                .expect("opacity Rect")
+                .opacity,
+            0.5
+        );
+
+        set_descriptor_constant(
+            &mut render,
+            opacity_descriptor,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 0.0,
+            },
+        );
+        assert_eq!(
+            evaluate_semantic_draw_list_at(&render, 0.0)
+                .expect("zero opacity query")
+                .iter()
+                .find(|op| op.kind == NodeKind::Rect)
+                .expect("zero opacity Rect")
+                .opacity,
+            0.0
+        );
+
+        set_descriptor_constant(
+            &mut render,
+            opacity_descriptor,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 1.5,
+            },
+        );
+        assert_eq!(
+            evaluate_semantic_draw_list_at(&render, 0.0).expect_err("invalid opacity"),
+            "render.invalid-composite"
+        );
+
+        let dynamic_opacity = add_descriptor_segment_points(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 0.25,
+            },
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 0.75,
+            },
+        );
+        render.nodes[rect_index].opacity_descriptor = dynamic_opacity;
+        assert_eq!(
+            evaluate_semantic_draw_list_at(&render, 0.0)
+                .expect("dynamic opacity at start")
+                .iter()
+                .find(|op| op.kind == NodeKind::Rect)
+                .expect("dynamic opacity Rect at start")
+                .opacity,
+            0.25
+        );
+        assert_eq!(
+            evaluate_semantic_draw_list_at(&render, 1.0)
+                .expect("dynamic opacity at later time")
+                .iter()
+                .find(|op| op.kind == NodeKind::Rect)
+                .expect("dynamic opacity Rect at later time")
+                .opacity,
+            0.75
+        );
+
+        render.nodes[rect_index].opacity_descriptor = opacity_descriptor;
+        render.core.descriptors[opacity_descriptor as usize].kind =
+            DescriptorKind::Constant(u32::MAX);
+        assert_eq!(
+            evaluate_semantic_draw_list_at(&render, 0.0)
+                .expect_err("opacity descriptor execution failure"),
+            "render.invalid-descriptor"
+        );
+    }
+
+    #[test]
+    fn isolated_group_own_opacity_does_not_multiply_into_descendant_draw_ops() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        // The fixture's only isolated Group root wraps a Text child
+        // (writer.rs: text-isolate).
+        let isolated_index = render
+            .nodes
+            .iter()
+            .position(|node| {
+                node.parent.is_none() && node.kind == NodeKind::Group && node.isolated()
+            })
+            .expect("fixture isolated Group root");
+
+        let baseline_text = evaluate_semantic_draw_list_at(&render, 0.0)
+            .expect("baseline query")
+            .into_iter()
+            .find(|op| op.kind == NodeKind::Text)
+            .expect("fixture Text under isolated Group")
+            .opacity;
+
+        // Replace the isolated Group's own opacity descriptor with 0.5 without
+        // touching the descendant's descriptor (Issue #448 bounded scope:
+        // DrawOp has no group boundary, so full isolated compositing is out
+        // of scope for this unit).
+        let isolated_opacity = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 0.5,
+            },
+        );
+        render.nodes[isolated_index].opacity_descriptor = isolated_opacity;
+
+        let bounded_text = evaluate_semantic_draw_list_at(&render, 0.0)
+            .expect("isolated query")
+            .into_iter()
+            .find(|op| op.kind == NodeKind::Text)
+            .expect("fixture Text under isolated Group")
+            .opacity;
+
+        // The isolated Group's own opacity must not multiply into descendants
+        // in this bounded DrawOp. If the boundary had been applied correctly
+        // via an offscreen pass the value would differ; we explicitly do not
+        // claim that behavior here.
+        assert_eq!(bounded_text, baseline_text);
+    }
+
+    #[test]
     fn solid_paint_color_comes_from_the_descriptor_table_not_the_constant_pool() {
         let core = write_nonempty_execution();
         let png = encode_test_png();
@@ -307,6 +1227,7 @@ mod tests {
         };
         let bytes = write_nonempty_render(&core, assets);
         let mut render = load_render(&bytes).expect("product render load");
+        make_world_attached(&mut render);
         set_full_viewport_rect(&mut render);
         let color_descriptor = render
             .paints
@@ -337,6 +1258,7 @@ mod tests {
     #[test]
     fn solid_rect_uses_bounds_output_color_space_and_even_quantization() {
         let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
         set_full_viewport_rect(&mut render);
         render.viewport_color_space = 1;
         let color_descriptor = render
@@ -380,6 +1302,130 @@ mod tests {
             rasterize_solid_rgba8(&render, 1, 1).expect("tie raster"),
             vec![0, 0, 0, 255]
         );
+    }
+
+    #[test]
+    fn solid_rect_raster_composites_multiple_rect_ops_in_draw_order() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
+        set_full_viewport_rect(&mut render);
+        render.viewport_color_space = 1;
+
+        let rect_index = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::Rect)
+            .expect("fixture Rect");
+        let second_index = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::RoundedRect)
+            .expect("fixture RoundedRect");
+        let rect_geometry = render.nodes[rect_index].geometry_ref;
+        let solid_paint = render.nodes[rect_index]
+            .fill_paint
+            .expect("fixture solid paint");
+        let color_descriptor = match render.paints[solid_paint as usize].data {
+            PaintData::Solid { color } => color,
+            _ => panic!("fixture Rect paint is not solid"),
+        };
+        set_descriptor_constant(
+            &mut render,
+            color_descriptor,
+            RuntimeValue::Color([1.0, 0.0, 0.0, 1.0]),
+        );
+        let blue = add_descriptor_constant(&mut render, RuntimeValue::Color([0.0, 0.0, 1.0, 0.5]));
+        let blue_paint = render.paints.len() as u32;
+        render.paints.push(PaintRecord {
+            id: u64::MAX,
+            data: PaintData::Solid { color: blue },
+        });
+        render.nodes[second_index].kind = NodeKind::Rect;
+        render.nodes[second_index].geometry_ref = rect_geometry;
+        render.nodes[second_index].fill_paint = Some(blue_paint);
+        render.nodes[second_index].composite = 1;
+        // The fixture's rounded node opacity descriptor is the speed track
+        // (evaluates 0.0 at t=0), which would make the blue op transparent.
+        render.nodes[second_index].opacity_descriptor = 8;
+
+        assert_eq!(
+            rasterize_solid_rgba8(&render, 1, 1).expect("composited raster"),
+            vec![128, 0, 128, 255]
+        );
+    }
+
+    #[test]
+    fn solid_rect_raster_applies_rect_clip_coverage() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
+        set_full_viewport_rect(&mut render);
+        render.viewport_color_space = 1;
+
+        let rect_index = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::Rect)
+            .expect("fixture Rect");
+        let hidden_visibility = add_descriptor_constant(&mut render, RuntimeValue::Bool(false));
+        render.nodes[rect_index].visibility_descriptor = hidden_visibility;
+        let rect_geometry = render.nodes[rect_index].geometry_ref;
+        let rect_fill = render.nodes[rect_index].fill_paint;
+        let image_index = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::Image)
+            .expect("fixture Image");
+        render.nodes[image_index].kind = NodeKind::Rect;
+        render.nodes[image_index].geometry_ref = rect_geometry;
+        render.nodes[image_index].fill_paint = rect_fill;
+
+        let clip_group_index = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::ClipGroup)
+            .expect("fixture ClipGroup");
+        let clip_index = render.nodes[clip_group_index]
+            .clip_ref
+            .expect("fixture ClipGroup clip") as usize;
+        let clip_geometry_index = render.clips[clip_index].geometry_ref as usize;
+        let origin = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [-6.0, -6.0],
+            },
+        );
+        let size = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [6.0, 12.0],
+            },
+        );
+        render.geometries[clip_geometry_index].kind = NodeKind::Rect;
+        render.geometries[clip_geometry_index].data = GeometryData::Rect { origin, size };
+
+        assert_eq!(
+            rasterize_solid_rgba8(&render, 2, 1).expect("clipped raster"),
+            vec![255, 255, 255, 255, 0, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn solid_core_shapes_rasterize_with_boundary_coverage() {
+        for kind in [NodeKind::RoundedRect, NodeKind::Circle, NodeKind::Ellipse] {
+            let mut render = load_render(&render_fixture()).expect("render load");
+            isolate_solid_shape(&mut render, kind);
+
+            let draw = evaluate_semantic_draw_list(&render).expect("shape semantic draw list");
+            assert_eq!(draw.len(), 1);
+            assert_eq!(draw[0].kind, kind);
+
+            let pixels = rasterize_solid_rgba8(&render, 4, 4).expect("shape raster");
+            let alpha: Vec<_> = pixels.chunks_exact(4).map(|pixel| pixel[3]).collect();
+            assert!(alpha.iter().any(|value| *value > 0));
+            assert!(alpha.iter().any(|value| *value < 255));
+        }
     }
 
     #[test]

@@ -53,6 +53,14 @@ expect = "success"
 clauses = ["9.1", "9.3", "9.5"]
 
 [[fixture]]
+id = "source.valid.appendix-a-minimal-complete"
+path = "source/valid/appendix-a-minimal-complete.fcs"
+stage = "canonical"
+expect = "success"
+expected = "expected/appendix-a-minimal-complete.json"
+clauses = ["1.1", "6.3", "6.6", "6.7", "6.8", "8.2", "12.1", "12.2", "17", "18", "Appendix A"]
+
+[[fixture]]
 id = "source.valid.time-scroll-note"
 path = "source/valid/time-scroll-note.fcs"
 stage = "canonical"

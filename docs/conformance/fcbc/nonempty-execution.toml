@@ -9,6 +9,7 @@ chart_count = 1
 resource_count = 0
 exact_descriptors_only = true
 expect = "success"
+core_expect = "success"
 path = "nonempty-execution.hex"
 decoded_length = 3432
 sha256 = "ffcd8f24bd792c406a584fea26c753b62fafaa7d8f91ff0886b697c67dbfea61"

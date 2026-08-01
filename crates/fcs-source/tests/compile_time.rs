@@ -2862,8 +2862,12 @@ fn phase2_schema_exposes_only_gameplay_side_as_a_closed_string_enum() {
         Some(&FieldConstraint::TimeOrBeat)
     );
     assert_eq!(
+        note.field("gameplay.soundResource").unwrap().constraint(),
+        Some(&FieldConstraint::ResourceReference)
+    );
+    assert_eq!(
         note.field("presentation.texture").unwrap().constraint(),
-        None
+        Some(&FieldConstraint::ResourceReference)
     );
 }
 

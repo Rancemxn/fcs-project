@@ -53,6 +53,8 @@ struct GoldenManifest {
     resource_count: usize,
     exact_descriptors_only: bool,
     expect: String,
+    core_expect: String,
+    core_diagnostic: Option<String>,
     path: String,
     decoded_length: u64,
     sha256: String,
@@ -379,6 +381,8 @@ fn nonempty_execution_manifest_binds_static_artifacts() {
     assert_eq!(golden.resource_count, golden.resource.len());
     assert!(golden.exact_descriptors_only);
     assert_eq!(golden.expect, "success");
+    assert_eq!(golden.core_expect, "success");
+    assert!(golden.core_diagnostic.is_none());
     assert!(base.join(&golden.path).is_file());
     assert!(base.join(&golden.execution.vector).is_file());
     assert!(base.join(&entry.mutations).is_file());

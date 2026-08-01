@@ -3,6 +3,7 @@ name = "fcs-render"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+license-file.workspace = true
 description = "FCS Render Profile product codec and reference raster surface"
 
 [dependencies]

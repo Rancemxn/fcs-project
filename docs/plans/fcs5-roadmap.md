@@ -757,3 +757,31 @@ git diff --check
   Bounded child #432 adds an explicit finite external JSON container-nesting limit to `ImportLimits`, preserves the
   default `parse_json_document` entry point, and reports the first rejected depth as typed `max_json_depth`
   evidence before recursive lossless materialization; broader #294/#295/#296 and I10 closure remain open.
+  Bounded child #452 binds the unpublished local RC distribution inventory to workspace package metadata, the
+  AGPL-3.0-or-later license declaration and canonical hash, the DCO plus inbound=outbound policy, the five candidate
+  version domains, FCBC container profiles, the Render manifest, and the checked-in Conversion profile registry. Its bounded artifact contract now checks the root license text, all seven
+  Cargo package listings, required packaged paths, and UTF-8 inventory inputs; the Appendix A example is now
+  manifest-backed with focused elaboration/canonical and CLI canonical/Core-load evidence. Final executable
+  cross-domain, matrix, joint review, and re-freeze obligations remain open under #296; the exact-head Full Gate
+  for the current assembly passed (run 30694250501 on head c2196d2).
+  The complete I10 product/domain evidence index is `docs/conformance/fcs5-i10-evidence-ledger.md`; it records
+  runtime/property/fuzz rows with exact-head Full Gate evidence and does not promote any version domain to Frozen.
+- The I10 `check` command now reuses `canonical_compilation_with_source`, so a successful check covers
+  profile, elaboration, canonical graph, workspace-resource, and Render-source validation instead of
+  parser syntax alone; its canonical-profile regression and exhaustive manifest-partition fixture lane are recorded in
+  the CLI conformance tests, together with the applicable product-boundary lane for every checked-in FCS example
+  (`format` plus parser validation for the fragment profile, `check` for complete documents) and
+  26 canonical fixtures through `check` and 12 successful chart fixtures through `compile`/FCBC Core load; the four source-only canonical fixtures are `source.valid.profile-publishable-both`, `source.valid.contributor-credit-closure`, `source.invalid.resource-hash-mismatch`, and `source.invalid.resource-missing-member`, covered by their profile, contributor/metadata, and resource-bundle domain runners. The full source corpus continues to execute
+  through `conformance_manifest` at its declared parse, elaborate, canonical, or evaluate boundary;
+  the CLI lane covers the exhaustive canonical partition and applicable example paths, including the fragment example's format/parser boundary. The same suite now drives all six
+  public Conversion import fixtures through `report`, all three manifest-declared export/reparse
+  fixtures through `convert`, all three FCBC goldens through `inspect` and declared Core-load success/rejection contracts, and
+  the Render source and canonical compile paths through `check` and `compile`, decodable semantic paths
+  through `inspect --render`, and the semantic-only embedded-resource binding through `compile` plus plain
+  `inspect` without media decode. These are product-entry evidence only; they do not close final executable
+  cross-domain conformance or the I10 re-freeze gate.
+  The current Render product delta also covers a bounded source -> canonical -> FCBC -> loader -> semantic/raster handoff for
+  root Rect/Image, nested Group/RoundedRect/Circle/Ellipse nodes, solid-fill Polyline/Polygon nodes, and source active intervals
+  lowered to FCBC Node flags, plus Image DrawOps and bounded nearest/linear decoded-image sampling with source-rect validation
+  and premultiplied compositing; source Line stroke lowering, full Path/Text geometry, broader paint/resource semantics,
+  isolated compositing, and semantic/raster conformance remain open under #295.

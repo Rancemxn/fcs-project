@@ -3,6 +3,7 @@ name = "fcs-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+license-file.workspace = true
 description = "FCS product CLI for check, format, compile, inspect, convert, and report"
 default-run = "fcs"
 
@@ -21,4 +22,5 @@ fcs-source = { path = "../fcs-source" }
 serde_json.workspace = true
 
 [dev-dependencies]
+toml.workspace = true
 tempfile.workspace = true

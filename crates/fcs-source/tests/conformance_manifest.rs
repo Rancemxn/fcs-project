@@ -10,7 +10,10 @@ use fcs_runtime::{
     evaluate_note_distance,
 };
 use fcs_source::ResourceLimits;
-use fcs_source::ast::{Beat, ExpandedSourceDocument, Type, TypedValue};
+
+#[path = "support/canonical_snapshot.rs"]
+mod canonical_snapshot;
+use fcs_source::ast::{Beat, ExpandedSourceDocument, NoteVariant, Type, TypedValue};
 use fcs_source::diagnostic::{Diagnostic, DiagnosticStage, ExpansionTraceKind};
 use fcs_source::elaborator::{CompileTimeLimits, elaborate};
 use fcs_source::parser::parse_document;
@@ -77,6 +80,8 @@ struct FcbcGoldenManifest {
     resource_count: usize,
     exact_descriptors_only: bool,
     expect: FixtureExpectation,
+    core_expect: FixtureExpectation,
+    core_diagnostic: Option<String>,
     path: String,
     decoded_length: u64,
     sha256: String,
@@ -743,6 +748,26 @@ fn expected_json(fcs_base: &Path, fixture: &FixtureEntry) -> serde_json::Value {
         .unwrap_or_else(|error| panic!("failed to parse {} as JSON: {error}", path.display()))
 }
 
+fn assert_forbidden_canonical_keys(value: &serde_json::Value, forbidden: &[&str]) {
+    match value {
+        serde_json::Value::Object(object) => {
+            for (key, child) in object {
+                assert!(
+                    !forbidden.contains(&key.as_str()),
+                    "canonical projection retained forbidden authoring key {key:?}"
+                );
+                assert_forbidden_canonical_keys(child, forbidden);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for child in values {
+                assert_forbidden_canonical_keys(child, forbidden);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn note_entities(document: &ExpandedSourceDocument) -> Vec<&fcs_source::ast::ExpandedEntity> {
     document
         .collections()
@@ -765,7 +790,7 @@ fn typed_manifests_load_with_bound_counts() {
     assert_eq!(render.schema_version, 3);
     assert_eq!(conversion.schema_version, 2);
     assert_eq!(root.suite.len(), 6);
-    assert_eq!(fcs.fixture.len(), 52);
+    assert_eq!(fcs.fixture.len(), 53);
     assert_eq!(fcbc.fixture.len(), 3);
     assert_eq!(render.binary_fixture.len(), 0);
     assert_eq!(render.fixture.len(), 1);
@@ -839,7 +864,140 @@ fn fcs_source_fixtures_execute_at_the_declared_frontend_boundary() {
 
     assert_eq!(parse_success, 3);
     assert_eq!(parse_error, 9);
-    assert_eq!(later_stage, 40);
+    assert_eq!(later_stage, 41);
+}
+
+#[test]
+fn appendix_a_fixture_expands_four_notes_at_exact_beats_and_eliminates_authoring_structure() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+    let fixture = fixture(&fcs, "source.valid.appendix-a-minimal-complete");
+    assert_eq!(fixture.stage, FixtureStage::Canonical);
+    assert_eq!(fixture.expect, FixtureExpectation::Success);
+    assert!(fixture.clauses.iter().any(|clause| clause == "Appendix A"));
+
+    let expected = expected_json(&fcs_base, fixture);
+    let source = fs::read_to_string(fcs_base.join(&fixture.path))
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", fixture.path));
+    let document = parse_document(&source)
+        .into_result()
+        .unwrap_or_else(|errors| panic!("{} must parse: {errors:?}", fixture.id));
+    let expanded = elaborate(&document, phase2_schema(), fixture_limits(fixture))
+        .unwrap_or_else(|errors| panic!("{} must elaborate: {errors:?}", fixture.id));
+    expanded
+        .validate_invariants()
+        .expect("Appendix A expansion must be concrete");
+    let expanded_notes = note_entities(&expanded);
+    assert_eq!(
+        expected["noteCount"].as_u64(),
+        Some(expanded_notes.len() as u64)
+    );
+    let expected_times = expected["times"]
+        .as_array()
+        .expect("Appendix A must declare exact note beats");
+    let expected_paths = [
+        "gameplay.judgment.enabled",
+        "gameplay.side",
+        "gameplay.time",
+        "line",
+        "presentation.alpha",
+        "presentation.color",
+        "presentation.positionX",
+        "presentation.rotation",
+        "presentation.scaleX",
+        "presentation.scaleY",
+        "presentation.scrollFactor",
+        "presentation.xOffset",
+        "presentation.yOffset",
+        "render.enabled",
+    ];
+    assert_eq!(expected_times.len(), expanded_notes.len());
+    for (entity, expected_time) in expanded_notes.iter().zip(expected_times) {
+        assert_eq!(entity.entity_type(), &Type::Note);
+        assert_eq!(entity.variant(), Some(NoteVariant::Tap));
+        assert_eq!(
+            entity
+                .fields()
+                .map(|field| field.path())
+                .collect::<Vec<_>>(),
+            expected_paths
+        );
+        assert!(entity.fields().all(|field| field.value().is_concrete()));
+        assert_eq!(
+            entity.field("line").expect("line field").value(),
+            &TypedValue::Line("main".into())
+        );
+        assert_eq!(
+            entity.field("gameplay.side").expect("side field").value(),
+            &TypedValue::String("above".into())
+        );
+        assert_eq!(
+            entity.field("gameplay.time").expect("time field").value(),
+            &TypedValue::Beat(
+                Beat::new(
+                    expected_time["numerator"]
+                        .as_i64()
+                        .expect("expected numerator must be an integer"),
+                    expected_time["denominator"]
+                        .as_i64()
+                        .expect("expected denominator must be an integer"),
+                )
+                .unwrap()
+            )
+        );
+    }
+
+    let chart = document
+        .canonical_chart(fixture_limits(fixture))
+        .unwrap_or_else(|errors| panic!("{} must lower: {errors:?}", fixture.id));
+    let canonical_notes = chart.notes().notes();
+    assert_eq!(
+        expected["noteCount"].as_u64(),
+        Some(canonical_notes.len() as u64)
+    );
+    assert_eq!(expected_times.len(), canonical_notes.len());
+    for (note, expected_time) in canonical_notes.iter().zip(expected_times) {
+        let beat = note
+            .gameplay()
+            .time()
+            .source_beat()
+            .expect("Appendix A note time must retain beat provenance");
+        assert_eq!(
+            (beat.numerator(), beat.denominator()),
+            (
+                expected_time["numerator"]
+                    .as_i64()
+                    .expect("expected numerator must be an integer"),
+                expected_time["denominator"]
+                    .as_i64()
+                    .expect("expected denominator must be an integer")
+            )
+        );
+    }
+
+    let forbidden = [
+        "sourceText",
+        "workspacePath",
+        "template",
+        "generator",
+        "local",
+        "preserveRawPayload",
+    ];
+    let expected_canonical_forbidden: Vec<_> = expected["forbiddenCanonicalFields"]
+        .as_array()
+        .expect("Appendix A must declare forbidden canonical fields")
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .expect("forbidden canonical field must be text")
+        })
+        .collect();
+    assert_eq!(expected_canonical_forbidden, forbidden);
+    let snapshot: serde_json::Value =
+        serde_json::from_str(&canonical_snapshot::canonical_snapshot(&chart))
+            .expect("canonical snapshot must remain valid JSON");
+    assert_forbidden_canonical_keys(&snapshot, &forbidden);
 }
 
 #[test]
@@ -1149,6 +1307,33 @@ fn i5_contributor_credit_fixtures_execute_at_the_canonical_boundary() {
                 && source.is_char_boundary(diagnostic.primary_span().end)
         }));
     }
+}
+
+#[test]
+fn i5_unknown_texture_fixture_executes_at_the_canonical_chart_boundary() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+    let invalid = fixture(&fcs, "source.invalid.unknown-resource");
+    assert_eq!(invalid.stage, FixtureStage::Canonical);
+    assert_eq!(invalid.expect, FixtureExpectation::Error);
+    let source = fs::read_to_string(fcs_base.join(&invalid.path))
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", invalid.path));
+    let diagnostics = parse_document(&source)
+        .into_result()
+        .unwrap_or_else(|errors| panic!("{} must parse: {errors:?}", invalid.id))
+        .canonical_chart(fixture_limits(invalid))
+        .expect_err("unknown presentation texture must fail canonical chart lowering");
+    assert_eq!(
+        diagnostics[0].code().as_str(),
+        invalid
+            .diagnostic
+            .as_deref()
+            .expect("unknown texture fixture binds a diagnostic")
+    );
+    assert_eq!(diagnostics[0].stage(), DiagnosticStage::Canonical);
+    assert!(diagnostics[0].primary_span().end <= source.len());
+    assert!(source.is_char_boundary(diagnostics[0].primary_span().start));
+    assert!(source.is_char_boundary(diagnostics[0].primary_span().end));
 }
 
 #[test]
@@ -1940,6 +2125,42 @@ fn manifests_preserve_integrity_invariants() {
         assert_eq!(golden.chart_count, 1);
         assert!(golden.exact_descriptors_only);
         assert_eq!(golden.expect, FixtureExpectation::Success);
+        match golden.core_expect {
+            FixtureExpectation::Success => assert!(
+                golden.core_diagnostic.is_none(),
+                "successful FCBC Core load {} must not name a diagnostic",
+                fixture.id
+            ),
+            FixtureExpectation::Error => {
+                let diagnostic = golden.core_diagnostic.as_deref().unwrap_or_else(|| {
+                    panic!("failed FCBC Core load {} needs a diagnostic", fixture.id)
+                });
+                assert!(
+                    !diagnostic.is_empty(),
+                    "failed FCBC Core load {} needs a nonempty diagnostic",
+                    fixture.id
+                );
+                assert!(
+                    !diagnostic.starts_with("implementation."),
+                    "FCBC fixture {} uses a temporary implementation diagnostic",
+                    fixture.id
+                );
+            }
+        }
+        match fixture.id.as_str() {
+            "minimal-runtime" | "embedded-resource" => {
+                assert_eq!(golden.core_expect, FixtureExpectation::Error);
+                assert_eq!(
+                    golden.core_diagnostic.as_deref(),
+                    Some("fcbc.invalid-tempo")
+                );
+            }
+            "nonempty-execution" => {
+                assert_eq!(golden.core_expect, FixtureExpectation::Success);
+                assert!(golden.core_diagnostic.is_none());
+            }
+            id => panic!("unexpected FCBC fixture ID in golden audit: {id}"),
+        }
         assert_eq!(golden.resource_count, golden.resource.len());
         assert!(is_lower_hex(&golden.sha256, 64));
         if let Some(execution) = &golden.execution {

@@ -1,0 +1,64 @@
+schema_version = 1
+publication = "unpublished"
+workspace_version = "5.0.0"
+workspace_license = "AGPL-3.0-or-later"
+contribution_policy = "DCO + inbound=outbound"
+contribution_policy_file = "../../../CONTRIBUTING.md"
+license_file = "../../../LICENSE"
+license_sha256 = "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
+fcbc_version = "2.0.0"
+execution_abi_version = "1.0.0"
+render_profile_version = "1.0.0"
+conversion_version = "1.0.0"
+
+workspace_members = [
+  "crates/fcs-model",
+  "crates/fcs-runtime",
+  "crates/fcs-source",
+  "crates/fcs-conversion",
+  "crates/fcs-fcbc",
+  "crates/fcs-cli",
+  "crates/fcs-render",
+]
+
+source_profiles = ["fragment", "chart", "playable", "renderable", "publishable"]
+fcbc_container_profiles = ["runtime", "fidelity", "strict-runtime"]
+
+root_conformance_manifest = "../manifest.toml"
+fcbc_manifest = "../fcbc/manifest.toml"
+render_manifest = "../render/manifest.toml"
+conversion_profile_registry = "../conversion/profile-registry.toml"
+
+package_required_files = [
+  { member = "crates/fcs-model", files = ["Cargo.toml", "src/lib.rs", "LICENSE"] },
+  { member = "crates/fcs-runtime", files = ["Cargo.toml", "src/lib.rs", "LICENSE"] },
+  { member = "crates/fcs-source", files = ["Cargo.toml", "src/lib.rs", "LICENSE"] },
+  { member = "crates/fcs-conversion", files = ["Cargo.toml", "src/lib.rs", "LICENSE"] },
+  { member = "crates/fcs-fcbc", files = ["Cargo.toml", "src/lib.rs", "LICENSE"] },
+  { member = "crates/fcs-cli", files = ["Cargo.toml", "src/main.rs", "LICENSE"] },
+  { member = "crates/fcs-render", files = ["Cargo.toml", "src/lib.rs", "LICENSE"] },
+]
+
+utf8_paths = [
+  "../../../LICENSE",
+  "../../../CONTRIBUTING.md",
+  "../manifest.toml",
+  "manifest.toml",
+  "../render/manifest.toml",
+  "../conversion/profile-registry.toml",
+]
+
+conversion_profiles = [
+  "pgr.phira.v1@1.0.0",
+  "pgr.phira.v3@1.0.0",
+  "pgr.phichain-import.v1@1.0.0",
+  "pgr.phichain-import.v3@1.0.0",
+  "rpe.community.divide-bpmfactor@1.0.0",
+  "rpe.docs-example.multiply-bpmfactor@1.0.0",
+  "rpe.phira.legacy-speed@1.0.0",
+  "rpe.phira.rpe170-speed@1.0.0",
+  "rpe.phichain-import@1.0.0",
+  "pec.phira@1.0.0",
+  "pec.extends@1.0.0",
+  "pec.phispler@1.0.0",
+]

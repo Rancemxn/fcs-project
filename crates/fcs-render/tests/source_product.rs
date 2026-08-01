@@ -1,9 +1,13 @@
+use std::path::Path;
+
 use fcs_fcbc::write_from_compilation;
 use fcs_source::ResourceLimits;
 use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
 
-use fcs_render::{NodeKind, load_render};
+use fcs_render::{
+    GeometryData, NodeKind, evaluate_semantic_draw_list_at, load_render, rasterize_solid_rgba8_at,
+};
 
 fn u32_at(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("u32"))
@@ -89,4 +93,264 @@ fn solid_rect_source_reaches_product_render_loader() {
         section[node + 88..node + 92].copy_from_slice(&u32::MAX.to_le_bytes());
     });
     assert_eq!(load_render(&malformed), Err("render.invalid-reference"));
+}
+
+#[test]
+fn nested_shape_source_reaches_product_render_loader() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport {
+        width: 16px;
+        height: 16px;
+        colorSpace: "linear-srgb";
+    }
+    layer main {
+        pass: "overlay";
+        children {
+            group root {
+                children {
+                    circle circleShape {
+                        zOrder: 2;
+                        radius: 2px;
+                        fill: solid(#0000FFFF);
+                    }
+                    roundedRect roundedShape {
+                        zOrder: 0;
+                        size: vec2(6px, 6px);
+                        radius: 1px;
+                        fill: solid(#FF0000FF);
+                    }
+                    ellipse ellipseShape {
+                        zOrder: 1;
+                        radiusX: 3px;
+                        radiusY: 2px;
+                        fill: solid(#00FF00FF);
+                    }
+                }
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("nested Render source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| {
+            panic!("nested Render canonical lowering failed: {diagnostics:?}")
+        });
+
+    let bytes = write_from_compilation(&compilation).expect("nested Render FCBC writing");
+    let render = load_render(&bytes).expect("nested Render product loader");
+
+    assert_eq!(render.layers.len(), 1);
+    assert_eq!(render.layers[0].root_count, 1);
+    assert_eq!(render.nodes.len(), 4);
+    assert_eq!(render.nodes[0].kind, NodeKind::Group);
+    assert_eq!(render.nodes[0].parent, None);
+    assert_eq!(render.nodes[1].kind, NodeKind::RoundedRect);
+    assert_eq!(render.nodes[2].kind, NodeKind::Ellipse);
+    assert_eq!(render.nodes[3].kind, NodeKind::Circle);
+    assert_eq!(render.nodes[1].parent, Some(0));
+    assert_eq!(render.nodes[2].parent, Some(0));
+    assert_eq!(render.nodes[3].parent, Some(0));
+    assert_eq!(render.geometries.len(), 3);
+    assert!(render
+        .geometries
+        .iter()
+        .any(|geometry| matches!(geometry.data, GeometryData::RoundedRect { radii, .. } if radii.len() == 4)));
+    assert!(
+        render
+            .geometries
+            .iter()
+            .any(|geometry| matches!(geometry.data, GeometryData::Circle { .. }))
+    );
+    assert!(
+        render
+            .geometries
+            .iter()
+            .any(|geometry| matches!(geometry.data, GeometryData::Ellipse { .. }))
+    );
+    assert_eq!(render.paints.len(), 3);
+}
+
+#[test]
+fn point_geometry_source_reaches_product_render_loader() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport {
+        width: 16px;
+        height: 16px;
+    }
+    layer main {
+        pass: "overlay";
+        children {
+            polyline trace {
+                zOrder: 0;
+                active: [1beat, 2beat);
+                points: [vec2(-6px, -4px), vec2(0px, 4px), vec2(6px, -4px)];
+                fill: solid(#00FFFFFF);
+            }
+            polygon shard {
+                zOrder: 1;
+                points: [vec2(-2px, -2px), vec2(2px, -2px), vec2(0px, 2px)];
+                fill: solid(#FF00FFFF);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("point geometry source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| {
+            panic!("point geometry canonical lowering failed: {diagnostics:?}")
+        });
+
+    let bytes = write_from_compilation(&compilation).expect("point geometry FCBC writing");
+    let render = load_render(&bytes).expect("point geometry product loader");
+
+    assert_eq!(render.nodes.len(), 2);
+    assert_eq!(render.nodes[0].kind, NodeKind::Polyline);
+    assert_eq!(render.nodes[1].kind, NodeKind::Polygon);
+    assert_eq!(render.nodes[0].flags & 0b11, 0);
+    assert!((render.nodes[0].active_start - 0.5).abs() < f64::EPSILON);
+    assert!((render.nodes[0].active_end - 1.0).abs() < f64::EPSILON);
+    assert_eq!(render.geometries.len(), 2);
+    assert!(render.geometries.iter().any(|geometry| {
+        matches!(geometry.data, GeometryData::Polyline { ref points } if points.len() == 3)
+    }));
+    assert!(render.geometries.iter().any(|geometry| {
+        matches!(geometry.data, GeometryData::Polygon { ref points } if points.len() == 3)
+    }));
+    assert_eq!(render.paints.len(), 2);
+
+    assert_eq!(
+        evaluate_semantic_draw_list_at(&render, 0.25)
+            .expect("inactive polyline is skipped")
+            .len(),
+        1
+    );
+    assert_eq!(
+        evaluate_semantic_draw_list_at(&render, 0.75)
+            .expect("point geometry semantic evaluation")
+            .len(),
+        2
+    );
+    let pixels =
+        rasterize_solid_rgba8_at(&render, 0.75, 16, 16).expect("point geometry rasterization");
+    assert!(
+        pixels.chunks_exact(4).any(|pixel| pixel[3] != 0),
+        "filled point geometry should contribute raster coverage"
+    );
+}
+
+#[test]
+fn image_source_reaches_product_render_loader_with_resource_metadata() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+resources {
+    image sprite {
+        source: "assets/fcs-test-rgba8.png";
+        hash: "sha256:a108791d9edc1d9c37644a45ce29d4a20e479711db97daf85375b82924e8fa22";
+        mediaType: "image/png";
+        colorSpace: "srgb";
+        alpha: "straight";
+        sampling: "linear";
+    }
+}
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport {
+        width: 4px;
+        height: 4px;
+        colorSpace: "linear-srgb";
+    }
+    layer main {
+        pass: "overlay";
+        children {
+            image spriteNode {
+                resource: @sprite;
+                destination.origin: vec2(-2px, -2px);
+                destination.size: vec2(4px, 4px);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("Image Render source parses");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/conformance/render");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            &workspace,
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| panic!("Image canonical lowering failed: {diagnostics:?}"));
+
+    let bytes = write_from_compilation(&compilation).expect("Image Render FCBC writing");
+    let render = load_render(&bytes).expect("Image product Render loader");
+
+    assert_eq!(render.viewport_width, 4.0);
+    assert_eq!(render.viewport_height, 4.0);
+    assert_eq!(render.nodes.len(), 1);
+    assert_eq!(render.nodes[0].kind, NodeKind::Image);
+    assert_eq!(render.nodes[0].fill_paint, None);
+    assert_eq!(render.geometries.len(), 1);
+    let GeometryData::Image {
+        resource_id,
+        destination,
+        source: source_rect,
+        sampling,
+    } = &render.geometries[0].data
+    else {
+        panic!("expected Image geometry");
+    };
+    assert_eq!(destination.len(), 4);
+    assert!(source_rect.is_none());
+    assert_eq!(*sampling, 2);
+    assert_eq!(render.resources.len(), 1);
+    assert_eq!(render.resources[0].id, *resource_id);
+    assert_eq!(render.resources[0].kind, 2);
+    assert_eq!(render.resources[0].media_type, "image/png");
+    assert_eq!(
+        render.resources[0].data.as_slice(),
+        include_bytes!("../../../docs/conformance/render/assets/fcs-test-rgba8.png")
+    );
+    assert!(render.decoded_images.contains_key(resource_id));
+
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0)
+        .expect("Image semantic evaluation")
+        .into_iter()
+        .next()
+        .expect("Image draw op");
+    let image = draw.image.expect("Image draw payload");
+    assert_eq!(image.resource_id, *resource_id);
+    assert_eq!(image.destination, [-2.0, -2.0, 4.0, 4.0]);
+    assert_eq!(image.source, [0.0, 0.0, 2.0, 2.0]);
+    assert_eq!(image.sampling, 2);
+
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Image rasterization");
+    assert_eq!(pixels.len(), 4 * 4 * 4);
+    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
 }

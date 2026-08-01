@@ -10,6 +10,7 @@ use super::ast::{NoteVariant, Type};
 pub enum FieldConstraint {
     StringEnum(&'static [&'static str]),
     TimeOrBeat,
+    ResourceReference,
 }
 
 /// The schema of a field accepted by an entity constructor.
@@ -36,7 +37,9 @@ impl FieldSchema {
     pub fn accepts_type(&self, actual: &Type) -> bool {
         match self.constraint {
             Some(FieldConstraint::TimeOrBeat) => matches!(actual, Type::Time | Type::Beat),
-            Some(FieldConstraint::StringEnum(_)) | None => actual == &self.ty,
+            Some(FieldConstraint::StringEnum(_))
+            | Some(FieldConstraint::ResourceReference)
+            | None => actual == &self.ty,
         }
     }
 
@@ -172,7 +175,12 @@ fn build_phase2_schema() -> ConstructionSchema {
                 false,
                 FieldConstraint::StringEnum(&["default", "none", "resource"]),
             ),
-            field("gameplay.soundResource", Type::String, false),
+            constrained_field(
+                "gameplay.soundResource",
+                Type::String,
+                false,
+                FieldConstraint::ResourceReference,
+            ),
             constrained_field(
                 "gameplay.scorePolicy",
                 Type::String,
@@ -190,7 +198,12 @@ fn build_phase2_schema() -> ConstructionSchema {
             field("presentation.scaleY", Type::Float, false),
             field("presentation.rotation", Type::Angle, false),
             field("presentation.color", Type::Color, false),
-            field("presentation.texture", Type::String, false),
+            constrained_field(
+                "presentation.texture",
+                Type::String,
+                false,
+                FieldConstraint::ResourceReference,
+            ),
             field("presentation.visibleFrom", Type::Beat, false),
             field("presentation.visibleUntil", Type::Beat, false),
         ],

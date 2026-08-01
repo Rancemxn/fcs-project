@@ -3,6 +3,7 @@ name = "fcs-runtime"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+license-file.workspace = true
 description = "FCS exact runtime descriptor and evaluation foundations"
 
 [dependencies]

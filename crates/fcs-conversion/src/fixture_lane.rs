@@ -81,7 +81,8 @@ struct FixtureExportReparse {
     parser_dialect: String,
     target_profile: String,
     target_profile_version: String,
-    floor_scale_px: String,
+    #[serde(default)]
+    floor_scale_px: Option<String>,
     policy: String,
 }
 
@@ -562,11 +563,6 @@ fn run_export_reparse(
     let Some(target) = fixture.export_reparse.as_ref() else {
         return Ok(products.report.clone());
     };
-    let floor_scale = ExactDecimal::parse(&target.floor_scale_px, DecimalLimits::default())
-        .map_err(|error| FixtureLaneError::Export {
-            fixture_id: fixture.id.clone(),
-            message: error.to_string(),
-        })?;
     let target_profile = format!(
         "{}@{}",
         target.target_profile, target.target_profile_version
@@ -579,6 +575,7 @@ fn run_export_reparse(
             {
                 return Err(unsupported_export_target(fixture));
             }
+            let floor_scale = required_export_floor_scale(fixture)?;
             let options =
                 ExportOptions::semantic(CapabilitySet::pgr_v3().descriptor(Some(target_profile)))
                     .with_floor_scale_px(floor_scale);
@@ -597,10 +594,10 @@ fn run_export_reparse(
             if binding.profile().version() != target.target_profile_version {
                 return Err(unsupported_export_target(fixture));
             }
+            // RPE target binding carries no floor-scale parameter.
             let options =
                 ExportOptions::semantic(CapabilitySet::rpe_json().descriptor(Some(target_profile)))
-                    .with_rpe_profile_binding(binding)
-                    .with_floor_scale_px(floor_scale);
+                    .with_rpe_profile_binding(binding);
             export_rpe_json_with_options(products.compilation.chart(), &options)
         }
         FixtureFormat::Pec => {
@@ -616,6 +613,7 @@ fn run_export_reparse(
             if profile.version() != target.target_profile_version {
                 return Err(unsupported_export_target(fixture));
             }
+            let floor_scale = required_export_floor_scale(fixture)?;
             let options =
                 ExportOptions::semantic(CapabilitySet::pec_line().descriptor(Some(target_profile)))
                     .with_floor_scale_px(floor_scale);
@@ -635,6 +633,29 @@ fn run_export_reparse(
         });
     }
     Ok(outcome.report().clone())
+}
+
+fn required_export_floor_scale(fixture: &FixtureEntry) -> Result<ExactDecimal, FixtureLaneError> {
+    let target = fixture
+        .export_reparse
+        .as_ref()
+        .expect("export target is present while dispatching");
+    let declared = target
+        .floor_scale_px
+        .as_deref()
+        .ok_or_else(|| FixtureLaneError::Export {
+            fixture_id: fixture.id.clone(),
+            message: format!(
+                "{} export/reparse requires floor_scale_px",
+                fixture.format.as_str()
+            ),
+        })?;
+    ExactDecimal::parse(declared, DecimalLimits::default()).map_err(|error| {
+        FixtureLaneError::Export {
+            fixture_id: fixture.id.clone(),
+            message: error.to_string(),
+        }
+    })
 }
 
 fn unsupported_export_target(fixture: &FixtureEntry) -> FixtureLaneError {
@@ -798,7 +819,7 @@ mod tests {
         assert_eq!(target.parser_dialect, "pgr.json.v3");
         assert_eq!(target.target_profile, "pgr.phira.v3");
         assert_eq!(target.target_profile_version, "1.0.0");
-        assert_eq!(target.floor_scale_px, "120");
+        assert_eq!(target.floor_scale_px.as_deref(), Some("120"));
         assert_eq!(target.policy, "semantic");
     }
 

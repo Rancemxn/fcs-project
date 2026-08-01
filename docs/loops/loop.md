@@ -97,7 +97,8 @@
   criteria 和未决 decision residual；任何非终止 iteration 必须关闭至少一个 criterion、消除一个
   decision residual、完成保持原验收覆盖的严格缩小拆分，或按 Residual Routing 退出该路径。主 loop 的 240 预算
   同时单调递减；reviewer 的独立 480 review-unit 预算由 `review-loop.md` 单独管理。
-- **Remote gate state:** 需要编译或测试反馈的修改以 draft PR 上的新固定 SHA 触发 GitHub full gate；
+- **Remote gate state:** 需要编译或测试反馈的修改以 draft PR 上的新固定 SHA 触发 GitHub full gate，或按
+  根 `AGENTS.md` 的 Codespace Full Gate 条款直接在用户 GitHub Codespace 对同 SHA 执行完整命令序列；
   `queued`/`in_progress` 只是待验证状态，不算通过或 iteration 进展。成功的同 SHA run 可以关闭验证项；失败 run
   必须产生决定性证据并由修正后的新 SHA 推进，否则按 no-progress 路由。同 SHA 的瞬时基础设施重跑和等待 Action
   都不消耗 work-unit；新 SHA 取消的旧 run 是过期证据，不算当前 gate 失败；cache miss 也不改变 gate。
@@ -156,6 +157,11 @@
   work-unit 的前置等待门。主会话在 Primary audit 通过后发送 `Review requested`，固定被审 PR、关联 Issue、head SHA、
   审查 scope、规范/ADR 条款、复现命令、full-gate evidence、已知 residual 和验收 gate，并继续不依赖 reviewer
   即时返回的安全交付。
+- 审查会话的 corrective/read-only worktree 不运行任何编译、测试、fuzz 或生成 Cargo build artifact 的命令；需要
+  执行证据时通过 GitHub `.github/workflows/full-gate.yml` 对解析为目标 SHA 的 ref 运行（`workflow_dispatch` 或 PR
+  run），不在本地跑测试或逐次烧 gate 迭代；审查的 test/conformance 证据只来自同 SHA full-gate run。主会话本地
+  允许的编译/lint/格式命令只作开发反馈（见 `AGENTS.md` 的 Rust 开发与验证），test/conformance 证据仍只来自
+  full gate。
 - 审查期间若 head SHA、scope、验收命令或依赖证据变化，原审查立即失效；当前会话必须追加新的
   `Review requested`，审查会话必须追加 `superseding/re-review` 说明并以新快照重新开始。旧评论和
   finding 不得被编辑或静默覆盖。
@@ -262,8 +268,9 @@ Routine GitHub delivery 和满足 Authorized Change & Delivery 条件的普通 m
 # Measurement Domain
 
 本地允许运行编译、lint 与格式检查（`cargo check`、`cargo clippy`、`cargo build`、`cargo fmt`，详见根
-`AGENTS.md` 的 Rust 开发与验证）；本地不运行测试。测试、fuzz 和可执行 fixture 反馈均由 GitHub
-`.github/workflows/full-gate.yml` 执行，并绑定精确 head SHA。验证记录必须区分
+`AGENTS.md` 的 Rust 开发与验证）；本地工作树不运行测试。测试、fuzz 和可执行 fixture 反馈按用户决定直接在该
+GitHub Codespace 对精确 head SHA 执行完整 Full Gate 命令序列（等价于 `.github/workflows/full-gate.yml`），
+GitHub runner 的 PR run 仍是 PR/merge required gate。验证记录必须区分
 passed、failed、queued、skipped 和 non-applicable，不能把缺失或运行中的 gate 写成通过。
 
 | Output domain | Verification method | Required artifact |
