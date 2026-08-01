@@ -278,6 +278,14 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
     assert_eq!(&bytes[..4], b"FCSB");
     let decoded = crate::load_chart(&bytes).expect("compiled FCBC Core chart must load");
     assert_eq!(
+        decoded.sync,
+        crate::DecodedSync {
+            primary_audio_id: None,
+            audio_offset: 0.0,
+            preview: None,
+        }
+    );
+    assert_eq!(
         decoded.lines.len(),
         compilation.chart().lines().lines().count()
     );
@@ -291,6 +299,7 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
 fn write_from_compilation_preserves_source_version_meta_and_artwork() {
     let workspace = tempdir().unwrap();
     fs::write(workspace.path().join("cover.png"), b"opaque cover").unwrap();
+    fs::write(workspace.path().join("song.ogg"), b"opaque song").unwrap();
     let source = r#"#fcs 5.0.1
 format { profile: chart; }
 meta {
@@ -306,8 +315,12 @@ contributors {
     }
     person bob { name: "Bob"; }
 }
-resources { image cover { source: "cover.png"; mediaType: "image/png"; } }
+resources {
+    image cover { source: "cover.png"; mediaType: "image/png"; }
+    audio song { source: "song.ogg"; mediaType: "audio/ogg"; }
+}
 artwork { primary: @cover; }
+sync { primaryAudio: @song; audioOffset: -100ms; preview: [30s, 45s); }
 tempoMap { 0beat -> 120bpm; }
 "#;
     let document = parse_document(source).into_result().unwrap();
@@ -322,6 +335,17 @@ tempoMap { 0beat -> 120bpm; }
     let bytes = write_from_compilation(&compilation).unwrap();
     let decoded = crate::load_chart(&bytes).expect("metadata-bearing chart must load");
     assert_eq!(decoded.source_fcs_version, (5, 0, 1));
+    assert_eq!(
+        decoded.sync,
+        crate::DecodedSync {
+            primary_audio_id: Some(stable_id(b"fcs.resource", b"song")),
+            audio_offset: -0.1,
+            preview: Some(crate::DecodedPreview {
+                start_seconds: 30.0,
+                end_seconds: 45.0,
+            }),
+        }
+    );
     assert_eq!(decoded.document_profile, 2);
     assert_eq!(decoded.document_feature_bits, 0);
     assert_eq!(

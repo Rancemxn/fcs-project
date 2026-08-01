@@ -284,6 +284,19 @@ pub struct DecodedContributor {
     pub custom: DecodedValue,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DecodedPreview {
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecodedSync {
+    pub primary_audio_id: Option<u64>,
+    pub audio_offset: f64,
+    pub preview: Option<DecodedPreview>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct NoteRecord {
     pub id: u64,
@@ -319,6 +332,7 @@ pub struct DecodedChart {
     pub meta: DecodedValue,
     pub artwork: DecodedValue,
     pub contributors: Vec<DecodedContributor>,
+    pub sync: DecodedSync,
     pub feature_flags: u64,
     pub strings: Vec<String>,
     pub constants: Vec<RuntimeValue>,
@@ -510,7 +524,7 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
     }
     validate_artwork(&artwork, &resources)?;
     validate_extension_references(&extensions, &resources, &contributor_ids)?;
-    parse_sync(section_payload(bytes, &section_map, 7)?, &resources)?;
+    let sync = parse_sync(section_payload(bytes, &section_map, 7)?, &resources)?;
     let tempo_points = parse_tempo(section_payload(bytes, &section_map, 8)?)?;
     let lines = parse_lines(section_payload(bytes, &section_map, 9)?, &strings)?;
     if (feature_flags & (1 << 8) != 0) != lines.iter().any(|line| line.line_flags & 1 != 0) {
@@ -547,6 +561,7 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
         meta,
         artwork,
         contributors,
+        sync,
         feature_flags,
         strings,
         constants,
@@ -1576,11 +1591,14 @@ fn validate_resource_data(
     Ok(())
 }
 
-fn parse_sync(bytes: &[u8], resources: &[ResourceRecord]) -> Result<(), &'static str> {
+fn parse_sync(bytes: &[u8], resources: &[ResourceRecord]) -> Result<DecodedSync, &'static str> {
     let mut outer = Cursor::new(bytes, "fcbc.invalid-record");
     let mut record = take_record(&mut outer)?;
     let primary_audio = record.u64()?;
-    record.f64()?;
+    let audio_offset = record.f64()?;
+    if !audio_offset.is_finite() {
+        return Err("fcbc.invalid-record");
+    }
     let has_preview = record.u8()?;
     if has_preview > 1 {
         return Err("fcbc.invalid-record");
@@ -1591,7 +1609,13 @@ fn parse_sync(bytes: &[u8], resources: &[ResourceRecord]) -> Result<(), &'static
     if has_preview == 0 && (preview_start.to_bits() != 0 || preview_end.to_bits() != 0) {
         return Err("fcbc.invalid-record");
     }
-    if has_preview == 1 && preview_end < preview_start {
+    if has_preview == 1
+        && (!preview_start.is_finite()
+            || !preview_end.is_finite()
+            || preview_start < 0.0
+            || preview_end <= preview_start
+            || primary_audio == 0)
+    {
         return Err("fcbc.invalid-record");
     }
     if primary_audio != 0
@@ -1601,7 +1625,16 @@ fn parse_sync(bytes: &[u8], resources: &[ResourceRecord]) -> Result<(), &'static
     {
         return Err("fcbc.dangling-reference");
     }
-    outer.finish()
+    record.finish()?;
+    outer.finish()?;
+    Ok(DecodedSync {
+        primary_audio_id: (primary_audio != 0).then_some(primary_audio),
+        audio_offset,
+        preview: (has_preview == 1).then_some(DecodedPreview {
+            start_seconds: preview_start,
+            end_seconds: preview_end,
+        }),
+    })
 }
 
 fn parse_tempo(bytes: &[u8]) -> Result<Vec<TempoPoint>, &'static str> {

@@ -143,6 +143,13 @@ struct ContributorFixture<'a> {
     contributor: &'a CanonicalContributor,
 }
 
+#[derive(Clone, Copy)]
+struct SyncFixture {
+    primary_audio_id: u64,
+    audio_offset: f64,
+    preview: Option<(f64, f64)>,
+}
+
 #[derive(Clone)]
 struct NativeTrackFixture {
     line_id: u64,
@@ -403,6 +410,7 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         None,
         None,
         &[],
+        None,
     )
     .expect("the fixed execution fixture is valid")
 }
@@ -681,6 +689,7 @@ pub fn write_from_compilation_with_profile(
 
     let resources = native_resources(compilation)?;
     let contributors = native_contributors(chart)?;
+    let sync = native_sync(chart, &resources)?;
     let extensions = native_extensions(chart.required_extensions())?;
 
     assemble_package(
@@ -700,6 +709,7 @@ pub fn write_from_compilation_with_profile(
         (profile == ContainerProfile::Fidelity).then_some(compilation.distribution()),
         Some(chart),
         &contributors,
+        sync,
     )
 }
 
@@ -755,6 +765,7 @@ fn assemble_package(
     fidelity: Option<&DistributionMetadata>,
     chart: Option<&CanonicalChart>,
     contributors: &[ContributorFixture<'_>],
+    sync: Option<SyncFixture>,
 ) -> FcbcResult<Vec<u8>> {
     let mut lines = lines.to_vec();
     let mut notes = notes.to_vec();
@@ -917,7 +928,14 @@ fn assemble_package(
         Section::new(4, contributors_section(contributors, &strings)?),
         Section::new(5, count_zero_section()),
         Section::new(6, resource_records),
-        Section::new(7, sync_section_with_offset(audio_offset)),
+        Section::new(
+            7,
+            sync_section(sync.unwrap_or(SyncFixture {
+                primary_audio_id: 0,
+                audio_offset,
+                preview: None,
+            })),
+        ),
         Section::new(8, tempo_section_from(tempo)),
         Section::new(9, lines_section(&lines, &constants)),
         Section::new(10, notes_section_from(&notes, &strings)),
@@ -1632,6 +1650,43 @@ fn native_contributors(chart: &CanonicalChart) -> FcbcResult<Vec<ContributorFixt
         ));
     }
     Ok(contributors)
+}
+
+fn native_sync(
+    chart: &CanonicalChart,
+    resources: &[ResourceFixture<'_>],
+) -> FcbcResult<Option<SyncFixture>> {
+    let Some(sync) = chart.metadata().sync() else {
+        return Ok(None);
+    };
+    let primary_audio_id = sync
+        .primary_audio()
+        .map(|id| {
+            let resource = resources
+                .iter()
+                .find(|resource| resource.id == stable_id(b"fcs.resource", id.as_bytes()))
+                .ok_or_else(|| {
+                    FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "canonical sync primary audio is missing",
+                    )
+                })?;
+            if resource.kind != 1 {
+                return Err(FcbcError::new(
+                    "fcbc.invalid-sync",
+                    "canonical sync primary audio is not an audio resource",
+                ));
+            }
+            Ok(resource.id)
+        })
+        .transpose()?;
+    Ok(Some(SyncFixture {
+        primary_audio_id: primary_audio_id.unwrap_or(0),
+        audio_offset: sync.audio_offset().seconds(),
+        preview: sync
+            .preview()
+            .map(|preview| (preview.start_seconds(), preview.end_seconds())),
+    }))
 }
 
 fn native_extensions<'a>(
@@ -2864,14 +2919,15 @@ fn count_zero_section() -> Vec<u8> {
     0u32.to_le_bytes().to_vec()
 }
 
-fn sync_section_with_offset(audio_offset: f64) -> Vec<u8> {
+fn sync_section(sync: SyncFixture) -> Vec<u8> {
     let mut payload = Vec::new();
-    put_u64(&mut payload, 0);
-    put_f64(&mut payload, audio_offset);
-    put_u8(&mut payload, 0);
+    put_u64(&mut payload, sync.primary_audio_id);
+    put_f64(&mut payload, sync.audio_offset);
+    put_u8(&mut payload, u8::from(sync.preview.is_some()));
     payload.resize(24, 0);
-    put_f64(&mut payload, 0.0);
-    put_f64(&mut payload, 0.0);
+    let (preview_start, preview_end) = sync.preview.unwrap_or((0.0, 0.0));
+    put_f64(&mut payload, preview_start);
+    put_f64(&mut payload, preview_end);
     record(payload)
 }
 

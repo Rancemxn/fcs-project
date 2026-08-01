@@ -31,11 +31,11 @@ pub use evaluator::{
 };
 pub use loader::{
     DecodedChart, DecodedContributor, DecodedJudgeShape, DecodedNoteScorePolicy,
-    DecodedNoteSoundPolicy, DecodedValue, DescriptorKind, DistanceClassification,
-    DistanceDescriptor, Domain, ExpressionNode, ExtensionRecord, LineRecord, NULL_INDEX,
-    NoteRecord, PropertyDescriptor, ResourceRecord, RuntimeValue, SectionInfo, Segment, TempoPoint,
-    ValueType, load, load_chart, validate_descriptor_env_p_context,
-    validate_descriptor_environment_for_target,
+    DecodedNoteSoundPolicy, DecodedPreview, DecodedSync, DecodedValue, DescriptorKind,
+    DistanceClassification, DistanceDescriptor, Domain, ExpressionNode, ExtensionRecord,
+    LineRecord, NULL_INDEX, NoteRecord, PropertyDescriptor, ResourceRecord, RuntimeValue,
+    SectionInfo, Segment, TempoPoint, ValueType, load, load_chart,
+    validate_descriptor_env_p_context, validate_descriptor_environment_for_target,
 };
 pub use writer::{
     write_from_compilation, write_from_compilation_with_profile, write_nonempty_execution,
