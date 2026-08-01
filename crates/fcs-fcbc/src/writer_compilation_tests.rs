@@ -857,14 +857,14 @@ lines {
         },
     );
     assert_runtime_value_bits(
-        decoded.constants[line.transform_origin_constant as usize],
+        decoded.constants[line.transform_origin_constant as usize].clone(),
         crate::RuntimeValue::Vec2 {
             ty: crate::ValueType::Vec2Length,
             value: [1.0, 2.0],
         },
     );
     assert_runtime_value_bits(
-        decoded.constants[line.texture_anchor_constant as usize],
+        decoded.constants[line.texture_anchor_constant as usize].clone(),
         crate::RuntimeValue::Vec2 {
             ty: crate::ValueType::Vec2Float,
             value: [0.25, 0.75],
@@ -1493,8 +1493,6 @@ lines {{
                 ty: crate::ValueType::Float,
                 value: easing.evaluate(0.5).unwrap(),
             },
-            "{}",
-            easing.name(),
         );
     }
 }
