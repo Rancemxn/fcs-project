@@ -64,16 +64,10 @@ fn inventory_matches_product_metadata_and_registries() {
     let workspace = read_toml(root.join("Cargo.toml"));
     let workspace_package = &workspace["workspace"]["package"];
     assert_eq!(string(workspace_package, "version"), "5.0.0");
-    assert_eq!(
-        string(workspace_package, "license"),
-        "AGPL-3.0-or-later"
-    );
+    assert_eq!(string(workspace_package, "license"), "AGPL-3.0-or-later");
     assert_eq!(string(workspace_package, "license-file"), "LICENSE");
     assert_eq!(string(&inventory, "workspace_version"), "5.0.0");
-    assert_eq!(
-        string(&inventory, "workspace_license"),
-        "AGPL-3.0-or-later"
-    );
+    assert_eq!(string(&inventory, "workspace_license"), "AGPL-3.0-or-later");
     assert_eq!(
         string(&inventory, "contribution_policy"),
         "DCO + inbound=outbound"
@@ -137,17 +131,16 @@ fn inventory_matches_product_metadata_and_registries() {
     let license_path = inventory_path("license_file");
     let license_bytes = fs::read(&license_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", license_path.display()));
-    let license = std::str::from_utf8(&license_bytes)
-        .unwrap_or_else(|error| panic!("license is not UTF-8: {}: {error}", license_path.display()));
+    let license = std::str::from_utf8(&license_bytes).unwrap_or_else(|error| {
+        panic!("license is not UTF-8: {}: {error}", license_path.display())
+    });
     let license_sha256 = lower_hex(&CanonicalContentSha256::digest(&license_bytes).as_bytes());
     assert_eq!(license_sha256, string(&inventory, "license_sha256"));
     assert_eq!(
         license_sha256,
         "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
     );
-    assert!(license.starts_with(
-        "                    GNU AFFERO GENERAL PUBLIC LICENSE\n"
-    ));
+    assert!(license.starts_with("                    GNU AFFERO GENERAL PUBLIC LICENSE\n"));
     assert!(license.contains("Version 3, 19 November 2007"));
 
     for relative in strings(&inventory, "utf8_paths") {
