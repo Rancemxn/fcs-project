@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use fcs_source::elaborator::CompileTimeLimits;
@@ -7,6 +7,13 @@ use fcs_source::parser::parse_document;
 
 fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_fcs"))
+}
+
+fn load_toml(path: &Path) -> toml::Value {
+    let source = fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    toml::from_str(&source)
+        .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()))
 }
 
 #[test]
@@ -47,10 +54,7 @@ fn check_rejects_canonical_profile_errors() {
 fn check_executes_the_canonical_source_fixture_lane() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let conformance = root.join("docs/conformance/fcs5");
-    let manifest: toml::Value = fs::read_to_string(conformance.join("manifest.toml"))
-        .unwrap()
-        .parse()
-        .unwrap();
+    let manifest = load_toml(&conformance.join("manifest.toml"));
 
     for fixture in manifest["fixture"].as_array().unwrap() {
         if fixture["stage"].as_str() != Some("canonical") {
@@ -95,29 +99,46 @@ fn check_executes_the_canonical_source_fixture_lane() {
 }
 
 #[test]
-fn check_executes_all_repository_fcs_examples() {
+fn repository_fcs_examples_execute_at_their_applicable_product_boundaries() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let mut examples: Vec<_> = fs::read_dir(root.join("examples/fcs"))
+    let examples_directory = root.join("examples/fcs");
+    let expected = vec![
+        "chart.fcs".to_owned(),
+        "fragment.fcs".to_owned(),
+        "templates.fcs".to_owned(),
+    ];
+    let mut discovered: Vec<_> = fs::read_dir(&examples_directory)
         .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("fcs"))
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".fcs"))
         .collect();
-    examples.sort();
-    assert!(!examples.is_empty());
+    discovered.sort();
+    assert_eq!(discovered, expected);
 
-    for source in examples {
-        let output = bin()
-            .arg("check")
-            .arg(&source)
-            .arg("--json")
-            .output()
-            .unwrap();
+    for name in &expected {
+        let source = examples_directory.join(name);
+        let mut command = bin();
+        if name == "fragment.fcs" {
+            command.arg("format").arg(&source);
+        } else {
+            command.arg("check").arg(&source).arg("--json");
+        }
+        let output = command.output().unwrap();
         assert!(
             output.status.success(),
             "{}: stderr={}",
             source.display(),
             String::from_utf8_lossy(&output.stderr)
         );
+        if name == "fragment.fcs" {
+            let formatted = std::str::from_utf8(&output.stdout)
+                .unwrap_or_else(|error| panic!("{name}: formatter output is not UTF-8: {error}"));
+            parse_document(formatted)
+                .into_result()
+                .unwrap_or_else(|errors| {
+                    panic!("{name}: formatted output does not parse: {errors:?}")
+                });
+        }
     }
 }
 
@@ -125,10 +146,7 @@ fn check_executes_all_repository_fcs_examples() {
 fn compile_executes_successful_canonical_source_fixtures_through_core_load() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let conformance = root.join("docs/conformance/fcs5");
-    let manifest: toml::Value = fs::read_to_string(conformance.join("manifest.toml"))
-        .unwrap()
-        .parse()
-        .unwrap();
+    let manifest = load_toml(&conformance.join("manifest.toml"));
     let output_directory = tempfile::tempdir().unwrap();
 
     for fixture in manifest["fixture"].as_array().unwrap() {
@@ -837,10 +855,7 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
 fn report_executes_every_public_conversion_fixture() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let fixture_root = root.join("docs/conformance/conversion/public-fixtures");
-    let manifest: toml::Value = fs::read_to_string(fixture_root.join("manifest.toml"))
-        .unwrap()
-        .parse()
-        .unwrap();
+    let manifest = load_toml(&fixture_root.join("manifest.toml"));
 
     for fixture in manifest["fixture"].as_array().unwrap() {
         let id = fixture["id"].as_str().unwrap();
@@ -851,11 +866,7 @@ fn report_executes_every_public_conversion_fixture() {
             fixture["profile_version"].as_str().unwrap()
         );
         let source = fixture_root.join(fixture["source"].as_str().unwrap());
-        let expected: toml::Value =
-            fs::read_to_string(fixture_root.join(fixture["expected"].as_str().unwrap()))
-                .unwrap()
-                .parse()
-                .unwrap();
+        let expected = load_toml(&fixture_root.join(fixture["expected"].as_str().unwrap()));
         let mut command = bin();
         command
             .arg("report")
@@ -917,10 +928,7 @@ fn report_executes_every_public_conversion_fixture() {
 fn convert_executes_every_declared_public_export_reparse_fixture() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let fixture_root = root.join("docs/conformance/conversion/public-fixtures");
-    let manifest: toml::Value = fs::read_to_string(fixture_root.join("manifest.toml"))
-        .unwrap()
-        .parse()
-        .unwrap();
+    let manifest = load_toml(&fixture_root.join("manifest.toml"));
     let directory = tempfile::tempdir().unwrap();
 
     for fixture in manifest["fixture"].as_array().unwrap() {
@@ -935,11 +943,7 @@ fn convert_executes_every_declared_public_export_reparse_fixture() {
             fixture["profile_version"].as_str().unwrap()
         );
         let source = fixture_root.join(fixture["source"].as_str().unwrap());
-        let expected: toml::Value =
-            fs::read_to_string(fixture_root.join(fixture["expected"].as_str().unwrap()))
-                .unwrap()
-                .parse()
-                .unwrap();
+        let expected = load_toml(&fixture_root.join(fixture["expected"].as_str().unwrap()));
         let output_path = directory.path().join(format!("{id}.{format}"));
         let target_profile = format!(
             "{}@{}",
@@ -1025,18 +1029,11 @@ fn convert_executes_every_declared_public_export_reparse_fixture() {
 fn inspect_executes_every_fcbc_golden_through_core_load() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let conformance = root.join("docs/conformance/fcbc");
-    let manifest: toml::Value = fs::read_to_string(conformance.join("manifest.toml"))
-        .unwrap()
-        .parse()
-        .unwrap();
+    let manifest = load_toml(&conformance.join("manifest.toml"));
 
     for fixture in manifest["fixture"].as_array().unwrap() {
         let id = fixture["id"].as_str().unwrap();
-        let golden: toml::Value =
-            fs::read_to_string(conformance.join(fixture["manifest"].as_str().unwrap()))
-                .unwrap()
-                .parse()
-                .unwrap();
+        let golden = load_toml(&conformance.join(fixture["manifest"].as_str().unwrap()));
         let hex = conformance.join(golden["path"].as_str().unwrap());
         let output = bin()
             .arg("inspect")
@@ -1072,10 +1069,7 @@ fn inspect_executes_every_fcbc_golden_through_core_load() {
 fn render_manifest_source_and_product_paths_are_exercised() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let render = root.join("docs/conformance/render");
-    let manifest: toml::Value = fs::read_to_string(render.join("manifest.toml"))
-        .unwrap()
-        .parse()
-        .unwrap();
+    let manifest = load_toml(&render.join("manifest.toml"));
 
     for fixture in manifest["source_fixture"].as_array().unwrap() {
         let id = fixture["id"].as_str().unwrap();

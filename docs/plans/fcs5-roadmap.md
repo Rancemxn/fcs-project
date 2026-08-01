@@ -768,10 +768,11 @@ git diff --check
 - The I10 `check` command now reuses `canonical_compilation_with_source`, so a successful check covers
   profile, elaboration, canonical graph, workspace-resource, and Render-source validation instead of
   parser syntax alone; its canonical-profile regression and full canonical fixture lane are recorded in
-  the CLI conformance tests, together with executable lanes for every checked-in FCS example and each
-  successful canonical fixture through FCBC Core load. The full source corpus continues to execute
+  the CLI conformance tests, together with the applicable product-boundary lane for every checked-in FCS example
+  (`format` plus parser validation for the fragment profile, `check` for complete documents) and
+  each successful canonical fixture through FCBC Core load. The full source corpus continues to execute
   through `conformance_manifest` at its declared parse, elaborate, canonical, or evaluate boundary;
-  the CLI lane covers the applicable canonical and example paths. The same suite now drives all six
+  the CLI lane covers the applicable canonical and example paths, including the fragment example's format/parser boundary. The same suite now drives all six
   public Conversion import fixtures through `report`, all three manifest-declared export/reparse
   fixtures through `convert`, all three FCBC goldens through `inspect` and mandatory Core load, and
   the Render source, canonical compile, and embedded-resource binding paths through `check`, `compile`,
