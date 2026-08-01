@@ -637,7 +637,7 @@ fn independent_loader_rejects_invalid_sync_preview_bounds() {
         [("negative-start", -1.0, 1.0), ("empty-preview", 1.0, 1.0)]
     {
         let mut bytes = original.clone();
-        patch_sync_preview(&mut bytes, &golden, 1, preview_start, preview_end);
+        patch_sync_preview(&mut bytes, &golden, 0, preview_start, preview_end);
         assert_eq!(
             load(&bytes).expect_err("invalid Sync preview must be rejected"),
             "fcbc.invalid-record",
