@@ -44,3 +44,23 @@ diagnostic = "fcbc.section-checksum"
 [[mutation.patch]]
 offset = 688
 replace_hex = "03"
+
+[[mutation]]
+id = "reverse-scroll-feature-bit-without-line-flag"
+diagnostic = "fcbc.invalid-header"
+
+[[mutation.patch]]
+offset = 29
+replace_hex = "01"
+
+[[mutation]]
+id = "reverse-scroll-line-flag-without-feature-bit"
+diagnostic = "fcbc.invalid-header"
+
+[[mutation.patch]]
+offset = 1224
+replace_hex = "01000000"
+
+[[mutation.patch]]
+offset = 480
+replace_hex = "dc34be85"
