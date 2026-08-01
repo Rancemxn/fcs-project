@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use fcs_fcbc::ContainerProfile;
+use fcs_model::CanonicalContentSha256;
 use toml::Value;
 
 fn root() -> PathBuf {
@@ -49,6 +50,10 @@ fn package_files(output: &[u8], package: &str) -> Vec<String> {
         .collect()
 }
 
+fn lower_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 #[test]
 fn inventory_matches_product_metadata_and_registries() {
     let root = root();
@@ -59,10 +64,20 @@ fn inventory_matches_product_metadata_and_registries() {
     let workspace = read_toml(root.join("Cargo.toml"));
     let workspace_package = &workspace["workspace"]["package"];
     assert_eq!(string(workspace_package, "version"), "5.0.0");
-    assert_eq!(string(workspace_package, "license"), "MIT");
+    assert_eq!(
+        string(workspace_package, "license"),
+        "AGPL-3.0-or-later"
+    );
     assert_eq!(string(workspace_package, "license-file"), "LICENSE");
     assert_eq!(string(&inventory, "workspace_version"), "5.0.0");
-    assert_eq!(string(&inventory, "workspace_license"), "MIT");
+    assert_eq!(
+        string(&inventory, "workspace_license"),
+        "AGPL-3.0-or-later"
+    );
+    assert_eq!(
+        string(&inventory, "contribution_policy"),
+        "DCO + inbound=outbound"
+    );
 
     let members = strings(&workspace["workspace"], "members");
     let inventory_members = strings(&inventory, "workspace_members");
@@ -112,11 +127,28 @@ fn inventory_matches_product_metadata_and_registries() {
         path
     };
 
+    let policy_path = inventory_path("contribution_policy_file");
+    let policy = fs::read_to_string(&policy_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", policy_path.display()));
+    assert!(policy.contains("Contributions are inbound=outbound"));
+    assert!(policy.contains("Developer's Certificate of Origin 1.1"));
+    assert!(policy.contains("Signed-off-by:"));
+
     let license_path = inventory_path("license_file");
-    let license = fs::read_to_string(&license_path)
+    let license_bytes = fs::read(&license_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", license_path.display()));
-    assert!(license.starts_with("MIT License\n"));
-    assert!(license.contains("Copyright (c) 2026 FCS contributors"));
+    let license = std::str::from_utf8(&license_bytes)
+        .unwrap_or_else(|error| panic!("license is not UTF-8: {}: {error}", license_path.display()));
+    let license_sha256 = lower_hex(&CanonicalContentSha256::digest(&license_bytes).as_bytes());
+    assert_eq!(license_sha256, string(&inventory, "license_sha256"));
+    assert_eq!(
+        license_sha256,
+        "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
+    );
+    assert!(license.starts_with(
+        "                    GNU AFFERO GENERAL PUBLIC LICENSE\n"
+    ));
+    assert!(license.contains("Version 3, 19 November 2007"));
 
     for relative in strings(&inventory, "utf8_paths") {
         let path = inventory_dir.join(&relative);
