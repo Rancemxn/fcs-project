@@ -716,7 +716,7 @@ fn extension_payload_duplicate_keys_remain_ordered_and_unbalanced_envelopes_fail
         "#fcs 5.0.0\nformat { profile: fragment; }\nextensions { extension(\"x\", 1.0.0) optional { \"x\": 1, }",
         "#fcs 5.0.0\nformat { profile: fragment; }\npreserve { source { format: \"rpe\"; }",
         "#fcs 5.0.0\nformat { profile: fragment; }\nrender profile 1.0.0 { layer x {",
-        "#fcs 5.0.0\nformat { profile: fragment; }\nrender profile 1.0.0 { active: [0s, 1s); }",
+        "#fcs 5.0.0\nformat { profile: fragment; }\nrender profile 1.0.0 { active: [0s, 1s; }",
     ] {
         parse_document(malformed)
             .into_result()
