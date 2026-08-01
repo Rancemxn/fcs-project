@@ -64,7 +64,10 @@ fn check_executes_the_canonical_source_fixture_lane() {
         let source = conformance.join(fixture["path"].as_str().unwrap());
         let mut command = bin();
         command.arg("check").arg(&source).arg("--json");
-        if let Some(workspace_root) = fixture["workspace_root"].as_str() {
+        if let Some(workspace_root) = fixture
+            .get("workspace_root")
+            .and_then(|value| value.as_str())
+        {
             command
                 .arg("--resolver-root")
                 .arg(conformance.join(workspace_root));
@@ -164,7 +167,10 @@ fn compile_executes_successful_canonical_source_fixtures_through_core_load() {
             .arg(&source)
             .arg("--output")
             .arg(&output_path);
-        if let Some(workspace_root) = fixture["workspace_root"].as_str() {
+        if let Some(workspace_root) = fixture
+            .get("workspace_root")
+            .and_then(|value| value.as_str())
+        {
             command
                 .arg("--resolver-root")
                 .arg(conformance.join(workspace_root));
