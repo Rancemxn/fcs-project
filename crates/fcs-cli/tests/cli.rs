@@ -329,6 +329,8 @@ const CLI_CHECK_CANONICAL_FIXTURES: &[&str] = &[
     "source.valid.exact-expression-dag",
     "source.valid.note-policies",
     "source.valid.metadata-credits-resources-sync",
+    "source.valid.profile-publishable-both",
+    "source.valid.contributor-credit-closure",
     "source.invalid.contributor-missing-name",
     "source.invalid.credit-duplicate-contributor",
     "source.invalid.credit-resource-reference",
@@ -344,6 +346,8 @@ const CLI_CHECK_CANONICAL_FIXTURES: &[&str] = &[
     "source.invalid.sync-preview-without-audio",
     "source.invalid.sync-preview-domain",
     "source.invalid.resource-path-escape",
+    "source.invalid.resource-hash-mismatch",
+    "source.invalid.resource-missing-member",
     "source.invalid.custom-duplicate-key",
 ];
 
@@ -360,13 +364,6 @@ const CLI_COMPILE_CANONICAL_FIXTURES: &[&str] = &[
     "source.valid.exact-expression-dag",
     "source.valid.note-policies",
     "source.valid.metadata-credits-resources-sync",
-];
-
-const SOURCE_ONLY_CANONICAL_FIXTURES: &[&str] = &[
-    "source.valid.profile-publishable-both",
-    "source.valid.contributor-credit-closure",
-    "source.invalid.resource-hash-mismatch",
-    "source.invalid.resource-missing-member",
 ];
 
 fn manifest_fixture<'a>(manifest: &'a toml::Value, id: &str) -> &'a toml::Value {
@@ -417,25 +414,15 @@ fn assert_canonical_fixture_partition(manifest: &toml::Value) {
         CLI_COMPILE_CANONICAL_FIXTURES,
         "CLI compile canonical fixtures",
     );
-    let source_only_ids = validate_fixture_list(
-        manifest,
-        SOURCE_ONLY_CANONICAL_FIXTURES,
-        "source-only canonical fixtures",
-    );
-
     assert_eq!(canonical_ids.len(), 32);
-    assert_eq!(check_ids.len(), 28);
+    assert_eq!(check_ids.len(), 32);
     assert_eq!(compile_ids.len(), 12);
-    assert_eq!(source_only_ids.len(), 4);
-    assert!(check_ids.is_disjoint(&source_only_ids));
     assert!(compile_ids.is_subset(&check_ids));
     assert!(compile_ids.iter().all(|id| {
         manifest_fixture(manifest, id.as_str())["expect"].as_str() == Some("success")
     }));
 
-    let mut partition = check_ids.clone();
-    partition.extend(source_only_ids);
-    assert_eq!(partition, canonical_ids);
+    assert_eq!(check_ids, canonical_ids);
 }
 
 fn is_listed_canonical_fixture(fixture: &toml::Value, ids: &[&str]) -> bool {
