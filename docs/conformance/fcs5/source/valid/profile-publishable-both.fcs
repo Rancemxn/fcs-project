@@ -23,4 +23,16 @@ render profile 1.0.0 {
         height: 1080px;
         colorSpace: "linear-srgb";
     }
+    layer main {
+        pass: "overlay";
+        zOrder: 0;
+        space: "screen";
+        children {
+            rect full {
+                origin: vec2(-1px, -1px);
+                size: vec2(2px, 2px);
+                fill: solid(#FFFFFFFF);
+            }
+        }
+    }
 }
