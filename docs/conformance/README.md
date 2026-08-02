@@ -41,8 +41,8 @@ S15 FCBC/Execution ABI closure 把 root `candidate_baseline` 更新为
 最小向量有 11 个 header/section/profile mutation，resource 向量有 2 个在重新计算 section CRC 后
 才能到达的 resource hash/coverage mutation。它们仍是规范候选 corpus，不代表 Frozen；当前
 `fcs-fcbc` loader/mutation tests 和 CLI `inspect` product lane 分别提供 domain 与产品入口证据，
-其中 CLI 对三个 golden 分别执行声明的 Core success/rejection contract。同 SHA Full Gate 已通过
-（run 30694250501，head c2196d2）；独立复审和五域 re-freeze 仍是
+其中 CLI 对三个 golden 分别执行声明的 Core success/rejection contract。该产品 assembly 的同 SHA Full Gate 已通过
+（run 30728878791，head e9ef09baf2c1fb505cd67573dca2a52aa057827b）；独立复审和五域 re-freeze 仍是
 I10 门槛。
 
 Conformance runner 必须：
@@ -108,6 +108,6 @@ import fixture 及声明的 export/reparse target，CLI product lane 再通过 `
 I10 product-entry, domain, property, fuzz, CLI, and distribution evidence is
 indexed in [`fcs5-i10-evidence-ledger.md`](fcs5-i10-evidence-ledger.md). The
 unpublished distribution inventory at `fcs5/distribution.toml` is checked against
-Cargo package listings and UTF-8 inputs by the CLI distribution test; the exact
-final-SHA Full Gate passed (run 30694250501 on head c2196d2), and independent
+Cargo package listings and UTF-8 inputs by the CLI distribution test; the current
+product assembly Full Gate passed (run 30728878791 on head e9ef09baf2c1fb505cd67573dca2a52aa057827b), and independent
 review and five-domain re-freeze remain.

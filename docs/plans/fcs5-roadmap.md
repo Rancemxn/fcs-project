@@ -763,8 +763,8 @@ git diff --check
   version domains, FCBC container profiles, the Render manifest, and the checked-in Conversion profile registry. Its bounded artifact contract now checks the root license text, all seven
   Cargo package listings, required packaged paths, and UTF-8 inventory inputs; the Appendix A example is now
   manifest-backed with focused elaboration/canonical and CLI canonical/Core-load evidence. Final executable
-  cross-domain, matrix, joint review, and re-freeze obligations remain open under #296; the exact-head Full Gate
-  for the current assembly passed (run 30694250501 on head c2196d2).
+  cross-domain, matrix, joint review, and re-freeze obligations remain open under #296; the CLI product assembly
+  exact-head Full Gate passed (run 30728878791 on head e9ef09baf2c1fb505cd67573dca2a52aa057827b).
   The complete I10 product/domain evidence index is `docs/conformance/fcs5-i10-evidence-ledger.md`; it records
   runtime/property/fuzz rows with exact-head Full Gate evidence and does not promote any version domain to Frozen.
 - The I10 `check` command now reuses `canonical_compilation_with_source`, so a successful check covers
