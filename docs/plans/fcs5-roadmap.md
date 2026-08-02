@@ -763,8 +763,8 @@ git diff --check
   version domains, FCBC container profiles, the Render manifest, and the checked-in Conversion profile registry. Its bounded artifact contract now checks the root license text, all seven
   Cargo package listings, required packaged paths, and UTF-8 inventory inputs; the Appendix A example is now
   manifest-backed with focused elaboration/canonical and CLI canonical/Core-load evidence. Final executable
-  cross-domain, matrix, joint review, and re-freeze obligations remain open under #296; the exact-head Full Gate
-  for the current assembly passed (run 30694250501 on head c2196d2).
+  cross-domain, matrix, joint review, and re-freeze obligations remain open under #296; the CLI product assembly
+  exact-head Full Gate passed (run 30728878791 on head e9ef09baf2c1fb505cd67573dca2a52aa057827b).
   The complete I10 product/domain evidence index is `docs/conformance/fcs5-i10-evidence-ledger.md`; it records
   runtime/property/fuzz rows with exact-head Full Gate evidence and does not promote any version domain to Frozen.
 - The I10 `check` command now reuses `canonical_compilation_with_source`, so a successful check covers
@@ -772,7 +772,7 @@ git diff --check
   parser syntax alone; its canonical-profile regression and exhaustive manifest-partition fixture lane are recorded in
   the CLI conformance tests, together with the applicable product-boundary lane for every checked-in FCS example
   (`format` plus parser validation for the fragment profile, `check` for complete documents) and
-  28 canonical fixtures through `check` and 12 successful chart fixtures through `compile`/FCBC Core load; the four source-only canonical fixtures are `source.valid.profile-publishable-both`, `source.valid.contributor-credit-closure`, `source.invalid.resource-hash-mismatch`, and `source.invalid.resource-missing-member`, covered by their profile, contributor/metadata, and resource-bundle domain runners. The full source corpus continues to execute
+  all 32 canonical fixtures through `check`, with 12 successful chart fixtures additionally reaching `compile`/FCBC Core load; the profile and resource fixtures include the minimum complete-document fields required for the CLI canonical boundary while preserving their declared domain assertions. The full source corpus continues to execute
   through `conformance_manifest` at its declared parse, elaborate, canonical, or evaluate boundary;
   the CLI lane covers the exhaustive canonical partition and applicable example paths, including the fragment example's format/parser boundary. The same suite now drives all six
   public Conversion import fixtures through `report`, all three manifest-declared export/reparse
