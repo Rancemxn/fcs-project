@@ -863,9 +863,14 @@ fn parse_credits(
         }
         check_string_ref(record.u32()?, strings.len())?;
         let contributor_count = limited_count(record.u32()?)?;
+        let mut contributor_set = BTreeSet::new();
         for _ in 0..contributor_count {
-            if !contributor_ids.contains(&record.u64()?) {
+            let contributor_id = record.u64()?;
+            if !contributor_ids.contains(&contributor_id) {
                 return Err("fcbc.dangling-reference");
+            }
+            if !contributor_set.insert(contributor_id) {
+                return Err("fcbc.invalid-record");
             }
         }
         if parse_value(&mut record, strings.len())?.tag != 14 {

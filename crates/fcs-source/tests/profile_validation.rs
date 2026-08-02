@@ -22,7 +22,7 @@ meta {{
     chartVersion: "1";
     license: "CC0-1.0";
 }}
-credits {{ credit {{ role: "charter"; }} }}
+credits {{ credit {{ id: "charter-main"; role: "charter"; }} }}
 resources {{
     audio song {{
         source: "song.ogg";
@@ -131,7 +131,7 @@ render profile 1.0.0 {}
             r#"#fcs 5.0.0
 format { profile: publishable; features: [playable]; }
 meta { title: "P"; documentId: "p"; chartVersion: "1"; license: "CC0-1.0"; }
-credits { credit { role: "charter"; } }
+credits { credit { id: "charter-main"; role: "charter"; } }
 resources { audio song {
     source: "song.ogg";
     hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -147,7 +147,7 @@ lines { line main {} }
             r#"#fcs 5.0.0
 format { profile: publishable; features: [renderable]; }
 meta { title: "P"; documentId: "p"; chartVersion: "1"; license: "CC0-1.0"; }
-credits { credit { role: "charter"; } }
+credits { credit { id: "charter-main"; role: "charter"; } }
 tempoMap { 0beat -> 120bpm; }
 render profile 1.0.0 {}
 "#,
@@ -266,7 +266,10 @@ fn publishable_profile_requires_capability_metadata_credit_and_declared_hashes()
         expect_requirement(&complete.replace(spelling, ""), field);
     }
     expect_requirement(
-        &complete.replace("credits { credit { role: \"charter\"; } }\n", ""),
+        &complete.replace(
+            "credits { credit { id: \"charter-main\"; role: \"charter\"; } }\n",
+            "",
+        ),
         "at least one credit",
     );
     let missing_hash = complete.replace(&format!("        {HASH}\n"), "");

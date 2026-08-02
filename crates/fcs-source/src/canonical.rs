@@ -1901,8 +1901,10 @@ fn lower_credits(
 ) -> Vec<CanonicalCredit> {
     let mut output = Vec::new();
     let Some(block) = block else { return output };
+    let mut registry = StableIdRegistry::new();
     for entry in &block.entries {
         let mut expected = BTreeMap::new();
+        expected.insert("id", Expected::String);
         expected.insert("role", Expected::String);
         expected.insert("label", Expected::String);
         expected.insert(
@@ -1919,6 +1921,32 @@ fn lower_credits(
             diagnostics,
             "credit",
         );
+        let Some(textual_id) = string_field(&fields, "id", entry.span, diagnostics, "credit ID")
+        else {
+            continue;
+        };
+        let textual_id = match CanonicalTextualId::explicit(textual_id) {
+            Ok(textual_id) => textual_id,
+            Err(error) => {
+                diagnostics.push(canonical_diagnostic(
+                    DiagnosticCode::NAME_DUPLICATE,
+                    error.to_string(),
+                    entry.span,
+                ));
+                continue;
+            }
+        };
+        let id = match registry.insert(EntityKind::Credit, textual_id) {
+            Ok(id) => id,
+            Err(error) => {
+                diagnostics.push(canonical_diagnostic(
+                    DiagnosticCode::NAME_DUPLICATE,
+                    error.to_string(),
+                    entry.span,
+                ));
+                continue;
+            }
+        };
         let Some(role) = string_field(&fields, "role", entry.span, diagnostics, "credit role")
         else {
             continue;
@@ -1945,7 +1973,7 @@ fn lower_credits(
                     .collect()
             })
             .unwrap_or_default();
-        match CanonicalCredit::new(role, label, credit_contributors) {
+        match CanonicalCredit::new(id, role, label, credit_contributors) {
             Ok(credit) => output.push(credit),
             Err(_) => diagnostics.push(canonical_diagnostic(
                 DiagnosticCode::NAME_DUPLICATE,

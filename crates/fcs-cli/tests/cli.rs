@@ -332,6 +332,8 @@ const CLI_CHECK_CANONICAL_FIXTURES: &[&str] = &[
     "source.invalid.contributor-missing-name",
     "source.invalid.credit-duplicate-contributor",
     "source.invalid.credit-resource-reference",
+    "source.invalid.credit-missing-id",
+    "source.invalid.credit-duplicate-id",
     "source.invalid.profile-fragment-feature",
     "source.invalid.profile-publishable-requirements",
     "source.invalid.hold-end",
@@ -421,8 +423,8 @@ fn assert_canonical_fixture_partition(manifest: &toml::Value) {
         "source-only canonical fixtures",
     );
 
-    assert_eq!(canonical_ids.len(), 30);
-    assert_eq!(check_ids.len(), 26);
+    assert_eq!(canonical_ids.len(), 32);
+    assert_eq!(check_ids.len(), 28);
     assert_eq!(compile_ids.len(), 12);
     assert_eq!(source_only_ids.len(), 4);
     assert!(check_ids.is_disjoint(&source_only_ids));

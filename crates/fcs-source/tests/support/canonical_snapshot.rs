@@ -158,6 +158,7 @@ fn metadata_value(metadata: &CanonicalMetadata) -> Value {
 
 fn credit_value(credit: &CanonicalCredit) -> Value {
     object([
+        ("id", stable_id_value(credit.id())),
         ("role", string(credit.role())),
         ("label", optional(credit.label().map(string))),
         (

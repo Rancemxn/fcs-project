@@ -1,0 +1,6 @@
+#fcs 5.0.0
+format { profile: fragment; }
+credits {
+    credit { id: "same"; role: "composer"; }
+    credit { id: "same"; role: "charter"; }
+}

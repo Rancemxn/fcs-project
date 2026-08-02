@@ -790,7 +790,7 @@ fn typed_manifests_load_with_bound_counts() {
     assert_eq!(render.schema_version, 3);
     assert_eq!(conversion.schema_version, 2);
     assert_eq!(root.suite.len(), 6);
-    assert_eq!(fcs.fixture.len(), 53);
+    assert_eq!(fcs.fixture.len(), 55);
     assert_eq!(fcbc.fixture.len(), 3);
     assert_eq!(render.binary_fixture.len(), 0);
     assert_eq!(render.fixture.len(), 1);
@@ -864,7 +864,7 @@ fn fcs_source_fixtures_execute_at_the_declared_frontend_boundary() {
 
     assert_eq!(parse_success, 3);
     assert_eq!(parse_error, 9);
-    assert_eq!(later_stage, 41);
+    assert_eq!(later_stage, 43);
 }
 
 #[test]
@@ -1267,6 +1267,11 @@ fn i5_contributor_credit_fixtures_execute_at_the_canonical_boundary() {
     assert_eq!(alice.identifiers().entries()[1].key(), "local");
     assert_eq!(metadata.credits()[0].contributors(), &["bob", "alice"]);
     assert_eq!(
+        metadata.credits()[0].id().textual().as_str(),
+        "composer-main"
+    );
+    assert_eq!(metadata.credits()[1].id().textual().as_str(), "artist-main");
+    assert_eq!(
         metadata.credits()[0].role_kind().standard(),
         Some(CanonicalStandardCreditRole::Composer)
     );
@@ -1279,6 +1284,8 @@ fn i5_contributor_credit_fixtures_execute_at_the_canonical_boundary() {
         "source.invalid.contributor-missing-name",
         "source.invalid.credit-duplicate-contributor",
         "source.invalid.credit-resource-reference",
+        "source.invalid.credit-missing-id",
+        "source.invalid.credit-duplicate-id",
     ] {
         let invalid = fixture(&fcs, id);
         assert_eq!(invalid.stage, FixtureStage::Canonical, "{id}");
@@ -1411,6 +1418,18 @@ fn i5_sync_fixtures_execute_at_the_canonical_boundary() {
         .canonical_metadata()
         .unwrap_or_else(|errors| panic!("{} must lower sync: {errors:?}", valid.id));
     let expected = expected_json(&fcs_base, valid);
+    let expected_credit_ids = expected["creditIds"]
+        .as_array()
+        .expect("creditIds")
+        .iter()
+        .map(|value| value.as_str().expect("credit ID").to_owned())
+        .collect::<Vec<_>>();
+    let credit_ids = metadata
+        .credits()
+        .iter()
+        .map(|credit| credit.id().textual().as_str().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(credit_ids, expected_credit_ids);
     let sync = metadata.sync().expect("valid sync fixture has sync");
     assert_eq!(
         sync.audio_offset().seconds(),

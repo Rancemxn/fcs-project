@@ -197,6 +197,22 @@ diagnostic = "resource.type-mismatch"
 clauses = ["2.9", "7.2", "16", "17", "18"]
 
 [[fixture]]
+id = "source.invalid.credit-missing-id"
+path = "source/invalid/credit-missing-id.fcs"
+stage = "canonical"
+expect = "error"
+diagnostic = "schema.missing-required-field"
+clauses = ["7.2", "17", "18"]
+
+[[fixture]]
+id = "source.invalid.credit-duplicate-id"
+path = "source/invalid/credit-duplicate-id.fcs"
+stage = "canonical"
+expect = "error"
+diagnostic = "name.duplicate"
+clauses = ["7.2", "17", "18"]
+
+[[fixture]]
 id = "source.invalid.missing-header"
 path = "source/invalid/missing-header.fcs"
 stage = "parse"

@@ -84,9 +84,9 @@ product, or FCS 5 release completion.
 - Contributor declarations remain a deterministic ID-keyed map, so their
   declaration order is non-semantic. Credit order remains semantic and changes
   canonical equality when reordered.
-- Credit stable-ID generation and FCBC record assembly remain I7-owned. FCS 5
-  fixes exact generated textual identity only for Line and Note, so I5.2 does
-  not invent a generated credit ID spelling.
+- Credit stable-ID generation and FCBC record assembly remain I7-owned. Credit
+  identity is now explicit source `id` text in the I7 contract; FCS 5 does not
+  invent a generated credit ID spelling.
 
 ## I5.2 acceptance evidence
 
@@ -97,7 +97,9 @@ product, or FCS 5 release completion.
 - `source.valid.contributor-credit-closure`,
   `source.invalid.contributor-missing-name`,
   `source.invalid.credit-duplicate-contributor`, and
-  `source.invalid.credit-resource-reference` are manifest-bound and execute
+  `source.invalid.credit-resource-reference`,
+  `source.invalid.credit-missing-id`, and
+  `source.invalid.credit-duplicate-id` are manifest-bound and execute
   through `conformance_manifest::i5_contributor_credit_fixtures_execute_at_the_canonical_boundary`.
 - Acceptance requires the exact PR head to pass `.github/workflows/full-gate.yml`
   and a passing Primary Self-Audit with no unresolved Critical/Important finding.

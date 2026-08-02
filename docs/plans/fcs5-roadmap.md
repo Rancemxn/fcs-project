@@ -592,8 +592,9 @@ distance、canonical assembly 或整体 I6 完成。固定 `serde` 1.0.228、
   `byteorder`，也不得截断未知 enum/flag。
 - **I7.2 Container writer**：激活 cataloged `crc` 的 CRC-32/ISO-HDLC 与 `sha2`，实现 128-byte
   header、40-byte entries、alignment/padding、checksum、source hash 和 deterministic sections。
-- **I7.3 Core sections**：Meta through Distance、required ResourceData 的 record writer/reader、原始
-  resource bytes/hash/coverage 和 version dispatch。
+- **I7.3 Core sections**：Meta through Distance、Contributors/Credits、required ResourceData 的 record
+  writer/reader、原始 resource bytes/hash/coverage 和 version dispatch；Credit 使用显式 textual ID，
+  保持 canonical display order。
 - **I7.4 Descriptor ABI**：PropertyDescriptor、Segment/Piecewise/Expression topological nodes、
   environment/type validation、analytic/evaluable Distance 和 descriptor kind 5 rejection；FCBC 2
   所有 profile 都是 exact-only，显式 target approximation 不写入 standard FCBC。
@@ -771,7 +772,7 @@ git diff --check
   parser syntax alone; its canonical-profile regression and exhaustive manifest-partition fixture lane are recorded in
   the CLI conformance tests, together with the applicable product-boundary lane for every checked-in FCS example
   (`format` plus parser validation for the fragment profile, `check` for complete documents) and
-  26 canonical fixtures through `check` and 12 successful chart fixtures through `compile`/FCBC Core load; the four source-only canonical fixtures are `source.valid.profile-publishable-both`, `source.valid.contributor-credit-closure`, `source.invalid.resource-hash-mismatch`, and `source.invalid.resource-missing-member`, covered by their profile, contributor/metadata, and resource-bundle domain runners. The full source corpus continues to execute
+  28 canonical fixtures through `check` and 12 successful chart fixtures through `compile`/FCBC Core load; the four source-only canonical fixtures are `source.valid.profile-publishable-both`, `source.valid.contributor-credit-closure`, `source.invalid.resource-hash-mismatch`, and `source.invalid.resource-missing-member`, covered by their profile, contributor/metadata, and resource-bundle domain runners. The full source corpus continues to execute
   through `conformance_manifest` at its declared parse, elaborate, canonical, or evaluate boundary;
   the CLI lane covers the exhaustive canonical partition and applicable example paths, including the fragment example's format/parser boundary. The same suite now drives all six
   public Conversion import fixtures through `report`, all three manifest-declared export/reparse

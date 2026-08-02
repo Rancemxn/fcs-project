@@ -8,6 +8,7 @@ resources {
 }
 credits {
     credit {
+        id: "designer-main";
         role: "designer";
         contributors: [@blob];
     }

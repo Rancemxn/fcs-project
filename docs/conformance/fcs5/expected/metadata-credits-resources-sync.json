@@ -3,6 +3,7 @@
   "documentId": "org.fcs.conformance",
   "revision": 1,
   "contributors": ["alice"],
+  "creditIds": ["charter-main"],
   "creditRoles": ["charter"],
   "resources": [
     {

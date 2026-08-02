@@ -315,6 +315,19 @@ contributors {
     }
     person bob { name: "Bob"; }
 }
+credits {
+    credit {
+        id: "composer-main";
+        role: "composer";
+        label: "Music";
+        contributors: [@alice, @bob];
+    }
+    credit {
+        id: "effects-main";
+        role: "chart-effects";
+        contributors: [@bob];
+    }
+}
 resources {
     image cover { source: "cover.png"; mediaType: "image/png"; }
     audio song { source: "song.ogg"; mediaType: "audio/ogg"; }
@@ -403,6 +416,30 @@ tempoMap { 0beat -> 120bpm; }
     ];
     expected_contributors.sort_by_key(|contributor| contributor.id);
     assert_eq!(decoded.contributors, expected_contributors);
+    assert_eq!(
+        decoded.credits,
+        vec![
+            crate::DecodedCredit {
+                id: stable_id(b"fcs.credit", b"composer-main"),
+                role_kind: 1,
+                custom_role: None,
+                label: "Music".into(),
+                contributors: vec![
+                    stable_id(b"fcs.contributor", b"alice"),
+                    stable_id(b"fcs.contributor", b"bob"),
+                ],
+                custom: crate::DecodedValue::Object(Vec::new()),
+            },
+            crate::DecodedCredit {
+                id: stable_id(b"fcs.credit", b"effects-main"),
+                role_kind: 0,
+                custom_role: Some("chart-effects".into()),
+                label: String::new(),
+                contributors: vec![stable_id(b"fcs.contributor", b"bob")],
+                custom: crate::DecodedValue::Object(Vec::new()),
+            },
+        ]
+    );
 }
 
 #[test]

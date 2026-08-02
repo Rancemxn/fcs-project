@@ -30,6 +30,10 @@ fn lowers_the_metadata_fixture_without_retaining_workspace_source_paths() {
         Some(CanonicalValue::Object(_))
     ));
     assert_eq!(metadata.contributors().len(), 1);
+    assert_eq!(
+        metadata.credits()[0].id().textual().as_str(),
+        "charter-main"
+    );
     assert_eq!(metadata.credits()[0].role(), "charter");
     assert_eq!(metadata.credits()[0].contributors(), &["alice"]);
 
@@ -111,7 +115,7 @@ fn resolves_typed_references_and_enforces_resource_kinds_and_preview() {
         r#"#fcs 5.0.0
 format { profile: fragment; }
 contributors { person alice { name: "Alice"; } }
-credits { credit { role: "composer"; contributors: [@alice]; } }
+credits { credit { id: "composer-main"; role: "composer"; contributors: [@alice]; } }
 resources {
     audio song { source: "audio/song.ogg"; mediaType: "audio/ogg"; }
     image cover { source: "cover.png"; mediaType: "image/png"; }
@@ -169,8 +173,8 @@ fn declaration_reordering_does_not_change_map_owned_metadata_but_credit_order_re
 format { profile: fragment; }
 contributors { person alice { name: "Alice"; } person bob { name: "Bob"; } }
 credits {
-    credit { role: "composer"; contributors: [@alice]; }
-    credit { role: "charter"; contributors: [@bob]; }
+    credit { id: "composer-main"; role: "composer"; contributors: [@alice]; }
+    credit { id: "charter-main"; role: "charter"; contributors: [@bob]; }
 }
 resources {
     binary one { source: "one.bin"; mediaType: "application/octet-stream"; }
@@ -186,8 +190,8 @@ resources {
     binary one { mediaType: "application/octet-stream"; source: "one.bin"; }
 }
 credits {
-    credit { role: "composer"; contributors: [@alice]; }
-    credit { role: "charter"; contributors: [@bob]; }
+    credit { id: "composer-main"; role: "composer"; contributors: [@alice]; }
+    credit { id: "charter-main"; role: "charter"; contributors: [@bob]; }
 }
 contributors { person bob { name: "Bob"; } person alice { name: "Alice"; } }
 "#,
@@ -233,10 +237,16 @@ contributors {
 fn every_standard_credit_role_is_typed_and_custom_artist_is_not_rewritten() {
     let standard_credits = CanonicalStandardCreditRole::ALL
         .iter()
-        .map(|role| format!("credit {{ role: \"{}\"; }}", role.as_str()))
+        .map(|role| {
+            format!(
+                "credit {{ id: \"role-{}\"; role: \"{}\"; }}",
+                role.as_str(),
+                role.as_str()
+            )
+        })
         .collect::<String>();
     let source = format!(
-        "#fcs 5.0.0\nformat {{ profile: fragment; }}\ncredits {{ {standard_credits} credit {{ role: \"artist\"; }} }}\n"
+        "#fcs 5.0.0\nformat {{ profile: fragment; }}\ncredits {{ {standard_credits} credit {{ id: \"artist\"; role: \"artist\"; }} }}\n"
     );
     let metadata = canonical(&source);
 
@@ -261,8 +271,8 @@ fn credit_and_contributor_order_are_normative_but_declaration_maps_are_not() {
 format { profile: fragment; }
 contributors { person alice { name: "Alice"; } person bob { name: "Bob"; } }
 credits {
-    credit { role: "composer"; contributors: [@bob, @alice]; }
-    credit { role: "charter"; contributors: [@alice]; }
+    credit { id: "composer-main"; role: "composer"; contributors: [@bob, @alice]; }
+    credit { id: "charter-main"; role: "charter"; contributors: [@alice]; }
 }
 "#,
     );
@@ -271,13 +281,18 @@ credits {
 format { profile: fragment; }
 contributors { person bob { name: "Bob"; } person alice { name: "Alice"; } }
 credits {
-    credit { role: "charter"; contributors: [@alice]; }
-    credit { role: "composer"; contributors: [@bob, @alice]; }
+    credit { id: "charter-main"; role: "charter"; contributors: [@alice]; }
+    credit { id: "composer-main"; role: "composer"; contributors: [@bob, @alice]; }
 }
 "#,
     );
 
     assert_eq!(first.credits()[0].contributors(), &["bob", "alice"]);
+    assert_eq!(first.credits()[0].id().textual().as_str(), "composer-main");
+    assert_eq!(
+        reversed.credits()[0].id().textual().as_str(),
+        "charter-main"
+    );
     assert_eq!(reversed.credits()[0].role(), "charter");
     assert_ne!(first, reversed);
 }
@@ -293,9 +308,9 @@ resources {
     binary blob { source: "blob.bin"; mediaType: "application/octet-stream"; }
 }
 credits {
-    credit { role: "composer"; contributors: [@alice, @alice]; }
-    credit { role: "charter"; contributors: [@missing]; }
-    credit { role: "designer"; contributors: [@blob]; }
+    credit { id: "composer-main"; role: "composer"; contributors: [@alice, @alice]; }
+    credit { id: "charter-main"; role: "charter"; contributors: [@missing]; }
+    credit { id: "designer-main"; role: "designer"; contributors: [@blob]; }
 }
 "#,
     )
@@ -320,6 +335,29 @@ credits {
 }
 
 #[test]
+fn credit_ids_are_required_and_unique() {
+    for source in [
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+credits { credit { role: "composer"; } }
+"#,
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+credits {
+    credit { id: "same"; role: "composer"; }
+    credit { id: "same"; role: "charter"; }
+}
+"#,
+    ] {
+        let document = parse_document(source).into_result().unwrap();
+        let diagnostics = document.canonical_metadata().unwrap_err();
+        assert!(diagnostics.iter().any(|diagnostic| diagnostic.code()
+            == DiagnosticCode::NAME_DUPLICATE
+            || diagnostic.code() == DiagnosticCode::SCHEMA_MISSING_REQUIRED_FIELD));
+    }
+}
+
+#[test]
 fn contributor_names_identifiers_and_custom_roles_enforce_the_frozen_boundaries() {
     let document = parse_document(
         r#"#fcs 5.0.0
@@ -331,9 +369,9 @@ contributors {
     person duplicate { name: "Duplicate"; identifiers: { "same": "a", "same": "b" }; }
 }
 credits {
-    credit { role: ""; }
-    credit { role: "特效"; }
-    credit { role: "custom(role)"; }
+    credit { id: "empty-role"; role: ""; }
+    credit { id: "unicode-role"; role: "特效"; }
+    credit { id: "custom-role"; role: "custom(role)"; }
 }
 "#,
     )
@@ -429,7 +467,7 @@ format { profile: fragment; }
 meta { revision: -1; level: 1.0 / 0.0; }
 contributors { person alice { aliases: [1]; } person alice { name: "Again"; } }
 credits {
-    credit { role: "custom(role)"; contributors: [@missing]; }
+    credit { id: "custom-role"; role: "custom(role)"; contributors: [@missing]; }
 }
 resources {
     image cover { source: "cover.png"; hash: "sha256:bad"; mediaType: "image/png"; }

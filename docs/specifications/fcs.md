@@ -753,11 +753,13 @@ contributors {
 
 credits {
     credit {
+        id: "composer-main";
         role: "composer";
         label: "作曲";
         contributors: [@alice];
     }
     credit {
+        id: "chart-effects";
         role: "chart-effects";
         label: "特效谱面";
         contributors: [@alice];
@@ -765,12 +767,17 @@ credits {
 }
 ```
 
-Contributor ID 在文档内唯一。`role` 是 string。标准 role string 包括 `"composer"`、
+Contributor ID 在文档内唯一。Credit `id` 是非空的显式 canonical textual ID，在文档内唯一；它
+原样保留 UTF-8 字节，不得以保留的 `generated/` 前缀开头。不同 entity kind 可以使用相同的
+textual ID；typed namespace 仍使其 stable ID 独立。`id` 是 Credit 的 identity，不能从
+`role`、`label`、贡献者或数组 ordinal 推导。`role` 是 string。标准 role string 包括 `"composer"`、
 `"arranger"`、`"lyricist"`、`"vocalist"`、`"instrumentalist"`、`"mixer"`、
 `"mastering"`、`"charter"`、`"illustrator"`、`"designer"`、`"programmer"` 和
 `"publisher"`。其他 role 必须是非空 ASCII custom ID，不使用上下文相关的 `custom(...)`
-特殊语法。Label 是自由 UTF-8 展示文本。Credit 顺序有展示语义。来源含糊的 `"artist"`
-不得自动解释为 `"composer"`。
+特殊语法。Label 是自由 UTF-8 展示文本。Credit 顺序有展示语义，但重排 Credit 不改变各自
+identity。重复 Credit ID 必须失败；role、label 或 contributor 内容变化不改变该 Credit 的
+textual identity，但会改变其 canonical record 内容。来源含糊的 `"artist"` 不得自动解释为
+`"composer"`。
 
 ### 7.3 Resources 和 Artwork
 
@@ -1865,8 +1872,8 @@ Runtime property lowering 只允许 exact Constant、SegmentTrack、Piecewise �
 第 14.2 节的 BakedCurve 只属于显式有损 target conversion。
 
 Canonical ID 由显式 ID 优先；缺失允许 ID 的 schema 使用规范化 source path 和 document order
-生成稳定 ID。显式 ID 与生成 ID 的 namespace 分离，避免碰撞。Publishable Note/Line/Resource
-必须最终拥有稳定 ID。
+生成稳定 ID。显式 ID 与生成 ID 的 namespace 分离，避免碰撞。每个 Credit 必须使用显式 ID；
+Publishable Note/Line/Resource 必须最终拥有稳定 ID。
 
 这里的“规范化 source path”是 AST 内的声明/expansion path，不是 workspace 文件系统绝对路径或
 resource `source`。相同 source、resource bytes 和 compilation profile 位于不同宿主目录时，必须
@@ -1895,10 +1902,12 @@ traversal 中 template call 的零基顺序；`generator-index` 是该 generator
 comment、trivia 或 authoring-only local name 不得改变这些 ID。
 
 显式 source ID 保留原始 UTF-8 字节，不得以 `generated/` 开头；该前缀由 compiler 生成 ID 保留，违反时
-必须在 canonical ID validation 失败。Line 使用 `fcs.line`、Note 使用 `fcs.note` typed namespace，
+必须在 canonical ID validation 失败。Credit 使用 `fcs.credit` typed namespace，Line 使用
+`fcs.line`、Note 使用 `fcs.note` typed namespace，
 并按 `fcbc.md` §6.2 对最终 textual ID 计算 `SHA-256(namespace || 0x00 || UTF-8(textual ID))` 的前
 64 little-endian bits。ID 为 0、重复 textual ID 或同一 typed namespace 中的任意 64-bit collision 都是
-错误；compiler 不得加盐、重命名或依赖 map/host traversal order 恢复。
+错误；compiler 不得加盐、重命名或依赖 map/host traversal order 恢复。Credit 的 canonical
+display order 独立于 stable ID 数值顺序。
 
 标准 FCBC writer 必须消费整个 CanonicalCompilation，把恰好一个 CanonicalChart 和全部
 CanonicalResourceBundle payload 写入一个自包含 FCBC。播放器只从 FCBC loader 得到已验证的

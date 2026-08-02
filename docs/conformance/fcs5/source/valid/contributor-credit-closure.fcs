@@ -16,11 +16,13 @@ resources {
 }
 credits {
     credit {
+        id: "composer-main";
         role: "composer";
         label: "Music";
         contributors: [@bob, @alice];
     }
     credit {
+        id: "artist-main";
         role: "artist";
         label: "Source artist";
         contributors: [@alice];

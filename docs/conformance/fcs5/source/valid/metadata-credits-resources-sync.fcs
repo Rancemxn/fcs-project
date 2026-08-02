@@ -15,6 +15,7 @@ contributors {
 }
 credits {
     credit {
+        id: "charter-main";
         role: "charter";
         label: "谱面";
         contributors: [@alice];
