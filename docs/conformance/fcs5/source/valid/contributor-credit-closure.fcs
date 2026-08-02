@@ -28,3 +28,4 @@ credits {
         contributors: [@alice];
     }
 }
+tempoMap { 0beat -> 120bpm; }

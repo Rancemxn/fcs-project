@@ -1,5 +1,6 @@
 #fcs 5.0.0
 format { profile: fragment; }
+tempoMap { 0beat -> 120bpm; }
 resources {
     binary missing {
         source: "assets/does-not-exist.bin";

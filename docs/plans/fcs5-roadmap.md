@@ -772,7 +772,7 @@ git diff --check
   parser syntax alone; its canonical-profile regression and exhaustive manifest-partition fixture lane are recorded in
   the CLI conformance tests, together with the applicable product-boundary lane for every checked-in FCS example
   (`format` plus parser validation for the fragment profile, `check` for complete documents) and
-  28 canonical fixtures through `check` and 12 successful chart fixtures through `compile`/FCBC Core load; the four source-only canonical fixtures are `source.valid.profile-publishable-both`, `source.valid.contributor-credit-closure`, `source.invalid.resource-hash-mismatch`, and `source.invalid.resource-missing-member`, covered by their profile, contributor/metadata, and resource-bundle domain runners. The full source corpus continues to execute
+  all 32 canonical fixtures through `check`, with 12 successful chart fixtures additionally reaching `compile`/FCBC Core load; the profile and resource fixtures include the minimum complete-document fields required for the CLI canonical boundary while preserving their declared domain assertions. The full source corpus continues to execute
   through `conformance_manifest` at its declared parse, elaborate, canonical, or evaluate boundary;
   the CLI lane covers the exhaustive canonical partition and applicable example paths, including the fragment example's format/parser boundary. The same suite now drives all six
   public Conversion import fixtures through `report`, all three manifest-declared export/reparse
