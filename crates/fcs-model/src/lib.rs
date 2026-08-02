@@ -97,6 +97,9 @@ pub const LINE_NAMESPACE: &str = "fcs.line";
 /// The fixed FCBC namespace used when deriving a stable Note ID.
 pub const NOTE_NAMESPACE: &str = "fcs.note";
 
+/// The fixed FCBC namespace used when deriving a stable Credit ID.
+pub const CREDIT_NAMESPACE: &str = "fcs.credit";
+
 /// The fixed FCBC namespace used when deriving a stable resource ID.
 pub const RESOURCE_NAMESPACE: &str = "fcs.resource";
 
@@ -115,6 +118,7 @@ pub const RENDER_GLYPH_RUN_NAMESPACE: &str = "fcs.render.glyph-run";
 pub enum EntityKind {
     Line,
     Note,
+    Credit,
     Resource,
     RenderLayer,
     RenderNode,
@@ -131,6 +135,7 @@ impl EntityKind {
         match self {
             Self::Line => LINE_NAMESPACE,
             Self::Note => NOTE_NAMESPACE,
+            Self::Credit => CREDIT_NAMESPACE,
             Self::Resource => RESOURCE_NAMESPACE,
             Self::RenderLayer => RENDER_LAYER_NAMESPACE,
             Self::RenderNode => RENDER_NODE_NAMESPACE,
@@ -147,6 +152,7 @@ impl EntityKind {
         match self {
             Self::Line => "line",
             Self::Note => "note",
+            Self::Credit => "credit",
             Self::Resource => "resource",
             Self::RenderLayer => "renderLayer",
             Self::RenderNode => "renderNode",

@@ -284,6 +284,16 @@ pub struct DecodedContributor {
     pub custom: DecodedValue,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecodedCredit {
+    pub id: u64,
+    pub role_kind: u16,
+    pub custom_role: Option<String>,
+    pub label: String,
+    pub contributors: Vec<u64>,
+    pub custom: DecodedValue,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DecodedPreview {
     pub start_seconds: f64,
@@ -332,6 +342,7 @@ pub struct DecodedChart {
     pub meta: DecodedValue,
     pub artwork: DecodedValue,
     pub contributors: Vec<DecodedContributor>,
+    pub credits: Vec<DecodedCredit>,
     pub sync: DecodedSync,
     pub feature_flags: u64,
     pub strings: Vec<String>,
@@ -502,7 +513,7 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
         .iter()
         .map(|contributor| contributor.id)
         .collect();
-    parse_credits(
+    let credits = parse_credits(
         section_payload(bytes, &section_map, 5)?,
         &strings,
         &contributor_ids,
@@ -561,6 +572,7 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
         meta,
         artwork,
         contributors,
+        credits,
         sync,
         feature_flags,
         strings,
@@ -1341,10 +1353,11 @@ fn parse_credits(
     bytes: &[u8],
     strings: &[String],
     contributor_ids: &BTreeSet<u64>,
-) -> Result<(), &'static str> {
+) -> Result<Vec<DecodedCredit>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
     let count = limited_count(cursor.u32()?)?;
     let mut stable_ids = BTreeSet::new();
+    let mut credits = Vec::with_capacity(count);
     for _ in 0..count {
         let mut record = take_record(&mut cursor)?;
         let stable_id = record.u64()?;
@@ -1359,21 +1372,48 @@ fn parse_credits(
         if (role == 0) != custom_role.is_some() || role > 12 {
             return Err("fcbc.invalid-record");
         }
-        if let Some(reference) = custom_role {
+        let custom_role = if let Some(reference) = custom_role {
             check_string_ref(reference, strings.len())?;
-        }
-        check_string_ref(record.u32()?, strings.len())?;
+            let role = strings[reference as usize].clone();
+            if role.is_empty() {
+                return Err("fcbc.invalid-record");
+            }
+            Some(role)
+        } else {
+            None
+        };
+        let label = strings
+            .get(record.u32()? as usize)
+            .ok_or("fcbc.dangling-reference")?
+            .clone();
         let contributor_count = limited_count(record.u32()?)?;
+        let mut contributors = Vec::with_capacity(contributor_count);
+        let mut contributor_set = BTreeSet::new();
         for _ in 0..contributor_count {
-            if !contributor_ids.contains(&record.u64()?) {
+            let contributor_id = record.u64()?;
+            if !contributor_ids.contains(&contributor_id) {
                 return Err("fcbc.dangling-reference");
             }
+            if !contributor_set.insert(contributor_id) {
+                return Err("fcbc.invalid-record");
+            }
+            contributors.push(contributor_id);
         }
-        if parse_value(&mut record, strings.len())?.tag != 14 {
+        let custom = decode_value(&parse_value(&mut record, strings.len())?, strings)?;
+        if !matches!(&custom, DecodedValue::Object(_)) {
             return Err("fcbc.invalid-record");
         }
+        credits.push(DecodedCredit {
+            id: stable_id,
+            role_kind: role,
+            custom_role,
+            label,
+            contributors,
+            custom,
+        });
     }
-    cursor.finish()
+    cursor.finish()?;
+    Ok(credits)
 }
 
 fn parse_extensions(

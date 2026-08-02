@@ -30,7 +30,7 @@ pub use evaluator::{
     query_descriptor, query_distance, query_scroll_coordinate,
 };
 pub use loader::{
-    DecodedChart, DecodedContributor, DecodedJudgeShape, DecodedNoteScorePolicy,
+    DecodedChart, DecodedContributor, DecodedCredit, DecodedJudgeShape, DecodedNoteScorePolicy,
     DecodedNoteSoundPolicy, DecodedPreview, DecodedSync, DecodedValue, DescriptorKind,
     DistanceClassification, DistanceDescriptor, Domain, ExpressionNode, ExtensionRecord,
     LineRecord, NULL_INDEX, NoteRecord, PropertyDescriptor, ResourceRecord, RuntimeValue,

@@ -266,7 +266,7 @@ record tail，否则不得声称 lossless preservation。
 ### 6.2 Index 和 ID
 
 - Table index 使用 u32，`0xFFFFFFFF` 表示 optional null；
-- Stable entity/resource/contributor ID 使用 u64；0 保留为 null；
+- Stable entity/resource/contributor/credit ID 使用 u64；0 保留为 null；
 - ID 由 compiler 对 canonical textual ID 计算 SipHash-2-4 不可接受，因为 key 不稳定；
   Core 使用 SHA-256(`namespace || 0x00 || UTF-8 id`) 的前 64 little-endian bits；
 - 如果发生 64-bit collision，compiler 必须报错，不能换盐导致不确定输出。
@@ -464,9 +464,16 @@ contributors:u64[contributorCount]
 custom:Value(object)
 ```
 
-Credit 保持 canonical display order，不按 ID 重排。`roleKind=0` 表示 custom 且 customRole 必须
-存在。标准 ID：1 composer、2 arranger、3 lyricist、4 vocalist、5 instrumentalist、6 mixer、
-7 mastering、8 charter、9 illustrator、10 designer、11 programmer、12 publisher。
+Credit 保持 canonical display order，不按 ID 重排。`stableId` 是 FCS Credit 的显式 canonical
+textual ID 按 §6.2 使用 `fcs.credit` namespace 得到的 stable ID；writer 不从 role、label、
+contributor 或 ordinal 推导 identity。`roleKind=0` 表示 custom 且 customRole 必须存在。标准
+ID：1 composer、2 arranger、3 lyricist、4 vocalist、5 instrumentalist、6 mixer、7 mastering、
+8 charter、9 illustrator、10 designer、11 programmer、12 publisher。CreditRecord 中重复 stable
+ID、0 或 collision 已在 canonical 编译阶段失败；record 顺序仍是 display order。
+`label` 始终编码为有效的 StringRef；FCS 中省略 `label` 时，writer 将其物化为 StringTable 中的空
+字符串，因此省略 label 与显式空 label 在 FCBC 中具有相同表示。每个 contributor ID 必须存在，且
+在同一 CreditRecord 内唯一；缺失引用是 `fcbc.dangling-reference`，重复引用是
+`fcbc.invalid-record`。
 
 ### 9.4 Resources
 

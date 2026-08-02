@@ -6,7 +6,7 @@ meta {
     chartVersion: "1";
     license: "CC0-1.0";
 }
-credits { credit { role: "charter"; } }
+credits { credit { id: "charter-main"; role: "charter"; } }
 resources {
     audio song {
         source: "assets/opaque-resource.bin";

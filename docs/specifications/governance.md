@@ -78,6 +78,29 @@ Profile 1.0.0 的旧 Frozen 状态并完成 Source grammar closure。随后用�
 profile 和 exact-first runtime expression 边界，因此五个版本域均进入本表所示的重新修订或联合
 复审状态。
 
+### 2.0.1 Credit identity amendment (2026-08-02)
+
+Issue #477 records the accepted Credit identity decision: FCS `Credit.id` is
+required, explicit, non-empty UTF-8 text; duplicate or reserved IDs fail;
+`fcs.credit` is the typed stable-ID namespace; and declaration order remains
+canonical display order. FCBC §9.3 materializes an omitted label as the empty
+StringTable string and rejects repeated contributor references as
+`fcbc.invalid-record`.
+
+The affected candidate files are `fcs.md`, `fcbc.md`, the FCS manifest and
+Credit fixtures. The candidate hashes for this work unit are:
+
+| File | SHA-256 |
+|---|---|
+| `docs/specifications/fcs.md` | `1fd88d95125152b53c21adae4c1fed086cf0236b95a280ca96ca1d002943364a` |
+| `docs/specifications/fcbc.md` | `a2885b6a657833bdbb4d7a97901305fd74fcffbb8b4735a003ebc93b7dda2d15` |
+| `docs/conformance/fcs5/manifest.toml` | `3a9887f77ba952d640969a64c9bdc8273099feafeb91465620315e8b910c1606` |
+
+This dated amendment preserves the earlier re-freeze hashes as historical
+evidence. The affected FCS Core, FCBC Container, and Execution ABI candidates
+remain Draft; the exact-head Full Gate, Primary Self-Audit, and independent
+review still govern implementation delivery.
+
 `fcbc.md` 继续联合定义 FCBC Container 2.0.0 与 Execution ABI 1.0.0。旧冻结审查只对整个文件
 保存一个 hash，而资源 payload、required section 和 loader contract 的修改会改变该联合文件；
 因此 Container 与 ABI 一起重审，不为了保留旧状态拆分文件或使用脆弱的章节级冻结。联合重审

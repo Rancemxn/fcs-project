@@ -1,13 +1,14 @@
 use fcs_model::{
-    CanonicalChart, CanonicalCompilation, CanonicalContributor, CanonicalDescriptorKind,
-    CanonicalDescriptorTable, CanonicalExpressionDag, CanonicalExpressionOpcode,
-    CanonicalExpressionType, CanonicalExpressionValue, CanonicalJudgeShape, CanonicalNoteKind,
-    CanonicalNoteScorePolicy, CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject,
-    CanonicalProfile, CanonicalProfileFeature, CanonicalRenderGeometryData,
-    CanonicalRenderPaintData, CanonicalRenderScene, CanonicalRequiredExtension,
-    CanonicalResourceKind, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
-    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget,
-    CanonicalTrackValue, CanonicalValue, CanonicalValueType, DistributionMetadata,
+    CanonicalChart, CanonicalCompilation, CanonicalContributor, CanonicalCredit,
+    CanonicalCreditRole, CanonicalDescriptorKind, CanonicalDescriptorTable, CanonicalExpressionDag,
+    CanonicalExpressionOpcode, CanonicalExpressionType, CanonicalExpressionValue,
+    CanonicalJudgeShape, CanonicalNoteKind, CanonicalNoteScorePolicy, CanonicalNoteSide,
+    CanonicalNoteSoundPolicy, CanonicalObject, CanonicalProfile, CanonicalProfileFeature,
+    CanonicalRenderGeometryData, CanonicalRenderPaintData, CanonicalRenderScene,
+    CanonicalRequiredExtension, CanonicalResourceKind, CanonicalTrack, CanonicalTrackBlend,
+    CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment,
+    CanonicalTrackTarget, CanonicalTrackValue, CanonicalValue, CanonicalValueType,
+    DistributionMetadata,
 };
 use fcs_runtime::EasingId;
 use sha2::{Digest, Sha256};
@@ -141,6 +142,12 @@ struct ExtensionFixture<'a> {
 struct ContributorFixture<'a> {
     id: u64,
     contributor: &'a CanonicalContributor,
+}
+
+#[derive(Clone)]
+struct CreditFixture<'a> {
+    credit: &'a CanonicalCredit,
+    contributor_ids: Vec<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -409,6 +416,7 @@ pub fn write_nonempty_execution() -> Vec<u8> {
         ContainerProfile::StrictRuntime,
         None,
         None,
+        &[],
         &[],
         None,
     )
@@ -689,6 +697,7 @@ pub fn write_from_compilation_with_profile(
 
     let resources = native_resources(compilation)?;
     let contributors = native_contributors(chart)?;
+    let credits = native_credits(chart, &contributors)?;
     let sync = native_sync(chart, &resources)?;
     let extensions = native_extensions(chart.required_extensions())?;
 
@@ -709,6 +718,7 @@ pub fn write_from_compilation_with_profile(
         (profile == ContainerProfile::Fidelity).then_some(compilation.distribution()),
         Some(chart),
         &contributors,
+        &credits,
         sync,
     )
 }
@@ -765,6 +775,7 @@ fn assemble_package(
     fidelity: Option<&DistributionMetadata>,
     chart: Option<&CanonicalChart>,
     contributors: &[ContributorFixture<'_>],
+    credits: &[CreditFixture<'_>],
     sync: Option<SyncFixture>,
 ) -> FcbcResult<Vec<u8>> {
     let mut lines = lines.to_vec();
@@ -886,8 +897,15 @@ fn assemble_package(
         .iter()
         .map(|contributor| contributor.id)
         .collect();
-    let mut strings =
-        string_table_values(resources, &notes, extensions, fidelity, chart, contributors);
+    let mut strings = string_table_values(
+        resources,
+        &notes,
+        extensions,
+        fidelity,
+        chart,
+        contributors,
+        credits,
+    );
     if render.is_some() {
         strings.extend([
             "centerDescriptor",
@@ -926,7 +944,7 @@ fn assemble_package(
         Section::new(2, constant_pool_section(&constants)),
         Section::new(3, meta_section(chart, &strings, &contributor_ids)?),
         Section::new(4, contributors_section(contributors, &strings)?),
-        Section::new(5, count_zero_section()),
+        Section::new(5, credits_section(credits, &strings)?),
         Section::new(6, resource_records),
         Section::new(
             7,
@@ -1652,6 +1670,47 @@ fn native_contributors(chart: &CanonicalChart) -> FcbcResult<Vec<ContributorFixt
     Ok(contributors)
 }
 
+fn native_credits<'a>(
+    chart: &'a CanonicalChart,
+    contributors: &[ContributorFixture<'a>],
+) -> FcbcResult<Vec<CreditFixture<'a>>> {
+    let contributor_ids: std::collections::BTreeMap<_, _> = contributors
+        .iter()
+        .map(|contributor| (contributor.contributor.id(), contributor.id))
+        .collect();
+    let mut stable_ids = std::collections::BTreeSet::new();
+    let mut credits = Vec::with_capacity(chart.metadata().credits().len());
+    for credit in chart.metadata().credits() {
+        let id = credit.id().value();
+        if id == 0 || !stable_ids.insert(id) {
+            return Err(FcbcError::new(
+                "fcbc.duplicate-id",
+                "canonical credit IDs collide in FCBC stable-ID space",
+            ));
+        }
+        let contributor_ids = credit
+            .contributors()
+            .iter()
+            .map(|contributor| {
+                contributor_ids
+                    .get(contributor.as_str())
+                    .copied()
+                    .ok_or_else(|| {
+                        FcbcError::new(
+                            "fcbc.dangling-reference",
+                            "canonical credit references a missing contributor",
+                        )
+                    })
+            })
+            .collect::<FcbcResult<Vec<_>>>()?;
+        credits.push(CreditFixture {
+            credit,
+            contributor_ids,
+        });
+    }
+    Ok(credits)
+}
+
 fn native_sync(
     chart: &CanonicalChart,
     resources: &[ResourceFixture<'_>],
@@ -2179,6 +2238,7 @@ fn string_table_values<'a>(
     fidelity: Option<&'a DistributionMetadata>,
     chart: Option<&'a CanonicalChart>,
     contributors: &[ContributorFixture<'a>],
+    credits: &[CreditFixture<'a>],
 ) -> Vec<&'a str> {
     let mut strings = vec!["kind", "lineDefault"];
     for note in notes {
@@ -2203,6 +2263,17 @@ fn string_table_values<'a>(
         strings.push(contributor.contributor.name());
         strings.extend(contributor.contributor.aliases().iter().map(String::as_str));
         collect_canonical_object_strings(contributor.contributor.identifiers(), &mut strings);
+    }
+    for credit in credits {
+        if credit.credit.label().is_none() {
+            strings.push("");
+        }
+        if let Some(label) = credit.credit.label() {
+            strings.push(label);
+        }
+        if let Some(role) = credit.credit.role_kind().custom() {
+            strings.push(role);
+        }
     }
     strings.extend(
         notes
@@ -2768,6 +2839,53 @@ fn contributors_section(
     Ok(section)
 }
 
+fn credits_section(credits: &[CreditFixture<'_>], strings: &[&str]) -> FcbcResult<Vec<u8>> {
+    let mut section = Vec::new();
+    put_u32(&mut section, credits.len() as u32);
+    for credit in credits {
+        let mut payload = Vec::new();
+        put_u64(&mut payload, credit.credit.id().value());
+        let (role_kind, custom_role) = match credit.credit.role_kind() {
+            CanonicalCreditRole::Standard(role) => (credit_role_ordinal(*role), NULL_INDEX),
+            CanonicalCreditRole::Custom(role) => (0, string_index(strings, role)),
+        };
+        put_u16(&mut payload, role_kind);
+        put_u16(&mut payload, 0);
+        put_u32(&mut payload, custom_role);
+        put_u32(
+            &mut payload,
+            credit.credit.label().map_or_else(
+                || string_index(strings, ""),
+                |label| string_index(strings, label),
+            ),
+        );
+        put_u32(&mut payload, credit.contributor_ids.len() as u32);
+        for contributor_id in &credit.contributor_ids {
+            put_u64(&mut payload, *contributor_id);
+        }
+        payload.extend_from_slice(&empty_object());
+        section.extend_from_slice(&record(payload));
+    }
+    Ok(section)
+}
+
+const fn credit_role_ordinal(role: fcs_model::CanonicalStandardCreditRole) -> u16 {
+    match role {
+        fcs_model::CanonicalStandardCreditRole::Composer => 1,
+        fcs_model::CanonicalStandardCreditRole::Arranger => 2,
+        fcs_model::CanonicalStandardCreditRole::Lyricist => 3,
+        fcs_model::CanonicalStandardCreditRole::Vocalist => 4,
+        fcs_model::CanonicalStandardCreditRole::Instrumentalist => 5,
+        fcs_model::CanonicalStandardCreditRole::Mixer => 6,
+        fcs_model::CanonicalStandardCreditRole::Mastering => 7,
+        fcs_model::CanonicalStandardCreditRole::Charter => 8,
+        fcs_model::CanonicalStandardCreditRole::Illustrator => 9,
+        fcs_model::CanonicalStandardCreditRole::Designer => 10,
+        fcs_model::CanonicalStandardCreditRole::Programmer => 11,
+        fcs_model::CanonicalStandardCreditRole::Publisher => 12,
+    }
+}
+
 fn constant_pool_section(constants: &[Constant]) -> Vec<u8> {
     let mut payload = Vec::new();
     put_u32(&mut payload, constants.len() as u32);
@@ -2913,10 +3031,6 @@ fn parse_source_version(value: &str) -> FcbcResult<(u16, u16, u16)> {
         ));
     }
     Ok((parsed[0], parsed[1], parsed[2]))
-}
-
-fn count_zero_section() -> Vec<u8> {
-    0u32.to_le_bytes().to_vec()
 }
 
 fn sync_section(sync: SyncFixture) -> Vec<u8> {

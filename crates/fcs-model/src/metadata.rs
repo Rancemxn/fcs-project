@@ -10,7 +10,7 @@ use std::fmt;
 
 use sha2::{Digest, Sha256};
 
-use crate::{AudioOffset, Beat, TempoError};
+use crate::{AudioOffset, Beat, EntityKind, StableId, TempoError};
 
 /// A linear RGBA color value carried by canonical typed custom data.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -414,6 +414,7 @@ pub enum CanonicalCreditRoleError {
 /// An ordered display credit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalCredit {
+    id: StableId,
     role: CanonicalCreditRole,
     label: Option<String>,
     contributors: Vec<String>,
@@ -421,10 +422,14 @@ pub struct CanonicalCredit {
 
 impl CanonicalCredit {
     pub fn new(
+        id: StableId,
         role: CanonicalCreditRole,
         label: Option<String>,
         contributors: Vec<String>,
     ) -> Result<Self, CanonicalCreditError> {
+        if id.namespace() != EntityKind::Credit {
+            return Err(CanonicalCreditError::WrongNamespace { id: id.value() });
+        }
         let mut unique = std::collections::BTreeSet::new();
         if let Some(duplicate) = contributors
             .iter()
@@ -435,10 +440,15 @@ impl CanonicalCredit {
             ));
         }
         Ok(Self {
+            id,
             role,
             label,
             contributors,
         })
+    }
+
+    pub fn id(&self) -> &StableId {
+        &self.id
     }
 
     pub fn role(&self) -> &str {
@@ -460,6 +470,7 @@ impl CanonicalCredit {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CanonicalCreditError {
+    WrongNamespace { id: u64 },
     DuplicateContributor(String),
 }
 
@@ -864,6 +875,7 @@ impl CanonicalMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CanonicalTextualId, StableIdRegistry};
 
     #[test]
     fn credit_roles_classify_every_standard_name_and_exact_custom_ids() {
@@ -902,7 +914,17 @@ mod tests {
 
         let role = CanonicalCreditRole::parse("charter").unwrap();
         assert_eq!(
-            CanonicalCredit::new(role, None, vec!["alice".into(), "alice".into()]),
+            CanonicalCredit::new(
+                StableIdRegistry::new()
+                    .insert(
+                        EntityKind::Credit,
+                        CanonicalTextualId::explicit("credit").unwrap()
+                    )
+                    .unwrap(),
+                role,
+                None,
+                vec!["alice".into(), "alice".into()],
+            ),
             Err(CanonicalCreditError::DuplicateContributor("alice".into()))
         );
     }

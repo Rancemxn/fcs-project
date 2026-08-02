@@ -1,0 +1,7 @@
+#fcs 5.0.0
+format { profile: fragment; }
+credits {
+    credit {
+        role: "charter";
+    }
+}
