@@ -1,8 +1,8 @@
 //! Product FCS Render Profile surface (I9).
 //!
-//! Owns RenderSection product load/write, semantic draw-list evaluation, solid
-//! reference raster for core fill geometries, and restricted fixture asset codecs. Realtime GPU backends
-//! remain post-RC.
+//! Owns RenderSection product load/write, semantic draw-list evaluation, the
+//! reference raster for bounded fill geometries, and restricted fixture asset codecs. Realtime GPU
+//! backends remain post-RC.
 
 mod assets;
 mod loader;
@@ -15,12 +15,12 @@ pub use assets::{
     encode_test_webp, shape_simple_ltr, shape_simple_ltr_with_limits,
 };
 pub use loader::{
-    DecodedRenderChart, GeometryData, NodeKind, load_render, load_render_with_limits,
+    DecodedRenderChart, GeometryData, NodeKind, PaintData, load_render, load_render_with_limits,
 };
 pub use semantic::{
-    DrawOp, ImageDrawOp, evaluate_semantic_draw_list, evaluate_semantic_draw_list_at,
-    rasterize_solid_rgba8, rasterize_solid_rgba8_at, rasterize_solid_rgba8_with_limits,
-    rasterize_solid_rgba8_with_limits_at,
+    DrawOp, GradientStopDrawOp, ImageDrawOp, LinearGradientDrawOp, evaluate_semantic_draw_list,
+    evaluate_semantic_draw_list_at, rasterize_solid_rgba8, rasterize_solid_rgba8_at,
+    rasterize_solid_rgba8_with_limits, rasterize_solid_rgba8_with_limits_at,
 };
 pub use writer::{
     ANALYTIC_NOTE_TEXT_ID, FONT_RESOURCE_TEXT_ID, MALFORMED_RESOURCE_TEXT_ID, PNG_RESOURCE_TEXT_ID,

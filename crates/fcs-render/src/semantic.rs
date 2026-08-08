@@ -21,6 +21,7 @@ pub struct DrawOp {
     pub z_order: i32,
     pub document_order: u32,
     pub fill_rgba: Option<[f64; 4]>,
+    pub linear_gradient: Option<LinearGradientDrawOp>,
     pub image: Option<ImageDrawOp>,
     pub opacity: f64,
     pub world_matrix: [f64; 9],
@@ -35,6 +36,20 @@ pub struct ImageDrawOp {
     pub destination: [f64; 4],
     pub source: [f64; 4],
     pub sampling: u16,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LinearGradientDrawOp {
+    pub start: [f64; 2],
+    pub end: [f64; 2],
+    pub spread: u16,
+    pub stops: Vec<GradientStopDrawOp>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GradientStopDrawOp {
+    pub offset: f64,
+    pub color: [f64; 4],
 }
 
 struct SubtreeState {
@@ -263,7 +278,7 @@ fn emit_draw_subtree(
             },
         );
     }
-    let (fill_rgba, bounds, image) = if node.kind.is_drawable() {
+    let (fill_rgba, linear_gradient, bounds, image) = if node.kind.is_drawable() {
         let geometry = geometry_evaluation(
             chart,
             node.geometry_ref,
@@ -280,7 +295,7 @@ fn emit_draw_subtree(
                 },
             );
         }
-        let fill_rgba = match node.fill_paint {
+        let paint = match node.fill_paint {
             Some(index) => paint_rgba(
                 chart,
                 chart
@@ -290,11 +305,11 @@ fn emit_draw_subtree(
                 chart_time,
                 attachment.environment,
             )?,
-            None => None,
+            None => (None, None),
         };
-        (fill_rgba, geometry.world_bounds, geometry.image)
+        (paint.0, paint.1, geometry.world_bounds, geometry.image)
     } else {
-        (None, [0.0; 4], None)
+        (None, None, [0.0; 4], None)
     };
     let opacity = query_opacity(chart, node, chart_time, attachment.environment)?;
     let effective_opacity = inherited_opacity * opacity;
@@ -309,6 +324,7 @@ fn emit_draw_subtree(
             z_order: node.z_order,
             document_order: node.document_order,
             fill_rgba,
+            linear_gradient,
             image,
             opacity: effective_opacity,
             world_matrix,
@@ -847,6 +863,7 @@ struct RasterOp {
 
 enum RasterSource {
     Solid([f64; 4]),
+    LinearGradient(LinearGradientDrawOp),
     Image(ImageDrawOp),
 }
 
@@ -1075,11 +1092,11 @@ fn composite_premultiplied(
     Ok(())
 }
 
-/// Rasterize supported solid-fill geometry to tightly packed RGBA8 bytes.
+/// Rasterize supported fill geometry to tightly packed RGBA8 bytes.
 ///
-/// The Render 1.0 reference sample grid is used for solid Rect, RoundedRect,
-/// Circle, Ellipse, Polyline, and Polygon geometry; stroke/path/text coverage
-/// remains outside this bounded solid-fill path.
+/// The Render 1.0 reference sample grid is used for Rect, RoundedRect, Circle,
+/// Ellipse, Polyline, and Polygon geometry; stroke/path/text coverage remains
+/// outside this bounded fill path.
 pub fn rasterize_solid_rgba8(
     chart: &DecodedRenderChart,
     width: u32,
@@ -1088,7 +1105,7 @@ pub fn rasterize_solid_rgba8(
     rasterize_solid_rgba8_at(chart, 0.0, width, height)
 }
 
-/// Rasterize the bounded solid-fill surface at one chart-time query point.
+/// Rasterize the bounded fill surface at one chart-time query point.
 pub fn rasterize_solid_rgba8_at(
     chart: &DecodedRenderChart,
     chart_time: f64,
@@ -1147,6 +1164,8 @@ pub fn rasterize_solid_rgba8_with_limits_at(
         };
         let source = if op.kind == NodeKind::Image {
             RasterSource::Image(op.image.ok_or("render.invalid-geometry")?)
+        } else if let Some(gradient) = op.linear_gradient.clone() {
+            RasterSource::LinearGradient(gradient)
         } else {
             let Some(fill) = op.fill_rgba else {
                 continue;
@@ -1252,6 +1271,7 @@ fn raster_source_at(
 ) -> Result<Option<[f64; 4]>, &'static str> {
     let mut value = match source {
         RasterSource::Solid(value) => *value,
+        RasterSource::LinearGradient(gradient) => gradient_color(gradient, local_point)?,
         RasterSource::Image(image) => {
             let Some(value) = sample_image(chart, *image, local_point)? else {
                 return Ok(None);
@@ -1263,6 +1283,75 @@ fn raster_source_at(
         *component *= opacity;
     }
     Ok(Some(value))
+}
+
+fn gradient_color(
+    gradient: &LinearGradientDrawOp,
+    point: [f64; 2],
+) -> Result<[f64; 4], &'static str> {
+    let dx = gradient.end[0] - gradient.start[0];
+    let dy = gradient.end[1] - gradient.start[1];
+    let denominator = (dx * dx) + (dy * dy);
+    let mut t = if denominator == 0.0 {
+        0.0
+    } else {
+        ((point[0] - gradient.start[0]) * dx + (point[1] - gradient.start[1]) * dy) / denominator
+    };
+    if !t.is_finite() {
+        return Err("render.invalid-paint");
+    }
+    t = match gradient.spread {
+        1 => t.clamp(0.0, 1.0),
+        2 => t.rem_euclid(1.0),
+        3 => {
+            let reflected = t.rem_euclid(2.0);
+            if reflected > 1.0 {
+                2.0 - reflected
+            } else {
+                reflected
+            }
+        }
+        _ => return Err("render.invalid-paint"),
+    };
+    let first = gradient.stops.first().ok_or("render.invalid-paint")?;
+    if t < first.offset {
+        return Ok(premultiply(first.color));
+    }
+    let mut left = 0;
+    for (index, stop) in gradient.stops.iter().enumerate() {
+        if stop.offset <= t {
+            left = index;
+        } else {
+            break;
+        }
+    }
+    let mut right = left + 1;
+    while right < gradient.stops.len()
+        && gradient.stops[right].offset == gradient.stops[left].offset
+    {
+        right += 1;
+    }
+    if right == gradient.stops.len() {
+        return Ok(premultiply(gradient.stops[left].color));
+    }
+    let left_stop = &gradient.stops[left];
+    let right_stop = &gradient.stops[right];
+    let ratio = (t - left_stop.offset) / (right_stop.offset - left_stop.offset);
+    let mut color = [0.0; 4];
+    for (component, value) in color.iter_mut().enumerate() {
+        *value = left_stop.color[component]
+            + (right_stop.color[component] - left_stop.color[component]) * ratio;
+    }
+    Ok(premultiply(color))
+}
+
+fn premultiply(color: [f64; 4]) -> [f64; 4] {
+    [
+        color[0] * color[3],
+        color[1] * color[3],
+        color[2] * color[3],
+        color[3],
+    ]
 }
 
 fn sample_image(
@@ -1380,22 +1469,60 @@ fn paint_rgba(
     paint: &PaintRecord,
     chart_time: f64,
     environment: EvaluationEnvironment,
-) -> Result<Option<[f64; 4]>, &'static str> {
-    match paint.data {
+) -> Result<(Option<[f64; 4]>, Option<LinearGradientDrawOp>), &'static str> {
+    match &paint.data {
         // `colorDescriptor` is an FCBC descriptor index, not a constant-pool slot
         // (fcs-render.md sections 14.5 and 15.3); the loader already validated it as a
         // Color descriptor, so an unresolvable or wrongly-typed result is an invariant
-        // violation. Transform, attachment, clip, and non-solid paint evaluation remain
-        // in the broader #295 Render product path.
+        // violation. Radial and ImagePattern evaluation remain outside this bounded
+        // linear-gradient product path.
         PaintData::Solid { color } => {
-            let evaluation = query_descriptor(&chart.core, color, chart_time, environment)
+            let evaluation = query_descriptor(&chart.core, *color, chart_time, environment)
                 .map_err(|_| "render.invalid-descriptor")?;
             match evaluation.value {
-                RuntimeValue::Color(rgba) => Ok(Some(rgba)),
+                RuntimeValue::Color(rgba) => Ok((Some(rgba), None)),
                 _ => Err("render.invalid-descriptor"),
             }
         }
-        _ => Ok(None),
+        PaintData::LinearGradient {
+            start,
+            end,
+            spread,
+            stops,
+        } => {
+            let start = query_vec2_in(
+                chart,
+                *start,
+                chart_time,
+                ValueType::Vec2Length,
+                environment,
+            )?;
+            let end = query_vec2_in(chart, *end, chart_time, ValueType::Vec2Length, environment)?;
+            let stops = stops
+                .iter()
+                .map(|stop| {
+                    let value =
+                        query_value_in(chart, stop.color_descriptor, chart_time, environment)?;
+                    let RuntimeValue::Color(color) = value else {
+                        return Err("render.invalid-descriptor");
+                    };
+                    Ok(GradientStopDrawOp {
+                        offset: stop.offset,
+                        color,
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((
+                None,
+                Some(LinearGradientDrawOp {
+                    start,
+                    end,
+                    spread: *spread,
+                    stops,
+                }),
+            ))
+        }
+        _ => Ok((None, None)),
     }
 }
 

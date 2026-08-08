@@ -8,16 +8,17 @@ use fcs_model::{
     CanonicalChartError, CanonicalColor, CanonicalCompilation, CanonicalContributor,
     CanonicalCredit, CanonicalCreditRole, CanonicalDescriptorDomain, CanonicalDescriptorKind,
     CanonicalDescriptorRoot, CanonicalDescriptorTable, CanonicalExpressionType,
-    CanonicalExpressionValue, CanonicalImageSampling, CanonicalLineGraph, CanonicalMetadata,
-    CanonicalObject, CanonicalObjectEntry, CanonicalPreview, CanonicalProfile,
-    CanonicalProfileFeature, CanonicalPropertyDescriptor, CanonicalRenderAttachment,
-    CanonicalRenderColorSpace, CanonicalRenderComposite, CanonicalRenderGeometry,
-    CanonicalRenderGeometryData, CanonicalRenderLayer, CanonicalRenderNode,
-    CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
-    CanonicalRenderPaintData, CanonicalRenderPass, CanonicalRenderScene, CanonicalRenderSceneSpec,
-    CanonicalRequiredExtension, CanonicalResource, CanonicalResourceKind, CanonicalSourceVersion,
-    CanonicalSync, CanonicalTextualId, CanonicalValue, CanonicalValueType, CanonicalViewport,
-    ChartTimeMap, DeclaredSha256, DistributionMetadata, EntityKind, StableId, StableIdRegistry,
+    CanonicalExpressionValue, CanonicalGradientSpread, CanonicalGradientStop,
+    CanonicalImageSampling, CanonicalLineGraph, CanonicalMetadata, CanonicalObject,
+    CanonicalObjectEntry, CanonicalPreview, CanonicalProfile, CanonicalProfileFeature,
+    CanonicalPropertyDescriptor, CanonicalRenderAttachment, CanonicalRenderColorSpace,
+    CanonicalRenderComposite, CanonicalRenderGeometry, CanonicalRenderGeometryData,
+    CanonicalRenderLayer, CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec,
+    CanonicalRenderPaint, CanonicalRenderPaintData, CanonicalRenderPass, CanonicalRenderScene,
+    CanonicalRenderSceneSpec, CanonicalRequiredExtension, CanonicalResource, CanonicalResourceKind,
+    CanonicalSourceVersion, CanonicalSync, CanonicalTextualId, CanonicalValue, CanonicalValueType,
+    CanonicalViewport, ChartTimeMap, DeclaredSha256, DistributionMetadata, EntityKind, StableId,
+    StableIdRegistry,
 };
 
 use crate::ast::{
@@ -338,7 +339,17 @@ fn render_value(field: &SchemaField) -> Result<TypedValue, Diagnostic> {
     crate::elaborator::evaluate_metadata_expression(expression, None)
 }
 
-fn render_paint_color(field: &SchemaField) -> Result<TypedValue, Diagnostic> {
+enum RenderPaintExpression {
+    Solid(TypedValue),
+    LinearGradient {
+        start: TypedValue,
+        end: TypedValue,
+        spread: CanonicalGradientSpread,
+        stops: Vec<(f64, TypedValue)>,
+    },
+}
+
+fn render_paint_expression(field: &SchemaField) -> Result<RenderPaintExpression, Diagnostic> {
     let SchemaValue::Expression(expression) = &field.value else {
         return Err(render_error(
             "Render paint must be a compile-time expression",
@@ -357,10 +368,92 @@ fn render_paint_color(field: &SchemaField) -> Result<TypedValue, Diagnostic> {
                 field.span,
             ));
         };
-        return crate::elaborator::evaluate_metadata_expression(argument, None);
+        return crate::elaborator::evaluate_metadata_expression(argument, None)
+            .map(RenderPaintExpression::Solid);
+    }
+    if let SourceExpression::Call {
+        callee, arguments, ..
+    } = expression
+        && let SourceExpression::Name { name, .. } = callee.as_ref()
+        && name == "linearGradient"
+    {
+        let [start, end, stops, spread] = arguments.as_slice() else {
+            return Err(render_error(
+                "linearGradient requires start, end, stops, and spread arguments",
+                field.span,
+            ));
+        };
+        let start = crate::elaborator::evaluate_metadata_expression(start, None)?;
+        let end = crate::elaborator::evaluate_metadata_expression(end, None)?;
+        let SourceExpression::Array { elements, .. } = stops else {
+            return Err(render_error(
+                "linearGradient stops must be an array of stop(offset, color)",
+                field.span,
+            ));
+        };
+        let mut parsed_stops = Vec::with_capacity(elements.len());
+        for stop in elements {
+            let (callee, arguments) = match stop {
+                SourceExpression::Call {
+                    callee, arguments, ..
+                } => (callee, arguments),
+                _ => {
+                    return Err(render_error(
+                        "linearGradient stops must use stop(offset, color)",
+                        stop.span(),
+                    ));
+                }
+            };
+            let SourceExpression::Name { name, .. } = callee.as_ref() else {
+                return Err(render_error(
+                    "linearGradient stops must use stop(offset, color)",
+                    stop.span(),
+                ));
+            };
+            if name != "stop" {
+                return Err(render_error(
+                    "linearGradient stops must use stop(offset, color)",
+                    stop.span(),
+                ));
+            }
+            let [offset, color] = arguments.as_slice() else {
+                return Err(render_error(
+                    "stop requires offset and color arguments",
+                    stop.span(),
+                ));
+            };
+            let offset = render_float(
+                crate::elaborator::evaluate_metadata_expression(offset, None)?,
+                offset.span(),
+            )?;
+            let color = crate::elaborator::evaluate_metadata_expression(color, None)?;
+            parsed_stops.push((offset, color));
+        }
+        let spread = match render_string(
+            crate::elaborator::evaluate_metadata_expression(spread, None)?,
+            spread.span(),
+        )?
+        .as_str()
+        {
+            "pad" => CanonicalGradientSpread::Pad,
+            "repeat" => CanonicalGradientSpread::Repeat,
+            "reflect" => CanonicalGradientSpread::Reflect,
+            value => {
+                return Err(render_error(
+                    format!("unsupported Render gradient spread {value}"),
+                    spread.span(),
+                ));
+            }
+        };
+        return Ok(RenderPaintExpression::LinearGradient {
+            start,
+            end,
+            spread,
+            stops: parsed_stops,
+        });
     }
     Err(render_error(
-        "Render fill must use solid(color)",
+        "Render fill must use solid(color) or linearGradient(start, end, stops, spread)",
         field.span,
     ))
 }
@@ -753,23 +846,69 @@ impl<'a> RenderLowerer<'a> {
         }
     }
 
-    fn add_solid_paint(
+    fn add_paint(
         &mut self,
         node_path: &str,
         node: &crate::ast::RenderNodeDeclaration,
     ) -> Result<CanonicalRenderPaint, Diagnostic> {
         let field = render_body_field(&node.items, "fill")
             .ok_or_else(|| render_error("drawable Render node requires fill", node.span))?;
-        let TypedValue::Color(color) = render_paint_color(field)? else {
-            return Err(render_error("solid paint requires a color", field.span));
-        };
-        let color = self.descriptor(TypedValue::Color(color))?;
         let id = self.stable_id(
             EntityKind::RenderPaint,
             format!("{node_path}/fill"),
             field.span,
         )?;
-        CanonicalRenderPaint::new(id, CanonicalRenderPaintData::Solid { color })
+        let data = match render_paint_expression(field)? {
+            RenderPaintExpression::Solid(TypedValue::Color(color)) => {
+                CanonicalRenderPaintData::Solid {
+                    color: self.descriptor(TypedValue::Color(color))?,
+                }
+            }
+            RenderPaintExpression::Solid(value) => {
+                return Err(render_error(
+                    format!("solid paint requires a color, found {}", value.ty()),
+                    field.span,
+                ));
+            }
+            RenderPaintExpression::LinearGradient {
+                start,
+                end,
+                spread,
+                stops,
+            } => {
+                let start = render_vec2_length(start, field.span)?;
+                let end = render_vec2_length(end, field.span)?;
+                let start = self.descriptor(
+                    TypedValue::vec2(TypedValue::Length(start[0]), TypedValue::Length(start[1]))
+                        .expect("homogeneous length vector"),
+                )?;
+                let end = self.descriptor(
+                    TypedValue::vec2(TypedValue::Length(end[0]), TypedValue::Length(end[1]))
+                        .expect("homogeneous length vector"),
+                )?;
+                let stops = stops
+                    .into_iter()
+                    .map(|(offset, color)| {
+                        let TypedValue::Color(color) = color else {
+                            return Err(render_error(
+                                "linearGradient stop requires a color",
+                                field.span,
+                            ));
+                        };
+                        let color = self.descriptor(TypedValue::Color(color))?;
+                        CanonicalGradientStop::new(offset, color)
+                            .map_err(|error| render_error(format!("{error:?}"), field.span))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                CanonicalRenderPaintData::LinearGradient {
+                    start,
+                    end,
+                    spread,
+                    stops,
+                }
+            }
+        };
+        CanonicalRenderPaint::new(id, data)
             .map_err(|error| render_error(format!("{error:?}"), node.span))
     }
 }
@@ -874,7 +1013,7 @@ impl<'a> RenderLowerer<'a> {
                             .expect("homogeneous length vector"),
                         )?,
                     }),
-                    Some(self.add_solid_paint(node_path, node)?),
+                    Some(self.add_paint(node_path, node)?),
                 )
             }
             CanonicalRenderNodeKind::RoundedRect => {
@@ -907,7 +1046,7 @@ impl<'a> RenderLowerer<'a> {
                         size,
                         radii: [radius; 4],
                     }),
-                    Some(self.add_solid_paint(node_path, node)?),
+                    Some(self.add_paint(node_path, node)?),
                 )
             }
             CanonicalRenderNodeKind::Circle => {
@@ -931,7 +1070,7 @@ impl<'a> RenderLowerer<'a> {
                         center,
                         radius: self.descriptor(TypedValue::Length(radius))?,
                     }),
-                    Some(self.add_solid_paint(node_path, node)?),
+                    Some(self.add_paint(node_path, node)?),
                 )
             }
             CanonicalRenderNodeKind::Ellipse => {
@@ -960,7 +1099,7 @@ impl<'a> RenderLowerer<'a> {
                         radius_y: self.descriptor(TypedValue::Length(radius_y))?,
                         rotation,
                     }),
-                    Some(self.add_solid_paint(node_path, node)?),
+                    Some(self.add_paint(node_path, node)?),
                 )
             }
             CanonicalRenderNodeKind::Polyline => {
@@ -985,7 +1124,7 @@ impl<'a> RenderLowerer<'a> {
                     .collect::<Result<Vec<_>, _>>()?;
                 (
                     Some(CanonicalRenderGeometryData::Polyline { points }),
-                    Some(self.add_solid_paint(node_path, node)?),
+                    Some(self.add_paint(node_path, node)?),
                 )
             }
             CanonicalRenderNodeKind::Polygon => {
@@ -1010,7 +1149,7 @@ impl<'a> RenderLowerer<'a> {
                     .collect::<Result<Vec<_>, _>>()?;
                 (
                     Some(CanonicalRenderGeometryData::Polygon { points }),
-                    Some(self.add_solid_paint(node_path, node)?),
+                    Some(self.add_paint(node_path, node)?),
                 )
             }
             CanonicalRenderNodeKind::Image => {
@@ -1192,15 +1331,28 @@ impl<'a> RenderLowerer<'a> {
             self.geometries.push(geometry);
         }
         if let Some(paint_index) = fill_paint {
-            let color = match self.paints[paint_index].data() {
-                CanonicalRenderPaintData::Solid { color } => *color,
-                _ => unreachable!("bounded Render lowering only creates solid paint"),
+            let owner = self.paints[paint_index].id().value();
+            let roots = match self.paints[paint_index].data() {
+                CanonicalRenderPaintData::Solid { color } => {
+                    vec![("render.paint.color".to_owned(), *color)]
+                }
+                CanonicalRenderPaintData::LinearGradient {
+                    start, end, stops, ..
+                } => {
+                    let mut roots = vec![
+                        ("render.paint.start".to_owned(), *start),
+                        ("render.paint.end".to_owned(), *end),
+                    ];
+                    roots.extend(stops.iter().enumerate().map(|(index, stop)| {
+                        (format!("render.paint.stop[{index}].color"), stop.color())
+                    }));
+                    roots
+                }
+                _ => Vec::new(),
             };
-            self.add_descriptor_root(
-                "render.paint.color",
-                self.paints[paint_index].id().value(),
-                color,
-            );
+            for (path, descriptor) in roots {
+                self.add_descriptor_root(&path, owner, descriptor);
+            }
         }
 
         if let Some(children) = node.items.iter().find_map(|item| match item {
