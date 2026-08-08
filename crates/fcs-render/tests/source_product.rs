@@ -2,10 +2,12 @@ use std::path::Path;
 
 use fcs_fcbc::write_from_compilation;
 use fcs_model::{
-    CanonicalCompilation, CanonicalExpressionType, CanonicalRenderGeometry,
-    CanonicalRenderGeometryData, CanonicalRenderNode, CanonicalRenderNodeKind,
-    CanonicalRenderNodeSpec, CanonicalRenderScene, CanonicalRenderSceneSpec, CanonicalRenderStroke,
-    CanonicalStrokeCap, CanonicalStrokeJoin, CanonicalTextualId, EntityKind, StableIdRegistry,
+    CanonicalCompilation, CanonicalExpressionType, CanonicalImageRepeat, CanonicalImageSampling,
+    CanonicalPatternTransform, CanonicalRenderGeometry, CanonicalRenderGeometryData,
+    CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
+    CanonicalRenderPaintData, CanonicalRenderScene, CanonicalRenderSceneSpec,
+    CanonicalRenderStroke, CanonicalStrokeCap, CanonicalStrokeJoin, CanonicalTextualId, EntityKind,
+    StableIdRegistry,
 };
 use fcs_source::ResourceLimits;
 use fcs_source::elaborator::CompileTimeLimits;
@@ -692,6 +694,136 @@ render profile 1.0.0 {
     assert_eq!(image.sampling, 2);
 
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Image rasterization");
+    assert_eq!(pixels.len(), 4 * 4 * 4);
+    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
+}
+
+#[test]
+fn canonical_image_pattern_writer_reaches_product_render_loader() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+resources {
+    image sprite {
+        source: "assets/fcs-test-rgba8.png";
+        hash: "sha256:a108791d9edc1d9c37644a45ce29d4a20e479711db97daf85375b82924e8fa22";
+        mediaType: "image/png";
+        colorSpace: "srgb";
+        alpha: "straight";
+        sampling: "linear";
+    }
+}
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 4px; height: 4px; }
+    layer main {
+        pass: "overlay";
+        children {
+            circle patternShape {
+                center: vec2(0px, 0px);
+                radius: 2px;
+                fill: solid(#FFFFFFFF);
+            }
+            image spriteNode {
+                resource: @sprite;
+                destination.origin: vec2(-2px, -2px);
+                destination.size: vec2(4px, 4px);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("ImagePattern source parses");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/conformance/render");
+    let base = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            &workspace,
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| {
+            panic!("ImagePattern canonical lowering failed: {diagnostics:?}")
+        });
+    let original = base.chart().render().expect("source Render scene");
+    let pattern_node = &original.nodes()[0];
+    let resource_id = original
+        .geometries()
+        .iter()
+        .find_map(|geometry| match geometry.data() {
+            CanonicalRenderGeometryData::Image { resource, .. } => Some(resource.clone()),
+            _ => None,
+        })
+        .expect("source fixture must provide an image resource");
+    let paint = CanonicalRenderPaint::new(
+        original.paints()[0].id().clone(),
+        CanonicalRenderPaintData::ImagePattern {
+            resource: resource_id.clone(),
+            transform: CanonicalPatternTransform {
+                position: pattern_node.position(),
+                origin: pattern_node.origin(),
+                rotation: pattern_node.rotation(),
+                scale: pattern_node.scale(),
+            },
+            repeat: CanonicalImageRepeat::Both,
+            sampling: CanonicalImageSampling::Bilinear,
+        },
+    )
+    .expect("canonical ImagePattern paint");
+    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+        viewport: original.viewport(),
+        layers: original.layers().to_vec(),
+        nodes: original.nodes().to_vec(),
+        geometries: original.geometries().to_vec(),
+        paths: original.paths().to_vec(),
+        paints: vec![paint],
+        strokes: original.strokes().to_vec(),
+        clips: original.clips().to_vec(),
+        glyph_runs: original.glyph_runs().to_vec(),
+    })
+    .expect("canonical ImagePattern scene");
+    let compilation = CanonicalCompilation::new(
+        base.chart().clone().with_render(scene),
+        base.resources().clone(),
+        base.distribution().clone(),
+    );
+    let bytes = write_from_compilation(&compilation).expect("ImagePattern FCBC writing");
+    let render = load_render(&bytes).expect("ImagePattern product Render loader");
+
+    assert_eq!(render.paints.len(), 1);
+    let PaintData::ImagePattern {
+        resource_id: decoded_resource,
+        position,
+        origin,
+        rotation,
+        scale,
+        repeat,
+        sampling,
+    } = render.paints[0].data
+    else {
+        panic!("expected ImagePattern paint");
+    };
+    assert_eq!(decoded_resource, resource_id.value());
+    assert_eq!(position, render.nodes[0].position_descriptor);
+    assert_eq!(origin, render.nodes[0].origin_descriptor);
+    assert_eq!(rotation, render.nodes[0].rotation_descriptor);
+    assert_eq!(scale, render.nodes[0].scale_descriptor);
+    assert_eq!(repeat, 4);
+    assert_eq!(sampling, 2);
+    assert_eq!(render.resources.len(), 1);
+    assert_eq!(render.resources[0].id, decoded_resource);
+
+    let draw =
+        evaluate_semantic_draw_list_at(&render, 0.0).expect("ImagePattern semantic evaluation");
+    let pattern = draw
+        .iter()
+        .find_map(|operation| operation.image_pattern)
+        .expect("ImagePattern draw payload");
+    assert_eq!(pattern.resource_id, decoded_resource);
+    assert_eq!(pattern.repeat, 4);
+    assert_eq!(pattern.sampling, 2);
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("ImagePattern rasterization");
     assert_eq!(pixels.len(), 4 * 4 * 4);
     assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
 }

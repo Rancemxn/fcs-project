@@ -1415,12 +1415,11 @@ fn render_section(
         let paint = &scene.paints()[*paint_index];
         let mut record_payload = Vec::new();
         put_u64(&mut record_payload, paint.id().value());
-        let kind = match paint.data() {
+        match paint.data() {
             CanonicalRenderPaintData::Solid { color } => {
                 put_u16(&mut record_payload, 1);
                 put_u16(&mut record_payload, 0);
                 put_u32(&mut record_payload, descriptor(*color)?);
-                None
             }
             CanonicalRenderPaintData::LinearGradient {
                 start,
@@ -1447,7 +1446,6 @@ fn render_section(
                     put_u32(&mut record_payload, descriptor(stop.color())?);
                     put_u32(&mut record_payload, 0);
                 }
-                None
             }
             CanonicalRenderPaintData::RadialGradient {
                 start_center,
@@ -1478,16 +1476,40 @@ fn render_section(
                     put_u32(&mut record_payload, descriptor(stop.color())?);
                     put_u32(&mut record_payload, 0);
                 }
-                None
             }
-            _ => Some(FcbcError::new(
-                "fcbc.render-unsupported",
-                "Render paint is not supported by the product writer",
-            )),
+            CanonicalRenderPaintData::ImagePattern {
+                resource,
+                transform,
+                repeat,
+                sampling,
+            } => {
+                let resource_id = resource.value();
+                let resource = resources
+                    .iter()
+                    .find(|candidate| candidate.id == resource_id)
+                    .ok_or_else(|| {
+                        FcbcError::new(
+                            "fcbc.render-resource-not-found",
+                            format!("Render ImagePattern references resource {resource_id}"),
+                        )
+                    })?;
+                if !matches!(resource.kind, 2 | 4) {
+                    return Err(FcbcError::new(
+                        "fcbc.render-unsupported",
+                        "Render ImagePattern requires an image or texture resource",
+                    ));
+                }
+                put_u16(&mut record_payload, 4);
+                put_u16(&mut record_payload, 0);
+                put_u64(&mut record_payload, resource_id);
+                put_u32(&mut record_payload, descriptor(transform.position)?);
+                put_u32(&mut record_payload, descriptor(transform.origin)?);
+                put_u32(&mut record_payload, descriptor(transform.rotation)?);
+                put_u32(&mut record_payload, descriptor(transform.scale)?);
+                put_u16(&mut record_payload, repeat.ordinal());
+                put_u16(&mut record_payload, sampling.ordinal());
+            }
         };
-        if let Some(error) = kind {
-            return Err(error);
-        }
         payload.extend_from_slice(&record(record_payload));
     }
     for stroke_index in &stroke_order {

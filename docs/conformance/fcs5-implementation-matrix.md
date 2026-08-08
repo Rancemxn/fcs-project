@@ -206,6 +206,9 @@ and `semantic_tests::line_stroke_caps_and_dash_boundaries_are_stable`.
 Issue #503 adds the bounded canonical Render Line geometry and StrokeRecord path
 through the product FCBC writer and Render loader, with descriptor/table round-trip
 evidence in `source_product::canonical_line_stroke_writer_reaches_product_render_loader`.
+Issue #506 adds the bounded canonical ImagePattern paint path through the product
+FCBC writer and Render loader, with resource, transform, semantic, and raster
+round-trip evidence in `source_product::canonical_image_pattern_writer_reaches_product_render_loader`.
 Source Line stroke lowering, source ImagePattern lowering, broader canonical writer
 coverage, Polyline/Path/Text, and descriptor-driven gradient stroke lowering remain outside these bounded units;
 no Frozen or final I10 claim changes.

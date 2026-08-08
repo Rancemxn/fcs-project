@@ -788,6 +788,7 @@ git diff --check
   and the #499 existing-FCBC kind 4 ImagePattern -> loader -> semantic/raster path with inverse transform,
   repeat-axis, and decoded nearest/linear sampling evidence, plus the #501 existing-FCBC kind 7 Line stroke ->
   loader -> semantic/raster path with query-time width, caps, dash phase, and coverage evidence, and #503 canonical
-  Line geometry/StrokeRecord -> product FCBC writer -> Render loader round-trip evidence;
+  Line geometry/StrokeRecord -> product FCBC writer -> Render loader round-trip evidence, plus #506 canonical
+  ImagePattern paint -> product FCBC writer -> Render loader -> semantic/raster round-trip evidence;
   source Line stroke lowering, source ImagePattern lowering, broader canonical writer coverage, Polyline/Path/Text geometry,
   broader resource semantics, isolated compositing, and semantic/raster conformance remain open under #295.
