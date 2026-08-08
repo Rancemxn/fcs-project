@@ -19,9 +19,9 @@ pub use loader::{
 };
 pub use semantic::{
     DrawOp, GradientStopDrawOp, ImageDrawOp, ImagePatternDrawOp, LinearGradientDrawOp,
-    RadialGradientDrawOp, evaluate_semantic_draw_list, evaluate_semantic_draw_list_at,
-    rasterize_solid_rgba8, rasterize_solid_rgba8_at, rasterize_solid_rgba8_with_limits,
-    rasterize_solid_rgba8_with_limits_at,
+    RadialGradientDrawOp, StrokeDrawOp, evaluate_semantic_draw_list,
+    evaluate_semantic_draw_list_at, rasterize_solid_rgba8, rasterize_solid_rgba8_at,
+    rasterize_solid_rgba8_with_limits, rasterize_solid_rgba8_with_limits_at,
 };
 pub use writer::{
     ANALYTIC_NOTE_TEXT_ID, FONT_RESOURCE_TEXT_ID, MALFORMED_RESOURCE_TEXT_ID, PNG_RESOURCE_TEXT_ID,
@@ -1127,6 +1127,130 @@ mod tests {
             .map(|rgba| [rgba[0], rgba[1], rgba[2]]);
         let first = colors.next().expect("ImagePattern coverage");
         assert!(colors.any(|color| color != first));
+    }
+
+    #[test]
+    fn line_stroke_paint_reaches_semantics_and_rasterizes_coverage() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
+        render.viewport_width = 4.0;
+        render.viewport_height = 4.0;
+        render.viewport_color_space = 1;
+
+        let hidden = add_descriptor_constant(&mut render, RuntimeValue::Bool(false));
+        let visible = add_descriptor_constant(&mut render, RuntimeValue::Bool(true));
+        let zero_position = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [0.0, 0.0],
+            },
+        );
+        let zero_angle = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Angle,
+                value: 0.0,
+            },
+        );
+        let unit_scale = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Float,
+                value: [1.0, 1.0],
+            },
+        );
+        let opaque = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 1.0,
+            },
+        );
+
+        for node in &mut render.nodes {
+            node.visibility_descriptor = hidden;
+        }
+        let target = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::Line)
+            .expect("fixture Line node");
+        let stroke_index = render.nodes[target]
+            .stroke_ref
+            .expect("fixture Line stroke") as usize;
+        let paint_index = render.strokes[stroke_index].paint_ref as usize;
+        let color = match render.paints[paint_index].data {
+            PaintData::Solid { color } => color,
+            _ => panic!("fixture Line stroke is not solid"),
+        };
+        set_descriptor_constant(
+            &mut render,
+            color,
+            RuntimeValue::Color([1.0, 1.0, 1.0, 1.0]),
+        );
+        let width = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 1.0,
+            },
+        );
+        let dash_offset = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 0.0,
+            },
+        );
+        render.strokes[stroke_index].width_descriptor = width;
+        render.strokes[stroke_index].dash_offset_descriptor = dash_offset;
+
+        let mut current = Some(target);
+        while let Some(index) = current {
+            let node = &mut render.nodes[index];
+            node.visibility_descriptor = visible;
+            node.position_descriptor = zero_position;
+            node.origin_descriptor = zero_position;
+            node.rotation_descriptor = zero_angle;
+            node.scale_descriptor = unit_scale;
+            node.opacity_descriptor = opaque;
+            current = node.parent.map(|parent| parent as usize);
+        }
+
+        let geometry_index = render.nodes[target]
+            .geometry_ref
+            .expect("fixture Line geometry") as usize;
+        let start = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [-2.0, 0.0],
+            },
+        );
+        let end = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [2.0, 0.0],
+            },
+        );
+        render.geometries[geometry_index].data = GeometryData::Line { start, end };
+
+        let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Line semantic query");
+        let op = draw
+            .iter()
+            .find(|op| op.node_id == render.nodes[target].id)
+            .expect("Line draw op");
+        assert!(op.fill_rgba.is_none());
+        let stroke = op.stroke.as_ref().expect("Line stroke payload");
+        assert_eq!(stroke.width, 1.0);
+        assert_eq!((stroke.cap, stroke.join), (1, 1));
+        assert_eq!(stroke.dash, vec![0.5, 0.5]);
+
+        let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Line raster");
+        assert!(pixels.chunks_exact(4).any(|rgba| rgba[3] > 0));
+        assert!(pixels.chunks_exact(4).any(|rgba| rgba[3] == 0));
     }
 
     #[test]

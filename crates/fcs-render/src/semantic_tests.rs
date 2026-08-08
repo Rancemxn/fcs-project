@@ -1,7 +1,7 @@
 use super::{
-    GradientStopDrawOp, ImagePatternDrawOp, LinearGradientDrawOp, RadialGradientDrawOp,
-    gradient_color, linear_axis, pattern_local_point, pattern_repeat_axes, pattern_texel_index,
-    radial_gradient_color,
+    GradientStopDrawOp, ImagePatternDrawOp, LinearGradientDrawOp, LocalShape, RadialGradientDrawOp,
+    StrokeDrawOp, gradient_color, linear_axis, pattern_local_point, pattern_repeat_axes,
+    pattern_texel_index, radial_gradient_color, stroke_contains, stroke_segments,
 };
 
 #[test]
@@ -162,4 +162,41 @@ fn image_pattern_transform_inverse_and_repeat_edges_are_stable() {
         ..pattern
     };
     assert_eq!(pattern_local_point(singular, [1.0, 2.0]), None);
+}
+
+#[test]
+fn line_stroke_caps_and_dash_boundaries_are_stable() {
+    let line = LocalShape::Line {
+        start: [-2.0, 0.0],
+        end: [2.0, 0.0],
+    };
+    let mut stroke = StrokeDrawOp {
+        width: 1.0,
+        cap: 1,
+        join: 1,
+        miter_limit: 2.0,
+        dash_offset: 0.0,
+        dash: Vec::new(),
+        fill_rgba: Some([1.0, 1.0, 1.0, 1.0]),
+        linear_gradient: None,
+        radial_gradient: None,
+        image_pattern: None,
+    };
+    assert!(stroke_contains(&line, [0.0, 0.49], &stroke).unwrap());
+    assert!(!stroke_contains(&line, [0.0, 0.51], &stroke).unwrap());
+    assert!(!stroke_contains(&line, [-2.1, 0.0], &stroke).unwrap());
+
+    stroke.cap = 2;
+    assert!(stroke_contains(&line, [-2.3, 0.3], &stroke).unwrap());
+    stroke.cap = 3;
+    assert!(stroke_contains(&line, [-2.4, 0.0], &stroke).unwrap());
+
+    assert_eq!(
+        stroke_segments(4.0, 0.0, &[1.0, 1.0]).unwrap(),
+        vec![(0.0, 1.0), (2.0, 3.0)]
+    );
+    assert_eq!(
+        stroke_segments(4.0, 0.5, &[1.0, 1.0]).unwrap(),
+        vec![(0.0, 0.5), (1.5, 2.5), (3.5, 4.0)]
+    );
 }
