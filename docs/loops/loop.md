@@ -97,11 +97,11 @@
   criteria 和未决 decision residual；任何非终止 iteration 必须关闭至少一个 criterion、消除一个
   decision residual、完成保持原验收覆盖的严格缩小拆分，或按 Residual Routing 退出该路径。主 loop 的 240 预算
   同时单调递减；reviewer 的独立 480 review-unit 预算由 `review-loop.md` 单独管理。
-- **Remote gate state:** 需要编译或测试反馈的修改以 draft PR 上的新固定 SHA 触发 GitHub full gate，或按
-  根 `AGENTS.md` 的 Codespace Full Gate 条款直接在用户 GitHub Codespace 对同 SHA 执行完整命令序列；
-  `queued`/`in_progress` 只是待验证状态，不算通过或 iteration 进展。成功的同 SHA run 可以关闭验证项；失败 run
-  必须产生决定性证据并由修正后的新 SHA 推进，否则按 no-progress 路由。同 SHA 的瞬时基础设施重跑和等待 Action
-  都不消耗 work-unit；新 SHA 取消的旧 run 是过期证据，不算当前 gate 失败；cache miss 也不改变 gate。
+- **Remote gate state:** 需要编译或测试反馈的修改以 draft PR 上的新固定 SHA 触发 GitHub Actions full gate，或对
+  解析为目标 SHA 的 branch/tag ref 使用 `workflow_dispatch`；当前 I10 不在 Codespace 执行测试、fuzz 或可执行
+  fixture。`queued`/`in_progress` 只是待验证状态，不算通过或 iteration 进展。成功的同 SHA run 可以关闭验证项；
+  失败 run 必须产生决定性证据并由修正后的新 SHA 推进，否则按 no-progress 路由。同 SHA 的瞬时基础设施重跑和等待
+  Action 都不消耗 work-unit；新 SHA 取消的旧 run 是过期证据，不算当前 gate 失败；cache miss 也不改变 gate。
 - **Frontier selection:** 默认选择路线图中最早、依赖已满足的 `ready-for-agent` Issue，优先关闭
   当前 stage gate，不以容易的后期任务长期回避关键路径 blocker。
 - **Safe look-ahead:** 当前路径受阻时，可以推进不依赖该 blocker 的后续规范闭包研究、fixture 设计、
@@ -268,9 +268,9 @@ Routine GitHub delivery 和满足 Authorized Change & Delivery 条件的普通 m
 # Measurement Domain
 
 本地允许运行编译、lint 与格式检查（`cargo check`、`cargo clippy`、`cargo build`、`cargo fmt`，详见根
-`AGENTS.md` 的 Rust 开发与验证）；本地工作树不运行测试。测试、fuzz 和可执行 fixture 反馈按用户决定直接在该
-GitHub Codespace 对精确 head SHA 执行完整 Full Gate 命令序列（等价于 `.github/workflows/full-gate.yml`），
-GitHub runner 的 PR run 仍是 PR/merge required gate。验证记录必须区分
+`AGENTS.md` 的 Rust 开发与验证）；本地工作树不运行测试。测试、fuzz 和可执行 fixture 反馈只通过
+`.github/workflows/full-gate.yml` 在 GitHub Actions runner 上对精确 head SHA 执行完整 Full Gate 命令序列取得；
+当前 I10 不在 Codespace 执行这些验证。验证记录必须区分
 passed、failed、queued、skipped 和 non-applicable，不能把缺失或运行中的 gate 写成通过。
 
 | Output domain | Verification method | Required artifact |
