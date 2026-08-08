@@ -58,7 +58,6 @@ collections {
             id: "writer-stroke";
             line: @main;
             gameplay.time: 1beat;
-            presentation.positionX: 1px;
         };
     }
 }
@@ -67,9 +66,9 @@ render profile 1.0.0 {
     layer main {
         pass: "overlay";
         children {
-            rect sourceShape {
-                origin: vec2(0px, 0px);
-                size: vec2(10px, 10px);
+            circle sourceShape {
+                center: vec2(0px, 0px);
+                radius: 5px;
                 fill: solid(#FFFFFFFF);
             }
         }
@@ -90,8 +89,8 @@ render profile 1.0.0 {
     let original = base.chart().render().expect("source Render scene");
     let original_node = &original.nodes()[0];
     let original_geometry = &original.geometries()[0];
-    let CanonicalRenderGeometryData::Rect { origin, size } = original_geometry.data() else {
-        panic!("source fixture must provide a Rect geometry");
+    let CanonicalRenderGeometryData::Circle { center, .. } = original_geometry.data() else {
+        panic!("source fixture must provide a Circle geometry");
     };
     let width_descriptor = base
         .chart()
@@ -151,8 +150,8 @@ render profile 1.0.0 {
             CanonicalRenderGeometry::new(
                 original_geometry.id().clone(),
                 CanonicalRenderGeometryData::Line {
-                    start: *origin,
-                    end: *size,
+                    start: *center,
+                    end: *center,
                 },
             )
             .expect("canonical Line geometry"),
