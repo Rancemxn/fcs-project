@@ -404,6 +404,26 @@ RadialGradient(startCenter,startRadius,endCenter,endRadius,stops,spread)
 ImagePattern(resource,transform,repeat,sampling)
 ```
 
+Render source uses the following fixed spellings for the bounded Core paint
+constructors. The product implementation currently supports `solid` and
+`linearGradient`; `linearGradient` takes two `vec2<length>` expressions, a
+compile-time array of `stop(offset, color)` calls, and a compile-time spread
+string:
+
+```fcs
+fill: linearGradient(
+    vec2(-4px, 0px),
+    vec2(4px, 0px),
+    [stop(0.0, #FF0000FF), stop(1.0, #0000FFFF)],
+    "pad"
+);
+```
+
+The array and stop offsets are compile-time topology. This bounded source
+lowering accepts finite compile-time geometry and colors; descriptor-driven
+gradient geometry remains a separate source-lowering unit. An unsupported paint
+constructor is an error and does not fall back to a solid paint.
+
 Gradient stop 数量至少 2；offset compile-time 确定、有限、位于 `[0,1]` 且非递减。RadialGradient
 的 startRadius/endRadius 必须是 finite 且非负；动态 descriptor 成功返回负值时使用
 `render.invalid-paint`，不能把它解释成反向或隐式取绝对值。同 offset

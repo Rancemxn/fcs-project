@@ -178,6 +178,19 @@ The full Render scene, semantic, raster,
 and executable conformance closure remains partial within the final #296/#9 gate, and this delta
 does not change the I9/I10 or five-domain Frozen claims.
 
+## Bounded Render linear-gradient product delta
+
+Issue #493 adds the bounded source `linearGradient(vec2, vec2, [stop(...)],
+spread)` path for finite compile-time geometry and colors. The canonical paint
+is encoded as FCBC PaintRecord kind 2, validated by the product loader, exposed
+as a semantic DrawOp with query-time descriptor colors, and sampled by the
+existing reference raster. Evidence is bound by
+`source_product::linear_gradient_source_reaches_product_loader_semantics_and_raster`
+and `semantic_tests::linear_gradient_pad_and_repeat_apply_at_declared_boundaries`.
+RadialGradient, ImagePattern, Stroke/Path/Text, and descriptor-driven gradient
+source lowering remain outside this bounded unit; no Frozen or final I10 claim
+changes.
+
 ## Credit stable identity delta
 
 Issue #477 now has an explicit Credit identity decision: source `id` text is

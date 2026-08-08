@@ -2,13 +2,13 @@ use fcs_model::{
     CanonicalChart, CanonicalCompilation, CanonicalContributor, CanonicalCredit,
     CanonicalCreditRole, CanonicalDescriptorKind, CanonicalDescriptorTable, CanonicalExpressionDag,
     CanonicalExpressionOpcode, CanonicalExpressionType, CanonicalExpressionValue,
-    CanonicalJudgeShape, CanonicalNoteKind, CanonicalNoteScorePolicy, CanonicalNoteSide,
-    CanonicalNoteSoundPolicy, CanonicalObject, CanonicalProfile, CanonicalProfileFeature,
-    CanonicalRenderGeometryData, CanonicalRenderPaintData, CanonicalRenderScene,
-    CanonicalRequiredExtension, CanonicalResourceKind, CanonicalTrack, CanonicalTrackBlend,
-    CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment,
-    CanonicalTrackTarget, CanonicalTrackValue, CanonicalValue, CanonicalValueType,
-    DistributionMetadata,
+    CanonicalGradientSpread, CanonicalJudgeShape, CanonicalNoteKind, CanonicalNoteScorePolicy,
+    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalProfile,
+    CanonicalProfileFeature, CanonicalRenderGeometryData, CanonicalRenderPaintData,
+    CanonicalRenderScene, CanonicalRequiredExtension, CanonicalResourceKind, CanonicalTrack,
+    CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece,
+    CanonicalTrackSegment, CanonicalTrackTarget, CanonicalTrackValue, CanonicalValue,
+    CanonicalValueType, DistributionMetadata,
 };
 use fcs_runtime::EasingId;
 use sha2::{Digest, Sha256};
@@ -1365,17 +1365,50 @@ fn render_section(
     }
     for paint_index in &paint_order {
         let paint = &scene.paints()[*paint_index];
-        let CanonicalRenderPaintData::Solid { color } = paint.data() else {
-            return Err(FcbcError::new(
-                "fcbc.render-unsupported",
-                "Render paint is not Solid",
-            ));
-        };
         let mut record_payload = Vec::new();
         put_u64(&mut record_payload, paint.id().value());
-        put_u16(&mut record_payload, 1);
-        put_u16(&mut record_payload, 0);
-        put_u32(&mut record_payload, descriptor(*color)?);
+        let kind = match paint.data() {
+            CanonicalRenderPaintData::Solid { color } => {
+                put_u16(&mut record_payload, 1);
+                put_u16(&mut record_payload, 0);
+                put_u32(&mut record_payload, descriptor(*color)?);
+                None
+            }
+            CanonicalRenderPaintData::LinearGradient {
+                start,
+                end,
+                spread,
+                stops,
+            } => {
+                put_u16(&mut record_payload, 2);
+                put_u16(&mut record_payload, 0);
+                put_u32(&mut record_payload, descriptor(*start)?);
+                put_u32(&mut record_payload, descriptor(*end)?);
+                put_u16(
+                    &mut record_payload,
+                    match spread {
+                        CanonicalGradientSpread::Pad => 1,
+                        CanonicalGradientSpread::Repeat => 2,
+                        CanonicalGradientSpread::Reflect => 3,
+                    },
+                );
+                put_u16(&mut record_payload, 0);
+                put_u32(&mut record_payload, stops.len() as u32);
+                for stop in stops {
+                    put_f64(&mut record_payload, stop.offset());
+                    put_u32(&mut record_payload, descriptor(stop.color())?);
+                    put_u32(&mut record_payload, 0);
+                }
+                None
+            }
+            _ => Some(FcbcError::new(
+                "fcbc.render-unsupported",
+                "Render paint is not supported by the product writer",
+            )),
+        };
+        if let Some(error) = kind {
+            return Err(error);
+        }
         payload.extend_from_slice(&record(record_payload));
     }
     Ok(record(payload))

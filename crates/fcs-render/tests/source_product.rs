@@ -6,7 +6,8 @@ use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
 
 use fcs_render::{
-    GeometryData, NodeKind, evaluate_semantic_draw_list_at, load_render, rasterize_solid_rgba8_at,
+    GeometryData, NodeKind, PaintData, evaluate_semantic_draw_list_at, load_render,
+    rasterize_solid_rgba8_at,
 };
 
 fn u32_at(bytes: &[u8], offset: usize) -> u32 {
@@ -93,6 +94,69 @@ fn solid_rect_source_reaches_product_render_loader() {
         section[node + 88..node + 92].copy_from_slice(&u32::MAX.to_le_bytes());
     });
     assert_eq!(load_render(&malformed), Err("render.invalid-reference"));
+}
+
+#[test]
+fn linear_gradient_source_reaches_product_loader_semantics_and_raster() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport {
+        width: 8px;
+        height: 8px;
+    }
+    layer main {
+        pass: "overlay";
+        children {
+            rect gradient {
+                origin: vec2(-4px, -4px);
+                size: vec2(8px, 8px);
+                fill: linearGradient(vec2(-4px, 0px), vec2(4px, 0px), [
+                    stop(0.0, #FF0000FF),
+                    stop(1.0, #0000FFFF),
+                ], "repeat");
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("linear gradient source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| panic!("linear gradient lowering failed: {diagnostics:?}"));
+    let scene = compilation
+        .chart()
+        .render()
+        .expect("canonical Render scene");
+    assert_eq!(scene.paints().len(), 1);
+
+    let bytes = write_from_compilation(&compilation).expect("linear gradient FCBC writing");
+    let render = load_render(&bytes).expect("linear gradient product loader");
+    assert!(matches!(
+        render.paints[0].data,
+        PaintData::LinearGradient { spread: 2, ref stops, .. } if stops.len() == 2
+    ));
+
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("gradient semantic evaluation");
+    assert!(draw.iter().any(|op| op.linear_gradient.is_some()));
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 8, 8).expect("gradient rasterization");
+    assert_eq!(pixels.len(), 8 * 8 * 4);
+    let left = &pixels[0..4];
+    let right = &pixels[28..32];
+    assert_ne!(
+        left, right,
+        "gradient output must not fall back to one solid color"
+    );
+    assert!(left[0] > left[2]);
+    assert!(right[2] > right[0]);
 }
 
 #[test]
