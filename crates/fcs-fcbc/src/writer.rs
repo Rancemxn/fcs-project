@@ -1505,7 +1505,7 @@ fn render_section(
                     put_u16(&mut command_payload, 0);
                 }
             }
-            payload.extend_from_slice(&record(command_payload));
+            record_payload.extend_from_slice(&record(command_payload));
         }
         payload.extend_from_slice(&record(record_payload));
     }

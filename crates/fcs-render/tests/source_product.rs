@@ -977,13 +977,6 @@ render profile 1.0.0 {
     );
     let scene = compilation.chart().render().expect("canonical Path scene");
     let bytes = write_from_compilation(&compilation).expect("canonical Path FCBC writing");
-    let _ = mutate_render_section(bytes.clone(), |section| {
-        eprintln!(
-            "canonical Path Render section ({} bytes): {:02x?}",
-            section.len(),
-            section
-        );
-    });
     let render = load_render(&bytes).expect("canonical Path product loader");
 
     let decoded_node_index = render
