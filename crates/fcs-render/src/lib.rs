@@ -18,9 +18,10 @@ pub use loader::{
     DecodedRenderChart, GeometryData, NodeKind, PaintData, load_render, load_render_with_limits,
 };
 pub use semantic::{
-    DrawOp, GradientStopDrawOp, ImageDrawOp, LinearGradientDrawOp, evaluate_semantic_draw_list,
-    evaluate_semantic_draw_list_at, rasterize_solid_rgba8, rasterize_solid_rgba8_at,
-    rasterize_solid_rgba8_with_limits, rasterize_solid_rgba8_with_limits_at,
+    DrawOp, GradientStopDrawOp, ImageDrawOp, LinearGradientDrawOp, RadialGradientDrawOp,
+    evaluate_semantic_draw_list, evaluate_semantic_draw_list_at, rasterize_solid_rgba8,
+    rasterize_solid_rgba8_at, rasterize_solid_rgba8_with_limits,
+    rasterize_solid_rgba8_with_limits_at,
 };
 pub use writer::{
     ANALYTIC_NOTE_TEXT_ID, FONT_RESOURCE_TEXT_ID, MALFORMED_RESOURCE_TEXT_ID, PNG_RESOURCE_TEXT_ID,

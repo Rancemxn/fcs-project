@@ -1,4 +1,7 @@
-use super::{GradientStopDrawOp, LinearGradientDrawOp, gradient_color, linear_axis};
+use super::{
+    GradientStopDrawOp, LinearGradientDrawOp, RadialGradientDrawOp, gradient_color, linear_axis,
+    radial_gradient_color,
+};
 
 #[test]
 fn linear_taps_clamp_independently_at_source_edges() {
@@ -43,6 +46,95 @@ fn linear_gradient_pad_and_repeat_apply_at_declared_boundaries() {
     };
     assert_eq!(
         gradient_color(&repeat, [2.0, 0.0]).unwrap(),
+        [1.0, 0.0, 0.0, 1.0]
+    );
+}
+
+#[test]
+fn radial_gradient_solves_quadratic_and_applies_spread() {
+    let gradient = RadialGradientDrawOp {
+        start_center: [0.0, 0.0],
+        start_radius: 0.0,
+        end_center: [0.0, 0.0],
+        end_radius: 1.0,
+        spread: 1,
+        stops: vec![
+            GradientStopDrawOp {
+                offset: 0.0,
+                color: [1.0, 0.0, 0.0, 1.0],
+            },
+            GradientStopDrawOp {
+                offset: 1.0,
+                color: [0.0, 0.0, 1.0, 1.0],
+            },
+        ],
+    };
+    assert_eq!(
+        radial_gradient_color(&gradient, [0.5, 0.0]).unwrap(),
+        [0.5, 0.0, 0.5, 1.0]
+    );
+
+    let linear_root = RadialGradientDrawOp {
+        start_center: [0.0, 0.0],
+        start_radius: 0.0,
+        end_center: [1.0, 0.0],
+        end_radius: 1.0,
+        spread: 1,
+        stops: gradient.stops.clone(),
+    };
+    assert_eq!(
+        radial_gradient_color(&linear_root, [0.25, 0.0]).unwrap(),
+        [0.875, 0.0, 0.125, 1.0]
+    );
+
+    assert_eq!(
+        radial_gradient_color(&gradient, [2.0, 0.0]).unwrap(),
+        [0.0, 0.0, 1.0, 1.0]
+    );
+
+    let repeat = RadialGradientDrawOp {
+        spread: 2,
+        ..gradient.clone()
+    };
+    assert_eq!(
+        radial_gradient_color(&repeat, [2.0, 0.0]).unwrap(),
+        [1.0, 0.0, 0.0, 1.0]
+    );
+    let reflect = RadialGradientDrawOp {
+        spread: 3,
+        ..gradient
+    };
+    assert_eq!(
+        radial_gradient_color(&reflect, [1.5, 0.0]).unwrap(),
+        [0.5, 0.0, 0.5, 1.0]
+    );
+}
+
+#[test]
+fn radial_gradient_with_no_nonnegative_root_is_transparent() {
+    let gradient = RadialGradientDrawOp {
+        start_center: [0.0, 0.0],
+        start_radius: 1.0,
+        end_center: [0.0, 0.0],
+        end_radius: 1.0,
+        spread: 1,
+        stops: vec![
+            GradientStopDrawOp {
+                offset: 0.0,
+                color: [1.0, 0.0, 0.0, 1.0],
+            },
+            GradientStopDrawOp {
+                offset: 1.0,
+                color: [0.0, 0.0, 1.0, 1.0],
+            },
+        ],
+    };
+    assert_eq!(
+        radial_gradient_color(&gradient, [0.0, 0.0]).unwrap(),
+        [0.0, 0.0, 0.0, 0.0]
+    );
+    assert_eq!(
+        radial_gradient_color(&gradient, [1.0, 0.0]).unwrap(),
         [1.0, 0.0, 0.0, 1.0]
     );
 }

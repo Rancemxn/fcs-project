@@ -1401,6 +1401,37 @@ fn render_section(
                 }
                 None
             }
+            CanonicalRenderPaintData::RadialGradient {
+                start_center,
+                start_radius,
+                end_center,
+                end_radius,
+                spread,
+                stops,
+            } => {
+                put_u16(&mut record_payload, 3);
+                put_u16(&mut record_payload, 0);
+                put_u32(&mut record_payload, descriptor(*start_center)?);
+                put_u32(&mut record_payload, descriptor(*start_radius)?);
+                put_u32(&mut record_payload, descriptor(*end_center)?);
+                put_u32(&mut record_payload, descriptor(*end_radius)?);
+                put_u16(
+                    &mut record_payload,
+                    match spread {
+                        CanonicalGradientSpread::Pad => 1,
+                        CanonicalGradientSpread::Repeat => 2,
+                        CanonicalGradientSpread::Reflect => 3,
+                    },
+                );
+                put_u16(&mut record_payload, 0);
+                put_u32(&mut record_payload, stops.len() as u32);
+                for stop in stops {
+                    put_f64(&mut record_payload, stop.offset());
+                    put_u32(&mut record_payload, descriptor(stop.color())?);
+                    put_u32(&mut record_payload, 0);
+                }
+                None
+            }
             _ => Some(FcbcError::new(
                 "fcbc.render-unsupported",
                 "Render paint is not supported by the product writer",

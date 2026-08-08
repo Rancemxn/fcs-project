@@ -782,7 +782,8 @@ git diff --check
   `inspect` without media decode. These are product-entry evidence only; they do not close final executable
   cross-domain conformance or the I10 re-freeze gate.
   The current Render product delta also covers a bounded source -> canonical -> FCBC -> loader -> semantic/raster handoff for
-  root Rect/Image, nested Group/RoundedRect/Circle/Ellipse nodes, solid-fill Polyline/Polygon nodes, and source active intervals
-  lowered to FCBC Node flags, plus Image DrawOps and bounded nearest/linear decoded-image sampling with source-rect validation
-  and premultiplied compositing; source Line stroke lowering, full Path/Text geometry, broader paint/resource semantics,
-  isolated compositing, and semantic/raster conformance remain open under #295.
+  root Rect/Image, nested Group/RoundedRect/Circle/Ellipse nodes, solid-fill Polyline/Polygon nodes, source active intervals
+  lowered to FCBC Node flags, plus Image DrawOps and bounded nearest/linear decoded-image sampling with source-rect validation,
+  premultiplied compositing, and the #497 radial-gradient source -> canonical -> FCBC -> loader -> semantic/raster path;
+  source Line stroke lowering, full Path/Text geometry, ImagePattern, broader resource semantics, isolated compositing, and
+  semantic/raster conformance remain open under #295.

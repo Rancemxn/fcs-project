@@ -22,6 +22,7 @@ pub struct DrawOp {
     pub document_order: u32,
     pub fill_rgba: Option<[f64; 4]>,
     pub linear_gradient: Option<LinearGradientDrawOp>,
+    pub radial_gradient: Option<RadialGradientDrawOp>,
     pub image: Option<ImageDrawOp>,
     pub opacity: f64,
     pub world_matrix: [f64; 9],
@@ -45,6 +46,22 @@ pub struct LinearGradientDrawOp {
     pub spread: u16,
     pub stops: Vec<GradientStopDrawOp>,
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RadialGradientDrawOp {
+    pub start_center: [f64; 2],
+    pub start_radius: f64,
+    pub end_center: [f64; 2],
+    pub end_radius: f64,
+    pub spread: u16,
+    pub stops: Vec<GradientStopDrawOp>,
+}
+
+type PaintParts = (
+    Option<[f64; 4]>,
+    Option<LinearGradientDrawOp>,
+    Option<RadialGradientDrawOp>,
+);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct GradientStopDrawOp {
@@ -278,7 +295,7 @@ fn emit_draw_subtree(
             },
         );
     }
-    let (fill_rgba, linear_gradient, bounds, image) = if node.kind.is_drawable() {
+    let (fill_rgba, linear_gradient, radial_gradient, bounds, image) = if node.kind.is_drawable() {
         let geometry = geometry_evaluation(
             chart,
             node.geometry_ref,
@@ -305,11 +322,17 @@ fn emit_draw_subtree(
                 chart_time,
                 attachment.environment,
             )?,
-            None => (None, None),
+            None => (None, None, None),
         };
-        (paint.0, paint.1, geometry.world_bounds, geometry.image)
+        (
+            paint.0,
+            paint.1,
+            paint.2,
+            geometry.world_bounds,
+            geometry.image,
+        )
     } else {
-        (None, None, [0.0; 4], None)
+        (None, None, None, [0.0; 4], None)
     };
     let opacity = query_opacity(chart, node, chart_time, attachment.environment)?;
     let effective_opacity = inherited_opacity * opacity;
@@ -325,6 +348,7 @@ fn emit_draw_subtree(
             document_order: node.document_order,
             fill_rgba,
             linear_gradient,
+            radial_gradient,
             image,
             opacity: effective_opacity,
             world_matrix,
@@ -864,6 +888,7 @@ struct RasterOp {
 enum RasterSource {
     Solid([f64; 4]),
     LinearGradient(LinearGradientDrawOp),
+    RadialGradient(RadialGradientDrawOp),
     Image(ImageDrawOp),
 }
 
@@ -1166,6 +1191,8 @@ pub fn rasterize_solid_rgba8_with_limits_at(
             RasterSource::Image(op.image.ok_or("render.invalid-geometry")?)
         } else if let Some(gradient) = op.linear_gradient.clone() {
             RasterSource::LinearGradient(gradient)
+        } else if let Some(gradient) = op.radial_gradient.clone() {
+            RasterSource::RadialGradient(gradient)
         } else {
             let Some(fill) = op.fill_rgba else {
                 continue;
@@ -1272,6 +1299,7 @@ fn raster_source_at(
     let mut value = match source {
         RasterSource::Solid(value) => *value,
         RasterSource::LinearGradient(gradient) => gradient_color(gradient, local_point)?,
+        RasterSource::RadialGradient(gradient) => radial_gradient_color(gradient, local_point)?,
         RasterSource::Image(image) => {
             let Some(value) = sample_image(chart, *image, local_point)? else {
                 return Ok(None);
@@ -1292,7 +1320,7 @@ fn gradient_color(
     let dx = gradient.end[0] - gradient.start[0];
     let dy = gradient.end[1] - gradient.start[1];
     let denominator = (dx * dx) + (dy * dy);
-    let mut t = if denominator == 0.0 {
+    let t = if denominator == 0.0 {
         0.0
     } else {
         ((point[0] - gradient.start[0]) * dx + (point[1] - gradient.start[1]) * dy) / denominator
@@ -1300,7 +1328,65 @@ fn gradient_color(
     if !t.is_finite() {
         return Err("render.invalid-paint");
     }
-    t = match gradient.spread {
+    gradient_color_at_t(t, gradient.spread, &gradient.stops)
+}
+
+fn radial_gradient_color(
+    gradient: &RadialGradientDrawOp,
+    point: [f64; 2],
+) -> Result<[f64; 4], &'static str> {
+    let ux = point[0] - gradient.start_center[0];
+    let uy = point[1] - gradient.start_center[1];
+    let vx = gradient.end_center[0] - gradient.start_center[0];
+    let vy = gradient.end_center[1] - gradient.start_center[1];
+    let dr = gradient.end_radius - gradient.start_radius;
+    let a = ((vx * vx) + (vy * vy)) - (dr * dr);
+    let b = -2.0 * (((ux * vx) + (uy * vy)) + (gradient.start_radius * dr));
+    let c = ((ux * ux) + (uy * uy)) - (gradient.start_radius * gradient.start_radius);
+    if !a.is_finite() || !b.is_finite() || !c.is_finite() {
+        return Ok([0.0; 4]);
+    }
+
+    let mut selected = None;
+    let mut consider = |candidate: f64| {
+        if !candidate.is_finite() {
+            return;
+        }
+        let radius = gradient.start_radius + (candidate * dr);
+        if radius.is_finite() && radius >= 0.0 {
+            selected = Some(selected.map_or(candidate, |current: f64| current.max(candidate)));
+        }
+    };
+    if a == 0.0 {
+        if b != 0.0 {
+            consider(-c / b);
+        } else if c == 0.0 {
+            consider(0.0);
+        }
+    } else {
+        let discriminant = (b * b) - ((4.0 * a) * c);
+        if discriminant.is_finite() && discriminant >= 0.0 {
+            if discriminant == 0.0 {
+                consider((-b) / (2.0 * a));
+            } else {
+                let root = discriminant.sqrt();
+                consider(((-b) - root) / (2.0 * a));
+                consider(((-b) + root) / (2.0 * a));
+            }
+        }
+    }
+    let Some(t) = selected else {
+        return Ok([0.0; 4]);
+    };
+    gradient_color_at_t(t, gradient.spread, &gradient.stops)
+}
+
+fn gradient_color_at_t(
+    mut t: f64,
+    spread: u16,
+    stops: &[GradientStopDrawOp],
+) -> Result<[f64; 4], &'static str> {
+    t = match spread {
         1 => t.clamp(0.0, 1.0),
         2 => t.rem_euclid(1.0),
         3 => {
@@ -1313,12 +1399,12 @@ fn gradient_color(
         }
         _ => return Err("render.invalid-paint"),
     };
-    let first = gradient.stops.first().ok_or("render.invalid-paint")?;
+    let first = stops.first().ok_or("render.invalid-paint")?;
     if t < first.offset {
         return Ok(premultiply(first.color));
     }
     let mut left = 0;
-    for (index, stop) in gradient.stops.iter().enumerate() {
+    for (index, stop) in stops.iter().enumerate() {
         if stop.offset <= t {
             left = index;
         } else {
@@ -1326,16 +1412,14 @@ fn gradient_color(
         }
     }
     let mut right = left + 1;
-    while right < gradient.stops.len()
-        && gradient.stops[right].offset == gradient.stops[left].offset
-    {
+    while right < stops.len() && stops[right].offset == stops[left].offset {
         right += 1;
     }
-    if right == gradient.stops.len() {
-        return Ok(premultiply(gradient.stops[left].color));
+    if right == stops.len() {
+        return Ok(premultiply(stops[left].color));
     }
-    let left_stop = &gradient.stops[left];
-    let right_stop = &gradient.stops[right];
+    let left_stop = &stops[left];
+    let right_stop = &stops[right];
     let ratio = (t - left_stop.offset) / (right_stop.offset - left_stop.offset);
     let mut color = [0.0; 4];
     for (component, value) in color.iter_mut().enumerate() {
@@ -1469,18 +1553,17 @@ fn paint_rgba(
     paint: &PaintRecord,
     chart_time: f64,
     environment: EvaluationEnvironment,
-) -> Result<(Option<[f64; 4]>, Option<LinearGradientDrawOp>), &'static str> {
+) -> Result<PaintParts, &'static str> {
     match &paint.data {
         // `colorDescriptor` is an FCBC descriptor index, not a constant-pool slot
         // (fcs-render.md sections 14.5 and 15.3); the loader already validated it as a
         // Color descriptor, so an unresolvable or wrongly-typed result is an invariant
-        // violation. Radial and ImagePattern evaluation remain outside this bounded
-        // linear-gradient product path.
+        // violation. ImagePattern evaluation remains outside this bounded gradient path.
         PaintData::Solid { color } => {
             let evaluation = query_descriptor(&chart.core, *color, chart_time, environment)
                 .map_err(|_| "render.invalid-descriptor")?;
             match evaluation.value {
-                RuntimeValue::Color(rgba) => Ok((Some(rgba), None)),
+                RuntimeValue::Color(rgba) => Ok((Some(rgba), None, None)),
                 _ => Err("render.invalid-descriptor"),
             }
         }
@@ -1520,9 +1603,76 @@ fn paint_rgba(
                     spread: *spread,
                     stops,
                 }),
+                None,
             ))
         }
-        _ => Ok((None, None)),
+        PaintData::RadialGradient {
+            start_center,
+            start_radius,
+            end_center,
+            end_radius,
+            spread,
+            stops,
+        } => {
+            let start_center = query_vec2_in(
+                chart,
+                *start_center,
+                chart_time,
+                ValueType::Vec2Length,
+                environment,
+            )?;
+            let start_radius = query_scalar_in(
+                chart,
+                *start_radius,
+                chart_time,
+                ValueType::Length,
+                environment,
+            )?;
+            let end_center = query_vec2_in(
+                chart,
+                *end_center,
+                chart_time,
+                ValueType::Vec2Length,
+                environment,
+            )?;
+            let end_radius = query_scalar_in(
+                chart,
+                *end_radius,
+                chart_time,
+                ValueType::Length,
+                environment,
+            )?;
+            if start_radius < 0.0 || end_radius < 0.0 {
+                return Err("render.invalid-paint");
+            }
+            let stops = stops
+                .iter()
+                .map(|stop| {
+                    let value =
+                        query_value_in(chart, stop.color_descriptor, chart_time, environment)?;
+                    let RuntimeValue::Color(color) = value else {
+                        return Err("render.invalid-descriptor");
+                    };
+                    Ok(GradientStopDrawOp {
+                        offset: stop.offset,
+                        color,
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((
+                None,
+                None,
+                Some(RadialGradientDrawOp {
+                    start_center,
+                    start_radius,
+                    end_center,
+                    end_radius,
+                    spread: *spread,
+                    stops,
+                }),
+            ))
+        }
+        _ => Ok((None, None, None)),
     }
 }
 
