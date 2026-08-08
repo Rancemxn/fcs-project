@@ -160,6 +160,121 @@ render profile 1.0.0 {
 }
 
 #[test]
+fn radial_gradient_source_reaches_product_loader_semantics_and_raster() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport {
+        width: 8px;
+        height: 8px;
+    }
+    layer main {
+        pass: "overlay";
+        children {
+            rect gradient {
+                origin: vec2(-4px, -4px);
+                size: vec2(8px, 8px);
+                fill: radialGradient(
+                    vec2(0px, 0px),
+                    0px,
+                    vec2(0px, 0px),
+                    4px,
+                    [
+                        stop(0.0, #FF0000FF),
+                        stop(1.0, #0000FFFF),
+                    ],
+                    "pad"
+                );
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("radial gradient source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| panic!("radial gradient lowering failed: {diagnostics:?}"));
+    let scene = compilation
+        .chart()
+        .render()
+        .expect("canonical Render scene");
+    assert_eq!(scene.paints().len(), 1);
+
+    let bytes = write_from_compilation(&compilation).expect("radial gradient FCBC writing");
+    let render = load_render(&bytes).expect("radial gradient product loader");
+    assert!(matches!(
+        render.paints[0].data,
+        PaintData::RadialGradient {
+            spread: 1,
+            ref stops,
+            ..
+        } if stops.len() == 2
+    ));
+
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("radial gradient semantics");
+    assert!(draw.iter().any(|op| op.radial_gradient.is_some()));
+    let pixels =
+        rasterize_solid_rgba8_at(&render, 0.0, 8, 8).expect("radial gradient rasterization");
+    assert_eq!(pixels.len(), 8 * 8 * 4);
+    let corner = &pixels[0..4];
+    let center_offset = ((3 * 8 + 3) * 4) as usize;
+    let center = &pixels[center_offset..center_offset + 4];
+    assert_ne!(
+        corner, center,
+        "radial output must not fall back to one solid color"
+    );
+    assert!(corner[2] > corner[0]);
+    assert!(center[0] > center[2]);
+}
+
+#[test]
+fn radial_gradient_source_rejects_negative_radius() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 8px; height: 8px; }
+    layer main {
+        pass: "overlay";
+        children {
+            rect gradient {
+                size: vec2(8px, 8px);
+                fill: radialGradient(
+                    vec2(0px, 0px),
+                    -1px,
+                    vec2(0px, 0px),
+                    4px,
+                    [stop(0.0, #FF0000FF), stop(1.0, #0000FFFF)],
+                    "pad"
+                );
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("negative-radius source parses");
+    let diagnostics = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .expect_err("negative radial radius must fail at canonical lowering");
+    assert!(!diagnostics.is_empty());
+}
+
+#[test]
 fn nested_shape_source_reaches_product_render_loader() {
     let source = r#"#fcs 5.0.0
 format { profile: renderable; }

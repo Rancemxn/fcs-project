@@ -347,6 +347,80 @@ enum RenderPaintExpression {
         spread: CanonicalGradientSpread,
         stops: Vec<(f64, TypedValue)>,
     },
+    RadialGradient {
+        start_center: TypedValue,
+        start_radius: TypedValue,
+        end_center: TypedValue,
+        end_radius: TypedValue,
+        spread: CanonicalGradientSpread,
+        stops: Vec<(f64, TypedValue)>,
+    },
+}
+
+fn render_gradient_stops(
+    stops: &SourceExpression,
+    field_span: SourceSpan,
+    gradient_name: &str,
+) -> Result<Vec<(f64, TypedValue)>, Diagnostic> {
+    let SourceExpression::Array { elements, .. } = stops else {
+        return Err(render_error(
+            format!("{gradient_name} stops must be an array of stop(offset, color)"),
+            field_span,
+        ));
+    };
+    let mut parsed_stops = Vec::with_capacity(elements.len());
+    for stop in elements {
+        let (callee, arguments) = match stop {
+            SourceExpression::Call {
+                callee, arguments, ..
+            } => (callee, arguments),
+            _ => {
+                return Err(render_error(
+                    format!("{gradient_name} stops must use stop(offset, color)"),
+                    stop.span(),
+                ));
+            }
+        };
+        let SourceExpression::Name { name, .. } = callee.as_ref() else {
+            return Err(render_error(
+                format!("{gradient_name} stops must use stop(offset, color)"),
+                stop.span(),
+            ));
+        };
+        if name != "stop" {
+            return Err(render_error(
+                format!("{gradient_name} stops must use stop(offset, color)"),
+                stop.span(),
+            ));
+        }
+        let [offset, color] = arguments.as_slice() else {
+            return Err(render_error(
+                "stop requires offset and color arguments",
+                stop.span(),
+            ));
+        };
+        let offset = render_float(
+            crate::elaborator::evaluate_metadata_expression(offset, None)?,
+            offset.span(),
+        )?;
+        let color = crate::elaborator::evaluate_metadata_expression(color, None)?;
+        parsed_stops.push((offset, color));
+    }
+    Ok(parsed_stops)
+}
+
+fn render_gradient_spread(value: &SourceExpression) -> Result<CanonicalGradientSpread, Diagnostic> {
+    let spread = crate::elaborator::evaluate_metadata_expression(value, None)?;
+    let span = value.span();
+    match render_string(spread, span)?.as_str() {
+        "pad" => Ok(CanonicalGradientSpread::Pad),
+        "repeat" => Ok(CanonicalGradientSpread::Repeat),
+        "reflect" => Ok(CanonicalGradientSpread::Reflect),
+        value => Err(render_error(
+            format!("unsupported Render gradient spread {value}"),
+            span,
+        )),
+    }
 }
 
 fn render_paint_expression(field: &SchemaField) -> Result<RenderPaintExpression, Diagnostic> {
@@ -385,66 +459,8 @@ fn render_paint_expression(field: &SchemaField) -> Result<RenderPaintExpression,
         };
         let start = crate::elaborator::evaluate_metadata_expression(start, None)?;
         let end = crate::elaborator::evaluate_metadata_expression(end, None)?;
-        let SourceExpression::Array { elements, .. } = stops else {
-            return Err(render_error(
-                "linearGradient stops must be an array of stop(offset, color)",
-                field.span,
-            ));
-        };
-        let mut parsed_stops = Vec::with_capacity(elements.len());
-        for stop in elements {
-            let (callee, arguments) = match stop {
-                SourceExpression::Call {
-                    callee, arguments, ..
-                } => (callee, arguments),
-                _ => {
-                    return Err(render_error(
-                        "linearGradient stops must use stop(offset, color)",
-                        stop.span(),
-                    ));
-                }
-            };
-            let SourceExpression::Name { name, .. } = callee.as_ref() else {
-                return Err(render_error(
-                    "linearGradient stops must use stop(offset, color)",
-                    stop.span(),
-                ));
-            };
-            if name != "stop" {
-                return Err(render_error(
-                    "linearGradient stops must use stop(offset, color)",
-                    stop.span(),
-                ));
-            }
-            let [offset, color] = arguments.as_slice() else {
-                return Err(render_error(
-                    "stop requires offset and color arguments",
-                    stop.span(),
-                ));
-            };
-            let offset = render_float(
-                crate::elaborator::evaluate_metadata_expression(offset, None)?,
-                offset.span(),
-            )?;
-            let color = crate::elaborator::evaluate_metadata_expression(color, None)?;
-            parsed_stops.push((offset, color));
-        }
-        let spread = match render_string(
-            crate::elaborator::evaluate_metadata_expression(spread, None)?,
-            spread.span(),
-        )?
-        .as_str()
-        {
-            "pad" => CanonicalGradientSpread::Pad,
-            "repeat" => CanonicalGradientSpread::Repeat,
-            "reflect" => CanonicalGradientSpread::Reflect,
-            value => {
-                return Err(render_error(
-                    format!("unsupported Render gradient spread {value}"),
-                    spread.span(),
-                ));
-            }
-        };
+        let parsed_stops = render_gradient_stops(stops, field.span, "linearGradient")?;
+        let spread = render_gradient_spread(spread)?;
         return Ok(RenderPaintExpression::LinearGradient {
             start,
             end,
@@ -452,8 +468,43 @@ fn render_paint_expression(field: &SchemaField) -> Result<RenderPaintExpression,
             stops: parsed_stops,
         });
     }
+    if let SourceExpression::Call {
+        callee, arguments, ..
+    } = expression
+        && let SourceExpression::Name { name, .. } = callee.as_ref()
+        && name == "radialGradient"
+    {
+        let [
+            start_center,
+            start_radius,
+            end_center,
+            end_radius,
+            stops,
+            spread,
+        ] = arguments.as_slice()
+        else {
+            return Err(render_error(
+                "radialGradient requires startCenter, startRadius, endCenter, endRadius, stops, and spread arguments",
+                field.span,
+            ));
+        };
+        let start_center = crate::elaborator::evaluate_metadata_expression(start_center, None)?;
+        let start_radius = crate::elaborator::evaluate_metadata_expression(start_radius, None)?;
+        let end_center = crate::elaborator::evaluate_metadata_expression(end_center, None)?;
+        let end_radius = crate::elaborator::evaluate_metadata_expression(end_radius, None)?;
+        let parsed_stops = render_gradient_stops(stops, field.span, "radialGradient")?;
+        let spread = render_gradient_spread(spread)?;
+        return Ok(RenderPaintExpression::RadialGradient {
+            start_center,
+            start_radius,
+            end_center,
+            end_radius,
+            spread,
+            stops: parsed_stops,
+        });
+    }
     Err(render_error(
-        "Render fill must use solid(color) or linearGradient(start, end, stops, spread)",
+        "Render fill must use solid(color), linearGradient(start, end, stops, spread), or radialGradient(startCenter, startRadius, endCenter, endRadius, stops, spread)",
         field.span,
     ))
 }
@@ -490,6 +541,17 @@ fn render_length(value: TypedValue, span: SourceSpan) -> Result<f64, Diagnostic>
             span,
         )),
     }
+}
+
+fn render_radius(value: TypedValue, span: SourceSpan) -> Result<f64, Diagnostic> {
+    let value = render_length(value, span)?;
+    if value < 0.0 {
+        return Err(render_error(
+            "Render gradient radius must be non-negative",
+            span,
+        ));
+    }
+    Ok(value)
 }
 
 fn render_vec2_length(value: TypedValue, span: SourceSpan) -> Result<[f64; 2], Diagnostic> {
@@ -903,6 +965,57 @@ impl<'a> RenderLowerer<'a> {
                 CanonicalRenderPaintData::LinearGradient {
                     start,
                     end,
+                    spread,
+                    stops,
+                }
+            }
+            RenderPaintExpression::RadialGradient {
+                start_center,
+                start_radius,
+                end_center,
+                end_radius,
+                spread,
+                stops,
+            } => {
+                let start_center = render_vec2_length(start_center, field.span)?;
+                let start_radius = render_radius(start_radius, field.span)?;
+                let end_center = render_vec2_length(end_center, field.span)?;
+                let end_radius = render_radius(end_radius, field.span)?;
+                let start_center = self.descriptor(
+                    TypedValue::vec2(
+                        TypedValue::Length(start_center[0]),
+                        TypedValue::Length(start_center[1]),
+                    )
+                    .expect("homogeneous length vector"),
+                )?;
+                let start_radius = self.descriptor(TypedValue::Length(start_radius))?;
+                let end_center = self.descriptor(
+                    TypedValue::vec2(
+                        TypedValue::Length(end_center[0]),
+                        TypedValue::Length(end_center[1]),
+                    )
+                    .expect("homogeneous length vector"),
+                )?;
+                let end_radius = self.descriptor(TypedValue::Length(end_radius))?;
+                let stops = stops
+                    .into_iter()
+                    .map(|(offset, color)| {
+                        let TypedValue::Color(color) = color else {
+                            return Err(render_error(
+                                "radialGradient stop requires a color",
+                                field.span,
+                            ));
+                        };
+                        let color = self.descriptor(TypedValue::Color(color))?;
+                        CanonicalGradientStop::new(offset, color)
+                            .map_err(|error| render_error(format!("{error:?}"), field.span))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                CanonicalRenderPaintData::RadialGradient {
+                    start_center,
+                    start_radius,
+                    end_center,
+                    end_radius,
                     spread,
                     stops,
                 }
@@ -1342,6 +1455,25 @@ impl<'a> RenderLowerer<'a> {
                     let mut roots = vec![
                         ("render.paint.start".to_owned(), *start),
                         ("render.paint.end".to_owned(), *end),
+                    ];
+                    roots.extend(stops.iter().enumerate().map(|(index, stop)| {
+                        (format!("render.paint.stop[{index}].color"), stop.color())
+                    }));
+                    roots
+                }
+                CanonicalRenderPaintData::RadialGradient {
+                    start_center,
+                    start_radius,
+                    end_center,
+                    end_radius,
+                    stops,
+                    ..
+                } => {
+                    let mut roots = vec![
+                        ("render.paint.startCenter".to_owned(), *start_center),
+                        ("render.paint.startRadius".to_owned(), *start_radius),
+                        ("render.paint.endCenter".to_owned(), *end_center),
+                        ("render.paint.endRadius".to_owned(), *end_radius),
                     ];
                     roots.extend(stops.iter().enumerate().map(|(index, stop)| {
                         (format!("render.paint.stop[{index}].color"), stop.color())

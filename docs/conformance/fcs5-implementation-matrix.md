@@ -187,7 +187,13 @@ as a semantic DrawOp with query-time descriptor colors, and sampled by the
 existing reference raster. Evidence is bound by
 `source_product::linear_gradient_source_reaches_product_loader_semantics_and_raster`
 and `semantic_tests::linear_gradient_pad_and_repeat_apply_at_declared_boundaries`.
-RadialGradient, ImagePattern, Stroke/Path/Text, and descriptor-driven gradient
+Issue #497 adds the bounded `radialGradient` source -> canonical -> FCBC kind 3
+-> loader -> semantic quadratic-root -> reference-raster path. Its evidence is
+bound by `source_product::radial_gradient_source_reaches_product_loader_semantics_and_raster`,
+`source_product::radial_gradient_source_rejects_negative_radius`,
+`semantic_tests::radial_gradient_solves_quadratic_and_applies_spread`, and
+`semantic_tests::radial_gradient_with_no_nonnegative_root_is_transparent`.
+ImagePattern, Stroke/Path/Text, and descriptor-driven gradient
 source lowering remain outside this bounded unit; no Frozen or final I10 claim
 changes.
 
