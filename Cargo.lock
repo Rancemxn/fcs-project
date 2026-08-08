@@ -372,6 +372,7 @@ name = "fcs-render"
 version = "5.0.0"
 dependencies = [
  "fcs-fcbc",
+ "fcs-model",
  "fcs-source",
  "image",
  "serde",

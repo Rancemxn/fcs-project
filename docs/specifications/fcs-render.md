@@ -408,8 +408,9 @@ Render source uses the following fixed spellings for the bounded Core paint
 constructors. The product implementation currently supports `solid`,
 `linearGradient`, and `radialGradient`; its semantic/raster path also consumes
 loader-validated FCBC `ImagePattern` kind 4 records and kind 7 `Line` stroke
-records. Source `imagePattern` and Line stroke lowering plus canonical writer
-integration remain separate bounded work. The
+records. Source `imagePattern` and Line stroke lowering remain separate bounded
+work; broader canonical writer coverage remains open after the bounded Line
+writer path. The
 gradient constructors take a
 compile-time array of `stop(offset, color)` calls and a compile-time spread
 string. `linearGradient` takes two `vec2<length>` expressions, while
