@@ -18,9 +18,9 @@ pub use loader::{
     DecodedRenderChart, GeometryData, NodeKind, PaintData, load_render, load_render_with_limits,
 };
 pub use semantic::{
-    DrawOp, GradientStopDrawOp, ImageDrawOp, LinearGradientDrawOp, RadialGradientDrawOp,
-    evaluate_semantic_draw_list, evaluate_semantic_draw_list_at, rasterize_solid_rgba8,
-    rasterize_solid_rgba8_at, rasterize_solid_rgba8_with_limits,
+    DrawOp, GradientStopDrawOp, ImageDrawOp, ImagePatternDrawOp, LinearGradientDrawOp,
+    RadialGradientDrawOp, evaluate_semantic_draw_list, evaluate_semantic_draw_list_at,
+    rasterize_solid_rgba8, rasterize_solid_rgba8_at, rasterize_solid_rgba8_with_limits,
     rasterize_solid_rgba8_with_limits_at,
 };
 pub use writer::{
@@ -962,6 +962,171 @@ mod tests {
                 255, 255, 255, 0, 255,
             ]
         );
+    }
+
+    #[test]
+    fn image_pattern_paint_reaches_semantics_and_rasterizes_decoded_pixels() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
+        render.viewport_width = 4.0;
+        render.viewport_height = 4.0;
+        render.viewport_color_space = 1;
+
+        let hidden = add_descriptor_constant(&mut render, RuntimeValue::Bool(false));
+        let visible = add_descriptor_constant(&mut render, RuntimeValue::Bool(true));
+        let zero_position = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [0.0, 0.0],
+            },
+        );
+        let zero_angle = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Angle,
+                value: 0.0,
+            },
+        );
+        let unit_scale = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Float,
+                value: [1.0, 1.0],
+            },
+        );
+        let opaque = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 1.0,
+            },
+        );
+
+        for node in &mut render.nodes {
+            node.visibility_descriptor = hidden;
+        }
+        let target = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::Ellipse)
+            .expect("fixture ImagePattern ellipse");
+        let paint_index = render.nodes[target]
+            .fill_paint
+            .expect("ImagePattern fill paint") as usize;
+        let (pattern_resource_id, position, origin, rotation, scale, repeat, sampling) =
+            match &render.paints[paint_index].data {
+                PaintData::ImagePattern {
+                    resource_id,
+                    position,
+                    origin,
+                    rotation,
+                    scale,
+                    repeat,
+                    sampling,
+                } => (
+                    *resource_id,
+                    *position,
+                    *origin,
+                    *rotation,
+                    *scale,
+                    *repeat,
+                    *sampling,
+                ),
+                _ => panic!("fixture ellipse is not ImagePattern"),
+            };
+        assert_eq!(pattern_resource_id, resource_id(WEBP_RESOURCE_TEXT_ID));
+        assert_eq!(
+            (position, origin, rotation, scale, repeat, sampling),
+            (2, 2, 3, 4, 4, 1)
+        );
+
+        set_descriptor_constant(
+            &mut render,
+            position,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [0.0, 0.0],
+            },
+        );
+        set_descriptor_constant(
+            &mut render,
+            rotation,
+            RuntimeValue::Scalar {
+                ty: ValueType::Angle,
+                value: 0.0,
+            },
+        );
+        set_descriptor_constant(
+            &mut render,
+            scale,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Float,
+                value: [1.0, 1.0],
+            },
+        );
+
+        let mut current = Some(target);
+        while let Some(index) = current {
+            let node = &mut render.nodes[index];
+            node.visibility_descriptor = visible;
+            node.position_descriptor = zero_position;
+            node.origin_descriptor = zero_position;
+            node.rotation_descriptor = zero_angle;
+            node.scale_descriptor = unit_scale;
+            node.opacity_descriptor = opaque;
+            current = node.parent.map(|parent| parent as usize);
+        }
+
+        let geometry_index = render.nodes[target]
+            .geometry_ref
+            .expect("ImagePattern ellipse geometry") as usize;
+        let center = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [0.0, 0.0],
+            },
+        );
+        let radius = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 2.0,
+            },
+        );
+        let angle = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Angle,
+                value: 0.0,
+            },
+        );
+        render.geometries[geometry_index].data = GeometryData::Ellipse {
+            center,
+            radius_x: radius,
+            radius_y: radius,
+            rotation: angle,
+        };
+
+        let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("semantic query");
+        let pattern = draw
+            .iter()
+            .find(|op| op.node_id == render.nodes[target].id)
+            .expect("ImagePattern draw op")
+            .image_pattern
+            .expect("ImagePattern semantic payload");
+        assert_eq!(pattern.resource_id, pattern_resource_id);
+        assert_eq!(pattern.repeat, 4);
+        assert_eq!(pattern.sampling, 1);
+
+        let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("ImagePattern raster");
+        let mut colors = pixels
+            .chunks_exact(4)
+            .filter(|rgba| rgba[3] > 0)
+            .map(|rgba| [rgba[0], rgba[1], rgba[2]]);
+        let first = colors.next().expect("ImagePattern coverage");
+        assert!(colors.any(|color| color != first));
     }
 
     #[test]

@@ -784,6 +784,8 @@ git diff --check
   The current Render product delta also covers a bounded source -> canonical -> FCBC -> loader -> semantic/raster handoff for
   root Rect/Image, nested Group/RoundedRect/Circle/Ellipse nodes, solid-fill Polyline/Polygon nodes, source active intervals
   lowered to FCBC Node flags, plus Image DrawOps and bounded nearest/linear decoded-image sampling with source-rect validation,
-  premultiplied compositing, and the #497 radial-gradient source -> canonical -> FCBC -> loader -> semantic/raster path;
-  source Line stroke lowering, full Path/Text geometry, ImagePattern, broader resource semantics, isolated compositing, and
-  semantic/raster conformance remain open under #295.
+  premultiplied compositing, the #497 radial-gradient source -> canonical -> FCBC -> loader -> semantic/raster path,
+  and the #499 existing-FCBC kind 4 ImagePattern -> loader -> semantic/raster path with inverse transform,
+  repeat-axis, and decoded nearest/linear sampling evidence;
+  source Line stroke lowering, source ImagePattern lowering and canonical writer integration, full Path/Text geometry,
+  broader resource semantics, isolated compositing, and semantic/raster conformance remain open under #295.
