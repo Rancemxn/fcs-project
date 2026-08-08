@@ -921,6 +921,8 @@ fn assemble_package(
             "sampling",
             "sizeDescriptor",
             "sourceDescriptors",
+            "startDescriptor",
+            "endDescriptor",
         ]);
         strings.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
         strings.dedup();
@@ -1034,7 +1036,6 @@ fn render_section(
     resources: &[ResourceFixture<'_>],
 ) -> FcbcResult<Vec<u8>> {
     if scene.paths().iter().next().is_some()
-        || scene.strokes().iter().next().is_some()
         || scene.clips().iter().next().is_some()
         || scene.glyph_runs().iter().next().is_some()
     {
@@ -1067,6 +1068,12 @@ fn render_section(
     let mut paint_indices = vec![0u32; scene.paints().len()];
     for (index, paint) in paint_order.iter().enumerate() {
         paint_indices[*paint] = index as u32;
+    }
+    let mut stroke_order: Vec<usize> = (0..scene.strokes().len()).collect();
+    stroke_order.sort_by_key(|index| scene.strokes()[*index].id().value());
+    let mut stroke_indices = vec![NULL_INDEX; scene.strokes().len()];
+    for (index, stroke) in stroke_order.iter().enumerate() {
+        stroke_indices[*stroke] = index as u32;
     }
 
     let mut roots = Vec::<(usize, usize)>::new();
@@ -1121,7 +1128,7 @@ fn render_section(
     put_u32(&mut payload, scene.geometries().len() as u32);
     put_u32(&mut payload, scene.paths().len() as u32);
     put_u32(&mut payload, scene.paints().len() as u32);
-    put_u32(&mut payload, 0);
+    put_u32(&mut payload, scene.strokes().len() as u32);
     put_u32(&mut payload, 0);
     put_u32(&mut payload, 0);
     for (encoded, source_layer) in layer_order.iter().enumerate() {
@@ -1155,18 +1162,41 @@ fn render_section(
             None => NULL_INDEX,
         };
         let geometry = node.geometry();
-        let paint = match node.kind() {
+        let (paint, stroke) = match node.kind() {
             fcs_model::CanonicalRenderNodeKind::Rect
             | fcs_model::CanonicalRenderNodeKind::RoundedRect
             | fcs_model::CanonicalRenderNodeKind::Circle
             | fcs_model::CanonicalRenderNodeKind::Ellipse
             | fcs_model::CanonicalRenderNodeKind::Polyline
             | fcs_model::CanonicalRenderNodeKind::Polygon => {
-                Some(node.fill_paint().ok_or_else(|| {
-                    FcbcError::new("fcbc.dangling-reference", "Render Rect has no fill paint")
-                })?)
+                if node.stroke().is_some() {
+                    return Err(FcbcError::new(
+                        "fcbc.render-unsupported",
+                        "product Render writer only supports strokes on Line nodes",
+                    ));
+                }
+                (
+                    Some(node.fill_paint().ok_or_else(|| {
+                        FcbcError::new("fcbc.dangling-reference", "Render Rect has no fill paint")
+                    })?),
+                    None,
+                )
             }
-            fcs_model::CanonicalRenderNodeKind::Group => None,
+            fcs_model::CanonicalRenderNodeKind::Line => {
+                if node.fill_paint().is_some() {
+                    return Err(FcbcError::new(
+                        "fcbc.render-unsupported",
+                        "Render Line cannot carry a fill paint",
+                    ));
+                }
+                (
+                    None,
+                    Some(node.stroke().ok_or_else(|| {
+                        FcbcError::new("fcbc.dangling-reference", "Render Line has no stroke")
+                    })?),
+                )
+            }
+            fcs_model::CanonicalRenderNodeKind::Group => (None, None),
             fcs_model::CanonicalRenderNodeKind::Image => {
                 if node.fill_paint().is_some() || node.stroke().is_some() {
                     return Err(FcbcError::new(
@@ -1174,7 +1204,7 @@ fn render_section(
                         "Render Image cannot carry fill or stroke",
                     ));
                 }
-                None
+                (None, None)
             }
             _ => {
                 return Err(FcbcError::new(
@@ -1200,6 +1230,17 @@ fn render_section(
                     FcbcError::new(
                         "fcbc.dangling-reference",
                         "Render node references a missing paint",
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(NULL_INDEX);
+        let stroke = stroke
+            .map(|stroke| {
+                stroke_indices.get(stroke).copied().ok_or_else(|| {
+                    FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render node references a missing stroke",
                     )
                 })
             })
@@ -1232,7 +1273,7 @@ fn render_section(
         put_u32(&mut record_payload, descriptor(node.visibility())?);
         put_u32(&mut record_payload, geometry);
         put_u32(&mut record_payload, paint);
-        put_u32(&mut record_payload, NULL_INDEX);
+        put_u32(&mut record_payload, stroke);
         put_u32(&mut record_payload, NULL_INDEX);
         put_u16(&mut record_payload, node.composite().ordinal());
         put_u16(&mut record_payload, 0);
@@ -1310,6 +1351,13 @@ fn render_section(
                         "rotationDescriptor",
                         value_int(i64::from(descriptor(*rotation)?)),
                     ),
+                ],
+                strings,
+            ),
+            CanonicalRenderGeometryData::Line { start, end } => value_object(
+                &[
+                    ("startDescriptor", value_int(i64::from(descriptor(*start)?))),
+                    ("endDescriptor", value_int(i64::from(descriptor(*end)?))),
                 ],
                 strings,
             ),
@@ -1439,6 +1487,32 @@ fn render_section(
         };
         if let Some(error) = kind {
             return Err(error);
+        }
+        payload.extend_from_slice(&record(record_payload));
+    }
+    for stroke_index in &stroke_order {
+        let stroke = &scene.strokes()[*stroke_index];
+        let mut record_payload = Vec::new();
+        put_u64(&mut record_payload, stroke.id().value());
+        put_u16(&mut record_payload, 0);
+        put_u16(&mut record_payload, 0);
+        put_u32(
+            &mut record_payload,
+            paint_indices.get(stroke.paint()).copied().ok_or_else(|| {
+                FcbcError::new(
+                    "fcbc.dangling-reference",
+                    "Render stroke references a missing paint",
+                )
+            })?,
+        );
+        put_u32(&mut record_payload, descriptor(stroke.width())?);
+        put_u16(&mut record_payload, stroke.cap().ordinal());
+        put_u16(&mut record_payload, stroke.join().ordinal());
+        put_f64(&mut record_payload, stroke.miter_limit());
+        put_u32(&mut record_payload, descriptor(stroke.dash_offset())?);
+        put_u32(&mut record_payload, stroke.dash().len() as u32);
+        for dash in stroke.dash() {
+            put_f64(&mut record_payload, *dash);
         }
         payload.extend_from_slice(&record(record_payload));
     }

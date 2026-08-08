@@ -1,6 +1,12 @@
 use std::path::Path;
 
 use fcs_fcbc::write_from_compilation;
+use fcs_model::{
+    CanonicalCompilation, CanonicalExpressionType, CanonicalRenderGeometry,
+    CanonicalRenderGeometryData, CanonicalRenderNode, CanonicalRenderNodeKind,
+    CanonicalRenderNodeSpec, CanonicalRenderScene, CanonicalRenderSceneSpec, CanonicalRenderStroke,
+    CanonicalStrokeCap, CanonicalStrokeJoin, CanonicalTextualId, EntityKind, StableIdRegistry,
+};
 use fcs_source::ResourceLimits;
 use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
@@ -39,6 +45,130 @@ fn node_record_offset(section: &[u8]) -> usize {
         offset += u32_at(section, offset) as usize;
     }
     offset
+}
+
+fn canonical_line_stroke_compilation() -> CanonicalCompilation {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+    notes {
+        tap {
+            id: "writer-stroke";
+            line: @main;
+            gameplay.time: 1beat;
+            presentation.positionX: 1px;
+        };
+    }
+}
+render profile 1.0.0 {
+    viewport { width: 16px; height: 16px; }
+    layer main {
+        pass: "overlay";
+        children {
+            rect sourceShape {
+                origin: vec2(0px, 0px);
+                size: vec2(10px, 10px);
+                fill: solid(#FFFFFFFF);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("canonical Line writer source parses");
+    let base = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .expect("canonical Line writer source lowers");
+    let original = base.chart().render().expect("source Render scene");
+    let original_node = &original.nodes()[0];
+    let original_geometry = &original.geometries()[0];
+    let CanonicalRenderGeometryData::Rect { origin, size } = original_geometry.data() else {
+        panic!("source fixture must provide a Rect geometry");
+    };
+    let width_descriptor = base
+        .chart()
+        .descriptors()
+        .expect("source Render descriptors")
+        .descriptors()
+        .iter()
+        .position(|descriptor| descriptor.property_type() == &CanonicalExpressionType::Length)
+        .expect("source fixture must provide a Length descriptor");
+    let mut ids = StableIdRegistry::new();
+    let stroke_id = ids
+        .insert(
+            EntityKind::RenderStroke,
+            CanonicalTextualId::explicit("writer-stroke").expect("stroke textual ID"),
+        )
+        .expect("stroke stable ID");
+    let stroke = CanonicalRenderStroke::new(
+        stroke_id,
+        0,
+        width_descriptor,
+        CanonicalStrokeCap::Butt,
+        CanonicalStrokeJoin::Miter,
+        4.0,
+        width_descriptor,
+        vec![1.0, 2.0],
+    )
+    .expect("canonical stroke");
+    let node = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+        id: original_node.id().clone(),
+        kind: CanonicalRenderNodeKind::Line,
+        parent: original_node.parent(),
+        layer: original_node.layer(),
+        document_order: original_node.document_order(),
+        z_order: original_node.z_order(),
+        attachment: original_node.attachment().clone(),
+        active: original_node.active(),
+        isolate: original_node.isolate(),
+        follow_hidden_attachment: original_node.follow_hidden_attachment(),
+        position: original_node.position(),
+        origin: original_node.origin(),
+        rotation: original_node.rotation(),
+        scale: original_node.scale(),
+        opacity: original_node.opacity(),
+        visibility: original_node.visibility(),
+        geometry: Some(0),
+        fill_paint: None,
+        stroke: Some(0),
+        clip: None,
+        composite: original_node.composite(),
+    })
+    .expect("canonical Line node");
+    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+        viewport: original.viewport(),
+        layers: original.layers().to_vec(),
+        nodes: vec![node],
+        geometries: vec![
+            CanonicalRenderGeometry::new(
+                original_geometry.id().clone(),
+                CanonicalRenderGeometryData::Line {
+                    start: *origin,
+                    end: *size,
+                },
+            )
+            .expect("canonical Line geometry"),
+        ],
+        paths: Vec::new(),
+        paints: vec![original.paints()[0].clone()],
+        strokes: vec![stroke],
+        clips: Vec::new(),
+        glyph_runs: Vec::new(),
+    })
+    .expect("canonical Line scene");
+    CanonicalCompilation::new(
+        base.chart().clone().with_render(scene),
+        base.resources().clone(),
+        base.distribution().clone(),
+    )
 }
 
 #[test]
@@ -94,6 +224,39 @@ fn solid_rect_source_reaches_product_render_loader() {
         section[node + 88..node + 92].copy_from_slice(&u32::MAX.to_le_bytes());
     });
     assert_eq!(load_render(&malformed), Err("render.invalid-reference"));
+}
+
+#[test]
+fn canonical_line_stroke_writer_reaches_product_render_loader() {
+    let compilation = canonical_line_stroke_compilation();
+    let scene = compilation.chart().render().expect("canonical Line scene");
+    let bytes = write_from_compilation(&compilation).expect("canonical Line FCBC writing");
+    let render = load_render(&bytes).expect("canonical Line product loader");
+
+    assert_eq!(render.nodes.len(), 1);
+    assert_eq!(render.nodes[0].kind, NodeKind::Line);
+    assert_eq!(render.nodes[0].fill_paint, None);
+    assert_eq!(render.nodes[0].stroke_ref, Some(0));
+    assert_eq!(render.geometries.len(), 1);
+    assert!(matches!(
+        render.geometries[0].data,
+        GeometryData::Line { start, end } if start != u32::MAX && end != u32::MAX
+    ));
+    assert_eq!(render.paints.len(), 1);
+    assert_eq!(render.strokes.len(), 1);
+    assert_eq!(render.strokes[0].id, scene.strokes()[0].id().value());
+    assert_eq!(render.strokes[0].cap, 1);
+    assert_eq!(render.strokes[0].join, 1);
+    assert_eq!(render.strokes[0].miter_limit.to_bits(), 4.0f64.to_bits());
+    assert_eq!(render.strokes[0].dash, vec![1.0, 2.0]);
+    assert_eq!(
+        render.core.descriptors[render.strokes[0].width_descriptor as usize].property_type,
+        fcs_fcbc::ValueType::Length
+    );
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Line semantic draw list");
+    assert_eq!(draw.len(), 1);
+    assert_eq!(draw[0].kind, NodeKind::Line);
+    assert!(draw[0].stroke.is_some());
 }
 
 #[test]
