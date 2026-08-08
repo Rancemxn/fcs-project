@@ -3,12 +3,12 @@ use fcs_model::{
     CanonicalCreditRole, CanonicalDescriptorKind, CanonicalDescriptorTable, CanonicalExpressionDag,
     CanonicalExpressionOpcode, CanonicalExpressionType, CanonicalExpressionValue,
     CanonicalGradientSpread, CanonicalJudgeShape, CanonicalNoteKind, CanonicalNoteScorePolicy,
-    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalProfile,
-    CanonicalProfileFeature, CanonicalRenderGeometryData, CanonicalRenderPaintData,
-    CanonicalRenderScene, CanonicalRequiredExtension, CanonicalResourceKind, CanonicalTrack,
-    CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece,
-    CanonicalTrackSegment, CanonicalTrackTarget, CanonicalTrackValue, CanonicalValue,
-    CanonicalValueType, DistributionMetadata,
+    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalPathCommand,
+    CanonicalProfile, CanonicalProfileFeature, CanonicalRenderGeometryData,
+    CanonicalRenderPaintData, CanonicalRenderScene, CanonicalRequiredExtension,
+    CanonicalResourceKind, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
+    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget,
+    CanonicalTrackValue, CanonicalValue, CanonicalValueType, DistributionMetadata,
 };
 use fcs_runtime::EasingId;
 use sha2::{Digest, Sha256};
@@ -911,6 +911,7 @@ fn assemble_package(
             "centerDescriptor",
             "destinationDescriptors",
             "originDescriptor",
+            "pathRef",
             "pointDescriptors",
             "radiusDescriptor",
             "radiusXDescriptor",
@@ -1035,13 +1036,10 @@ fn render_section(
     strings: &[&str],
     resources: &[ResourceFixture<'_>],
 ) -> FcbcResult<Vec<u8>> {
-    if scene.paths().iter().next().is_some()
-        || scene.clips().iter().next().is_some()
-        || scene.glyph_runs().iter().next().is_some()
-    {
+    if scene.clips().iter().next().is_some() || scene.glyph_runs().iter().next().is_some() {
         return Err(FcbcError::new(
             "fcbc.render-unsupported",
-            "product Render writer currently supports only root Rect and Image scenes",
+            "product Render writer currently does not support clips or glyph runs",
         ));
     }
     let descriptor = |index: usize| {
@@ -1062,6 +1060,12 @@ fn render_section(
     let mut geometry_indices = vec![0u32; scene.geometries().len()];
     for (index, geometry) in geometry_order.iter().enumerate() {
         geometry_indices[*geometry] = index as u32;
+    }
+    let mut path_order: Vec<usize> = (0..scene.paths().len()).collect();
+    path_order.sort_by_key(|index| scene.paths()[*index].id().value());
+    let mut path_indices = vec![NULL_INDEX; scene.paths().len()];
+    for (index, path) in path_order.iter().enumerate() {
+        path_indices[*path] = index as u32;
     }
     let mut paint_order: Vec<usize> = (0..scene.paints().len()).collect();
     paint_order.sort_by_key(|index| scene.paints()[*index].id().value());
@@ -1168,7 +1172,8 @@ fn render_section(
             | fcs_model::CanonicalRenderNodeKind::Circle
             | fcs_model::CanonicalRenderNodeKind::Ellipse
             | fcs_model::CanonicalRenderNodeKind::Polyline
-            | fcs_model::CanonicalRenderNodeKind::Polygon => {
+            | fcs_model::CanonicalRenderNodeKind::Polygon
+            | fcs_model::CanonicalRenderNodeKind::Path => {
                 if node.stroke().is_some() {
                     return Err(FcbcError::new(
                         "fcbc.render-unsupported",
@@ -1365,6 +1370,21 @@ fn render_section(
             | CanonicalRenderGeometryData::Polygon { points } => {
                 value_object(&[("pointDescriptors", descriptor_array(points)?)], strings)
             }
+            CanonicalRenderGeometryData::Path { path } => {
+                let path_ref = path_indices.get(*path).copied().ok_or_else(|| {
+                    FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render geometry references a missing path",
+                    )
+                })?;
+                if path_ref == NULL_INDEX {
+                    return Err(FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render geometry references a missing path",
+                    ));
+                }
+                value_object(&[("pathRef", value_int(i64::from(path_ref)))], strings)
+            }
             CanonicalRenderGeometryData::Image {
                 resource,
                 destination,
@@ -1409,6 +1429,84 @@ fn render_section(
         put_u16(&mut record_payload, geometry.kind().ordinal());
         put_u16(&mut record_payload, 0);
         record_payload.extend_from_slice(&fields);
+        payload.extend_from_slice(&record(record_payload));
+    }
+    for path_index in &path_order {
+        let path = &scene.paths()[*path_index];
+        let mut record_payload = Vec::new();
+        put_u64(&mut record_payload, path.id().value());
+        put_u16(&mut record_payload, 0);
+        put_u16(&mut record_payload, path.fill_rule().ordinal());
+        put_u32(&mut record_payload, path.commands().len() as u32);
+        for command in path.commands() {
+            let mut command_payload = Vec::new();
+            match command {
+                CanonicalPathCommand::MoveTo(point) => {
+                    put_u16(&mut command_payload, 1);
+                    put_u16(&mut command_payload, 0);
+                    put_u32(&mut command_payload, descriptor(*point)?);
+                }
+                CanonicalPathCommand::LineTo(point) => {
+                    put_u16(&mut command_payload, 2);
+                    put_u16(&mut command_payload, 0);
+                    put_u32(&mut command_payload, descriptor(*point)?);
+                }
+                CanonicalPathCommand::QuadraticTo(control, end) => {
+                    put_u16(&mut command_payload, 3);
+                    put_u16(&mut command_payload, 0);
+                    put_u32(&mut command_payload, descriptor(*control)?);
+                    put_u32(&mut command_payload, descriptor(*end)?);
+                }
+                CanonicalPathCommand::CubicTo(first, second, end) => {
+                    put_u16(&mut command_payload, 4);
+                    put_u16(&mut command_payload, 0);
+                    put_u32(&mut command_payload, descriptor(*first)?);
+                    put_u32(&mut command_payload, descriptor(*second)?);
+                    put_u32(&mut command_payload, descriptor(*end)?);
+                }
+                CanonicalPathCommand::Arc {
+                    center,
+                    radius,
+                    start_angle,
+                    end_angle,
+                    direction,
+                } => {
+                    put_u16(&mut command_payload, 5);
+                    put_u16(&mut command_payload, 0);
+                    put_u32(&mut command_payload, descriptor(*center)?);
+                    put_u32(&mut command_payload, descriptor(*radius)?);
+                    put_u32(&mut command_payload, descriptor(*start_angle)?);
+                    put_u32(&mut command_payload, descriptor(*end_angle)?);
+                    put_u16(&mut command_payload, direction.ordinal());
+                    put_u16(&mut command_payload, 0);
+                }
+                CanonicalPathCommand::EllipseArc {
+                    center,
+                    radius_x,
+                    radius_y,
+                    rotation,
+                    start_angle,
+                    end_angle,
+                    direction,
+                } => {
+                    put_u16(&mut command_payload, 6);
+                    put_u16(&mut command_payload, 0);
+                    put_u32(&mut command_payload, descriptor(*center)?);
+                    put_u32(&mut command_payload, descriptor(*radius_x)?);
+                    put_u32(&mut command_payload, descriptor(*radius_y)?);
+                    put_u32(&mut command_payload, descriptor(*rotation)?);
+                    put_u32(&mut command_payload, descriptor(*start_angle)?);
+                    put_u32(&mut command_payload, descriptor(*end_angle)?);
+                    put_u16(&mut command_payload, direction.ordinal());
+                    put_u16(&mut command_payload, 0);
+                }
+                CanonicalPathCommand::Close => {
+                    put_u16(&mut command_payload, 7);
+                    put_u16(&mut command_payload, 0);
+                }
+            }
+            payload.extend_from_slice(&record(command_payload));
+        }
         payload.extend_from_slice(&record(record_payload));
     }
     for paint_index in &paint_order {
