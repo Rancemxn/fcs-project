@@ -24,6 +24,7 @@ pub struct DrawOp {
     pub linear_gradient: Option<LinearGradientDrawOp>,
     pub radial_gradient: Option<RadialGradientDrawOp>,
     pub image_pattern: Option<ImagePatternDrawOp>,
+    pub stroke: Option<StrokeDrawOp>,
     pub image: Option<ImageDrawOp>,
     pub opacity: f64,
     pub world_matrix: [f64; 9],
@@ -49,6 +50,20 @@ pub struct ImagePatternDrawOp {
     pub scale: [f64; 2],
     pub repeat: u16,
     pub sampling: u16,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StrokeDrawOp {
+    pub width: f64,
+    pub cap: u16,
+    pub join: u16,
+    pub miter_limit: f64,
+    pub dash_offset: f64,
+    pub dash: Vec<f64>,
+    pub fill_rgba: Option<[f64; 4]>,
+    pub linear_gradient: Option<LinearGradientDrawOp>,
+    pub radial_gradient: Option<RadialGradientDrawOp>,
+    pub image_pattern: Option<ImagePatternDrawOp>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -119,6 +134,10 @@ enum LocalShape {
         radius_x: f64,
         radius_y: f64,
         rotation: f64,
+    },
+    Line {
+        start: [f64; 2],
+        end: [f64; 2],
     },
     Polygon {
         points: Vec<[f64; 2]>,
@@ -308,7 +327,7 @@ fn emit_draw_subtree(
             },
         );
     }
-    let (fill_rgba, linear_gradient, radial_gradient, image_pattern, bounds, image) =
+    let (fill_rgba, linear_gradient, radial_gradient, image_pattern, bounds, image, stroke) =
         if node.kind.is_drawable() {
             let geometry = geometry_evaluation(
                 chart,
@@ -338,6 +357,67 @@ fn emit_draw_subtree(
                 )?,
                 None => (None, None, None, None),
             };
+            let stroke = match node.stroke_ref {
+                Some(index) => {
+                    let stroke_record = chart
+                        .strokes
+                        .get(index as usize)
+                        .ok_or("render.invalid-reference")?;
+                    let paint = paint_rgba(
+                        chart,
+                        chart
+                            .paints
+                            .get(stroke_record.paint_ref as usize)
+                            .ok_or("render.invalid-reference")?,
+                        chart_time,
+                        attachment.environment,
+                    )?;
+                    let width = query_scalar_in(
+                        chart,
+                        stroke_record.width_descriptor,
+                        chart_time,
+                        ValueType::Length,
+                        attachment.environment,
+                    )?;
+                    let dash_offset = query_scalar_in(
+                        chart,
+                        stroke_record.dash_offset_descriptor,
+                        chart_time,
+                        ValueType::Length,
+                        attachment.environment,
+                    )?;
+                    let dash_total = stroke_record.dash.iter().sum::<f64>();
+                    if !width.is_finite()
+                        || width < 0.0
+                        || !dash_offset.is_finite()
+                        || !stroke_record.miter_limit.is_finite()
+                        || stroke_record.miter_limit < 1.0
+                        || !matches!(stroke_record.cap, 1..=3)
+                        || !matches!(stroke_record.join, 1..=3)
+                        || stroke_record
+                            .dash
+                            .iter()
+                            .any(|value| !value.is_finite() || *value < 0.0)
+                        || (!stroke_record.dash.is_empty()
+                            && (!dash_total.is_finite() || dash_total <= 0.0))
+                    {
+                        return Err("render.invalid-stroke");
+                    }
+                    Some(StrokeDrawOp {
+                        width,
+                        cap: stroke_record.cap,
+                        join: stroke_record.join,
+                        miter_limit: stroke_record.miter_limit,
+                        dash_offset,
+                        dash: stroke_record.dash.clone(),
+                        fill_rgba: paint.0,
+                        linear_gradient: paint.1.clone(),
+                        radial_gradient: paint.2.clone(),
+                        image_pattern: paint.3,
+                    })
+                }
+                None => None,
+            };
             (
                 paint.0,
                 paint.1,
@@ -345,9 +425,10 @@ fn emit_draw_subtree(
                 paint.3,
                 geometry.world_bounds,
                 geometry.image,
+                stroke,
             )
         } else {
-            (None, None, None, None, [0.0; 4], None)
+            (None, None, None, None, [0.0; 4], None, None)
         };
     let opacity = query_opacity(chart, node, chart_time, attachment.environment)?;
     let effective_opacity = inherited_opacity * opacity;
@@ -365,6 +446,7 @@ fn emit_draw_subtree(
             linear_gradient,
             radial_gradient,
             image_pattern,
+            stroke,
             image,
             opacity: effective_opacity,
             world_matrix,
@@ -894,9 +976,11 @@ struct RasterShape {
 }
 
 struct RasterOp {
+    kind: NodeKind,
     shape: RasterShape,
     clips: Vec<RasterShape>,
     source: RasterSource,
+    stroke: Option<StrokeDrawOp>,
     opacity: f64,
     composite: u16,
 }
@@ -973,6 +1057,7 @@ fn local_shape_contains(shape: &LocalShape, point: [f64; 2]) -> bool {
             radius_y,
             rotation,
         } => ellipse_contains(*center, *radius_x, *radius_y, *rotation, point),
+        LocalShape::Line { .. } => false,
         LocalShape::Polygon { points } => polygon_contains(points, point),
         LocalShape::Image { bounds } => {
             bounds[2] > bounds[0]
@@ -983,6 +1068,157 @@ fn local_shape_contains(shape: &LocalShape, point: [f64; 2]) -> bool {
                 && point[1] < bounds[3]
         }
     }
+}
+
+fn stroke_contains(
+    shape: &LocalShape,
+    point: [f64; 2],
+    stroke: &StrokeDrawOp,
+) -> Result<bool, &'static str> {
+    let LocalShape::Line { start, end } = shape else {
+        return Err("render.invalid-geometry");
+    };
+    if !stroke.width.is_finite()
+        || stroke.width < 0.0
+        || !stroke.dash_offset.is_finite()
+        || !stroke.miter_limit.is_finite()
+        || stroke.miter_limit < 1.0
+        || !matches!(stroke.cap, 1..=3)
+        || !matches!(stroke.join, 1..=3)
+        || stroke
+            .dash
+            .iter()
+            .any(|value| !value.is_finite() || *value < 0.0)
+    {
+        return Err("render.invalid-stroke");
+    }
+    if stroke.width == 0.0 {
+        return Ok(false);
+    }
+    let dx = end[0] - start[0];
+    let dy = end[1] - start[1];
+    let length = dx.hypot(dy);
+    if !length.is_finite() || !point.iter().all(|value| value.is_finite()) {
+        return Err("render.invalid-geometry");
+    }
+    if length == 0.0 {
+        return Ok(false);
+    }
+    let half_width = stroke.width / 2.0;
+    let direction = [dx / length, dy / length];
+    let perpendicular = ((point[0] - start[0]) * dy - (point[1] - start[1]) * dx).abs() / length;
+    let along = (point[0] - start[0]) * direction[0] + (point[1] - start[1]) * direction[1];
+    for (segment_start, segment_end) in stroke_segments(length, stroke.dash_offset, &stroke.dash)? {
+        if along >= segment_start && along <= segment_end && perpendicular <= half_width {
+            return Ok(true);
+        }
+        match stroke.cap {
+            1 => {}
+            2 => {
+                let endpoint = if along < segment_start {
+                    [
+                        start[0] + direction[0] * segment_start,
+                        start[1] + direction[1] * segment_start,
+                    ]
+                } else {
+                    [
+                        start[0] + direction[0] * segment_end,
+                        start[1] + direction[1] * segment_end,
+                    ]
+                };
+                if along < segment_start || along > segment_end {
+                    let dx = point[0] - endpoint[0];
+                    let dy = point[1] - endpoint[1];
+                    if dx.mul_add(dx, dy * dy) <= half_width * half_width {
+                        return Ok(true);
+                    }
+                }
+            }
+            3 => {
+                if along >= segment_start - half_width
+                    && along <= segment_end + half_width
+                    && perpendicular <= half_width
+                {
+                    return Ok(true);
+                }
+            }
+            _ => return Err("render.invalid-stroke"),
+        }
+    }
+    Ok(false)
+}
+
+fn stroke_segments(
+    length: f64,
+    dash_offset: f64,
+    dash: &[f64],
+) -> Result<Vec<(f64, f64)>, &'static str> {
+    if !length.is_finite() || length < 0.0 || !dash_offset.is_finite() {
+        return Err("render.invalid-stroke");
+    }
+    if dash.is_empty() {
+        return Ok((length > 0.0)
+            .then_some((0.0, length))
+            .into_iter()
+            .collect());
+    }
+    let total = dash.iter().try_fold(0.0, |total, value| {
+        if !value.is_finite() || *value < 0.0 {
+            None
+        } else {
+            Some(total + value)
+        }
+    });
+    let Some(total) = total.filter(|value| value.is_finite() && *value > 0.0) else {
+        return Err("render.invalid-stroke");
+    };
+    if length == 0.0 {
+        return Ok(Vec::new());
+    }
+
+    let mut index = 0usize;
+    let mut consumed = dash_offset.rem_euclid(total);
+    loop {
+        let element = dash[index];
+        if element > 0.0 && consumed < element {
+            break;
+        }
+        if element > 0.0 {
+            consumed = (consumed - element).max(0.0);
+        }
+        index = (index + 1) % dash.len();
+        if consumed == 0.0 && dash[index] > 0.0 {
+            break;
+        }
+    }
+
+    let mut result = Vec::new();
+    let mut distance = 0.0;
+    while distance < length {
+        let element = dash[index];
+        if element == 0.0 {
+            index = (index + 1) % dash.len();
+            consumed = 0.0;
+            continue;
+        }
+        let span = element - consumed;
+        let remaining = length - distance;
+        if span <= remaining {
+            let end = distance + span;
+            if index.is_multiple_of(2) && end > distance {
+                result.push((distance, end));
+            }
+            distance = end;
+            index = (index + 1) % dash.len();
+            consumed = 0.0;
+        } else {
+            if index.is_multiple_of(2) {
+                result.push((distance, length));
+            }
+            break;
+        }
+    }
+    Ok(result)
 }
 
 fn polygon_contains(points: &[[f64; 2]], point: [f64; 2]) -> bool {
@@ -1134,11 +1370,11 @@ fn composite_premultiplied(
     Ok(())
 }
 
-/// Rasterize supported fill geometry to tightly packed RGBA8 bytes.
+/// Rasterize supported fill and Line stroke geometry to tightly packed RGBA8 bytes.
 ///
 /// The Render 1.0 reference sample grid is used for Rect, RoundedRect, Circle,
-/// Ellipse, Polyline, and Polygon geometry; stroke/path/text coverage remains
-/// outside this bounded fill path.
+/// Ellipse, Line, Polyline, and Polygon geometry; path/text coverage remains
+/// outside this bounded path.
 pub fn rasterize_solid_rgba8(
     chart: &DecodedRenderChart,
     width: u32,
@@ -1147,7 +1383,7 @@ pub fn rasterize_solid_rgba8(
     rasterize_solid_rgba8_at(chart, 0.0, width, height)
 }
 
-/// Rasterize the bounded fill surface at one chart-time query point.
+/// Rasterize the bounded surface at one chart-time query point.
 pub fn rasterize_solid_rgba8_at(
     chart: &DecodedRenderChart,
     chart_time: f64,
@@ -1189,6 +1425,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                 | NodeKind::RoundedRect
                 | NodeKind::Circle
                 | NodeKind::Ellipse
+                | NodeKind::Line
                 | NodeKind::Polyline
                 | NodeKind::Polygon
                 | NodeKind::Image
@@ -1206,26 +1443,26 @@ pub fn rasterize_solid_rgba8_with_limits_at(
         };
         let source = if op.kind == NodeKind::Image {
             RasterSource::Image(op.image.ok_or("render.invalid-geometry")?)
-        } else if let Some(gradient) = op.linear_gradient.clone() {
-            RasterSource::LinearGradient(gradient)
-        } else if let Some(gradient) = op.radial_gradient.clone() {
-            RasterSource::RadialGradient(gradient)
-        } else if let Some(pattern) = op.image_pattern {
-            RasterSource::ImagePattern(pattern)
+        } else if op.kind == NodeKind::Line {
+            let stroke = op.stroke.as_ref().ok_or("render.invalid-stroke")?;
+            raster_paint_source(
+                stroke.fill_rgba,
+                stroke.linear_gradient.clone(),
+                stroke.radial_gradient.clone(),
+                stroke.image_pattern,
+            )?
+            .ok_or("render.invalid-stroke")?
         } else {
-            let Some(fill) = op.fill_rgba else {
+            let Some(source) = raster_paint_source(
+                op.fill_rgba,
+                op.linear_gradient.clone(),
+                op.radial_gradient.clone(),
+                op.image_pattern,
+            )?
+            else {
                 continue;
             };
-            if fill.iter().any(|value| !value.is_finite()) {
-                return Err("render.invalid-descriptor");
-            }
-            let alpha = fill[3].clamp(0.0, 1.0);
-            RasterSource::Solid([
-                fill[0].clamp(0.0, 1.0) * alpha,
-                fill[1].clamp(0.0, 1.0) * alpha,
-                fill[2].clamp(0.0, 1.0) * alpha,
-                alpha,
-            ])
+            source
         };
         let mut clips = Vec::new();
         for clip_id in &op.clip_chain {
@@ -1235,9 +1472,11 @@ pub fn rasterize_solid_rgba8_with_limits_at(
             }
         }
         raster_ops.push(RasterOp {
+            kind: op.kind,
             shape: raster_shape(shape),
             clips,
             source,
+            stroke: op.stroke.clone(),
             opacity: op.opacity,
             composite: op.composite,
         });
@@ -1269,7 +1508,16 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                         let Some(local_point) = raster_shape_local_point(&op.shape, point) else {
                             continue;
                         };
-                        if !local_shape_contains(&op.shape.shape, local_point)
+                        let covered = if op.kind == NodeKind::Line {
+                            stroke_contains(
+                                &op.shape.shape,
+                                local_point,
+                                op.stroke.as_ref().ok_or("render.invalid-stroke")?,
+                            )?
+                        } else {
+                            local_shape_contains(&op.shape.shape, local_point)
+                        };
+                        if !covered
                             || !op
                                 .clips
                                 .iter()
@@ -1307,6 +1555,36 @@ pub fn rasterize_solid_rgba8_with_limits_at(
         }
     }
     Ok(out)
+}
+
+fn raster_paint_source(
+    fill_rgba: Option<[f64; 4]>,
+    linear_gradient: Option<LinearGradientDrawOp>,
+    radial_gradient: Option<RadialGradientDrawOp>,
+    image_pattern: Option<ImagePatternDrawOp>,
+) -> Result<Option<RasterSource>, &'static str> {
+    if let Some(gradient) = linear_gradient {
+        return Ok(Some(RasterSource::LinearGradient(gradient)));
+    }
+    if let Some(gradient) = radial_gradient {
+        return Ok(Some(RasterSource::RadialGradient(gradient)));
+    }
+    if let Some(pattern) = image_pattern {
+        return Ok(Some(RasterSource::ImagePattern(pattern)));
+    }
+    let Some(fill) = fill_rgba else {
+        return Ok(None);
+    };
+    if fill.iter().any(|value| !value.is_finite()) {
+        return Err("render.invalid-descriptor");
+    }
+    let alpha = fill[3].clamp(0.0, 1.0);
+    Ok(Some(RasterSource::Solid([
+        fill[0].clamp(0.0, 1.0) * alpha,
+        fill[1].clamp(0.0, 1.0) * alpha,
+        fill[2].clamp(0.0, 1.0) * alpha,
+        alpha,
+    ])))
 }
 
 fn raster_source_at(
@@ -2002,6 +2280,30 @@ fn geometry_evaluation(
                 }),
                 None,
             )
+        }
+        GeometryData::Line { start, end } => {
+            let start = query_vec2_in(
+                chart,
+                *start,
+                chart_time,
+                ValueType::Vec2Length,
+                environment,
+            )?;
+            let end = query_vec2_in(chart, *end, chart_time, ValueType::Vec2Length, environment)?;
+            if !start
+                .iter()
+                .chain(end.iter())
+                .all(|value| value.is_finite())
+            {
+                return Err("render.invalid-geometry");
+            }
+            let bounds = [
+                start[0].min(end[0]),
+                start[1].min(end[1]),
+                start[0].max(end[0]),
+                start[1].max(end[1]),
+            ];
+            (bounds, Some(LocalShape::Line { start, end }), None)
         }
         GeometryData::Polyline { points } | GeometryData::Polygon { points } => {
             let mut values = Vec::with_capacity(points.len());

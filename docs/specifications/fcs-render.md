@@ -407,8 +407,9 @@ ImagePattern(resource,transform,repeat,sampling)
 Render source uses the following fixed spellings for the bounded Core paint
 constructors. The product implementation currently supports `solid`,
 `linearGradient`, and `radialGradient`; its semantic/raster path also consumes
-loader-validated FCBC `ImagePattern` kind 4 records. Source `imagePattern`
-lowering and canonical writer integration remain separate bounded work. The
+loader-validated FCBC `ImagePattern` kind 4 records and kind 7 `Line` stroke
+records. Source `imagePattern` and Line stroke lowering plus canonical writer
+integration remain separate bounded work. The
 gradient constructors take a
 compile-time array of `stop(offset, color)` calls and a compile-time spread
 string. `linearGradient` takes two `vec2<length>` expressions, while
