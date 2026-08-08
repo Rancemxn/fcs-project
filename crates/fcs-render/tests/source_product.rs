@@ -1013,4 +1013,10 @@ render profile 1.0.0 {
         draw.iter()
             .any(|operation| operation.kind == NodeKind::Path)
     );
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Path rasterization");
+    assert!(
+        pixels
+            .chunks_exact(4)
+            .any(|pixel| { pixel[0] > 200 && pixel[1] > 200 && pixel[2] > 200 && pixel[3] > 0 })
+    );
 }

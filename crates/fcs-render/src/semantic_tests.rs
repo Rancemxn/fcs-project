@@ -1,7 +1,8 @@
 use super::{
-    GradientStopDrawOp, ImagePatternDrawOp, LinearGradientDrawOp, LocalShape, RadialGradientDrawOp,
-    StrokeDrawOp, gradient_color, linear_axis, pattern_local_point, pattern_repeat_axes,
-    pattern_texel_index, radial_gradient_color, stroke_contains, stroke_segments,
+    GradientStopDrawOp, ImagePatternDrawOp, LinearGradientDrawOp, LocalShape, PathSubpath,
+    RadialGradientDrawOp, StrokeDrawOp, append_quadratic, gradient_color, linear_axis,
+    path_contains, pattern_local_point, pattern_repeat_axes, pattern_texel_index,
+    radial_gradient_color, stroke_contains, stroke_segments,
 };
 
 #[test]
@@ -199,4 +200,28 @@ fn line_stroke_caps_and_dash_boundaries_are_stable() {
         stroke_segments(4.0, 0.5, &[1.0, 1.0]).unwrap(),
         vec![(0.0, 0.5), (1.5, 2.5), (3.5, 4.0)]
     );
+}
+
+#[test]
+fn path_fill_rules_distinguish_nested_subpaths() {
+    let outer = PathSubpath {
+        points: vec![[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]],
+    };
+    let inner = PathSubpath {
+        points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
+    };
+    assert!(path_contains(
+        &[outer.clone(), inner.clone()],
+        1,
+        [2.0, 2.0]
+    ));
+    assert!(!path_contains(&[outer, inner], 2, [2.0, 2.0]));
+}
+
+#[test]
+fn path_flattening_preserves_collinear_control_overshoot() {
+    let mut points = vec![[0.0, 0.0]];
+    append_quadratic(&mut points, [0.0, 0.0], [10.0, 0.0], [1.0, 0.0], 0).unwrap();
+    assert!(points.len() > 2);
+    assert!(points.iter().any(|point| point[0] > 1.0));
 }

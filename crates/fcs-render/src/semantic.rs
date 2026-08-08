@@ -9,7 +9,9 @@ use fcs_fcbc::{
 
 use crate::{
     RenderLimits,
-    loader::{DecodedRenderChart, GeometryData, NodeKind, PaintData, PaintRecord},
+    loader::{
+        DecodedRenderChart, GeometryData, NodeKind, PaintData, PaintRecord, PathCommand, PathRecord,
+    },
 };
 
 /// One drawable operation after semantic attachment/visibility filtering.
@@ -116,6 +118,22 @@ struct EvaluatedShape {
     world_matrix: [f64; 9],
 }
 
+const PATH_FLATTEN_TOLERANCE: f64 = 1.0 / 1024.0;
+const PATH_MAX_FLATTEN_DEPTH: u8 = 32;
+
+#[derive(Clone)]
+struct PathSubpath {
+    points: Vec<[f64; 2]>,
+}
+
+#[derive(Clone, Copy)]
+struct ArcGeometry {
+    center: [f64; 2],
+    radius_x: f64,
+    radius_y: f64,
+    rotation: f64,
+}
+
 #[derive(Clone)]
 enum LocalShape {
     Rect {
@@ -141,6 +159,10 @@ enum LocalShape {
     },
     Polygon {
         points: Vec<[f64; 2]>,
+    },
+    Path {
+        subpaths: Vec<PathSubpath>,
+        fill_rule: u16,
     },
     Image {
         bounds: [f64; 4],
@@ -1059,6 +1081,10 @@ fn local_shape_contains(shape: &LocalShape, point: [f64; 2]) -> bool {
         } => ellipse_contains(*center, *radius_x, *radius_y, *rotation, point),
         LocalShape::Line { .. } => false,
         LocalShape::Polygon { points } => polygon_contains(points, point),
+        LocalShape::Path {
+            subpaths,
+            fill_rule,
+        } => path_contains(subpaths, *fill_rule, point),
         LocalShape::Image { bounds } => {
             bounds[2] > bounds[0]
                 && bounds[3] > bounds[1]
@@ -1249,6 +1275,43 @@ fn polygon_contains(points: &[[f64; 2]], point: [f64; 2]) -> bool {
     winding != 0
 }
 
+fn path_contains(subpaths: &[PathSubpath], fill_rule: u16, point: [f64; 2]) -> bool {
+    let mut winding = 0i32;
+    let mut crossings = 0u32;
+    for subpath in subpaths {
+        if subpath.points.len() < 2 {
+            continue;
+        }
+        for index in 0..subpath.points.len() {
+            let [x0, y0] = subpath.points[index];
+            let [x1, y1] = subpath.points[(index + 1) % subpath.points.len()];
+            let cross = (x1 - x0) * (point[1] - y0) - (point[0] - x0) * (y1 - y0);
+            if cross == 0.0
+                && point[0] >= x0.min(x1)
+                && point[0] <= x0.max(x1)
+                && point[1] >= y0.min(y1)
+                && point[1] <= y0.max(y1)
+            {
+                return true;
+            }
+            if y0 <= point[1] {
+                if y1 > point[1] && cross > 0.0 {
+                    winding += 1;
+                    crossings += 1;
+                }
+            } else if y1 <= point[1] && cross < 0.0 {
+                winding -= 1;
+                crossings += 1;
+            }
+        }
+    }
+    match fill_rule {
+        1 => winding != 0,
+        2 => crossings % 2 == 1,
+        _ => false,
+    }
+}
+
 fn rounded_rect_contains(bounds: [f64; 4], radii: [f64; 4], point: [f64; 2]) -> bool {
     let [left, bottom, right, top] = bounds;
     let [top_left, top_right, bottom_right, bottom_left] = radii;
@@ -1373,8 +1436,7 @@ fn composite_premultiplied(
 /// Rasterize supported fill and Line stroke geometry to tightly packed RGBA8 bytes.
 ///
 /// The Render 1.0 reference sample grid is used for Rect, RoundedRect, Circle,
-/// Ellipse, Line, Polyline, and Polygon geometry; path/text coverage remains
-/// outside this bounded path.
+/// Ellipse, Line, Polyline, Polygon, and solid-fill Path geometry.
 pub fn rasterize_solid_rgba8(
     chart: &DecodedRenderChart,
     width: u32,
@@ -1428,6 +1490,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                 | NodeKind::Line
                 | NodeKind::Polyline
                 | NodeKind::Polygon
+                | NodeKind::Path
                 | NodeKind::Image
         ) {
             continue;
@@ -2328,6 +2391,21 @@ fn geometry_evaluation(
             }
             (bounds, Some(LocalShape::Polygon { points: values }), None)
         }
+        GeometryData::Path { path_ref } => {
+            let path = chart
+                .paths
+                .get(*path_ref as usize)
+                .ok_or("render.invalid-reference")?;
+            let (subpaths, bounds) = evaluate_path(chart, path, chart_time, environment)?;
+            (
+                bounds,
+                Some(LocalShape::Path {
+                    subpaths,
+                    fill_rule: path.fill_rule,
+                }),
+                None,
+            )
+        }
         GeometryData::Image {
             resource_id,
             destination,
@@ -2393,6 +2471,384 @@ fn geometry_evaluation(
         shape,
         image,
     })
+}
+
+fn evaluate_path(
+    chart: &DecodedRenderChart,
+    path: &PathRecord,
+    chart_time: f64,
+    environment: EvaluationEnvironment,
+) -> Result<(Vec<PathSubpath>, [f64; 4]), &'static str> {
+    if !matches!(path.fill_rule, 1 | 2) {
+        return Err("render.invalid-geometry");
+    }
+    let mut subpaths = Vec::new();
+    let mut current_subpath: Option<PathSubpath> = None;
+    let mut current = None;
+    let mut start = None;
+    for command in &path.commands {
+        match command {
+            PathCommand::MoveTo(point) => {
+                if let Some(subpath) = current_subpath.take() {
+                    subpaths.push(subpath);
+                }
+                let point = query_vec2_in(
+                    chart,
+                    *point,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?;
+                ensure_finite_point(point)?;
+                current_subpath = Some(PathSubpath {
+                    points: vec![point],
+                });
+                current = Some(point);
+                start = Some(point);
+            }
+            PathCommand::LineTo(point) => {
+                let end = query_vec2_in(
+                    chart,
+                    *point,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?;
+                ensure_finite_point(end)?;
+                current.ok_or("render.invalid-geometry")?;
+                current_subpath
+                    .as_mut()
+                    .ok_or("render.invalid-geometry")?
+                    .points
+                    .push(end);
+                current = Some(end);
+            }
+            PathCommand::QuadraticTo(control, end) => {
+                let control = query_vec2_in(
+                    chart,
+                    *control,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?;
+                let end =
+                    query_vec2_in(chart, *end, chart_time, ValueType::Vec2Length, environment)?;
+                ensure_finite_point(control)?;
+                ensure_finite_point(end)?;
+                let from = current.ok_or("render.invalid-geometry")?;
+                let subpath = current_subpath.as_mut().ok_or("render.invalid-geometry")?;
+                append_quadratic(&mut subpath.points, from, control, end, 0)?;
+                current = Some(end);
+            }
+            PathCommand::CubicTo(first, second, end) => {
+                let first = query_vec2_in(
+                    chart,
+                    *first,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?;
+                let second = query_vec2_in(
+                    chart,
+                    *second,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?;
+                let end =
+                    query_vec2_in(chart, *end, chart_time, ValueType::Vec2Length, environment)?;
+                ensure_finite_point(first)?;
+                ensure_finite_point(second)?;
+                ensure_finite_point(end)?;
+                let from = current.ok_or("render.invalid-geometry")?;
+                let subpath = current_subpath.as_mut().ok_or("render.invalid-geometry")?;
+                append_cubic(&mut subpath.points, from, first, second, end, 0)?;
+                current = Some(end);
+            }
+            PathCommand::Arc {
+                center,
+                radius,
+                start_angle,
+                end_angle,
+                direction,
+            } => {
+                let center = query_vec2_in(
+                    chart,
+                    *center,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?;
+                let radius =
+                    query_scalar_in(chart, *radius, chart_time, ValueType::Length, environment)?;
+                let start_angle = query_scalar_in(
+                    chart,
+                    *start_angle,
+                    chart_time,
+                    ValueType::Angle,
+                    environment,
+                )?;
+                let end_angle =
+                    query_scalar_in(chart, *end_angle, chart_time, ValueType::Angle, environment)?;
+                let from = current.ok_or("render.invalid-geometry")?;
+                let subpath = current_subpath.as_mut().ok_or("render.invalid-geometry")?;
+                let end = append_arc(
+                    &mut subpath.points,
+                    from,
+                    ArcGeometry {
+                        center,
+                        radius_x: radius,
+                        radius_y: radius,
+                        rotation: 0.0,
+                    },
+                    start_angle,
+                    end_angle,
+                    *direction,
+                )?;
+                current = Some(end);
+            }
+            PathCommand::EllipseArc {
+                center,
+                radius_x,
+                radius_y,
+                rotation,
+                start_angle,
+                end_angle,
+                direction,
+            } => {
+                let center = query_vec2_in(
+                    chart,
+                    *center,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?;
+                let radius_x =
+                    query_scalar_in(chart, *radius_x, chart_time, ValueType::Length, environment)?;
+                let radius_y =
+                    query_scalar_in(chart, *radius_y, chart_time, ValueType::Length, environment)?;
+                let rotation =
+                    query_scalar_in(chart, *rotation, chart_time, ValueType::Angle, environment)?;
+                let start_angle = query_scalar_in(
+                    chart,
+                    *start_angle,
+                    chart_time,
+                    ValueType::Angle,
+                    environment,
+                )?;
+                let end_angle =
+                    query_scalar_in(chart, *end_angle, chart_time, ValueType::Angle, environment)?;
+                let from = current.ok_or("render.invalid-geometry")?;
+                let subpath = current_subpath.as_mut().ok_or("render.invalid-geometry")?;
+                let end = append_arc(
+                    &mut subpath.points,
+                    from,
+                    ArcGeometry {
+                        center,
+                        radius_x,
+                        radius_y,
+                        rotation,
+                    },
+                    start_angle,
+                    end_angle,
+                    *direction,
+                )?;
+                current = Some(end);
+            }
+            PathCommand::Close => {
+                let start = start.ok_or("render.invalid-geometry")?;
+                let subpath = current_subpath.as_mut().ok_or("render.invalid-geometry")?;
+                if subpath.points.last().copied() != Some(start) {
+                    subpath.points.push(start);
+                }
+                current = Some(start);
+            }
+        }
+    }
+    if let Some(subpath) = current_subpath {
+        subpaths.push(subpath);
+    }
+    let mut bounds: Option<[f64; 4]> = None;
+    for point in subpaths.iter().flat_map(|subpath| subpath.points.iter()) {
+        let [x, y] = *point;
+        bounds = Some(match bounds {
+            Some([left, bottom, right, top]) => {
+                [left.min(x), bottom.min(y), right.max(x), top.max(y)]
+            }
+            None => [x, y, x, y],
+        });
+    }
+    let bounds = bounds.ok_or("render.invalid-geometry")?;
+    Ok((subpaths, bounds))
+}
+
+fn ensure_finite_point(point: [f64; 2]) -> Result<(), &'static str> {
+    point
+        .iter()
+        .all(|value| value.is_finite())
+        .then_some(())
+        .ok_or("render.invalid-geometry")
+}
+
+fn append_quadratic(
+    points: &mut Vec<[f64; 2]>,
+    start: [f64; 2],
+    control: [f64; 2],
+    end: [f64; 2],
+    depth: u8,
+) -> Result<(), &'static str> {
+    let flatness = distance_to_segment(control, start, end);
+    if !flatness.is_finite() {
+        return Err("render.invalid-geometry");
+    }
+    if flatness <= PATH_FLATTEN_TOLERANCE {
+        points.push(end);
+        return Ok(());
+    }
+    if depth >= PATH_MAX_FLATTEN_DEPTH {
+        return Err("render.limit-exceeded");
+    }
+    let first = midpoint(start, control);
+    let second = midpoint(control, end);
+    let middle = midpoint(first, second);
+    append_quadratic(points, start, first, middle, depth + 1)?;
+    append_quadratic(points, middle, second, end, depth + 1)
+}
+
+fn append_cubic(
+    points: &mut Vec<[f64; 2]>,
+    start: [f64; 2],
+    first: [f64; 2],
+    second: [f64; 2],
+    end: [f64; 2],
+    depth: u8,
+) -> Result<(), &'static str> {
+    let flatness =
+        distance_to_segment(first, start, end).max(distance_to_segment(second, start, end));
+    if !flatness.is_finite() {
+        return Err("render.invalid-geometry");
+    }
+    if flatness <= PATH_FLATTEN_TOLERANCE {
+        points.push(end);
+        return Ok(());
+    }
+    if depth >= PATH_MAX_FLATTEN_DEPTH {
+        return Err("render.limit-exceeded");
+    }
+    let first_mid = midpoint(start, first);
+    let center = midpoint(first, second);
+    let second_mid = midpoint(second, end);
+    let left_center = midpoint(first_mid, center);
+    let right_center = midpoint(center, second_mid);
+    let middle = midpoint(left_center, right_center);
+    append_cubic(points, start, first_mid, left_center, middle, depth + 1)?;
+    append_cubic(points, middle, right_center, second_mid, end, depth + 1)
+}
+
+fn append_arc(
+    points: &mut Vec<[f64; 2]>,
+    current: [f64; 2],
+    geometry: ArcGeometry,
+    start_angle: f64,
+    end_angle: f64,
+    direction: u16,
+) -> Result<[f64; 2], &'static str> {
+    if geometry.radius_x < 0.0
+        || geometry.radius_y < 0.0
+        || !geometry.center.iter().all(|value| value.is_finite())
+        || !geometry.radius_x.is_finite()
+        || !geometry.radius_y.is_finite()
+        || !geometry.rotation.is_finite()
+        || !start_angle.is_finite()
+        || !end_angle.is_finite()
+        || !matches!(direction, 1 | 2)
+    {
+        return Err("render.invalid-geometry");
+    }
+    let sweep = end_angle - start_angle;
+    if !sweep.is_finite()
+        || (sweep != 0.0 && ((direction == 1 && sweep >= 0.0) || (direction == 2 && sweep <= 0.0)))
+    {
+        return Err("render.invalid-geometry");
+    }
+    let start = arc_point(geometry, start_angle);
+    let end = arc_point(geometry, end_angle);
+    ensure_finite_point(start)?;
+    ensure_finite_point(end)?;
+    if current != start {
+        points.push(start);
+    }
+    append_arc_segment(points, geometry, start_angle, end_angle, 0)?;
+    Ok(end)
+}
+
+fn append_arc_segment(
+    points: &mut Vec<[f64; 2]>,
+    geometry: ArcGeometry,
+    start_angle: f64,
+    end_angle: f64,
+    depth: u8,
+) -> Result<(), &'static str> {
+    let middle_angle = start_angle + (end_angle - start_angle) / 2.0;
+    let start = arc_point(geometry, start_angle);
+    let end = arc_point(geometry, end_angle);
+    let middle = arc_point(geometry, middle_angle);
+    ensure_finite_point(middle)?;
+    let flatness = distance_to_segment(middle, start, end);
+    if !flatness.is_finite() {
+        return Err("render.invalid-geometry");
+    }
+    if (end_angle - start_angle).abs() <= std::f64::consts::PI && flatness <= PATH_FLATTEN_TOLERANCE
+    {
+        points.push(end);
+        return Ok(());
+    }
+    if depth >= PATH_MAX_FLATTEN_DEPTH {
+        return Err("render.limit-exceeded");
+    }
+    append_arc_segment(points, geometry, start_angle, middle_angle, depth + 1)?;
+    append_arc_segment(points, geometry, middle_angle, end_angle, depth + 1)
+}
+
+fn arc_point(geometry: ArcGeometry, angle: f64) -> [f64; 2] {
+    let (sin_angle, cos_angle) = angle.sin_cos();
+    let (sin_rotation, cos_rotation) = geometry.rotation.sin_cos();
+    [
+        geometry.center[0] + (geometry.radius_x * cos_angle) * cos_rotation
+            - (geometry.radius_y * sin_angle) * sin_rotation,
+        geometry.center[1]
+            + (geometry.radius_x * cos_angle) * sin_rotation
+            + (geometry.radius_y * sin_angle) * cos_rotation,
+    ]
+}
+
+fn midpoint(first: [f64; 2], second: [f64; 2]) -> [f64; 2] {
+    [
+        first[0] / 2.0 + second[0] / 2.0,
+        first[1] / 2.0 + second[1] / 2.0,
+    ]
+}
+
+fn distance_to_segment(point: [f64; 2], start: [f64; 2], end: [f64; 2]) -> f64 {
+    let dx = end[0] - start[0];
+    let dy = end[1] - start[1];
+    let length = dx.hypot(dy);
+    if length == 0.0 {
+        return (point[0] - start[0]).hypot(point[1] - start[1]);
+    }
+    if !length.is_finite() {
+        return f64::INFINITY;
+    }
+    let projection = (((point[0] - start[0]) * dx) + ((point[1] - start[1]) * dy)) / length;
+    if !projection.is_finite() {
+        return f64::INFINITY;
+    }
+    let along = projection.clamp(0.0, length);
+    let nearest = [
+        start[0] + along * dx / length,
+        start[1] + along * dy / length,
+    ];
+    (point[0] - nearest[0]).hypot(point[1] - nearest[1])
 }
 
 fn validate_source_rect(

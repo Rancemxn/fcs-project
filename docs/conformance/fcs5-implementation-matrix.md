@@ -213,9 +213,10 @@ Issue #509 adds the bounded canonical Path geometry and PathRecord writer path
 through the product Render loader, including all seven command record variants and
 descriptor/table round-trip evidence in `source_product::canonical_path_writer_reaches_product_render_loader`.
 Source Line stroke lowering, source ImagePattern lowering, source Path lowering,
-Path semantic/raster coverage, broader canonical writer coverage, Polyline/Text, and
-descriptor-driven gradient stroke lowering remain outside these bounded units; no
-Frozen or final I10 claim changes.
+Path stroke/text coverage, broader canonical writer coverage, Polyline/Text, and
+descriptor-driven gradient stroke lowering remain outside these bounded units. The
+solid-fill Path semantic/raster follow-up does not change any Frozen or final I10
+claim.
 
 ## Credit stable identity delta
 
