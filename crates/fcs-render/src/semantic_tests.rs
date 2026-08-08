@@ -1,5 +1,6 @@
 use super::{
-    GradientStopDrawOp, LinearGradientDrawOp, RadialGradientDrawOp, gradient_color, linear_axis,
+    GradientStopDrawOp, ImagePatternDrawOp, LinearGradientDrawOp, RadialGradientDrawOp,
+    gradient_color, linear_axis, pattern_local_point, pattern_repeat_axes, pattern_texel_index,
     radial_gradient_color,
 };
 
@@ -137,4 +138,28 @@ fn radial_gradient_with_no_nonnegative_root_is_transparent() {
         radial_gradient_color(&gradient, [1.0, 0.0]).unwrap(),
         [1.0, 0.0, 0.0, 1.0]
     );
+}
+
+#[test]
+fn image_pattern_transform_inverse_and_repeat_edges_are_stable() {
+    let pattern = ImagePatternDrawOp {
+        resource_id: 1,
+        position: [1.0, 2.0],
+        origin: [0.0, 0.0],
+        rotation: 0.0,
+        scale: [2.0, 4.0],
+        repeat: 4,
+        sampling: 1,
+    };
+    assert_eq!(pattern_local_point(pattern, [3.0, 6.0]), Some([1.0, 1.0]));
+    assert_eq!(pattern_repeat_axes(1).unwrap(), (false, false));
+    assert_eq!(pattern_repeat_axes(4).unwrap(), (true, true));
+    assert_eq!(pattern_texel_index(-0.25, 2, true), Some(1));
+    assert_eq!(pattern_texel_index(2.0, 2, false), None);
+
+    let singular = ImagePatternDrawOp {
+        scale: [0.0, 1.0],
+        ..pattern
+    };
+    assert_eq!(pattern_local_point(singular, [1.0, 2.0]), None);
 }

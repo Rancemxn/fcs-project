@@ -23,6 +23,7 @@ pub struct DrawOp {
     pub fill_rgba: Option<[f64; 4]>,
     pub linear_gradient: Option<LinearGradientDrawOp>,
     pub radial_gradient: Option<RadialGradientDrawOp>,
+    pub image_pattern: Option<ImagePatternDrawOp>,
     pub image: Option<ImageDrawOp>,
     pub opacity: f64,
     pub world_matrix: [f64; 9],
@@ -36,6 +37,17 @@ pub struct ImageDrawOp {
     pub resource_id: u64,
     pub destination: [f64; 4],
     pub source: [f64; 4],
+    pub sampling: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImagePatternDrawOp {
+    pub resource_id: u64,
+    pub position: [f64; 2],
+    pub origin: [f64; 2],
+    pub rotation: f64,
+    pub scale: [f64; 2],
+    pub repeat: u16,
     pub sampling: u16,
 }
 
@@ -61,6 +73,7 @@ type PaintParts = (
     Option<[f64; 4]>,
     Option<LinearGradientDrawOp>,
     Option<RadialGradientDrawOp>,
+    Option<ImagePatternDrawOp>,
 );
 
 #[derive(Clone, Debug, PartialEq)]
@@ -295,45 +308,47 @@ fn emit_draw_subtree(
             },
         );
     }
-    let (fill_rgba, linear_gradient, radial_gradient, bounds, image) = if node.kind.is_drawable() {
-        let geometry = geometry_evaluation(
-            chart,
-            node.geometry_ref,
-            chart_time,
-            attachment.environment,
-            world_matrix,
-        )?;
-        if let Some(shape) = geometry.shape {
-            scene.shapes.insert(
-                node.id,
-                EvaluatedShape {
-                    shape,
-                    world_matrix,
-                },
-            );
-        }
-        let paint = match node.fill_paint {
-            Some(index) => paint_rgba(
+    let (fill_rgba, linear_gradient, radial_gradient, image_pattern, bounds, image) =
+        if node.kind.is_drawable() {
+            let geometry = geometry_evaluation(
                 chart,
-                chart
-                    .paints
-                    .get(index as usize)
-                    .ok_or("render.invalid-reference")?,
+                node.geometry_ref,
                 chart_time,
                 attachment.environment,
-            )?,
-            None => (None, None, None),
+                world_matrix,
+            )?;
+            if let Some(shape) = geometry.shape {
+                scene.shapes.insert(
+                    node.id,
+                    EvaluatedShape {
+                        shape,
+                        world_matrix,
+                    },
+                );
+            }
+            let paint = match node.fill_paint {
+                Some(index) => paint_rgba(
+                    chart,
+                    chart
+                        .paints
+                        .get(index as usize)
+                        .ok_or("render.invalid-reference")?,
+                    chart_time,
+                    attachment.environment,
+                )?,
+                None => (None, None, None, None),
+            };
+            (
+                paint.0,
+                paint.1,
+                paint.2,
+                paint.3,
+                geometry.world_bounds,
+                geometry.image,
+            )
+        } else {
+            (None, None, None, None, [0.0; 4], None)
         };
-        (
-            paint.0,
-            paint.1,
-            paint.2,
-            geometry.world_bounds,
-            geometry.image,
-        )
-    } else {
-        (None, None, None, [0.0; 4], None)
-    };
     let opacity = query_opacity(chart, node, chart_time, attachment.environment)?;
     let effective_opacity = inherited_opacity * opacity;
     if !effective_opacity.is_finite() {
@@ -349,6 +364,7 @@ fn emit_draw_subtree(
             fill_rgba,
             linear_gradient,
             radial_gradient,
+            image_pattern,
             image,
             opacity: effective_opacity,
             world_matrix,
@@ -889,6 +905,7 @@ enum RasterSource {
     Solid([f64; 4]),
     LinearGradient(LinearGradientDrawOp),
     RadialGradient(RadialGradientDrawOp),
+    ImagePattern(ImagePatternDrawOp),
     Image(ImageDrawOp),
 }
 
@@ -1193,6 +1210,8 @@ pub fn rasterize_solid_rgba8_with_limits_at(
             RasterSource::LinearGradient(gradient)
         } else if let Some(gradient) = op.radial_gradient.clone() {
             RasterSource::RadialGradient(gradient)
+        } else if let Some(pattern) = op.image_pattern {
+            RasterSource::ImagePattern(pattern)
         } else {
             let Some(fill) = op.fill_rgba else {
                 continue;
@@ -1300,6 +1319,12 @@ fn raster_source_at(
         RasterSource::Solid(value) => *value,
         RasterSource::LinearGradient(gradient) => gradient_color(gradient, local_point)?,
         RasterSource::RadialGradient(gradient) => radial_gradient_color(gradient, local_point)?,
+        RasterSource::ImagePattern(pattern) => {
+            let Some(value) = sample_image_pattern(chart, *pattern, local_point)? else {
+                return Ok(None);
+            };
+            value
+        }
         RasterSource::Image(image) => {
             let Some(value) = sample_image(chart, *image, local_point)? else {
                 return Ok(None);
@@ -1438,6 +1463,111 @@ fn premultiply(color: [f64; 4]) -> [f64; 4] {
     ]
 }
 
+fn pattern_local_point(pattern: ImagePatternDrawOp, point: [f64; 2]) -> Option<[f64; 2]> {
+    let mut matrix = translation_matrix(pattern.position[0], pattern.position[1]);
+    matrix = multiply_matrix(
+        matrix,
+        translation_matrix(pattern.origin[0], pattern.origin[1]),
+    )
+    .ok()?;
+    matrix = multiply_matrix(matrix, rotation_matrix(pattern.rotation)).ok()?;
+    matrix = multiply_matrix(matrix, scale_matrix(pattern.scale[0], pattern.scale[1])).ok()?;
+    matrix = multiply_matrix(
+        matrix,
+        translation_matrix(-pattern.origin[0], -pattern.origin[1]),
+    )
+    .ok()?;
+    transform_point(inverse_affine(matrix)?, point).ok()
+}
+
+fn pattern_repeat_axes(repeat: u16) -> Result<(bool, bool), &'static str> {
+    match repeat {
+        1 => Ok((false, false)),
+        2 => Ok((true, false)),
+        3 => Ok((false, true)),
+        4 => Ok((true, true)),
+        _ => Err("render.invalid-paint"),
+    }
+}
+
+fn pattern_texel_index(coordinate: f64, dimension: u32, repeat: bool) -> Option<u32> {
+    if !coordinate.is_finite() || dimension == 0 {
+        return None;
+    }
+    let extent = f64::from(dimension);
+    if repeat {
+        Some(coordinate.rem_euclid(extent).floor() as u32)
+    } else if (0.0..extent).contains(&coordinate) {
+        Some(coordinate as u32)
+    } else {
+        None
+    }
+}
+
+fn sample_image_pattern(
+    chart: &DecodedRenderChart,
+    pattern: ImagePatternDrawOp,
+    point: [f64; 2],
+) -> Result<Option<[f64; 4]>, &'static str> {
+    let (repeat_x, repeat_y) = pattern_repeat_axes(pattern.repeat)?;
+    let local_point = pattern_local_point(pattern, point);
+    let Some([x, y]) = local_point else {
+        return Ok(None);
+    };
+    if !x.is_finite() || !y.is_finite() {
+        return Err("render.invalid-geometry");
+    }
+    let decoded = chart
+        .decoded_images
+        .get(&pattern.resource_id)
+        .ok_or("render.resource-not-found")?;
+    if (!repeat_x && !(0.0..f64::from(decoded.width)).contains(&x))
+        || (!repeat_y && !(0.0..f64::from(decoded.height)).contains(&y))
+    {
+        return Ok(None);
+    }
+    match pattern.sampling {
+        1 => {
+            let Some(x) = pattern_texel_index(x.floor(), decoded.width, repeat_x) else {
+                return Ok(None);
+            };
+            let Some(y) = pattern_texel_index(y.floor(), decoded.height, repeat_y) else {
+                return Ok(None);
+            };
+            Ok(Some(image_texel(decoded, x, y)))
+        }
+        2 => {
+            let fractional_x = x - 0.5;
+            let fractional_y = y - 0.5;
+            let base_x = fractional_x.floor();
+            let base_y = fractional_y.floor();
+            let tx = (fractional_x - base_x).clamp(0.0, 1.0);
+            let ty = (fractional_y - base_y).clamp(0.0, 1.0);
+            let x0 = pattern_texel_index(base_x, decoded.width, repeat_x);
+            let x1 = pattern_texel_index(base_x + 1.0, decoded.width, repeat_x);
+            let y0 = pattern_texel_index(base_y, decoded.height, repeat_y);
+            let y1 = pattern_texel_index(base_y + 1.0, decoded.height, repeat_y);
+            let texel = |x: Option<u32>, y: Option<u32>| {
+                x.zip(y)
+                    .map_or([0.0; 4], |(x, y)| image_texel(decoded, x, y))
+            };
+            let top_left = texel(x0, y0);
+            let top_right = texel(x1, y0);
+            let bottom_left = texel(x0, y1);
+            let bottom_right = texel(x1, y1);
+            let mut value = [0.0; 4];
+            for component in 0..4 {
+                let top = top_left[component] + (top_right[component] - top_left[component]) * tx;
+                let bottom = bottom_left[component]
+                    + (bottom_right[component] - bottom_left[component]) * tx;
+                value[component] = top + (bottom - top) * ty;
+            }
+            Ok(Some(value))
+        }
+        _ => Err("render.invalid-geometry"),
+    }
+}
+
 fn sample_image(
     chart: &DecodedRenderChart,
     image: ImageDrawOp,
@@ -1558,12 +1688,12 @@ fn paint_rgba(
         // `colorDescriptor` is an FCBC descriptor index, not a constant-pool slot
         // (fcs-render.md sections 14.5 and 15.3); the loader already validated it as a
         // Color descriptor, so an unresolvable or wrongly-typed result is an invariant
-        // violation. ImagePattern evaluation remains outside this bounded gradient path.
+        // violation. ImagePattern uses the same validated ResourceData binding as Image.
         PaintData::Solid { color } => {
             let evaluation = query_descriptor(&chart.core, *color, chart_time, environment)
                 .map_err(|_| "render.invalid-descriptor")?;
             match evaluation.value {
-                RuntimeValue::Color(rgba) => Ok((Some(rgba), None, None)),
+                RuntimeValue::Color(rgba) => Ok((Some(rgba), None, None, None)),
                 _ => Err("render.invalid-descriptor"),
             }
         }
@@ -1603,6 +1733,7 @@ fn paint_rgba(
                     spread: *spread,
                     stops,
                 }),
+                None,
                 None,
             ))
         }
@@ -1670,9 +1801,49 @@ fn paint_rgba(
                     spread: *spread,
                     stops,
                 }),
+                None,
             ))
         }
-        _ => Ok((None, None, None)),
+        PaintData::ImagePattern {
+            resource_id,
+            position,
+            origin,
+            rotation,
+            scale,
+            repeat,
+            sampling,
+        } => Ok((
+            None,
+            None,
+            None,
+            Some(ImagePatternDrawOp {
+                resource_id: *resource_id,
+                position: query_vec2_in(
+                    chart,
+                    *position,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?,
+                origin: query_vec2_in(
+                    chart,
+                    *origin,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?,
+                rotation: query_scalar_in(
+                    chart,
+                    *rotation,
+                    chart_time,
+                    ValueType::Angle,
+                    environment,
+                )?,
+                scale: query_vec2_in(chart, *scale, chart_time, ValueType::Vec2Float, environment)?,
+                repeat: *repeat,
+                sampling: *sampling,
+            }),
+        )),
     }
 }
 
