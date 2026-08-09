@@ -274,7 +274,10 @@ mod tests {
 
     fn make_world_attached(render: &mut DecodedRenderChart) {
         for node in &mut render.nodes {
-            node.attachment = Attachment { kind: 1, id: 0 };
+            // The fixture Text subtree's size descriptor reads Note distance.
+            if node.kind != NodeKind::Text && !(node.kind == NodeKind::Group && node.isolated()) {
+                node.attachment = Attachment { kind: 1, id: 0 };
+            }
         }
     }
 
@@ -1335,10 +1338,12 @@ mod tests {
         );
 
         for node in &mut render.nodes {
-            node.attachment = Attachment {
-                kind: 3,
-                id: line_id,
-            };
+            if node.kind != NodeKind::Text && !(node.kind == NodeKind::Group && node.isolated()) {
+                node.attachment = Attachment {
+                    kind: 3,
+                    id: line_id,
+                };
+            }
         }
         let line_rect = evaluate_semantic_draw_list_at(&render, 0.0)
             .expect("Line attachment query")
