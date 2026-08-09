@@ -222,8 +222,9 @@ the existing line stroke semantic/raster path. GitHub Actions Full Gate run
 `a9eb9594fb70b507f5c7738857b63fbc234519aa`.
 Source Line stroke lowering, source ImagePattern lowering, source Path lowering,
 source Path grammar, Path text coverage, broader canonical writer coverage,
-Polygon stroke coverage, source Text grammar/lowering, and descriptor-driven gradient stroke lowering remain outside these
-bounded units. These Render deltas do not change any Frozen or final I10 claim.
+RoundedRect/Circle/Ellipse stroke coverage, source Text grammar/lowering, and
+descriptor-driven gradient stroke lowering remain outside these bounded units.
+These Render deltas do not change any Frozen or final I10 claim.
 
 ## Bounded Render Path stroke-only delta
 
@@ -269,6 +270,21 @@ GitHub Actions Full Gate run 31291361028 (job 93188986800) passed on exact head
 `927f9542091a079c68e73c2908989814211c997f` (`workflow_dispatch`). Source stroke
 lowering, broader canonical writer coverage, and final Render closure remain
 open; this unit does not change any Frozen or final I10 claim.
+
+## Bounded Render Rect stroke-only delta
+
+The bounded Rect stroke follow-up extends the product writer to accept a
+stroke-only Rect. The semantic evaluator reuses the shared stroke path with a
+closed four-segment rectangle, and the raster path now includes Rect stroke
+paint sources. The fixture `source_product::canonical_rect_stroke_writer_reaches_product_render_loader`
+verifies the Rect geometry/StrokeRecord handoff, semantic stroke output, and
+non-empty raster coverage.
+
+GitHub Actions Full Gate run 31292754971 (job 93192672568) passed on exact head
+`16f299f8a81c987c88418ae4022f0d5ba639bc43` (`workflow_dispatch`).
+RoundedRect/Circle/Ellipse stroke coverage, source stroke lowering, broader
+canonical writer coverage, and final Render closure remain open; this unit does
+not change any Frozen or final I10 claim.
 
 ## Bounded Render Clip writer delta
 
