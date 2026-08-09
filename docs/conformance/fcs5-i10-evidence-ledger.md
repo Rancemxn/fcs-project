@@ -43,10 +43,22 @@ stroke-only open Polyline writer/loader round trip, preserves the implicit fill
 closure separately from `closed=false` stroke semantics, and verifies decoded
 StrokeRecord binding, semantic stroke output, and non-empty raster coverage
 through `source_product::canonical_polyline_stroke_writer_reaches_product_render_loader`.
-Polygon stroke coverage, source stroke lowering, broader canonical writer
+Polygon stroke coverage is recorded below; source stroke lowering, broader canonical writer
 coverage, and final Render closure remain open. Local tests, fuzz, and executable
 fixtures remain unrun; Codespaces remain outside the verification environment,
 and GitHub Actions remains the only complete Full Gate source.
+
+The bounded Polygon stroke follow-up passed GitHub Actions Full Gate run
+31291361028, job 93188986800, on exact head
+`927f9542091a079c68e73c2908989814211c997f` (`workflow_dispatch`). It permits a
+stroke-only closed Polygon writer/loader round trip, reuses the shared stroke
+path with `closed=true`, and verifies decoded geometry/StrokeRecord binding,
+closed-path semantic output, and non-empty raster coverage through
+`source_product::canonical_polygon_stroke_writer_reaches_product_render_loader`.
+Source stroke lowering, broader canonical writer coverage, and final Render
+closure remain open. Local tests, fuzz, and executable fixtures remain unrun;
+Codespaces remain outside the verification environment, and GitHub Actions
+remains the only complete Full Gate source.
 
 The canonical Clip writer follow-up passed GitHub Actions Full Gate run
 31286712377, job 93176761343, on exact head
@@ -119,6 +131,7 @@ Gate source.
 | Render Text stroke delta | `source_product::canonical_text_stroke_writer_reaches_product_render_loader` | Text fill/stroke/stroke-only writer handoff, decoded glyph contour stroke semantics, and non-empty raster coverage. Implemented as a bounded delta; GitHub Actions Full Gate run 31289376238 on exact head `825ecd480679f5a5348ef20a6df0424fa7b65167` passed. Source Text grammar/lowering, fallback/shaping beyond `simple-ltr-1`, and broader Render closure remain open. |
 | Render Path stroke-only delta | `source_product::canonical_path_writer_reaches_product_render_loader` | Stroke-only Path writer handoff, decoded StrokeRecord binding, stroked-path semantic output, and non-empty raster coverage. Implemented as a bounded delta; GitHub Actions Full Gate run 31290037232 on exact head `f65e3300131758d886bf3557d4daddb85dc3aa39` passed. Source Path grammar/lowering, Polyline/Polygon stroke coverage, broader canonical writer coverage, and final Render closure remain open. |
 | Render Polyline stroke delta | `source_product::canonical_polyline_stroke_writer_reaches_product_render_loader` | Stroke-only open Polyline writer handoff, decoded StrokeRecord binding, open-path semantic output, and non-empty raster coverage. Implemented as a bounded delta; GitHub Actions Full Gate run 31290853047 on exact head `cb8936f9faaecb83c397f8aed1c1d9bf707278ae` passed. Polygon stroke coverage, source stroke lowering, broader canonical writer coverage, and final Render closure remain open. |
+| Render Polygon stroke delta | `source_product::canonical_polygon_stroke_writer_reaches_product_render_loader` | Stroke-only closed Polygon writer handoff, decoded geometry/StrokeRecord binding, closed-path semantic output, and non-empty raster coverage. Implemented as a bounded delta; GitHub Actions Full Gate run 31291361028 on exact head `927f9542091a079c68e73c2908989814211c997f` passed. Source stroke lowering, broader canonical writer coverage, and final Render closure remain open. |
 | Render resource and limit boundaries | `every_public_render_limit_has_focused_boundary_evidence`; `group_and_clip_depth_overflow_stays_distinct_from_graph_cycles`; CLI `render_manifest_source_and_product_paths_are_exercised` | Resource identity/metadata, bounded decoder/loader/raster limits, and embedded opaque binding. The CLI binding path stops at compile/Core/FCBC framing and intentionally does not decode the opaque bytes; decodable Render semantics remain on explicit `inspect --render` and domain paths. Implemented; Full Gate run 30729340879 on head e0140f7ca15cc21620ef3ad8e44b4ece03a346c2 success. |
 | Six public CLI commands | `version_reports_workspace_version`; `check_accepts_minimal_valid_source`; `format_uses_the_fixed_text_policy_and_preserves_canonical_chart`; `compile_executes_manifest_declared_canonical_fixtures_through_core_load`; `inspect_executes_every_fcbc_golden_through_declared_core_contract`; `convert_runs_public_pgr_fixture`; `report_executes_every_public_conversion_fixture` | `check`, `format`, `compile`, `inspect`, `convert`, and `report` are the fixed product surface. Implemented; Full Gate run 30729340879 on head e0140f7ca15cc21620ef3ad8e44b4ece03a346c2 success. |
 | CLI product fixture delta | `check_executes_manifest_declared_canonical_fixtures`; `repository_fcs_examples_execute_at_their_applicable_product_boundaries`; `convert_executes_every_declared_public_export_reparse_fixture`; `render_manifest_source_and_product_paths_are_exercised`; `inventory_matches_product_metadata_and_registries` | Product-entry evidence for applicable canonical/example, Conversion, FCBC, Render, and distribution paths. Implemented; does not replace domain oracles or final cross-domain closure. |

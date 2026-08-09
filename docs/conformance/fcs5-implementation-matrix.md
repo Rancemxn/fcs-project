@@ -252,9 +252,23 @@ coverage.
 
 GitHub Actions Full Gate run 31290853047 (job 93187597128) passed on exact head
 `cb8936f9faaecb83c397f8aed1c1d9bf707278ae` (`workflow_dispatch`). Polygon stroke
-coverage, source stroke lowering, broader canonical writer coverage, and final
-Render closure remain open; this unit does not change any Frozen or final I10
-claim.
+coverage recorded below, source stroke lowering, broader canonical writer
+coverage, and final Render closure remain open; this unit does not change any
+Frozen or final I10 claim.
+
+## Bounded Render Polygon stroke delta
+
+The bounded Polygon stroke follow-up extends the product writer to accept a
+stroke-only closed point sequence. The semantic evaluator reuses the shared
+stroke path with `closed=true`, while Polygon fill semantics remain closed as
+before. The fixture `source_product::canonical_polygon_stroke_writer_reaches_product_render_loader`
+verifies the Polygon geometry/StrokeRecord handoff, closed-path semantic output,
+and non-empty raster coverage.
+
+GitHub Actions Full Gate run 31291361028 (job 93188986800) passed on exact head
+`927f9542091a079c68e73c2908989814211c997f` (`workflow_dispatch`). Source stroke
+lowering, broader canonical writer coverage, and final Render closure remain
+open; this unit does not change any Frozen or final I10 claim.
 
 ## Bounded Render Clip writer delta
 
