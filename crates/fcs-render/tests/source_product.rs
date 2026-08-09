@@ -174,6 +174,106 @@ render profile 1.0.0 {
     )
 }
 
+fn canonical_rect_stroke_compilation() -> CanonicalCompilation {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 16px; height: 16px; }
+    layer main {
+        pass: "overlay";
+        children {
+            rect sourceShape {
+                origin: vec2(-4px, -4px);
+                size: vec2(8px, 8px);
+                fill: solid(#FFFFFFFF);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("canonical Rect writer source parses");
+    let base = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .expect("canonical Rect writer source lowers");
+    let original = base.chart().render().expect("source Render scene");
+    let original_node = &original.nodes()[0];
+    let width_descriptor = base
+        .chart()
+        .descriptors()
+        .expect("source Render descriptors")
+        .descriptors()
+        .iter()
+        .position(|descriptor| descriptor.property_type() == &CanonicalExpressionType::Length)
+        .expect("source fixture must provide a Length descriptor");
+    let mut ids = StableIdRegistry::new();
+    let stroke_id = ids
+        .insert(
+            EntityKind::RenderStroke,
+            CanonicalTextualId::explicit("writer-rect-stroke").expect("Rect stroke textual ID"),
+        )
+        .expect("Rect stroke stable ID");
+    let stroke = CanonicalRenderStroke::new(
+        stroke_id,
+        0,
+        width_descriptor,
+        CanonicalStrokeCap::Butt,
+        CanonicalStrokeJoin::Miter,
+        4.0,
+        width_descriptor,
+        vec![2.0, 2.0],
+    )
+    .expect("canonical Rect stroke");
+    let node = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+        id: original_node.id().clone(),
+        kind: CanonicalRenderNodeKind::Rect,
+        parent: original_node.parent(),
+        layer: original_node.layer(),
+        document_order: original_node.document_order(),
+        z_order: original_node.z_order(),
+        attachment: original_node.attachment().clone(),
+        active: original_node.active(),
+        isolate: original_node.isolate(),
+        follow_hidden_attachment: original_node.follow_hidden_attachment(),
+        position: original_node.position(),
+        origin: original_node.origin(),
+        rotation: original_node.rotation(),
+        scale: original_node.scale(),
+        opacity: original_node.opacity(),
+        visibility: original_node.visibility(),
+        geometry: Some(0),
+        fill_paint: None,
+        stroke: Some(0),
+        clip: None,
+        composite: original_node.composite(),
+    })
+    .expect("canonical Rect node");
+    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+        viewport: original.viewport(),
+        layers: original.layers().to_vec(),
+        nodes: vec![node],
+        geometries: original.geometries().to_vec(),
+        paths: original.paths().to_vec(),
+        paints: original.paints().to_vec(),
+        strokes: vec![stroke],
+        clips: original.clips().to_vec(),
+        glyph_runs: original.glyph_runs().to_vec(),
+    })
+    .expect("canonical Rect scene");
+    CanonicalCompilation::new(
+        base.chart().clone().with_render(scene),
+        base.resources().clone(),
+        base.distribution().clone(),
+    )
+}
+
 fn canonical_clip_compilation() -> CanonicalCompilation {
     let source = r#"#fcs 5.0.0
 format { profile: renderable; }
@@ -520,6 +620,33 @@ fn canonical_line_stroke_writer_reaches_product_render_loader() {
     assert_eq!(draw.len(), 1);
     assert_eq!(draw[0].kind, NodeKind::Line);
     assert!(draw[0].stroke.is_some());
+}
+
+#[test]
+fn canonical_rect_stroke_writer_reaches_product_render_loader() {
+    let compilation = canonical_rect_stroke_compilation();
+    let scene = compilation.chart().render().expect("canonical Rect scene");
+    let bytes = write_from_compilation(&compilation).expect("canonical Rect FCBC writing");
+    let render = load_render(&bytes).expect("canonical Rect product loader");
+
+    assert_eq!(render.nodes.len(), 1);
+    assert_eq!(render.nodes[0].kind, NodeKind::Rect);
+    assert_eq!(render.nodes[0].fill_paint, None);
+    assert_eq!(render.nodes[0].stroke_ref, Some(0));
+    assert!(matches!(
+        render.geometries[0].data,
+        GeometryData::Rect { origin, size } if origin != u32::MAX && size != u32::MAX
+    ));
+    assert_eq!(render.strokes.len(), 1);
+    assert_eq!(render.strokes[0].id, scene.strokes()[0].id().value());
+
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Rect stroke semantics");
+    assert_eq!(draw.len(), 1);
+    assert_eq!(draw[0].kind, NodeKind::Rect);
+    assert!(draw[0].fill_rgba.is_none());
+    assert!(draw[0].stroke.is_some());
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Rect rasterization");
+    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
 }
 
 #[test]

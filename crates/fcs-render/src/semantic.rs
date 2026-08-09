@@ -1118,6 +1118,17 @@ fn stroke_contains(
         return Ok(false);
     }
     match shape {
+        LocalShape::Rect { bounds } => stroke_polyline_contains(
+            &[
+                [bounds[0], bounds[1]],
+                [bounds[2], bounds[1]],
+                [bounds[2], bounds[3]],
+                [bounds[0], bounds[3]],
+            ],
+            true,
+            point,
+            stroke,
+        ),
         LocalShape::Line { start, end } => {
             stroke_polyline_contains(&[*start, *end], false, point, stroke)
         }

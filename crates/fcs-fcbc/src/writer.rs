@@ -1174,19 +1174,29 @@ fn render_section(
         };
         let geometry = node.geometry();
         let (paint, stroke) = match node.kind() {
-            fcs_model::CanonicalRenderNodeKind::Rect
-            | fcs_model::CanonicalRenderNodeKind::RoundedRect
+            fcs_model::CanonicalRenderNodeKind::Rect => {
+                let fill = node.fill_paint();
+                let stroke = node.stroke();
+                if fill.is_none() && stroke.is_none() {
+                    return Err(FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render Rect has no fill paint or stroke",
+                    ));
+                }
+                (fill, stroke)
+            }
+            fcs_model::CanonicalRenderNodeKind::RoundedRect
             | fcs_model::CanonicalRenderNodeKind::Circle
             | fcs_model::CanonicalRenderNodeKind::Ellipse => {
                 if node.stroke().is_some() {
                     return Err(FcbcError::new(
                         "fcbc.render-unsupported",
-                        "product Render writer only supports strokes on Line nodes",
+                        "product Render writer does not support strokes on this shape",
                     ));
                 }
                 (
                     Some(node.fill_paint().ok_or_else(|| {
-                        FcbcError::new("fcbc.dangling-reference", "Render Rect has no fill paint")
+                        FcbcError::new("fcbc.dangling-reference", "Render shape has no fill paint")
                     })?),
                     None,
                 )
