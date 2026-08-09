@@ -225,6 +225,20 @@ source Path grammar, Path text coverage, broader canonical writer coverage,
 Polyline/Text, and descriptor-driven gradient stroke lowering remain outside these
 bounded units. These Render deltas do not change any Frozen or final I10 claim.
 
+## Bounded Render Clip writer delta
+
+The next bounded canonical unit extends the product writer with stable-ID-sorted
+ClipRecord emission, NodeRecord `clipRef` binding, and `ClipGroup` output. The
+existing canonical scene ownership and Render loader rules remain authoritative;
+the fixture only exercises the already-defined FCBC Clip boundary and does not
+introduce source clip grammar or source lowering. Evidence is bound by
+`source_product::canonical_clip_writer_reaches_product_render_loader`, including
+ClipGroup traversal, inherited clip-chain semantics, and non-empty raster output.
+GitHub Actions Full Gate run 31286712377 (job 93176761343) passed on exact head
+`2d31b7bfc2dc346b9fbb92875f37966cafeaab04` (`workflow_dispatch`). Source
+ClipGroup/clip lowering, text/glyph coverage, and broader Render closure remain
+open; this unit does not change any Frozen or final I10 claim.
+
 ## Credit stable identity delta
 
 Issue #477 now has an explicit Credit identity decision: source `id` text is

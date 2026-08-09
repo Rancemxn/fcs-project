@@ -24,6 +24,16 @@ Path StrokeRecord writer/loader handoff, explicit Close/open-subpath handling,
 dash phase, cap/join coverage, and zero-length flattened segments. Source
 Stroke grammar/lowering and Path text remain open.
 
+The canonical Clip writer follow-up passed GitHub Actions Full Gate run
+31286712377, job 93176761343, on exact head
+2d31b7bfc2dc346b9fbb92875f37966cafeaab04 (`workflow_dispatch`). It covers
+stable-ID-sorted ClipRecord emission, NodeRecord `clipRef` binding, ClipGroup
+loader validation, inherited clip-chain semantic output, and bounded raster
+coverage. Source ClipGroup/clip lowering, text/glyph coverage, and broader Render
+closure remain open. Local tests, fuzz, and executable fixtures remain unrun;
+Codespaces remain outside the verification environment, and GitHub Actions is
+the only complete Full Gate source.
+
 | Obligation | Executable evidence | Boundary and status |
 |---|---|---|
 | Source parse boundary: all 55 declared FCS fixtures | `fcs_source_fixtures_execute_at_the_declared_frontend_boundary` in `crates/fcs-source/tests/conformance_manifest.rs` | Dispatches parse success/errors and accepts later-stage sources at the parser boundary. Implemented; Full Gate run 30729340879 on head e0140f7ca15cc21620ef3ad8e44b4ece03a346c2 success. |
