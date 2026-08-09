@@ -279,6 +279,14 @@ render profile 1.0.0 {
 }
 
 fn canonical_text_compilation() -> CanonicalCompilation {
+    canonical_text_compilation_with_stroke(false)
+}
+
+fn canonical_text_stroke_compilation() -> CanonicalCompilation {
+    canonical_text_compilation_with_stroke(true)
+}
+
+fn canonical_text_compilation_with_stroke(stroked: bool) -> CanonicalCompilation {
     let source = r#"#fcs 5.0.0
 format { profile: renderable; }
 resources {
@@ -356,6 +364,25 @@ render profile 1.0.0 {
         }],
     )
     .expect("canonical glyph run");
+    let stroke = stroked.then(|| {
+        let stroke_id = ids
+            .insert(
+                EntityKind::RenderStroke,
+                CanonicalTextualId::explicit("writer-text-stroke").expect("Text stroke ID"),
+            )
+            .expect("Text stroke stable ID");
+        CanonicalRenderStroke::new(
+            stroke_id,
+            0,
+            size_descriptor,
+            CanonicalStrokeCap::Butt,
+            CanonicalStrokeJoin::Miter,
+            4.0,
+            size_descriptor,
+            Vec::new(),
+        )
+        .expect("canonical Text stroke")
+    });
     let node = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
         id: original_node.id().clone(),
         kind: CanonicalRenderNodeKind::Text,
@@ -374,8 +401,8 @@ render profile 1.0.0 {
         opacity: original_node.opacity(),
         visibility: original_node.visibility(),
         geometry: Some(0),
-        fill_paint: Some(0),
-        stroke: None,
+        fill_paint: (!stroked).then_some(0),
+        stroke: stroked.then_some(0),
         clip: None,
         composite: original_node.composite(),
     })
@@ -395,7 +422,7 @@ render profile 1.0.0 {
         geometries: vec![geometry],
         paths: Vec::new(),
         paints: original.paints().to_vec(),
-        strokes: Vec::new(),
+        strokes: stroke.into_iter().collect(),
         clips: Vec::new(),
         glyph_runs: vec![glyph_run],
     })
@@ -1369,5 +1396,30 @@ fn canonical_text_writer_reaches_product_render_loader() {
     assert_eq!(draw[0].kind, NodeKind::Text);
     assert!(draw[0].bounds[2] > draw[0].bounds[0]);
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Text rasterization");
+    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
+}
+
+#[test]
+fn canonical_text_stroke_writer_reaches_product_render_loader() {
+    let compilation = canonical_text_stroke_compilation();
+    let scene = compilation
+        .chart()
+        .render()
+        .expect("canonical Text stroke scene");
+    let bytes = write_from_compilation(&compilation).expect("canonical Text stroke FCBC writing");
+    let render = load_render(&bytes).expect("canonical Text stroke product loader");
+
+    assert_eq!(render.nodes.len(), 1);
+    assert_eq!(render.nodes[0].kind, NodeKind::Text);
+    assert_eq!(render.nodes[0].fill_paint, None);
+    assert_eq!(render.nodes[0].stroke_ref, Some(0));
+    assert_eq!(render.strokes.len(), 1);
+    assert_eq!(render.strokes[0].id, scene.strokes()[0].id().value());
+
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Text stroke semantics");
+    assert_eq!(draw.len(), 1);
+    assert!(draw[0].fill_rgba.is_none());
+    assert!(draw[0].stroke.is_some());
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Text stroke rasterization");
     assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
 }

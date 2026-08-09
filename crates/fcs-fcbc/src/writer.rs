@@ -1233,18 +1233,15 @@ fn render_section(
                 (None, None)
             }
             fcs_model::CanonicalRenderNodeKind::Text => {
-                if node.stroke().is_some() {
+                let fill = node.fill_paint();
+                let stroke = node.stroke();
+                if fill.is_none() && stroke.is_none() {
                     return Err(FcbcError::new(
-                        "fcbc.render-unsupported",
-                        "product Render writer only supports fill paint on Text nodes",
+                        "fcbc.dangling-reference",
+                        "Render Text has no fill paint or stroke",
                     ));
                 }
-                (
-                    Some(node.fill_paint().ok_or_else(|| {
-                        FcbcError::new("fcbc.dangling-reference", "Render Text has no fill paint")
-                    })?),
-                    None,
-                )
+                (fill, stroke)
             }
         };
         let geometry = geometry

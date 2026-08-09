@@ -1644,10 +1644,10 @@ fn composite_premultiplied(
     Ok(())
 }
 
-/// Rasterize supported fill and Line stroke geometry to tightly packed RGBA8 bytes.
+/// Rasterize supported fill and Line/Path/Text stroke geometry to tightly packed RGBA8 bytes.
 ///
 /// The Render 1.0 reference sample grid is used for Rect, RoundedRect, Circle,
-/// Ellipse, Line, Polyline, Polygon, and Path geometry with solid or stroked paint.
+/// Ellipse, Line, Polyline, Polygon, Path, and Text geometry with solid or stroked paint.
 pub fn rasterize_solid_rgba8(
     chart: &DecodedRenderChart,
     width: u32,
@@ -1728,7 +1728,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                 op.image_pattern,
             )?
         };
-        let stroke_source = if matches!(op.kind, NodeKind::Line | NodeKind::Path) {
+        let stroke_source = if matches!(op.kind, NodeKind::Line | NodeKind::Path | NodeKind::Text) {
             match op.stroke.as_ref() {
                 Some(stroke) => Some(
                     raster_paint_source(
