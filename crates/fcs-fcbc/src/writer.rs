@@ -1193,12 +1193,17 @@ fn render_section(
                     None,
                 )
             }
-            fcs_model::CanonicalRenderNodeKind::Path => (
-                Some(node.fill_paint().ok_or_else(|| {
-                    FcbcError::new("fcbc.dangling-reference", "Render Path has no fill paint")
-                })?),
-                node.stroke(),
-            ),
+            fcs_model::CanonicalRenderNodeKind::Path => {
+                let fill = node.fill_paint();
+                let stroke = node.stroke();
+                if fill.is_none() && stroke.is_none() {
+                    return Err(FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render Path has no fill paint or stroke",
+                    ));
+                }
+                (fill, stroke)
+            }
             fcs_model::CanonicalRenderNodeKind::Line => {
                 if node.fill_paint().is_some() {
                     return Err(FcbcError::new(

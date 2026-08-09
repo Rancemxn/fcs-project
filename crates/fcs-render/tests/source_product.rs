@@ -1152,20 +1152,6 @@ render profile 1.0.0 {
         panic!("source fixture must provide Circle geometry");
     };
     let mut ids = StableIdRegistry::new();
-    let stroke_paint_id = ids
-        .insert(
-            EntityKind::RenderPaint,
-            CanonicalTextualId::explicit("writer-path-stroke-paint")
-                .expect("Path stroke paint textual ID"),
-        )
-        .expect("Path stroke paint stable ID");
-    let stroke_paint = CanonicalRenderPaint::new(
-        stroke_paint_id,
-        original.paints()[path_node.fill_paint().expect("Path fill paint")]
-            .data()
-            .clone(),
-    )
-    .expect("Path stroke paint");
     let path_id = ids
         .insert(
             EntityKind::RenderPath,
@@ -1216,7 +1202,7 @@ render profile 1.0.0 {
         .expect("Path stroke stable ID");
     let stroke = CanonicalRenderStroke::new(
         stroke_id,
-        original.paints().len(),
+        0,
         width_descriptor,
         CanonicalStrokeCap::Round,
         CanonicalStrokeJoin::Bevel,
@@ -1243,7 +1229,7 @@ render profile 1.0.0 {
         opacity: path_node.opacity(),
         visibility: path_node.visibility(),
         geometry: Some(path_geometry_index),
-        fill_paint: path_node.fill_paint(),
+        fill_paint: None,
         stroke: Some(0),
         clip: None,
         composite: path_node.composite(),
@@ -1264,12 +1250,7 @@ render profile 1.0.0 {
         nodes,
         geometries,
         paths: vec![path],
-        paints: original
-            .paints()
-            .iter()
-            .cloned()
-            .chain([stroke_paint])
-            .collect(),
+        paints: original.paints().to_vec(),
         strokes: vec![stroke],
         clips: original.clips().to_vec(),
         glyph_runs: original.glyph_runs().to_vec(),
@@ -1311,8 +1292,9 @@ render profile 1.0.0 {
     assert_eq!(render.paths[0].id, scene.paths()[0].id().value());
     assert_eq!(render.paths[0].fill_rule, 1);
     assert_eq!(render.paths[0].commands.len(), 7);
-    assert_eq!(render.paints.len(), 3);
+    assert_eq!(render.paints.len(), 2);
     assert_eq!(render.strokes.len(), 1);
+    assert_eq!(render.nodes[decoded_node_index].fill_paint, None);
     assert_eq!(render.nodes[decoded_node_index].stroke_ref, Some(0));
     assert_eq!(render.strokes[0].cap, 2);
     assert_eq!(render.strokes[0].join, 3);
