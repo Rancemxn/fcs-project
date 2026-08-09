@@ -160,6 +160,7 @@ enum LocalShape {
     },
     Polygon {
         points: Vec<[f64; 2]>,
+        closed: bool,
     },
     Path {
         subpaths: Vec<PathSubpath>,
@@ -1082,7 +1083,7 @@ fn local_shape_contains(shape: &LocalShape, point: [f64; 2]) -> bool {
             rotation,
         } => ellipse_contains(*center, *radius_x, *radius_y, *rotation, point),
         LocalShape::Line { .. } => false,
-        LocalShape::Polygon { points } => polygon_contains(points, point),
+        LocalShape::Polygon { points, .. } => polygon_contains(points, point),
         LocalShape::Path {
             subpaths,
             fill_rule,
@@ -1127,6 +1128,9 @@ fn stroke_contains(
                 stroke_polyline_contains(&subpath.points, subpath.closed, point, stroke)
             }
         }),
+        LocalShape::Polygon { points, closed } => {
+            stroke_polyline_contains(points, *closed, point, stroke)
+        }
         _ => Err("render.invalid-geometry"),
     }
 }
@@ -1644,7 +1648,7 @@ fn composite_premultiplied(
     Ok(())
 }
 
-/// Rasterize supported fill and Line/Path/Text stroke geometry to tightly packed RGBA8 bytes.
+/// Rasterize supported fill and Line/Polyline/Path/Text stroke geometry to tightly packed RGBA8 bytes.
 ///
 /// The Render 1.0 reference sample grid is used for Rect, RoundedRect, Circle,
 /// Ellipse, Line, Polyline, Polygon, Path, and Text geometry with solid or stroked paint.
@@ -1728,7 +1732,10 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                 op.image_pattern,
             )?
         };
-        let stroke_source = if matches!(op.kind, NodeKind::Line | NodeKind::Path | NodeKind::Text) {
+        let stroke_source = if matches!(
+            op.kind,
+            NodeKind::Line | NodeKind::Polyline | NodeKind::Path | NodeKind::Text
+        ) {
             match op.stroke.as_ref() {
                 Some(stroke) => Some(
                     raster_paint_source(
@@ -2593,6 +2600,7 @@ fn geometry_evaluation(
             (bounds, Some(LocalShape::Line { start, end }), None)
         }
         GeometryData::Polyline { points } | GeometryData::Polygon { points } => {
+            let closed = matches!(&geometry.data, GeometryData::Polygon { .. });
             let mut values = Vec::with_capacity(points.len());
             for descriptor in points {
                 values.push(query_vec2_in(
@@ -2613,7 +2621,14 @@ fn geometry_evaluation(
                 bounds[2] = bounds[2].max(x);
                 bounds[3] = bounds[3].max(y);
             }
-            (bounds, Some(LocalShape::Polygon { points: values }), None)
+            (
+                bounds,
+                Some(LocalShape::Polygon {
+                    points: values,
+                    closed,
+                }),
+                None,
+            )
         }
         GeometryData::Path { path_ref } => {
             let path = chart

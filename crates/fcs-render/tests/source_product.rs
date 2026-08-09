@@ -1090,9 +1090,7 @@ render profile 1.0.0 {
     assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
 }
 
-#[test]
-fn canonical_path_writer_reaches_product_render_loader() {
-    let source = r#"#fcs 5.0.0
+const CANONICAL_PATH_SOURCE: &str = r#"#fcs 5.0.0
 format { profile: renderable; }
 tempoMap { 0beat -> 120bpm; }
 render profile 1.0.0 {
@@ -1117,6 +1115,10 @@ render profile 1.0.0 {
     }
 }
 "#;
+
+#[test]
+fn canonical_path_writer_reaches_product_render_loader() {
+    let source = CANONICAL_PATH_SOURCE;
     let document = parse_document(source)
         .into_result()
         .expect("Path Render source parses");
@@ -1317,6 +1319,133 @@ render profile 1.0.0 {
             .chunks_exact(4)
             .any(|pixel| { pixel[0] > 200 && pixel[1] > 200 && pixel[2] > 200 && pixel[3] > 0 })
     );
+}
+
+#[test]
+fn canonical_polyline_stroke_writer_reaches_product_render_loader() {
+    let document = parse_document(CANONICAL_PATH_SOURCE)
+        .into_result()
+        .expect("Polyline stroke source parses");
+    let base = document
+        .canonical_compilation_with_source(
+            CANONICAL_PATH_SOURCE,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| {
+            panic!("Polyline canonical lowering failed: {diagnostics:?}")
+        });
+    let original = base.chart().render().expect("source Render scene");
+    let node_index = original
+        .nodes()
+        .iter()
+        .position(|node| node.kind() == CanonicalRenderNodeKind::Polyline)
+        .expect("source fixture must provide a Polyline node");
+    let original_node = &original.nodes()[node_index];
+    let geometry_index = original_node.geometry().expect("Polyline geometry");
+    let width_descriptor = base
+        .chart()
+        .descriptors()
+        .expect("source Render descriptors")
+        .descriptors()
+        .iter()
+        .position(|descriptor| descriptor.property_type() == &CanonicalExpressionType::Length)
+        .expect("source fixture must provide a Length descriptor");
+    let mut ids = StableIdRegistry::new();
+    let stroke_id = ids
+        .insert(
+            EntityKind::RenderStroke,
+            CanonicalTextualId::explicit("writer-polyline-stroke")
+                .expect("Polyline stroke textual ID"),
+        )
+        .expect("Polyline stroke stable ID");
+    let stroke = CanonicalRenderStroke::new(
+        stroke_id,
+        0,
+        width_descriptor,
+        CanonicalStrokeCap::Butt,
+        CanonicalStrokeJoin::Miter,
+        4.0,
+        width_descriptor,
+        vec![2.0, 2.0],
+    )
+    .expect("canonical Polyline stroke");
+    let node = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+        id: original_node.id().clone(),
+        kind: CanonicalRenderNodeKind::Polyline,
+        parent: original_node.parent(),
+        layer: original_node.layer(),
+        document_order: original_node.document_order(),
+        z_order: original_node.z_order(),
+        attachment: original_node.attachment().clone(),
+        active: original_node.active(),
+        isolate: original_node.isolate(),
+        follow_hidden_attachment: original_node.follow_hidden_attachment(),
+        position: original_node.position(),
+        origin: original_node.origin(),
+        rotation: original_node.rotation(),
+        scale: original_node.scale(),
+        opacity: original_node.opacity(),
+        visibility: original_node.visibility(),
+        geometry: Some(geometry_index),
+        fill_paint: None,
+        stroke: Some(0),
+        clip: None,
+        composite: original_node.composite(),
+    })
+    .expect("canonical Polyline node");
+    let mut nodes = original.nodes().to_vec();
+    nodes[node_index] = node;
+    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+        viewport: original.viewport(),
+        layers: original.layers().to_vec(),
+        nodes,
+        geometries: original.geometries().to_vec(),
+        paths: original.paths().to_vec(),
+        paints: original.paints().to_vec(),
+        strokes: vec![stroke],
+        clips: original.clips().to_vec(),
+        glyph_runs: original.glyph_runs().to_vec(),
+    })
+    .expect("canonical Polyline scene");
+    let compilation = CanonicalCompilation::new(
+        base.chart().clone().with_render(scene),
+        base.resources().clone(),
+        base.distribution().clone(),
+    );
+    let scene = compilation
+        .chart()
+        .render()
+        .expect("canonical Polyline scene");
+    let bytes = write_from_compilation(&compilation).expect("canonical Polyline FCBC writing");
+    let render = load_render(&bytes).expect("canonical Polyline product loader");
+
+    let decoded_node_index = render
+        .nodes
+        .iter()
+        .position(|node| node.id == scene.nodes()[node_index].id().value())
+        .expect("decoded Polyline node");
+    let decoded_node = &render.nodes[decoded_node_index];
+    assert_eq!(decoded_node.kind, NodeKind::Polyline);
+    assert_eq!(decoded_node.fill_paint, None);
+    assert_eq!(decoded_node.stroke_ref, Some(0));
+    assert!(matches!(
+        render.geometries[decoded_node.geometry_ref.expect("Polyline geometry") as usize].data,
+        GeometryData::Polyline { ref points } if points.len() == 3
+    ));
+    assert_eq!(render.strokes.len(), 1);
+
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Polyline stroke semantics");
+    let operation = draw
+        .iter()
+        .find(|operation| operation.kind == NodeKind::Polyline)
+        .expect("Polyline draw op");
+    assert!(operation.fill_rgba.is_none());
+    assert!(operation.stroke.is_some());
+    let pixels =
+        rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Polyline stroke rasterization");
+    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
 }
 
 #[test]
