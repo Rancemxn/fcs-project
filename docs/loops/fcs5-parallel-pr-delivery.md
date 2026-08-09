@@ -90,10 +90,10 @@ Measurement Domain、worktree 清理与 Residual Routing 全部保留，只是�
 ## Subagent 配置契约
 
 - 项目 `.pi/settings.json` 固定全部内置 agent：
-  - model 统一为 `opencode-go/deepseek-v4-flash`；
-  - thinking：`worker`/`reviewer` 固定 `max`；`delegate`/`oracle`/`researcher`/`scout`
-    默认 `off`（no-thinking）以速度优先；父编排者只有在前者首次答案不足或任务风险需要时，
-    才可以把同一 agent 以 `high` 或 `max` 启动/恢复；
+  - model 统一为 `congee/gpt-5.6-luna`；
+  - thinking：`oracle`（planning/advisory）、`worker`（authoring）、`reviewer`（review）固定
+    `max`；`delegate`/`researcher`/`scout` 固定 `medium`（general minimum）；
+  - 答案不足时先恢复/跟进同一 agent 而不是直接替换，并在必要时提高 effort；
   - 工具为直接 FastCtx allowlist：`worker` 是唯一 writer（`acceptanceRole: writer`，含
     `edit`/`write`/`replace`/`run`/`run_background`/`job_*`），是唯一 lane/仓库写入者；
     `reviewer`/`scout` 是仓库只读（`acceptanceRole: read-only`，`read`/`grep`/`glob`/`run`），其中
@@ -619,9 +619,10 @@ SHA 门禁，也不被本规则改变。成功且同 SHA 的 Action run 是 Read
   Issue/PR、review、Ready 或 merge；父编排者统一审查共享工作区、验证和交付。
 - 父编排者为每个 lane 启动独立的 Pi 实例/subagent，动态调度互不冲突的 lane，综合 Review App 结果，
   排序 merge 请求，并把冲突委托给独立 corrective lane。全部并行子任务总数不超过三个。
-- 思考策略：`worker`/`reviewer` 固定 `max`；其余内置 agent（`delegate`/`oracle`/
-  `researcher`/`scout`）默认 `off`（no-thinking）速度优先；父编排者只有在首次答案不足或任务
-  风险需要时，才可以把同一 agent 以 `high` 或 `max` 启动/恢复。
+- 思考策略：全部内置 agent 使用 `congee/gpt-5.6-luna`；`oracle`（planning/advisory）、
+  `worker`（authoring）、`reviewer`（review）固定 `max`，`delegate`/`researcher`/`scout`
+  固定 `medium`（general minimum）；答案不足时先恢复/跟进同一 agent，必要时提高 effort，
+  不直接替换。
 - 工具边界：按 `.pi/settings.json` 的 allowlist 执行；reviewer/scout 只读，worker writer，
   researcher 保留 Tavily。任何 agent 都不得获得 Ready/merge/push `main` 能力。
 - 任务结束时按 Measurement Domain 执行静态检查；若 skill 自带的验证或写作流程与仓库命令、目录职责或

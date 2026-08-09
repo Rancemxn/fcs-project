@@ -46,10 +46,11 @@ Issue-first lane 一个 writer，异步独立复审，main/Ready/merge 只保留
 - **工具：** FastCtx 是规范性文件访问/搜索/替换工具；通用 Bash 默认禁止，只有经显式命名批准
   的进程（原生 Windows Git、App broker、静态校验器、`cargo fmt`）例外。
 - **Subagent 配置：** 项目 `.pi/settings.json` 固定全部内置 agent 为
-  `opencode-go/deepseek-v4-flash`，`worker`/`reviewer` thinking 固定 `max`，其余内置 agent
-  （`delegate`/`oracle`/`researcher`/`scout`）默认 `off`（no-thinking）速度优先，父编排者只有
-  在首次答案不足或任务风险需要时才把同一 agent 以 `high` 或 `max` 启动/恢复；直接 FastCtx
-  工具 allowlist，reviewer/scout 只读、worker writer，researcher 保留 Tavily。
+  `congee/gpt-5.6-luna`；thinking：`oracle`（planning/advisory）、`worker`（authoring）、
+  `reviewer`（review）固定 `max`，`delegate`/`researcher`/`scout` 固定 `medium`
+  （general minimum）；答案不足时先恢复/跟进同一 agent 而不是直接替换，必要时提高
+  effort；直接 FastCtx 工具 allowlist，reviewer/scout 只读、worker writer，researcher
+  保留 Tavily。
 - **替换持久会话：** 不再保留单一持久实现/审查会话；父编排者在隔离 lane 中启动独立 Pi
   实例/subagent，Review App 异步二审，全部并行子任务不超过三个。
 

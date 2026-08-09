@@ -2,8 +2,8 @@
   "subagents": {
     "agentOverrides": {
       "delegate": {
-        "model": "opencode-go/deepseek-v4-flash",
-        "thinking": false,
+        "model": "congee/gpt-5.6-luna",
+        "thinking": "medium",
         "tools": [
           "mcp:fastctx/glob",
           "mcp:fastctx/grep",
@@ -12,8 +12,8 @@
         ]
       },
       "oracle": {
-        "model": "opencode-go/deepseek-v4-flash",
-        "thinking": false,
+        "model": "congee/gpt-5.6-luna",
+        "thinking": "max",
         "tools": [
           "mcp:fastctx/glob",
           "mcp:fastctx/grep",
@@ -22,8 +22,8 @@
         ]
       },
       "researcher": {
-        "model": "opencode-go/deepseek-v4-flash",
-        "thinking": false,
+        "model": "congee/gpt-5.6-luna",
+        "thinking": "medium",
         "tools": [
           "mcp:fastctx/glob",
           "mcp:fastctx/grep",
@@ -34,7 +34,7 @@
         ]
       },
       "reviewer": {
-        "model": "opencode-go/deepseek-v4-flash",
+        "model": "congee/gpt-5.6-luna",
         "thinking": "max",
         "acceptanceRole": "read-only",
         "tools": [
@@ -45,8 +45,8 @@
         ]
       },
       "scout": {
-        "model": "opencode-go/deepseek-v4-flash",
-        "thinking": false,
+        "model": "congee/gpt-5.6-luna",
+        "thinking": "medium",
         "acceptanceRole": "read-only",
         "tools": [
           "mcp:fastctx/glob",
@@ -57,7 +57,7 @@
         ]
       },
       "worker": {
-        "model": "opencode-go/deepseek-v4-flash",
+        "model": "congee/gpt-5.6-luna",
         "thinking": "max",
         "acceptanceRole": "writer",
         "tools": [
