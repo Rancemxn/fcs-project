@@ -1364,4 +1364,10 @@ fn canonical_text_writer_reaches_product_render_loader() {
         render.geometries[0].data,
         GeometryData::Text { ref glyph_runs, .. } if glyph_runs == &vec![0]
     ));
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Text semantic evaluation");
+    assert_eq!(draw.len(), 1);
+    assert_eq!(draw[0].kind, NodeKind::Text);
+    assert!(draw[0].bounds[2] > draw[0].bounds[0]);
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Text rasterization");
+    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
 }

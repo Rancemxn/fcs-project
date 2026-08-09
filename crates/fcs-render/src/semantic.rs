@@ -1702,6 +1702,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                 | NodeKind::Polyline
                 | NodeKind::Polygon
                 | NodeKind::Path
+                | NodeKind::Text
                 | NodeKind::Image
         ) {
             continue;
@@ -2629,6 +2630,11 @@ fn geometry_evaluation(
                 None,
             )
         }
+        GeometryData::Text { glyph_runs, origin } => {
+            let (bounds, shape) =
+                evaluate_text(chart, glyph_runs, *origin, chart_time, environment)?;
+            (bounds, Some(shape), None)
+        }
         GeometryData::Image {
             resource_id,
             destination,
@@ -2683,17 +2689,163 @@ fn geometry_evaluation(
                 }),
             )
         }
-        _ => (
-            [0.0, 0.0, chart.viewport_width, chart.viewport_height],
-            None,
-            None,
-        ),
     };
     Ok(GeometryEvaluation {
         world_bounds: transformed_bounds(world_matrix, local_bounds)?,
         shape,
         image,
     })
+}
+
+fn evaluate_text(
+    chart: &DecodedRenderChart,
+    glyph_run_refs: &[u32],
+    origin_descriptor: u32,
+    chart_time: f64,
+    environment: EvaluationEnvironment,
+) -> Result<([f64; 4], LocalShape), &'static str> {
+    let origin = query_vec2_in(
+        chart,
+        origin_descriptor,
+        chart_time,
+        ValueType::Vec2Length,
+        environment,
+    )?;
+    let mut subpaths = Vec::new();
+    for glyph_run_ref in glyph_run_refs {
+        let run = chart
+            .glyph_runs
+            .get(*glyph_run_ref as usize)
+            .ok_or("render.invalid-reference")?;
+        let size = query_scalar_in(
+            chart,
+            run.size_descriptor,
+            chart_time,
+            ValueType::Length,
+            environment,
+        )?;
+        if size <= 0.0 {
+            return Err("render.invalid-geometry");
+        }
+        let font = chart
+            .decoded_fonts
+            .get(&run.font_resource_id)
+            .ok_or("render.resource-not-found")?;
+        if font.units_per_em == 0 || !run.run_offset.iter().all(|value| value.is_finite()) {
+            return Err("render.invalid-geometry");
+        }
+        let scale = size / f64::from(font.units_per_em);
+        let mut pen = [run.run_offset[0] * size, run.run_offset[1] * size];
+        for placement in &run.glyphs {
+            if ![
+                placement.x_advance,
+                placement.y_advance,
+                placement.x_offset,
+                placement.y_offset,
+            ]
+            .iter()
+            .all(|value| value.is_finite())
+            {
+                return Err("render.invalid-geometry");
+            }
+            let glyph = font
+                .glyphs
+                .get(placement.glyph_id as usize)
+                .ok_or("render.invalid-geometry")?;
+            let glyph_origin = [
+                origin[0] + pen[0] + placement.x_offset * size,
+                origin[1] + pen[1] + placement.y_offset * size,
+            ];
+            for contour in &glyph.contours {
+                let points = glyph_contour(contour, glyph_origin, scale)?;
+                if points.len() >= 3 {
+                    subpaths.push(PathSubpath {
+                        points,
+                        closed: true,
+                    });
+                }
+            }
+            pen[0] += placement.x_advance * size;
+            pen[1] += placement.y_advance * size;
+            if !pen.iter().all(|value| value.is_finite()) {
+                return Err("render.invalid-geometry");
+            }
+        }
+    }
+    let mut bounds = [origin[0], origin[1], origin[0], origin[1]];
+    for [x, y] in subpaths.iter().flat_map(|subpath| subpath.points.iter()) {
+        bounds[0] = bounds[0].min(*x);
+        bounds[1] = bounds[1].min(*y);
+        bounds[2] = bounds[2].max(*x);
+        bounds[3] = bounds[3].max(*y);
+    }
+    Ok((
+        bounds,
+        LocalShape::Path {
+            subpaths,
+            fill_rule: 1,
+        },
+    ))
+}
+
+fn glyph_contour(
+    contour: &[crate::assets::OutlinePoint],
+    origin: [f64; 2],
+    scale: f64,
+) -> Result<Vec<[f64; 2]>, &'static str> {
+    if contour.len() < 2 || !scale.is_finite() {
+        return Err("render.invalid-geometry");
+    }
+    let points: Vec<_> = contour
+        .iter()
+        .map(|point| {
+            (
+                [
+                    origin[0] + f64::from(point.x) * scale,
+                    origin[1] + f64::from(point.y) * scale,
+                ],
+                point.on_curve,
+            )
+        })
+        .collect();
+    if points
+        .iter()
+        .any(|(point, _)| !point.iter().all(|value| value.is_finite()))
+    {
+        return Err("render.invalid-geometry");
+    }
+    let last = points.len() - 1;
+    let (start_index, start) = if points[0].1 {
+        (1, points[0].0)
+    } else if points[last].1 {
+        (0, points[last].0)
+    } else {
+        (0, midpoint(points[last].0, points[0].0))
+    };
+    let mut output = vec![start];
+    let mut current = start;
+    let mut pending_control = None;
+    for offset in 0..points.len() {
+        let (point, on_curve) = points[(start_index + offset) % points.len()];
+        if on_curve {
+            if let Some(control) = pending_control.take() {
+                append_quadratic(&mut output, current, control, point, 0)?;
+            } else if point != current {
+                output.push(point);
+            }
+            current = point;
+        } else if let Some(control) = pending_control.replace(point) {
+            let implied = midpoint(control, point);
+            append_quadratic(&mut output, current, control, implied, 0)?;
+            current = implied;
+        }
+    }
+    if let Some(control) = pending_control {
+        append_quadratic(&mut output, current, control, start, 0)?;
+    } else if output.last().copied() != Some(start) {
+        output.push(start);
+    }
+    Ok(output)
 }
 
 fn evaluate_path(
