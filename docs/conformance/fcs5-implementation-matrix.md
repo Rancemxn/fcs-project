@@ -225,6 +225,21 @@ source Path grammar, Path text coverage, broader canonical writer coverage,
 Polyline, source Text grammar/lowering, and descriptor-driven gradient stroke lowering remain outside these
 bounded units. These Render deltas do not change any Frozen or final I10 claim.
 
+## Bounded Render Path stroke-only delta
+
+The bounded Path stroke-only follow-up closes the product writer case where a
+Path carries `strokeRef` without `fillPaint`. It reuses the decoded PathRecord
+and existing stroked-path semantic/raster implementation; the fixture
+`source_product::canonical_path_writer_reaches_product_render_loader` verifies
+the missing fill reference, StrokeRecord binding, semantic stroke output, and
+non-empty raster coverage after the product writer/loader round trip.
+
+GitHub Actions Full Gate run 31290037232 (job 93185526962) passed on exact head
+`f65e3300131758d886bf3557d4daddb85dc3aa39` (`workflow_dispatch`). Source Path
+grammar/lowering, Polyline/Polygon stroke coverage, broader canonical writer
+coverage, and final Render closure remain open; this unit does not change any
+Frozen or final I10 claim.
+
 ## Bounded Render Clip writer delta
 
 The next bounded canonical unit extends the product writer with stable-ID-sorted
