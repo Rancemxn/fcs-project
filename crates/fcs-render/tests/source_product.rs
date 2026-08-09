@@ -2,10 +2,11 @@ use std::path::Path;
 
 use fcs_fcbc::write_from_compilation;
 use fcs_model::{
-    CanonicalArcDirection, CanonicalCompilation, CanonicalExpressionType, CanonicalImageRepeat,
-    CanonicalImageSampling, CanonicalPathCommand, CanonicalPatternTransform, CanonicalRenderClip,
-    CanonicalRenderFillRule, CanonicalRenderGeometry, CanonicalRenderGeometryData,
-    CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
+    CanonicalArcDirection, CanonicalCompilation, CanonicalExpressionType, CanonicalGlyphPlacement,
+    CanonicalGlyphRun, CanonicalImageRepeat, CanonicalImageSampling, CanonicalPathCommand,
+    CanonicalPatternTransform, CanonicalRenderClip, CanonicalRenderFillRule,
+    CanonicalRenderGeometry, CanonicalRenderGeometryData, CanonicalRenderNode,
+    CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
     CanonicalRenderPaintData, CanonicalRenderPath, CanonicalRenderScene, CanonicalRenderSceneSpec,
     CanonicalRenderStroke, CanonicalStrokeCap, CanonicalStrokeJoin, CanonicalTextualId, EntityKind,
     StableIdRegistry,
@@ -270,6 +271,135 @@ render profile 1.0.0 {
         glyph_runs: original.glyph_runs().to_vec(),
     })
     .expect("canonical Clip scene");
+    CanonicalCompilation::new(
+        base.chart().clone().with_render(scene),
+        base.resources().clone(),
+        base.distribution().clone(),
+    )
+}
+
+fn canonical_text_compilation() -> CanonicalCompilation {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+resources {
+    font textFont {
+        source: "assets/fcs-test-font.ttf";
+        hash: "sha256:f603c8bcf005ee2a53ea78acae8002e91285ca26fee32ace235684b636706800";
+        mediaType: "font/ttf";
+    }
+}
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 16px; height: 16px; }
+    layer main {
+        pass: "overlay";
+        children {
+            circle sourceShape {
+                center: vec2(0px, 0px);
+                radius: 5px;
+                fill: solid(#FFFFFFFF);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("canonical Text writer source parses");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/conformance/render");
+    let base = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            &workspace,
+            ResourceLimits::default(),
+        )
+        .expect("canonical Text writer source lowers");
+    let original = base.chart().render().expect("source Render scene");
+    let original_node = &original.nodes()[0];
+    let CanonicalRenderGeometryData::Circle { center, .. } = original.geometries()[0].data() else {
+        panic!("source fixture must provide a Circle geometry");
+    };
+    let size_descriptor = base
+        .chart()
+        .descriptors()
+        .expect("source Render descriptors")
+        .descriptors()
+        .iter()
+        .position(|descriptor| descriptor.property_type() == &CanonicalExpressionType::Length)
+        .expect("source fixture must provide a Length descriptor");
+    let mut ids = StableIdRegistry::new();
+    let font_id = ids
+        .insert(
+            EntityKind::Resource,
+            CanonicalTextualId::explicit("textFont").expect("font textual ID"),
+        )
+        .expect("font stable ID");
+    let glyph_run_id = ids
+        .insert(
+            EntityKind::RenderGlyphRun,
+            CanonicalTextualId::explicit("writer-text-run").expect("glyph run textual ID"),
+        )
+        .expect("glyph run stable ID");
+    let glyph_run = CanonicalGlyphRun::new(
+        glyph_run_id,
+        font_id,
+        0,
+        size_descriptor,
+        [0.0, 0.0],
+        vec![CanonicalGlyphPlacement {
+            glyph_id: 1,
+            x_advance: 1.0,
+            y_advance: 0.0,
+            x_offset: 0.0,
+            y_offset: 0.0,
+        }],
+    )
+    .expect("canonical glyph run");
+    let node = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+        id: original_node.id().clone(),
+        kind: CanonicalRenderNodeKind::Text,
+        parent: original_node.parent(),
+        layer: original_node.layer(),
+        document_order: original_node.document_order(),
+        z_order: original_node.z_order(),
+        attachment: original_node.attachment().clone(),
+        active: original_node.active(),
+        isolate: original_node.isolate(),
+        follow_hidden_attachment: original_node.follow_hidden_attachment(),
+        position: original_node.position(),
+        origin: original_node.origin(),
+        rotation: original_node.rotation(),
+        scale: original_node.scale(),
+        opacity: original_node.opacity(),
+        visibility: original_node.visibility(),
+        geometry: Some(0),
+        fill_paint: Some(0),
+        stroke: None,
+        clip: None,
+        composite: original_node.composite(),
+    })
+    .expect("canonical Text node");
+    let geometry = CanonicalRenderGeometry::new(
+        original.geometries()[0].id().clone(),
+        CanonicalRenderGeometryData::Text {
+            glyph_runs: vec![0],
+            origin: *center,
+        },
+    )
+    .expect("canonical Text geometry");
+    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+        viewport: original.viewport(),
+        layers: original.layers().to_vec(),
+        nodes: vec![node],
+        geometries: vec![geometry],
+        paths: Vec::new(),
+        paints: original.paints().to_vec(),
+        strokes: Vec::new(),
+        clips: Vec::new(),
+        glyph_runs: vec![glyph_run],
+    })
+    .expect("canonical Text scene");
     CanonicalCompilation::new(
         base.chart().clone().with_render(scene),
         base.resources().clone(),
@@ -1209,4 +1339,29 @@ fn canonical_clip_writer_reaches_product_render_loader() {
     assert_eq!(target.clip_chain, vec![scene.clips()[0].id().value()]);
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 8, 8).expect("Clip rasterization");
     assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
+}
+
+#[test]
+fn canonical_text_writer_reaches_product_render_loader() {
+    let compilation = canonical_text_compilation();
+    let scene = compilation.chart().render().expect("canonical Text scene");
+    let bytes = write_from_compilation(&compilation).expect("canonical Text FCBC writing");
+    let render = load_render(&bytes).expect("canonical Text product loader");
+
+    assert_eq!(render.nodes.len(), 1);
+    assert_eq!(render.nodes[0].kind, NodeKind::Text);
+    assert_eq!(render.nodes[0].fill_paint, Some(0));
+    assert_eq!(render.glyph_runs.len(), 1);
+    assert_eq!(render.glyph_runs[0].id, scene.glyph_runs()[0].id().value());
+    assert_eq!(
+        render.glyph_runs[0].font_resource_id,
+        render.resources[0].id
+    );
+    assert_eq!(render.glyph_runs[0].glyphs.len(), 1);
+    assert_eq!(render.glyph_runs[0].glyphs[0].glyph_id, 1);
+    assert!(render.decoded_fonts.contains_key(&render.resources[0].id));
+    assert!(matches!(
+        render.geometries[0].data,
+        GeometryData::Text { ref glyph_runs, .. } if glyph_runs == &vec![0]
+    ));
 }

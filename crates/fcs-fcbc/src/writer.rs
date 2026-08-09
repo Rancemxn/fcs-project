@@ -924,6 +924,7 @@ fn assemble_package(
             "sourceDescriptors",
             "startDescriptor",
             "endDescriptor",
+            "glyphRunRefs",
         ]);
         strings.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
         strings.dedup();
@@ -1036,12 +1037,6 @@ fn render_section(
     strings: &[&str],
     resources: &[ResourceFixture<'_>],
 ) -> FcbcResult<Vec<u8>> {
-    if scene.glyph_runs().iter().next().is_some() {
-        return Err(FcbcError::new(
-            "fcbc.render-unsupported",
-            "product Render writer currently does not support glyph runs",
-        ));
-    }
     let descriptor = |index: usize| {
         descriptor_indices.get(index).copied().ok_or_else(|| {
             FcbcError::new(
@@ -1084,6 +1079,12 @@ fn render_section(
     let mut clip_indices = vec![NULL_INDEX; scene.clips().len()];
     for (index, clip) in clip_order.iter().enumerate() {
         clip_indices[*clip] = index as u32;
+    }
+    let mut glyph_run_order: Vec<usize> = (0..scene.glyph_runs().len()).collect();
+    glyph_run_order.sort_by_key(|index| scene.glyph_runs()[*index].id().value());
+    let mut glyph_run_indices = vec![NULL_INDEX; scene.glyph_runs().len()];
+    for (index, glyph_run) in glyph_run_order.iter().enumerate() {
+        glyph_run_indices[*glyph_run] = index as u32;
     }
 
     let mut roots = Vec::<(usize, usize)>::new();
@@ -1140,7 +1141,7 @@ fn render_section(
     put_u32(&mut payload, scene.paints().len() as u32);
     put_u32(&mut payload, scene.strokes().len() as u32);
     put_u32(&mut payload, scene.clips().len() as u32);
-    put_u32(&mut payload, 0);
+    put_u32(&mut payload, scene.glyph_runs().len() as u32);
     for (encoded, source_layer) in layer_order.iter().enumerate() {
         let layer = &scene.layers()[*source_layer];
         let (first_root, root_count) = layer_root_ranges[encoded];
@@ -1231,11 +1232,19 @@ fn render_section(
                 }
                 (None, None)
             }
-            _ => {
-                return Err(FcbcError::new(
-                    "fcbc.render-unsupported",
-                    "product Render writer does not support this node kind",
-                ));
+            fcs_model::CanonicalRenderNodeKind::Text => {
+                if node.stroke().is_some() {
+                    return Err(FcbcError::new(
+                        "fcbc.render-unsupported",
+                        "product Render writer only supports fill paint on Text nodes",
+                    ));
+                }
+                (
+                    Some(node.fill_paint().ok_or_else(|| {
+                        FcbcError::new("fcbc.dangling-reference", "Render Text has no fill paint")
+                    })?),
+                    None,
+                )
             }
         };
         let geometry = geometry
@@ -1449,11 +1458,33 @@ fn render_section(
                 fields.push(("sampling", value_int(i64::from(sampling.ordinal()))));
                 value_object(&fields, strings)
             }
-            _ => {
-                return Err(FcbcError::new(
-                    "fcbc.render-unsupported",
-                    "Render geometry is not supported by the product writer",
-                ));
+            CanonicalRenderGeometryData::Text { glyph_runs, origin } => {
+                let runs = glyph_runs
+                    .iter()
+                    .map(|glyph_run| {
+                        glyph_run_indices
+                            .get(*glyph_run)
+                            .copied()
+                            .filter(|index| *index != NULL_INDEX)
+                            .map(|index| value_int(i64::from(index)))
+                            .ok_or_else(|| {
+                                FcbcError::new(
+                                    "fcbc.dangling-reference",
+                                    "Render Text geometry references a missing glyph run",
+                                )
+                            })
+                    })
+                    .collect::<FcbcResult<Vec<_>>>()?;
+                value_object(
+                    &[
+                        ("glyphRunRefs", value_array(2, runs)),
+                        (
+                            "originDescriptor",
+                            value_int(i64::from(descriptor(*origin)?)),
+                        ),
+                    ],
+                    strings,
+                )
             }
         };
         let mut record_payload = Vec::new();
@@ -1684,6 +1715,46 @@ fn render_section(
         put_u16(&mut record_payload, 0);
         put_u16(&mut record_payload, clip.fill_rule().ordinal());
         put_u32(&mut record_payload, geometry);
+        payload.extend_from_slice(&record(record_payload));
+    }
+    for glyph_run_index in &glyph_run_order {
+        let glyph_run = &scene.glyph_runs()[*glyph_run_index];
+        let resource_id = glyph_run.font().value();
+        let resource = resources
+            .iter()
+            .find(|candidate| candidate.id == resource_id)
+            .ok_or_else(|| {
+                FcbcError::new(
+                    "fcbc.render-resource-not-found",
+                    format!("Render GlyphRun references resource {resource_id}"),
+                )
+            })?;
+        if resource.kind != 3 || resource.media_type != "font/ttf" {
+            return Err(FcbcError::new(
+                "fcbc.render-resource-type-mismatch",
+                "Render GlyphRun requires a font/ttf resource",
+            ));
+        }
+        let mut record_payload = Vec::new();
+        put_u64(&mut record_payload, glyph_run.id().value());
+        put_u64(&mut record_payload, resource_id);
+        put_u32(&mut record_payload, glyph_run.face_index());
+        put_u16(&mut record_payload, 0);
+        put_u16(&mut record_payload, 1);
+        put_u32(&mut record_payload, descriptor(glyph_run.size())?);
+        let [run_offset_x, run_offset_y] = glyph_run.run_offset();
+        put_f64(&mut record_payload, run_offset_x);
+        put_f64(&mut record_payload, run_offset_y);
+        put_u32(&mut record_payload, glyph_run.glyphs().len() as u32);
+        put_u32(&mut record_payload, 0);
+        for glyph in glyph_run.glyphs() {
+            put_u32(&mut record_payload, glyph.glyph_id);
+            put_u32(&mut record_payload, 0);
+            put_f64(&mut record_payload, glyph.x_advance);
+            put_f64(&mut record_payload, glyph.y_advance);
+            put_f64(&mut record_payload, glyph.x_offset);
+            put_f64(&mut record_payload, glyph.y_offset);
+        }
         payload.extend_from_slice(&record(record_payload));
     }
     Ok(record(payload))
