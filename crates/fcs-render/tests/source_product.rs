@@ -178,6 +178,16 @@ fn canonical_rect_stroke_compilation() -> CanonicalCompilation {
     let source = r#"#fcs 5.0.0
 format { profile: renderable; }
 tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+    notes {
+        tap {
+            id: "writer-rect-note";
+            line: @main;
+            gameplay.time: 1beat;
+        };
+    }
+}
 render profile 1.0.0 {
     viewport { width: 16px; height: 16px; }
     layer main {
