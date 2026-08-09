@@ -272,13 +272,21 @@ mod tests {
         }
     }
 
-    fn make_world_attached(render: &mut DecodedRenderChart) {
+    fn hide_text_subtree(render: &mut DecodedRenderChart) {
         for node in &mut render.nodes {
-            // The fixture Text subtree's size descriptor reads Note distance.
-            if node.kind != NodeKind::Text && !(node.kind == NodeKind::Group && node.isolated()) {
-                node.attachment = Attachment { kind: 1, id: 0 };
+            if node.kind == NodeKind::Text || (node.kind == NodeKind::Group && node.isolated()) {
+                node.flags &= !0b11;
+                node.active_start = 1.0;
+                node.active_end = 1.0;
             }
         }
+    }
+
+    fn make_world_attached(render: &mut DecodedRenderChart) {
+        for node in &mut render.nodes {
+            node.attachment = Attachment { kind: 1, id: 0 };
+        }
+        hide_text_subtree(render);
     }
 
     fn isolate_solid_shape(render: &mut DecodedRenderChart, kind: NodeKind) {
@@ -1338,13 +1346,12 @@ mod tests {
         );
 
         for node in &mut render.nodes {
-            if node.kind != NodeKind::Text && !(node.kind == NodeKind::Group && node.isolated()) {
-                node.attachment = Attachment {
-                    kind: 3,
-                    id: line_id,
-                };
-            }
+            node.attachment = Attachment {
+                kind: 3,
+                id: line_id,
+            };
         }
+        hide_text_subtree(&mut render);
         let line_rect = evaluate_semantic_draw_list_at(&render, 0.0)
             .expect("Line attachment query")
             .into_iter()
