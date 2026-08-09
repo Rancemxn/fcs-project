@@ -254,9 +254,9 @@ semantic draw/raster support.
 
 GitHub Actions Full Gate run 31287462784 (job 93178786167) passed on exact head
 `a6ff197c276e25f3092bd0d4410ff13f22f21db3` (`workflow_dispatch`). Source Text
-grammar/lowering, fallback/shaping beyond `simple-ltr-1`, Text stroke coverage,
-and broader Render closure remain open; Text semantic/raster evidence is recorded
-below. This unit does not change any Frozen or final I10 claim.
+grammar/lowering, fallback/shaping beyond `simple-ltr-1`, Text stroke coverage
+recorded below, and broader Render closure remain open. This unit does not change
+any Frozen or final I10 claim.
 
 ## Bounded Render Text semantic/raster delta
 
@@ -270,9 +270,24 @@ writer/loader round trip.
 
 GitHub Actions Full Gate run 31288628033 (job 93181879775) passed on exact head
 `b4169c9f26c86c8a090bd63f3c91db263a5e3658` (`workflow_dispatch`). Source Text
-grammar/lowering, fallback/shaping beyond `simple-ltr-1`, Text stroke coverage,
-and broader Render closure remain open; this unit does not change any Frozen or
-final I10 claim.
+grammar/lowering, fallback/shaping beyond `simple-ltr-1`, Text stroke coverage
+recorded below, and broader Render closure remain open; this unit does not change
+any Frozen or final I10 claim.
+
+## Bounded Render Text stroke delta
+
+The bounded Text stroke follow-up extends the product Render writer to accept
+Text with fill, stroke, or stroke-only paint. The semantic evaluator reuses
+decoded glyph contours as Path geometry, and the existing Path stroke coverage
+handles Text stroke paint through the product Render raster path. The fixture is
+`source_product::canonical_text_stroke_writer_reaches_product_render_loader`;
+it verifies stroke-only Text writer/loader references, semantic stroke output,
+and non-empty raster coverage.
+
+GitHub Actions Full Gate run 31289376238 (job 93183857394) passed on exact head
+`825ecd480679f5a5348ef20a6df0424fa7b65167` (`workflow_dispatch`). Source Text
+grammar/lowering, fallback/shaping beyond `simple-ltr-1`, and broader Render
+closure remain open; this unit does not change any Frozen or final I10 claim.
 
 ## Credit stable identity delta
 
