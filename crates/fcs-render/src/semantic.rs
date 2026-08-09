@@ -1745,7 +1745,8 @@ pub fn rasterize_solid_rgba8_with_limits_at(
         };
         let stroke_source = if matches!(
             op.kind,
-            NodeKind::Line
+            NodeKind::Rect
+                | NodeKind::Line
                 | NodeKind::Polyline
                 | NodeKind::Polygon
                 | NodeKind::Path
