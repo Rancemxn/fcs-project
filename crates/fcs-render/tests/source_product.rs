@@ -198,6 +198,11 @@ render profile 1.0.0 {
                 size: vec2(8px, 8px);
                 fill: solid(#FFFFFFFF);
             }
+            circle descriptorSource {
+                center: vec2(0px, 0px);
+                radius: 1px;
+                fill: solid(#000000FF);
+            }
         }
     }
 }
@@ -214,7 +219,13 @@ render profile 1.0.0 {
         )
         .expect("canonical Rect writer source lowers");
     let original = base.chart().render().expect("source Render scene");
-    let original_node = &original.nodes()[0];
+    let node_index = original
+        .nodes()
+        .iter()
+        .position(|node| node.kind() == CanonicalRenderNodeKind::Rect)
+        .expect("source fixture must provide a Rect node");
+    let original_node = &original.nodes()[node_index];
+    let geometry_index = original_node.geometry().expect("Rect geometry");
     let width_descriptor = base
         .chart()
         .descriptors()
@@ -269,9 +280,9 @@ render profile 1.0.0 {
         viewport: original.viewport(),
         layers: original.layers().to_vec(),
         nodes: vec![node],
-        geometries: original.geometries().to_vec(),
+        geometries: vec![original.geometries()[geometry_index].clone()],
         paths: original.paths().to_vec(),
-        paints: original.paints().to_vec(),
+        paints: vec![original.paints()[0].clone()],
         strokes: vec![stroke],
         clips: original.clips().to_vec(),
         glyph_runs: original.glyph_runs().to_vec(),
