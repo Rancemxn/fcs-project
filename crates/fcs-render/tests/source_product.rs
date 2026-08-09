@@ -3,7 +3,7 @@ use std::path::Path;
 use fcs_fcbc::write_from_compilation;
 use fcs_model::{
     CanonicalArcDirection, CanonicalCompilation, CanonicalExpressionType, CanonicalImageRepeat,
-    CanonicalImageSampling, CanonicalPathCommand, CanonicalPatternTransform,
+    CanonicalImageSampling, CanonicalPathCommand, CanonicalPatternTransform, CanonicalRenderClip,
     CanonicalRenderFillRule, CanonicalRenderGeometry, CanonicalRenderGeometryData,
     CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
     CanonicalRenderPaintData, CanonicalRenderPath, CanonicalRenderScene, CanonicalRenderSceneSpec,
@@ -166,6 +166,110 @@ render profile 1.0.0 {
         glyph_runs: Vec::new(),
     })
     .expect("canonical Line scene");
+    CanonicalCompilation::new(
+        base.chart().clone().with_render(scene),
+        base.resources().clone(),
+        base.distribution().clone(),
+    )
+}
+
+fn canonical_clip_compilation() -> CanonicalCompilation {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 8px; height: 8px; }
+    layer main {
+        pass: "overlay";
+        children {
+            group root {
+                children {
+                    rect target {
+                        origin: vec2(-3px, -3px);
+                        size: vec2(6px, 6px);
+                        fill: solid(#FFFFFFFF);
+                    }
+                }
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("canonical Clip writer source parses");
+    let base = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .expect("canonical Clip writer source lowers");
+    let original = base.chart().render().expect("source Render scene");
+    let mut ids = StableIdRegistry::new();
+    let clip_geometry_id = ids
+        .insert(
+            EntityKind::RenderGeometry,
+            CanonicalTextualId::explicit("writer-clip-geometry").expect("Clip geometry textual ID"),
+        )
+        .expect("Clip geometry stable ID");
+    let clip_id = ids
+        .insert(
+            EntityKind::RenderClip,
+            CanonicalTextualId::explicit("writer-clip").expect("Clip textual ID"),
+        )
+        .expect("Clip stable ID");
+    let clip_geometry =
+        CanonicalRenderGeometry::new(clip_geometry_id, original.geometries()[0].data().clone())
+            .expect("canonical Clip geometry");
+    let clip = CanonicalRenderClip::new(
+        clip_id,
+        CanonicalRenderFillRule::NonZero,
+        original.geometries().len(),
+    )
+    .expect("canonical Clip");
+    let root = &original.nodes()[0];
+    let clip_group = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+        id: root.id().clone(),
+        kind: CanonicalRenderNodeKind::ClipGroup,
+        parent: root.parent(),
+        layer: root.layer(),
+        document_order: root.document_order(),
+        z_order: root.z_order(),
+        attachment: root.attachment().clone(),
+        active: root.active(),
+        isolate: root.isolate(),
+        follow_hidden_attachment: root.follow_hidden_attachment(),
+        position: root.position(),
+        origin: root.origin(),
+        rotation: root.rotation(),
+        scale: root.scale(),
+        opacity: root.opacity(),
+        visibility: root.visibility(),
+        geometry: None,
+        fill_paint: None,
+        stroke: None,
+        clip: Some(0),
+        composite: root.composite(),
+    })
+    .expect("canonical ClipGroup node");
+    let mut nodes = original.nodes().to_vec();
+    nodes[0] = clip_group;
+    let mut geometries = original.geometries().to_vec();
+    geometries.push(clip_geometry);
+    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+        viewport: original.viewport(),
+        layers: original.layers().to_vec(),
+        nodes,
+        geometries,
+        paths: original.paths().to_vec(),
+        paints: original.paints().to_vec(),
+        strokes: original.strokes().to_vec(),
+        clips: vec![clip],
+        glyph_runs: original.glyph_runs().to_vec(),
+    })
+    .expect("canonical Clip scene");
     CanonicalCompilation::new(
         base.chart().clone().with_render(scene),
         base.resources().clone(),
@@ -1074,4 +1178,35 @@ render profile 1.0.0 {
             .chunks_exact(4)
             .any(|pixel| { pixel[0] > 200 && pixel[1] > 200 && pixel[2] > 200 && pixel[3] > 0 })
     );
+}
+
+#[test]
+fn canonical_clip_writer_reaches_product_render_loader() {
+    let compilation = canonical_clip_compilation();
+    let scene = compilation.chart().render().expect("canonical Clip scene");
+    let bytes = write_from_compilation(&compilation).expect("canonical Clip FCBC writing");
+    let render = load_render(&bytes).expect("canonical Clip product loader");
+
+    let clip_node = render
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::ClipGroup)
+        .expect("decoded ClipGroup node");
+    let clip_index = clip_node.clip_ref.expect("decoded Clip reference") as usize;
+    let clip = &render.clips[clip_index];
+    assert_eq!(clip.id, scene.clips()[0].id().value());
+    assert_eq!(clip.fill_rule, 1);
+    assert_eq!(
+        render.geometries[clip.geometry_ref as usize].id,
+        scene.geometries()[scene.clips()[0].geometry()].id().value()
+    );
+
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Clip semantic evaluation");
+    let target = draw
+        .iter()
+        .find(|operation| operation.kind == NodeKind::Rect)
+        .expect("clipped target draw op");
+    assert_eq!(target.clip_chain, vec![scene.clips()[0].id().value()]);
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 8, 8).expect("Clip rasterization");
+    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
 }

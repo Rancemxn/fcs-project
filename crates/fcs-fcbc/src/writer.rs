@@ -1036,10 +1036,10 @@ fn render_section(
     strings: &[&str],
     resources: &[ResourceFixture<'_>],
 ) -> FcbcResult<Vec<u8>> {
-    if scene.clips().iter().next().is_some() || scene.glyph_runs().iter().next().is_some() {
+    if scene.glyph_runs().iter().next().is_some() {
         return Err(FcbcError::new(
             "fcbc.render-unsupported",
-            "product Render writer currently does not support clips or glyph runs",
+            "product Render writer currently does not support glyph runs",
         ));
     }
     let descriptor = |index: usize| {
@@ -1078,6 +1078,12 @@ fn render_section(
     let mut stroke_indices = vec![NULL_INDEX; scene.strokes().len()];
     for (index, stroke) in stroke_order.iter().enumerate() {
         stroke_indices[*stroke] = index as u32;
+    }
+    let mut clip_order: Vec<usize> = (0..scene.clips().len()).collect();
+    clip_order.sort_by_key(|index| scene.clips()[*index].id().value());
+    let mut clip_indices = vec![NULL_INDEX; scene.clips().len()];
+    for (index, clip) in clip_order.iter().enumerate() {
+        clip_indices[*clip] = index as u32;
     }
 
     let mut roots = Vec::<(usize, usize)>::new();
@@ -1133,7 +1139,7 @@ fn render_section(
     put_u32(&mut payload, scene.paths().len() as u32);
     put_u32(&mut payload, scene.paints().len() as u32);
     put_u32(&mut payload, scene.strokes().len() as u32);
-    put_u32(&mut payload, 0);
+    put_u32(&mut payload, scene.clips().len() as u32);
     put_u32(&mut payload, 0);
     for (encoded, source_layer) in layer_order.iter().enumerate() {
         let layer = &scene.layers()[*source_layer];
@@ -1206,7 +1212,16 @@ fn render_section(
                     })?),
                 )
             }
-            fcs_model::CanonicalRenderNodeKind::Group => (None, None),
+            fcs_model::CanonicalRenderNodeKind::Group => {
+                if node.clip().is_some() {
+                    return Err(FcbcError::new(
+                        "fcbc.render-unsupported",
+                        "Render Group cannot carry a clip",
+                    ));
+                }
+                (None, None)
+            }
+            fcs_model::CanonicalRenderNodeKind::ClipGroup => (None, None),
             fcs_model::CanonicalRenderNodeKind::Image => {
                 if node.fill_paint().is_some() || node.stroke().is_some() {
                     return Err(FcbcError::new(
@@ -1256,6 +1271,18 @@ fn render_section(
             })
             .transpose()?
             .unwrap_or(NULL_INDEX);
+        let clip = node
+            .clip()
+            .map(|clip| {
+                clip_indices.get(clip).copied().ok_or_else(|| {
+                    FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render node references a missing clip",
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(NULL_INDEX);
         let attachment_id = node.attachment().target().map_or(0, |id| id.value());
         let active = node.active();
         let flags = u16::from(active.unbounded_before())
@@ -1284,7 +1311,7 @@ fn render_section(
         put_u32(&mut record_payload, geometry);
         put_u32(&mut record_payload, paint);
         put_u32(&mut record_payload, stroke);
-        put_u32(&mut record_payload, NULL_INDEX);
+        put_u32(&mut record_payload, clip);
         put_u16(&mut record_payload, node.composite().ordinal());
         put_u16(&mut record_payload, 0);
         record_payload.extend_from_slice(&empty_object());
@@ -1639,6 +1666,24 @@ fn render_section(
         for dash in stroke.dash() {
             put_f64(&mut record_payload, *dash);
         }
+        payload.extend_from_slice(&record(record_payload));
+    }
+    for clip_index in &clip_order {
+        let clip = &scene.clips()[*clip_index];
+        let geometry = geometry_indices
+            .get(clip.geometry())
+            .copied()
+            .ok_or_else(|| {
+                FcbcError::new(
+                    "fcbc.dangling-reference",
+                    "Render clip references a missing geometry",
+                )
+            })?;
+        let mut record_payload = Vec::new();
+        put_u64(&mut record_payload, clip.id().value());
+        put_u16(&mut record_payload, 0);
+        put_u16(&mut record_payload, clip.fill_rule().ordinal());
+        put_u32(&mut record_payload, geometry);
         payload.extend_from_slice(&record(record_payload));
     }
     Ok(record(payload))
