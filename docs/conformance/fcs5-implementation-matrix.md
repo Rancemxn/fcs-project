@@ -222,7 +222,7 @@ the existing line stroke semantic/raster path. GitHub Actions Full Gate run
 `a9eb9594fb70b507f5c7738857b63fbc234519aa`.
 Source Line stroke lowering, source ImagePattern lowering, source Path lowering,
 source Path grammar, Path text coverage, broader canonical writer coverage,
-Polyline/Text, and descriptor-driven gradient stroke lowering remain outside these
+Polyline, source Text grammar/lowering, and descriptor-driven gradient stroke lowering remain outside these
 bounded units. These Render deltas do not change any Frozen or final I10 claim.
 
 ## Bounded Render Clip writer delta
@@ -254,9 +254,25 @@ semantic draw/raster support.
 
 GitHub Actions Full Gate run 31287462784 (job 93178786167) passed on exact head
 `a6ff197c276e25f3092bd0d4410ff13f22f21db3` (`workflow_dispatch`). Source Text
-grammar/lowering, fallback/shaping beyond `simple-ltr-1`, Text semantic/raster
-coverage, and broader Render closure remain open; this unit does not change any
-Frozen or final I10 claim.
+grammar/lowering, fallback/shaping beyond `simple-ltr-1`, Text stroke coverage,
+and broader Render closure remain open; Text semantic/raster evidence is recorded
+below. This unit does not change any Frozen or final I10 claim.
+
+## Bounded Render Text semantic/raster delta
+
+The next bounded canonical unit evaluates loader-validated Text geometry from
+decoded `truetype-glyf-1` outlines. It applies the exact GlyphRun size, runOffset,
+pen, placement metrics, and Text origin, expands TrueType quadratic contours, and
+reuses the existing nonzero fill and 8x8 reference raster paths. Evidence is bound
+by `source_product::canonical_text_writer_reaches_product_render_loader`, which
+now checks the Text DrawOp bounds and non-empty raster coverage after the canonical
+writer/loader round trip.
+
+GitHub Actions Full Gate run 31288628033 (job 93181879775) passed on exact head
+`b4169c9f26c86c8a090bd63f3c91db263a5e3658` (`workflow_dispatch`). Source Text
+grammar/lowering, fallback/shaping beyond `simple-ltr-1`, Text stroke coverage,
+and broader Render closure remain open; this unit does not change any Frozen or
+final I10 claim.
 
 ## Credit stable identity delta
 
