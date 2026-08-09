@@ -217,7 +217,9 @@ StrokeRecord, then evaluates explicit Close/open-subpath behavior, dash phase,
 cap/join coverage, and zero-length flattened segments in the reference raster.
 Its focused evidence is `source_product::canonical_path_writer_reaches_product_render_loader`,
 `semantic_tests::path_stroke_respects_close_dash_and_zero_length_segments`, and
-the existing line stroke semantic/raster path.
+the existing line stroke semantic/raster path. GitHub Actions Full Gate run
+31285800196 (job 93174258827) passed on exact head
+`a9eb9594fb70b507f5c7738857b63fbc234519aa`.
 Source Line stroke lowering, source ImagePattern lowering, source Path lowering,
 source Path grammar, Path text coverage, broader canonical writer coverage,
 Polyline/Text, and descriptor-driven gradient stroke lowering remain outside these
