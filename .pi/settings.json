@@ -3,7 +3,7 @@
     "agentOverrides": {
       "delegate": {
         "model": "opencode-go/deepseek-v4-flash",
-        "thinking": "max",
+        "thinking": false,
         "tools": [
           "mcp:fastctx/glob",
           "mcp:fastctx/grep",
@@ -13,7 +13,7 @@
       },
       "oracle": {
         "model": "opencode-go/deepseek-v4-flash",
-        "thinking": "max",
+        "thinking": false,
         "tools": [
           "mcp:fastctx/glob",
           "mcp:fastctx/grep",
@@ -23,7 +23,7 @@
       },
       "researcher": {
         "model": "opencode-go/deepseek-v4-flash",
-        "thinking": "max",
+        "thinking": false,
         "tools": [
           "mcp:fastctx/glob",
           "mcp:fastctx/grep",
@@ -46,7 +46,7 @@
       },
       "scout": {
         "model": "opencode-go/deepseek-v4-flash",
-        "thinking": "max",
+        "thinking": false,
         "acceptanceRole": "read-only",
         "tools": [
           "mcp:fastctx/glob",
