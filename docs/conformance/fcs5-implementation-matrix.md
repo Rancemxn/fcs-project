@@ -222,7 +222,7 @@ the existing line stroke semantic/raster path. GitHub Actions Full Gate run
 `a9eb9594fb70b507f5c7738857b63fbc234519aa`.
 Source Line stroke lowering, source ImagePattern lowering, source Path lowering,
 source Path grammar, Path text coverage, broader canonical writer coverage,
-Polyline, source Text grammar/lowering, and descriptor-driven gradient stroke lowering remain outside these
+Polygon stroke coverage, source Text grammar/lowering, and descriptor-driven gradient stroke lowering remain outside these
 bounded units. These Render deltas do not change any Frozen or final I10 claim.
 
 ## Bounded Render Path stroke-only delta
@@ -239,6 +239,22 @@ GitHub Actions Full Gate run 31290037232 (job 93185526962) passed on exact head
 grammar/lowering, Polyline/Polygon stroke coverage, broader canonical writer
 coverage, and final Render closure remain open; this unit does not change any
 Frozen or final I10 claim.
+
+## Bounded Render Polyline stroke delta
+
+The bounded Polyline stroke follow-up extends the product writer to accept a
+stroke-only open point sequence. The semantic evaluator preserves the existing
+implicit closing segment for Polyline fill while passing `closed=false` to the
+shared stroke path, so endpoint caps and dash phase remain open-path behavior.
+The fixture `source_product::canonical_polyline_stroke_writer_reaches_product_render_loader`
+verifies the writer/loader binding, semantic stroke output, and non-empty raster
+coverage.
+
+GitHub Actions Full Gate run 31290853047 (job 93187597128) passed on exact head
+`cb8936f9faaecb83c397f8aed1c1d9bf707278ae` (`workflow_dispatch`). Polygon stroke
+coverage, source stroke lowering, broader canonical writer coverage, and final
+Render closure remain open; this unit does not change any Frozen or final I10
+claim.
 
 ## Bounded Render Clip writer delta
 
