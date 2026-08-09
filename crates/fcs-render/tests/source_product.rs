@@ -1321,11 +1321,14 @@ fn canonical_path_writer_reaches_product_render_loader() {
     );
 }
 
-#[test]
-fn canonical_polyline_stroke_writer_reaches_product_render_loader() {
+fn canonical_point_stroke_compilation(kind: CanonicalRenderNodeKind) -> CanonicalCompilation {
+    assert!(matches!(
+        kind,
+        CanonicalRenderNodeKind::Polyline | CanonicalRenderNodeKind::Polygon
+    ));
     let document = parse_document(CANONICAL_PATH_SOURCE)
         .into_result()
-        .expect("Polyline stroke source parses");
+        .expect("point stroke source parses");
     let base = document
         .canonical_compilation_with_source(
             CANONICAL_PATH_SOURCE,
@@ -1333,17 +1336,29 @@ fn canonical_polyline_stroke_writer_reaches_product_render_loader() {
             env!("CARGO_MANIFEST_DIR"),
             ResourceLimits::default(),
         )
-        .unwrap_or_else(|diagnostics| {
-            panic!("Polyline canonical lowering failed: {diagnostics:?}")
-        });
+        .unwrap_or_else(|diagnostics| panic!("point canonical lowering failed: {diagnostics:?}"));
     let original = base.chart().render().expect("source Render scene");
     let node_index = original
         .nodes()
         .iter()
         .position(|node| node.kind() == CanonicalRenderNodeKind::Polyline)
-        .expect("source fixture must provide a Polyline node");
+        .expect("source fixture must provide a point node");
     let original_node = &original.nodes()[node_index];
-    let geometry_index = original_node.geometry().expect("Polyline geometry");
+    let geometry_index = original_node.geometry().expect("point geometry");
+    let geometry_data = match kind {
+        CanonicalRenderNodeKind::Polyline => original.geometries()[geometry_index].data().clone(),
+        CanonicalRenderNodeKind::Polygon => {
+            let CanonicalRenderGeometryData::Polyline { points } =
+                original.geometries()[geometry_index].data()
+            else {
+                panic!("source fixture must provide Polyline points");
+            };
+            CanonicalRenderGeometryData::Polygon {
+                points: points.clone(),
+            }
+        }
+        _ => unreachable!("point stroke helper only supports point geometry"),
+    };
     let width_descriptor = base
         .chart()
         .descriptors()
@@ -1353,13 +1368,17 @@ fn canonical_polyline_stroke_writer_reaches_product_render_loader() {
         .position(|descriptor| descriptor.property_type() == &CanonicalExpressionType::Length)
         .expect("source fixture must provide a Length descriptor");
     let mut ids = StableIdRegistry::new();
+    let stroke_name = match kind {
+        CanonicalRenderNodeKind::Polyline => "writer-polyline-stroke",
+        CanonicalRenderNodeKind::Polygon => "writer-polygon-stroke",
+        _ => unreachable!("point stroke helper only supports point geometry"),
+    };
     let stroke_id = ids
         .insert(
             EntityKind::RenderStroke,
-            CanonicalTextualId::explicit("writer-polyline-stroke")
-                .expect("Polyline stroke textual ID"),
+            CanonicalTextualId::explicit(stroke_name).expect("point stroke textual ID"),
         )
-        .expect("Polyline stroke stable ID");
+        .expect("point stroke stable ID");
     let stroke = CanonicalRenderStroke::new(
         stroke_id,
         0,
@@ -1370,10 +1389,10 @@ fn canonical_polyline_stroke_writer_reaches_product_render_loader() {
         width_descriptor,
         vec![2.0, 2.0],
     )
-    .expect("canonical Polyline stroke");
+    .expect("canonical point stroke");
     let node = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
         id: original_node.id().clone(),
-        kind: CanonicalRenderNodeKind::Polyline,
+        kind,
         parent: original_node.parent(),
         layer: original_node.layer(),
         document_order: original_node.document_order(),
@@ -1394,58 +1413,82 @@ fn canonical_polyline_stroke_writer_reaches_product_render_loader() {
         clip: None,
         composite: original_node.composite(),
     })
-    .expect("canonical Polyline node");
+    .expect("canonical point node");
     let mut nodes = original.nodes().to_vec();
     nodes[node_index] = node;
+    let mut geometries = original.geometries().to_vec();
+    geometries[geometry_index] =
+        CanonicalRenderGeometry::new(geometries[geometry_index].id().clone(), geometry_data)
+            .expect("canonical point geometry");
     let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
         viewport: original.viewport(),
         layers: original.layers().to_vec(),
         nodes,
-        geometries: original.geometries().to_vec(),
+        geometries,
         paths: original.paths().to_vec(),
         paints: original.paints().to_vec(),
         strokes: vec![stroke],
         clips: original.clips().to_vec(),
         glyph_runs: original.glyph_runs().to_vec(),
     })
-    .expect("canonical Polyline scene");
-    let compilation = CanonicalCompilation::new(
+    .expect("canonical point scene");
+    CanonicalCompilation::new(
         base.chart().clone().with_render(scene),
         base.resources().clone(),
         base.distribution().clone(),
-    );
-    let scene = compilation
-        .chart()
-        .render()
-        .expect("canonical Polyline scene");
-    let bytes = write_from_compilation(&compilation).expect("canonical Polyline FCBC writing");
-    let render = load_render(&bytes).expect("canonical Polyline product loader");
+    )
+}
+
+fn assert_canonical_point_stroke(compilation: CanonicalCompilation, expected_kind: NodeKind) {
+    let scene = compilation.chart().render().expect("canonical point scene");
+    let bytes = write_from_compilation(&compilation).expect("canonical point FCBC writing");
+    let render = load_render(&bytes).expect("canonical point product loader");
 
     let decoded_node_index = render
         .nodes
         .iter()
-        .position(|node| node.id == scene.nodes()[node_index].id().value())
-        .expect("decoded Polyline node");
+        .position(|node| node.kind == expected_kind)
+        .expect("decoded point node");
     let decoded_node = &render.nodes[decoded_node_index];
-    assert_eq!(decoded_node.kind, NodeKind::Polyline);
+    assert_eq!(decoded_node.kind, expected_kind);
     assert_eq!(decoded_node.fill_paint, None);
     assert_eq!(decoded_node.stroke_ref, Some(0));
-    assert!(matches!(
-        render.geometries[decoded_node.geometry_ref.expect("Polyline geometry") as usize].data,
-        GeometryData::Polyline { ref points } if points.len() == 3
-    ));
+    let geometry = &render.geometries[decoded_node.geometry_ref.expect("point geometry") as usize];
+    assert_eq!(geometry.id, scene.geometries()[0].id().value());
+    match &geometry.data {
+        GeometryData::Polyline { points } | GeometryData::Polygon { points } => {
+            assert_eq!(points.len(), 3)
+        }
+        _ => panic!("decoded point geometry has the wrong kind"),
+    }
     assert_eq!(render.strokes.len(), 1);
 
-    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Polyline stroke semantics");
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("point stroke semantics");
     let operation = draw
         .iter()
-        .find(|operation| operation.kind == NodeKind::Polyline)
-        .expect("Polyline draw op");
+        .find(|operation| operation.kind == expected_kind)
+        .expect("point draw op");
     assert!(operation.fill_rgba.is_none());
     assert!(operation.stroke.is_some());
     let pixels =
-        rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Polyline stroke rasterization");
+        rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("point stroke rasterization");
     assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
+}
+
+#[test]
+fn canonical_polyline_stroke_writer_reaches_product_render_loader() {
+    assert_canonical_point_stroke(
+        canonical_point_stroke_compilation(CanonicalRenderNodeKind::Polyline),
+        NodeKind::Polyline,
+    );
+}
+
+#[test]
+fn canonical_polygon_stroke_writer_reaches_product_render_loader() {
+    assert_canonical_point_stroke(
+        canonical_point_stroke_compilation(CanonicalRenderNodeKind::Polygon),
+        NodeKind::Polygon,
+    );
 }
 
 #[test]

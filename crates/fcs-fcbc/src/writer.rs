@@ -1177,8 +1177,7 @@ fn render_section(
             fcs_model::CanonicalRenderNodeKind::Rect
             | fcs_model::CanonicalRenderNodeKind::RoundedRect
             | fcs_model::CanonicalRenderNodeKind::Circle
-            | fcs_model::CanonicalRenderNodeKind::Ellipse
-            | fcs_model::CanonicalRenderNodeKind::Polygon => {
+            | fcs_model::CanonicalRenderNodeKind::Ellipse => {
                 if node.stroke().is_some() {
                     return Err(FcbcError::new(
                         "fcbc.render-unsupported",
@@ -1192,13 +1191,14 @@ fn render_section(
                     None,
                 )
             }
-            fcs_model::CanonicalRenderNodeKind::Polyline => {
+            fcs_model::CanonicalRenderNodeKind::Polyline
+            | fcs_model::CanonicalRenderNodeKind::Polygon => {
                 let fill = node.fill_paint();
                 let stroke = node.stroke();
                 if fill.is_none() && stroke.is_none() {
                     return Err(FcbcError::new(
                         "fcbc.dangling-reference",
-                        "Render Polyline has no fill paint or stroke",
+                        "Render Polyline or Polygon has no fill paint or stroke",
                     ));
                 }
                 (fill, stroke)
