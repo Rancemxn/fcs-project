@@ -1,9 +1,10 @@
 name: Full gate
 
+# Candidate-SHA gate (ADR 0013 as amended by ADR 0014): runs only via
+# workflow_dispatch on a ref resolving to an explicitly submitted candidate
+# SHA. No automatic pull_request or push-to-main triggers. Verify the run's
+# headSha equals the candidate SHA before treating it as gate evidence.
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

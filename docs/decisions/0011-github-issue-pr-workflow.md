@@ -1,6 +1,6 @@
 # 0011：使用 GitHub Issue 与 Pull Request 交付工作
 
-状态：Accepted
+状态：Accepted（部分被 ADR 0014 取代）
 
 日期：2026-07-17
 
@@ -120,3 +120,17 @@ review-unit 分配并生成后继审查 handoff，不把空 frontier 标记为 `
 该 amendment 取代第 8 节关于“最多 10 次后返回 `waiting-for-main` residual 并结束 reviewer turn”的表述；其余
 权限、分支隔离、重试、进度消息、规范权威边界和 I10 success signal 保持不变。具体执行契约以本节、`AGENTS.md`、
 `docs/agents/issue-tracker.md`、`docs/loops/loop.md` 和 `docs/loops/review-loop.md` 的一致文本为准。
+
+## 10. 2026-08-09 dated amendment：部分被 ADR 0014 取代
+
+ADR 0014（FCS5 Parallel PR Delivery）部分取代本 ADR：§7–§9 的“主实现会话 + 独立审查会话”双角色模型、主会话
+唯一 Ready/merge owner、以及把 `docs/loops/loop.md` 与 `docs/loops/review-loop.md` 列为执行契约的条款，由
+`docs/loops/fcs5-parallel-pr-delivery.md` 命名冻结工作流取代；Ready/merge/push `main` 只保留给 Rancemxn，
+Delivery App（`fcs5-delivery-rancemxn[bot]`）与 Review App（`fcs5-review-rancemxn[bot]`）按该工作流分担
+交付与审查，两个 Bot 都不能绕过 main 规则。§2 的 branch 命名 `codex/<issue>-<slug>` 保留，lane worktree 路径
+`worktree/<issue>-<slug>` 由工作流定义。
+
+§5–§6（分条进度消息、重试与 pending remote sync outbox）继续有效：重试上限、写操作前的稳定身份查询、
+outbox 语义、superseding comment 与 delivery-ready/final merged checkpoint 规则均不改变，只把执行者从主会话
+重新指向 Delivery/Review App 与 lane。审查会话 480 review-unit 预算与持续等待语义由工作流继承。本 amendment
+只改变协作与交付基础设施，不改变 FCS、FCBC、Render、Conversion、fixture 或实现语义。

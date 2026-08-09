@@ -14,7 +14,7 @@
 | `plans/` | 总路线图与阶段实施计划 |
 | `reviews/` | 固定范围、hash、复现命令和独立复审证据 |
 | `agents/` | 领域阅读、GitHub Issue/PR 和 triage 规则 |
-| `loops/` | 主实现 loop 与独立审查 loop 契约 |
+| `loops/` | FCS5 Parallel PR Delivery 命名冻结工作流（唯一交付契约） |
 | `community/` | PGR、RPE、PEC 等外部格式证据综合 |
 | `scratch/` | 历史临时记录；不作为当前 request surface 或状态来源 |
 

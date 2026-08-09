@@ -2,7 +2,7 @@
 
 Status: implementation complete on the I3.2 branch; delivery remains gated by the repository full gate,
 Primary Self-Audit, and the Issue/PR workflow. This plan records the bounded implementation contract and
-does not change `docs/loops/loop.md` or promote any specification version to Reviewed/Frozen.
+does not change `docs/loops/fcs5-parallel-pr-delivery.md` or promote any specification version to Reviewed/Frozen.
 
 ## Normative dependency closure
 

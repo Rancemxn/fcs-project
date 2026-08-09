@@ -1,0 +1,79 @@
+{
+  "subagents": {
+    "agentOverrides": {
+      "delegate": {
+        "model": "opencode-go/deepseek-v4-flash",
+        "thinking": "max",
+        "tools": [
+          "mcp:fastctx/glob",
+          "mcp:fastctx/grep",
+          "mcp:fastctx/read",
+          "mcp:fastctx/run"
+        ]
+      },
+      "oracle": {
+        "model": "opencode-go/deepseek-v4-flash",
+        "thinking": "max",
+        "tools": [
+          "mcp:fastctx/glob",
+          "mcp:fastctx/grep",
+          "mcp:fastctx/read",
+          "mcp:fastctx/run"
+        ]
+      },
+      "researcher": {
+        "model": "opencode-go/deepseek-v4-flash",
+        "thinking": "max",
+        "tools": [
+          "mcp:fastctx/glob",
+          "mcp:fastctx/grep",
+          "mcp:fastctx/read",
+          "mcp:tavily_hikari/tavily_extract",
+          "mcp:tavily_hikari/tavily_search",
+          "write"
+        ]
+      },
+      "reviewer": {
+        "model": "opencode-go/deepseek-v4-flash",
+        "thinking": "max",
+        "acceptanceRole": "read-only",
+        "tools": [
+          "mcp:fastctx/glob",
+          "mcp:fastctx/grep",
+          "mcp:fastctx/read",
+          "mcp:fastctx/run"
+        ]
+      },
+      "scout": {
+        "model": "opencode-go/deepseek-v4-flash",
+        "thinking": "max",
+        "acceptanceRole": "read-only",
+        "tools": [
+          "mcp:fastctx/glob",
+          "mcp:fastctx/grep",
+          "mcp:fastctx/read",
+          "mcp:fastctx/run",
+          "write"
+        ]
+      },
+      "worker": {
+        "model": "opencode-go/deepseek-v4-flash",
+        "thinking": "max",
+        "acceptanceRole": "writer",
+        "tools": [
+          "mcp:fastctx/glob",
+          "mcp:fastctx/grep",
+          "mcp:fastctx/job_kill",
+          "mcp:fastctx/job_list",
+          "mcp:fastctx/job_output",
+          "mcp:fastctx/read",
+          "mcp:fastctx/replace",
+          "mcp:fastctx/run",
+          "mcp:fastctx/run_background",
+          "edit",
+          "write"
+        ]
+      }
+    }
+  }
+}

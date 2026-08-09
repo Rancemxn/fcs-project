@@ -6,3 +6,6 @@
 /.claude
 /.ccg
 /.worktrees/
+/main/
+/worktree/
+/.pi-subagents/

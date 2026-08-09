@@ -14,11 +14,11 @@
   - `docs/plans/`：路线图与阶段计划；
   - `docs/reviews/`：固定范围、hash 和复审证据；
   - `docs/agents/`：领域阅读、GitHub 交付和 triage 规则；
-  - `docs/loops/`：主实现 loop 与独立审查 loop；
+  - `docs/loops/`：FCS5 Parallel PR Delivery 命名冻结工作流（唯一交付契约）；
   - `docs/community/`：外部格式证据综合；
   - `docs/scratch/`：历史临时记录，只供追溯，不能作为当前状态入口。
 - `.github/ISSUE_TEMPLATE/` 和 `.github/pull_request_template.md`：Issue/PR 的初始契约模板；后续进度与
-  审查结果按 `docs/agents/issue-tracker.md` 和 `docs/loops/` 追加 comment。
+  审查结果按 `docs/agents/issue-tracker.md` 和 `docs/loops/fcs5-parallel-pr-delivery.md` 追加 comment。
 - `examples/` 保存输入样例；旧 converter、CLI、VM 和 bytecode 仅从归档分支读取，不迁移回活动
   workspace。
 - 修改文档或计划时，固定权威入口、边界、验收证据和禁止的便利方案；不要把实现状态复制到协作入口。
@@ -131,26 +131,19 @@
 
 ## Rust 开发与验证
 
-- 本地工作树临时允许运行本地编译、lint 与格式检查：`cargo check`、`cargo clippy`、`cargo build`、`cargo fmt`
-  等（均可带 `--workspace`/`--all-targets`），但都不得带 `--release`。这只是加快编译错误与 lint 反馈的开发
-  手段，由用户放开、也可由用户随时撤回并恢复为完全不在本地编译。本地工作树仍不运行任何测试、fuzz 或
-  执行可执行 fixture；用户决定当前 I10 工作的完整 Full Gate 直接在该 GitHub Codespace 执行（见下方
-  “Codespace Full Gate”），GitHub runner 的 `.github/workflows/full-gate.yml` 仍是 PR/merge 的 required
-  gate。本地其余检查
-  仍限于 diff、链接、Markdown/YAML/JSON/schema、格式等静态检查。本地 Clippy 必须使用与 gate 相同的
-  `--workspace --all-targets -- -D warnings`，不得降低告警级别或临时加 `#[allow]` 让本地变绿。本条仅适用于
-  主实现会话的本地工作树及主会话明确授权的有界本地草稿；不适用于独立审查会话的 corrective worktree，后者
-  按 `docs/loops/review-loop.md` 保持完全不编译。本条同时更新 `docs/loops/loop.md` 的 Measurement Domain 与
-  `docs/loops/review-loop.md` 的对应表述，二者其余的门禁与证据规则不变。
-- 本地编译、lint 与格式命令只产生开发反馈，不产生门禁证据：不得写成通过，不得替代任何
-  full-gate step，不得进入 Primary audit 或 reviewer `Audit result` 的 full-gate evidence，也不改变“适用 gate
-  必须由同一 head SHA 的成功 Action run 证明”这条要求。本地 Clippy 通过不代表 gate 的 Clippy step 通过：
-  toolchain 版本不同会给出不同 lint 集合。`target/` 是 gitignore 的构建产物，不得进入提交。
-- 第一个需要 Rust 门禁反馈的完整 SHA 可以直接在该 GitHub Codespace 同步并执行完整 Full Gate，也可以推送到
-  draft PR 触发 `pull_request` full gate；用户已决定当前 I10 工作以 Codespace 直接执行为主。Codespace 执行前必须
-  `git fetch origin` 并 checkout 到与目标 SHA 完全一致的 ref，执行后回读并确认 `git rev-parse HEAD` 与目标 SHA
-  完全一致。没有可用 Codespace 或 PR run 时，可以对解析为目标 SHA 的 branch/tag ref 使用 `workflow_dispatch`，
-  但必须回读并确认 run 的 `headSha` 与目标 SHA 完全一致。
+- 本地禁止一切编译、lint、测试、fuzz 与可执行 fixture 运行（`cargo check`、`cargo clippy`、`cargo build`、
+  `cargo nextest`、`cargo fuzz` 等全部禁止，任何带 `--release` 的组合同样禁止）。本地只允许
+  `cargo fmt --all -- --check` 与非编译静态检查（diff、链接、Markdown/YAML/JSON/schema、格式等）。
+  本地结果只产生开发反馈、不产生门禁证据：不得写成通过，不得替代任何 full-gate step，不得进入
+  Primary audit 或 reviewer `Audit result` 的 full-gate evidence。测试、fuzz 与可执行 fixture 证据只来自
+  对候选 SHA 的 GitHub Actions run（见下方“候选 SHA Full Gate”）。完整规则见
+  `docs/loops/fcs5-parallel-pr-delivery.md` 的 Measurement Domain。
+- 本地 Clippy 不作为 gate 的 Clippy step 证据：toolchain 版本不同会给出不同 lint 集合，本地静态检查通过
+  不代表 gate step 通过。`target/` 是 gitignore 的构建产物，不得进入提交。
+- 需要 Rust 门禁反馈的完整 SHA 作为候选 SHA 提交：对解析为目标 SHA 的 branch/tag ref 使用
+  `workflow_dispatch` 运行 `.github/workflows/full-gate.yml`，然后回读并确认 run 的 `headSha` 与目标 SHA
+  完全一致。full-gate 不再响应 `pull_request` 或 `push main`（ADR 0013 经 ADR 0014 修订）；Codespace
+  直接 Full Gate 条款已退役。
 - full gate 使用 cargo-nextest 而不是普通 `cargo test`，并且不使用 `--release`。其 Rust 检查顺序是：
 
   ```text
@@ -170,16 +163,12 @@
   ```
 
   workflow 还必须执行 ADR 0013 固定的 locked dependency、bounded fuzz、diff 和 clean-worktree gate。
-  不得用本地结果、cache 命中、部分 job 或旧 SHA 的 run 替代它。Codespace 直接执行时，以上序列必须在目标
-  SHA 的干净 checkout 上从头跑到尾，任一步失败即该 SHA gate 失败，重新同步到新 SHA 后重跑。
-- Codespace Full Gate：用户已打开 GitHub Codespace（`sturdy-potato-r4w5wrwjjq672p4xx`，仓库位于
-  `/workspaces/fcs-project`）作为当前 I10 工作的直接 Full Gate 执行环境；GitHub Actions 监督往返太慢。
-  执行步骤：`gh codespace ssh --codespace sturdy-potato-r4w5wrwjjq672p4xx -- '<remote script>'` 进入后，远程脚本首行必须
-  `export PATH="$HOME/.cargo/bin:$PATH"`（非交互 SSH 不保证加载 Cargo 用户 bin 路径），再执行 `git fetch origin`，
-  checkout 到目标 SHA（如 `git checkout -B codex/i10-final-assembly origin/codex/i10-final-assembly`），确认
-  `git rev-parse HEAD`，再按上方完整命令序列执行，并记录 exit code 与输出。Codespace 与 GitHub runner
-  一样只认精确 head SHA；同序列成功且 SHA 匹配的 Codespace 执行可以作为该 SHA 的 full-gate evidence，
-  与 `.github/workflows/full-gate.yml` 的 PR run 等价。
+  不得用本地结果、cache 命中、部分 job 或旧 SHA 的 run 替代它。该序列必须在目标 SHA 的干净 checkout 上
+  从头跑到尾，任一步失败即该 SHA gate 失败，修正后提交新 SHA 再重跑。
+- 候选 SHA Full Gate：`.github/workflows/full-gate.yml` 只响应 `workflow_dispatch`（ADR 0013 经 ADR 0014
+  修订）；Codespace 直接 Full Gate 条款已退役，GitHub runner 是唯一 full-gate 执行环境。dispatch 前必须
+  `git fetch origin` 并确认目标 ref 解析到与候选 SHA 完全一致的 commit；run 结束后回读 `headSha` 并核对。
+  同序列成功且 SHA 匹配的 run 是该 SHA 的 full-gate evidence。
 - 适用时，Primary audit 只接受同一 head SHA 的成功 run，并记录 workflow/run URL、run ID、event、`headSha` 和
   conclusion。`queued`/`in_progress`、缺失、失败或 SHA 不匹配都不能写成通过；GitHub 暂时不可用时只能继续
   不依赖远端结果的静态工作，不得 Ready 或 merge。
@@ -193,8 +182,8 @@
   converter、VM 和旧 bytecode 已不在活动
   workspace。未来跨格式语义变化必须针对 canonical model、ConversionReport、
   round-trip fixture 和 `examples/` 验证，converter 不得直接消费 source AST。
-- 交付说明必须分别列出本地检查（含临时放开的本地编译、lint 与格式检查）和远端 full-gate evidence，以及未运行门禁及
-  原因。不得将 `queued`、缺失、失败或 non-applicable 写成通过。
+- 交付说明必须分别列出本地静态检查（fmt 与非编译检查，含结果）和远端 full-gate evidence，以及未运行门禁及
+  原因。不得将 `queued`、缺失、失败或 non-applicable 写成通过；本地结果不得写成 gate evidence。
 - 使用校验脚本或外部模拟器验证解析逻辑时，先确认校验脚本与模拟器的代码逻辑一致，不能用有问题的校验脚本得出结论。
 - 遇到规范未定义的外部谱面边界时，研究阶段可以记录候选假设，但规范性实现不得发明“通用
   语义”。Strict mode 必须失败或要求显式 semantic profile；repair 只能修复非法或矛盾输入，
@@ -205,7 +194,9 @@
 
 ### Issue tracker
 
-本仓库使用 GitHub Issues 记录工作契约、依赖和验收条件，使用 Pull Requests 交付修改与验证证据。使用 `gh` 读写 Issue/PR，使用 `jq` 处理结构化 JSON。完整流程见 `docs/agents/issue-tracker.md`，接受的决策见 ADR 0011。Issue、PR 及其评论只能安排或证明工作，不能创造规范语义。
+本仓库使用 GitHub Issues 记录工作契约、依赖和验收条件，使用 Pull Requests 交付修改与验证证据。使用 `gh` 或
+Delivery/Review App 身份读写 Issue/PR，使用 `jq` 处理结构化 JSON。完整流程见 `docs/agents/issue-tracker.md`，接受的
+决策见 ADR 0011（经 ADR 0014 修订）。Issue、PR 及其评论只能安排或证明工作，不能创造规范语义。
 
 ### Triage labels
 
@@ -218,50 +209,56 @@
 - `gh` 因 DNS、连接超时/重置、TLS 中断或 HTTP 502/503/504 等瞬时网络问题失败时，每隔 5 秒重试同一操作，首次失败后最多再试 10 次。写操作在每次重试以及稍后补同步前，必须先按稳定身份查询远程是否已生效，避免重复创建 Issue/PR、重复评论、review 或 merge。不得重试认证/权限失败、参数/校验错误、not found、合并冲突或门禁失败；应立即报告。10 次重试耗尽后，记录完整待同步 payload、稳定身份、最后错误和 `pending remote sync` 状态，继续不依赖该远端结果的安全本地工作；在下一个有意义检查点以及 handoff、PR Ready、review 或 merge 等依赖远端状态的动作前再次查询并尝试同步。待同步记录只是 transport outbox，不是第二个 tracker；不得把未确认的远端动作描述为成功。
 - 开始非机械工作前，确保有一个写明范围、权威输入、验收条件、非目标、依赖和验证方法的 Issue。大型工作用 parent/sub-issue 和 blocked-by/blocking 关系，不在一个 Issue 中堆放不可独立验收的横向任务。
 - 非机械 Issue 正文必须写明稳定的初始工作契约和一条实质性的初始 `Progress`，不得只保留初始对话或空模板。之后每个有意义检查点分别发送一条新的 Issue comment，不在正文或旧评论中累计、反复 edit。范围/决定变化、完成工作单元、出现/解除阻塞、获得验证结果、创建 PR 或交付状态变化时发送新消息；每条包含 Completed、Evidence、Decisions、Blockers 和 Next。更正旧消息时发送显式 superseding comment 并指出被替代内容，不静默覆盖历史；不需要为每个 commit 发一条。
-- 主实现从最新 `origin/main` 创建 `codex/<issue>-<slug>` 分支；一个分支和 PR 只交付一个可审查工作单元。审查会话的 corrective branch 例外见“独立审查会话”。不要将工作区中与 Issue 无关的改动带入提交。
+- 主实现按 `docs/loops/fcs5-parallel-pr-delivery.md` 的 Lane Lifecycle 从最新 `origin/main` 创建
+  `codex/<issue>-<slug>` 分支与 `worktree/<issue>-<slug>` lane worktree；一个分支和 PR 只交付一个可审查
+  工作单元。corrective lane 的例外见“Review App 与 corrective lane”。不要将工作区中与 Issue 无关的改动
+  带入提交。lane 的 `refer` junction 为只读；禁止对包含 junction 的路径执行 `git clean -fdx`/`-fdX`。
 - PR 正文必须链接 Issue；只有 PR 合并即应关闭 Issue 时才使用 `Closes #<n>`，否则使用 `Refs #<n>`。正文同时记录规范/ADR/conformance/review 影响、实际验证命令、未执行门禁和剩余风险。
 - PR 不得只有空初始说明和一串 commits。正文必须含一条实质性的初始 `Progress`，说明首个可审查 change group、原因、证据、决定和剩余项；之后每次重要 push、阻塞变化和转 Ready 前分别发送新的 PR comment，使最新消息与当前 diff/commits 一致。不得把后续进度反复 edit 到正文或旧评论中；更正使用显式 superseding comment。commit message 不能替代这些进度消息。
 - Issue/PR 的 Progress 消息标题只写事件或状态，不手写 `YYYY-MM-DD` 等日历日期；时间以 GitHub 自带的 timestamp 为准。
 - push 前审查 staged diff；PR 合并前检查 `gh pr checks --required`、mergeability、Primary audit result 和未解决评论。不得用 `--admin` 绕过 branch protection，也不得为了变绿而降低测试、fixture 或 review gate。
 - merge 前分别在 Issue 和 PR 中发送新的 delivery-ready Progress comment；合并后即使 Issue 已由 `Closes` 自动关闭，也要分别发送新的 final merged checkpoint，记录合并 PR/交付结果、最终验证、未完成项与后续 Issue 链接，再确认 Issue 状态和后续 blocker。Issue/PR 的进度消息是工作流证据，不获得规范权威。
 
-#### 独立审查会话
+#### Review App 与 corrective lane
 
-- 主实现会话和独立审查会话只保留两个角色：当前会话是唯一实现者、唯一可以执行 `gh pr ready` 的角色，
-  也是唯一 merge owner；审查会话按 `docs/loops/review-loop.md` 运行，不创建第三个可选实现会话。
-- 审查者可以读取固定 Issue/PR/已合并 commit，引用历史 commit 指出漏洞，comment，提交
-  `gh pr review --comment`/`--request-changes`，创建 bug/finding Issue，以及为已记录 finding 创建
-  corrective PR。审查者不能合并 PR、标记 Ready、关闭主 Issue、修改主 Issue workflow label，或写入当前
-  会话的工作树、活动实现分支和 `main`。
-- 主会话在每个非机械实现 work-unit 的适用同 SHA GitHub full gate 成功后直接执行 Primary Self-Audit，不调用
-  subagent。它必须固定 `Issue/PR 或 commit + head SHA + scope + commands + full-gate evidence + acceptance gate`，
+- 角色只保留三类：lane writer（worker，该 lane 唯一实现者）、Review App（`fcs5-review-rancemxn[bot]`，
+  异步二审）、Delivery App（`fcs5-delivery-rancemxn[bot]`，lane push/draft PR/交付进度）。Rancemxn 是唯一
+  可以标记 Ready、合并 PR、更新 `main` 的角色；两个 Bot 都不能 Ready/merge/push `main`、关闭主 Issue 或修改
+  主 Issue workflow label。完整规则见 `docs/loops/fcs5-parallel-pr-delivery.md`。
+- Review App 按工作流的 Review Protocol 审查固定 SHA 快照，可以读取固定 Issue/PR/已合并 commit，引用历史
+  commit 指出漏洞，comment，提交 `gh pr review --comment`/`--request-changes`，创建 bug/finding Issue。它绝不
+  实现、不 push、不创建 corrective PR，也不合并 PR、标记 Ready、关闭主 Issue、修改主 Issue workflow label 或
+  写入 lane 工作树、活动实现分支和 `main`。
+- Delivery App 在每个非机械实现 work-unit 的适用同 SHA 候选 SHA full gate 成功后直接执行 Primary Self-Audit，
+  不调用 subagent。它必须固定 `Issue/PR 或 commit + head SHA + scope + commands + full-gate evidence + acceptance gate`，
   并在 PR（若存在）和关联 Issue 各追加一条
-  `Primary audit result`；只有 `pass` 且无未解决 Critical/Important finding 时，主会话才可 Ready/merge。Primary
-  audit 不是 reviewer 的独立证据，消息包含 Target、Head SHA、Scope、Commands、Full-gate evidence、Verdict、
-  Findings、Gate impact、Limitations 和 Next，不包含 `Advisories`，不手写日期、不编辑旧消息。
-- Primary audit 通过后，当前会话发送 `Review requested`；独立审查会话异步审查开放 PR 或其合并后的固定 commit，
-  不再是每个 work-unit 的前置等待门。审查结束后审查者立即在 PR 和关联 Issue 各追加一条 append-only `Audit result`
-  （被审 PR 存在时评论 PR，同时评论关联 Issue；仅有 commit 时评论关联 Issue），即使没有 finding。reviewer 的
-  `Audit result` 仍必须包含 Target、Head SHA、Scope、Commands、Full-gate evidence、Root cause、Corrective action、
-  Corrective PR、Regression evidence、Verdict、Findings、Advisories、Gate impact、Limitations、Worktree 和 Next，
-  不手写日期、不编辑旧消息。
-- 后续 push、scope、命令、依赖 closure 或验收变化会使旧 Primary audit 或 reviewer verdict 失效；追加
+  `Primary audit result`；只有 `pass` 且无未解决 Critical/Important finding 时，lane 才可请求 Rancemxn Ready/merge。
+  Primary audit 不是 Review App 的独立证据，消息包含 Target、Head SHA、Scope、Commands、Full-gate evidence、
+  Verdict、Findings、Gate impact、Limitations 和 Next，不包含 `Advisories`，不手写日期、不编辑旧消息。
+- Primary audit 通过后，Delivery App 发送 `Review requested`；Review App 异步审查开放 PR 或其合并后的固定
+  commit，不再是每个 work-unit 的前置等待门。审查结束后 Review App 立即在 PR 和关联 Issue 各追加一条
+  append-only `Audit result`（被审 PR 存在时评论 PR，同时评论关联 Issue；仅有 commit 时评论关联 Issue），即使
+  没有 finding。`Audit result` 包含 Target、Head SHA、Scope、Commands、Full-gate evidence、Root cause、Corrective
+  action、Corrective PR、Regression evidence、Verdict、Findings、Advisories、Gate impact、Limitations、Worktree 和
+  Next，不手写日期、不编辑旧消息。
+- 后续 push、scope、命令、依赖 closure 或验收变化会使旧 Primary audit 或 Review App verdict 失效；追加
   superseding/re-review 消息并以新 SHA 重新审查。Primary audit 的 Critical/Important finding 阻塞当前 PR
-  Ready/merge；reviewer 在合并后发现同等级实现/conformance finding 时冻结受影响的 stage claim 和后续依赖，
+  Ready/merge；Review App 在合并后发现同等级实现/conformance finding 时冻结受影响的 stage claim 和后续依赖，
   但不回滚已合并 PR。Minor 只有在不影响当前验收且有 owner、follow-up Issue、目标 stage 和解除条件时才能延期。
-- reviewer 在实现/conformance 审查通过后，可以追加架构和文档 advisory audit。架构优化、文档改善和一般建议必须
-  创建 `ready-for-human` 的 HUMAN-only Issue，不进入 `loop.md` acceptance ledger，不自动修复或阻塞 I10；若证据
+- Review App 在实现/conformance 审查通过后，可以追加架构和文档 advisory audit。架构优化、文档改善和一般建议必须
+  创建 `ready-for-human` 的 HUMAN-only Issue，不进入工作流 acceptance ledger，不自动修复或阻塞 I10；若证据
   实际证明规范矛盾、实现缺陷或当前 conformance 违约，则必须升级为标准 finding 并按严重度路由。
-- reviewer 在 FCS5/I10 尚未完成且当前没有固定 review target 时必须持续轮询远端 Frontier：每分钟重新同步一次，
-  每 10 次只是一个观察批次，批次结束后继续下一批。空 frontier 不得被标记为 `blocked`，也不得结束 reviewer
+- Review App 在 FCS5/I10 尚未完成且当前没有固定 review target 时必须持续轮询远端 Frontier：每分钟重新同步一次，
+  每 10 次只是一个观察批次，批次结束后继续下一批。空 frontier 不得被标记为 `blocked`，也不得结束 Review App
   持久目标；只有 I10 success signal 已满足且没有新的 review target、未分配 Critical/Important finding、待复审
-  corrective PR/merged SHA 或 reviewer worktree 时，reviewer 才能终止。480 个 review-unit 只限制实际审查预算，
+  corrective PR/merged SHA 或 reviewer worktree 时，Review App 才能终止。480 个 review-unit 只限制实际审查预算，
   不限制空闲等待；达到预算只生成后继审查 handoff，不改变空 frontier 的持续等待语义。
-- 审查者创建的 corrective PR 必须链接 finding Issue，并使用独立 worktree 和
-  `codex/<finding>-<slug>` 分支。开放 PR 的修复分支从被审 PR 的固定 head SHA 建立、目标为活动 PR 分支；
-  历史 commit 的修复分支从最新 `origin/main` 建立、目标为 `main`。审查者不得审查或批准自己创建的修复
-  PR；当前会话以 Primary Self-Audit 检查并合并后，主 PR 的新 SHA 送回 reviewer 做异步二审。
-- 本段权限与 `docs/loops/review-loop.md`、`docs/agents/issue-tracker.md` 和 ADR 0011 的 dated amendment 共同构成
+- corrective PR 由父编排者委托给独立 corrective lane 创建，必须链接 finding Issue，并使用 `/tmp` 隔离
+  worktree 和 `codex/<finding>-<slug>` 分支。开放 PR 的修复分支从被审 PR 的固定 head SHA 建立、目标为活动
+  PR 分支；历史 commit 的修复分支从最新 `origin/main` 建立、目标为 `main`。corrective lane 不得审查或批准
+  自己创建的修复 PR；主 lane 的 Delivery App 以 Primary Self-Audit 检查，Rancemxn 合并后，主 PR 的新 SHA
+  送回 Review App 做异步二审。
+- 本段权限与 `docs/loops/fcs5-parallel-pr-delivery.md`、`docs/agents/issue-tracker.md` 和 ADR 0014 共同构成
   当前工作流；它们不能赋予 Issue/PR 或审查评论规范权威。
 
 ### Domain docs
@@ -280,7 +277,7 @@
 - 对陌生代码区域需要先了解更高层的模块、调用方与系统边界时，使用 `zoom-out`。
 - 需要对方案、决定或计划进行逐项压力测试时，使用 `grill-me`。若压力测试还应同步维护领域文档，使用 `grill-with-docs`；该 skill 必须使用 `docs/CONTEXT.md` 和 `docs/decisions/`，不得创建 `docs/adr/`。
 - 设计模块接口、边界、seam、可测试性或 AI 可导航性时，使用 `improve-codebase-architecture`；其领域术语和 ADR 阅读同样必须遵守 `docs/agents/domain.md` 的单一上下文约定。
-- 用户要求设计 agent/automation loop 的 Markdown 契约时，使用 `agent-loop`；该 skill 只能产出 `docs/loops/loop.md`（或项目已声明的 `docs/loops/` 子路径），不得执行 loop 或生成运行时机制。
+- 用户要求设计 agent/automation loop 的 Markdown 契约时，使用 `agent-loop`；该 skill 只能产出 `docs/loops/fcs5-parallel-pr-delivery.md`（或项目已声明的 `docs/loops/` 子路径），不得执行 loop 或生成运行时机制。
 
 #### 调用边界
 
@@ -316,7 +313,7 @@ workspace 结构和现有依赖作出结论。不要仅凭记忆推荐版本、A
 
 ## 本地文件查阅
 
-如需读取、搜索和查找本地文件，请优先使用 FastCtx MCP 工具——`mcp__fastctx__read`、`mcp__fastctx__grep`、`mcp__fastctx__glob`——而不是 `cat`/`Get-Content`、`rg`/`findstr`/`Select-String` 或 `dir`/`ls -R`。只读取任务需要的内容。当需要多个文件时，请在单次 `read` 调用中以 `files=[{"path": ...}, ...]` 的形式传入，而非每个文件单独调用一次。请使用绝对路径。每个结果的最后一行会显示 `Complete` 或 `Partial`——仅当出现 `Partial` 备注时，才使用其提供的精确参数继续操作。
+读取、搜索和查找本地文件必须使用 FastCtx MCP 工具——`mcp__fastctx__read`、`mcp__fastctx__grep`、`mcp__fastctx__glob`——而不是 `cat`/`Get-Content`、`rg`/`findstr`/`Select-String` 或 `dir`/`ls -R`；不得用 shell 重定向或进程命令读取/搜索文件。只读取任务需要的内容。当需要多个文件时，请在单次 `read` 调用中以 `files=[{"path": ...}, ...]` 的形式传入，而非每个文件单独调用一次。请使用绝对路径。每个结果的最后一行会显示 `Complete` 或 `Partial`——仅当出现 `Partial` 备注时，才使用其提供的精确参数继续操作。
 
 切勿将 `read_mcp_resource`、`list_mcp_resources` 或 `list_mcp_resource_templates` 指向 `fastctx` 服务：FastCtx 提供的是工具（tools），而非 MCP 资源，因此上述调用必定失败。请使用 `mcp__fastctx__read` 加绝对路径来读取本地文件——切勿使用 `file://` URI。
 
@@ -326,5 +323,9 @@ workspace 结构和现有依赖作出结论。不要仅凭记忆推荐版本、A
 
 ### 命令执行
 
-协作会话中的 Cargo、Git、GitHub CLI 和其他 shell 命令统一通过 `fastctx_run` 的登录 shell 执行；这里的 `fastctx_run` 是执行环境约束，不改变仓库脚本中的 Bash 语言、shebang 或代码块语义。
+协作会话中的进程命令统一通过 `fastctx_run` 的登录 shell 执行；`fastctx_run` 只用于真正需要进程的场合（原生
+Windows Git、Delivery/Review App broker、Markdown/YAML/JSON/链接/静态校验器、`cargo fmt`）。通用 Bash 是例外
+且默认禁止：不得用 shell 命令读取/搜索/改写文件，也不得运行本地编译、lint、测试、fuzz 或可执行 fixture；
+需要豁免时必须得到显式命名批准。`fastctx_run` 是执行环境约束，不改变仓库脚本中的 Bash 语言、shebang 或
+代码块语义。
 <!-- fastctx:end -->

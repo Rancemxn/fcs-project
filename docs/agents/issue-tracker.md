@@ -1,8 +1,10 @@
 # GitHub Issues and Pull Requests
 
-GitHub Issues are the repository's work contracts. Pull Requests deliver one reviewable implementation unit and its verification evidence. ADR 0011 accepts this workflow. Neither surface has normative authority: specifications, governance, Accepted ADRs, conformance artifacts, and dated reviews retain the responsibilities defined by `AGENTS.md`.
+GitHub Issues are the repository's work contracts. Pull Requests deliver one reviewable implementation unit and its verification evidence. ADR 0011 (as amended by ADR 0014) accepts this workflow. Neither surface has normative authority: specifications, governance, Accepted ADRs, conformance artifacts, and dated reviews retain the responsibilities defined by `AGENTS.md`.
 
-Use the authenticated `gh` CLI for repository operations. Prefer `--json` plus `jq` over parsing human-readable tables.
+Use the authenticated `gh` CLI or the Delivery/Review App identities for repository operations. Prefer `--json` plus
+`jq` over parsing human-readable tables. All roles operate under `docs/loops/fcs5-parallel-pr-delivery.md`
+(ADR 0011 as amended by ADR 0014); only `Rancemxn` may mark PRs Ready, merge, or update `main`.
 
 All new GitHub Issue/PR titles, bodies, comments, and review messages must be written in English. Existing messages
 are append-only history and are not rewritten solely for language migration.
@@ -83,12 +85,14 @@ gh pr view 17 --json state,isDraft,mergeable,reviewDecision,statusCheckRollup,cl
 
 Use `jq -r` for plain strings, `jq -S` for stable key ordering, and `jq -e` when a filter is a gate. Pass dynamic data with `--arg` or `--argjson`. For APIs beyond built-in `gh --json`, use `gh api`; combine all pages with `--paginate --slurp` before aggregation.
 
-## Branch and implementation
+## Lane and implementation
 
-Start from current `origin/main` for the primary implementation branch. Use `codex/<issue>-<slug>` and keep one
-reviewable unit per branch. `gh issue develop <number> --base main --name <branch> --checkout` may create and link
-the branch when the working tree is clean. Corrective branches created by the independent review session follow the
-fixed-snapshot and worktree rules below and must not write the primary implementation worktree.
+Each work unit is Issue-first: a bounded child Issue, then a lane. The lane branch is `codex/<issue>-<slug>` and the
+lane worktree is `worktree/<issue>-<slug>` under `C:/Users/Admin/Desktop/fcs-project`, created from the latest
+`origin/main`; one lane has exactly one writer. The lane uses a sparse checkout excluding `refer` and a read-only
+`refer` junction to `main/refer` (the real tree lives once; `/refer` is gitignored). `git clean -fdx`/`-fdX` across the
+junction is forbidden. Corrective lanes created by the parent orchestrator follow the `/tmp` isolation and worktree
+rules below and must not write the primary lane worktree.
 
 Before editing:
 
@@ -101,8 +105,11 @@ During implementation, announce changed scope in a new Issue comment that explic
 
 ## Pull Request contract
 
-Open a draft PR at the first complete SHA that needs Rust compile or test feedback. Mark it ready only after the intended
-scope, local static checks, and every applicable same-SHA GitHub full gate are complete.
+Open a draft PR at the first complete SHA that needs Rust gate feedback. Submit each SHA that needs Rust evidence as
+a candidate SHA: dispatch `.github/workflows/full-gate.yml` via `workflow_dispatch` on a ref resolving to that exact
+SHA and verify the run `headSha`. The workflow has no automatic `pull_request`/`push main` triggers (ADR 0013 as
+amended by ADR 0014). Only `Rancemxn` may mark the PR ready, and only after the intended scope, local static checks,
+and every applicable same-SHA candidate-SHA full gate are complete.
 
 The PR body records the stable initial delivery contract:
 
@@ -117,10 +124,12 @@ It also contains one substantive initial `Progress` checkpoint. Group the initia
 
 After the PR is created, every later meaningful checkpoint is a new PR comment. Post one after each material push, when blockers change, and before marking the PR ready so the latest message matches the current diff and commit set. Do not repeatedly edit the PR body or an earlier comment. Correct stale information with a new explicitly superseding comment. A single-checkpoint PR still needs one substantive initial message; it does not need one message per commit.
 
-Select validation according to `AGENTS.md`. Local work is limited to non-building static checks. A documentation-only or
-workflow-policy-documentation-only PR has no required Rust full gate; a `.github/workflows/full-gate.yml` implementation,
-Rust/build/dependency/test/executable-fixture change must have a successful same-SHA GitHub full-gate run before the PR is
-ready or merged. A cache miss is not a gate failure, and a local Cargo result cannot replace the Action run.
+Select validation according to `AGENTS.md`. Local work is limited to `cargo fmt --all -- --check` and non-compiling
+static checks; local compilation, lint, tests, fuzz, and executable fixtures are prohibited, and local results are
+never gate evidence. A documentation-only or workflow-policy-documentation-only PR has no required Rust full gate; a
+`.github/workflows/full-gate.yml` implementation, Rust/build/dependency/test/executable-fixture change must have a
+successful same-SHA candidate-SHA full-gate run before the PR is ready or merged. A cache miss is not a gate failure,
+and a local Cargo result cannot replace the Action run.
 
 Useful commands:
 
@@ -134,17 +143,20 @@ gh pr view <number> --json reviewDecision,mergeable,statusCheckRollup,files |
 gh pr ready <number>
 ```
 
-Do not merge until required checks pass, review requirements are satisfied, the branch is mergeable, a passing `Primary audit result` is recorded, and all Primary-audit Critical/Important findings in the applicable gate are closed. The independent reviewer may still be pending; any reviewer finding that arrives before or after merge follows the routing rules below. Never use `gh pr merge --admin` to bypass protection. Merge only when the user has authorized it.
+Only `Rancemxn` merges, and only when required checks pass, review requirements are satisfied, the branch is
+mergeable, a passing `Primary audit result` is recorded, and all Primary-audit Critical/Important findings in the
+applicable gate are closed. The Review App may still be pending; any reviewer finding that arrives before or after
+merge follows the routing rules below. Never use `gh pr merge --admin` to bypass protection.
 
-## Primary self-audit and independent review session
+## Primary self-audit and independent review (Apps)
 
-The primary implementation session and the independent review session are two roles. The primary session is the sole
-implementer, the sole actor allowed to run `gh pr ready`, and the sole merge owner. Before Ready/merge, the primary
-session performs a direct Primary Self-Audit without a subagent and records `Primary audit result`; the independent
-review session uses `docs/loops/review-loop.md` as an asynchronous second-pass role and is not a third optional
-implementation session.
+The Delivery App (`fcs5-delivery-rancemxn[bot]`) and the Review App (`fcs5-review-rancemxn[bot]`) are the two
+automation roles; `Rancemxn` is the sole actor allowed to run `gh pr ready`, merge, or update `main`. Before
+Ready/merge, the Delivery App performs a direct Primary Self-Audit without a subagent and records
+`Primary audit result`; the Review App audits fixed SHAs under `docs/loops/fcs5-parallel-pr-delivery.md` as an
+asynchronous second-pass role and never implements or pushes.
 
-The review session may:
+The Review App may:
 
 - read a fixed Issue, PR, or merged commit and cite a historical commit to identify a defect;
 - append comments to the PR and associated Issue, and submit `gh pr review --comment` or
@@ -155,21 +167,22 @@ The review session may:
   Issues it creates and assign an existing milestone when the target stage is known;
 - propose, by a new English comment or Issue, changes to the global label or milestone taxonomy without applying those
   global changes itself;
-- create a corrective PR for a recorded finding, linking `Closes #<finding>` and
-  `Refs #<reviewed-issue-or-pr>`.
+- propose corrective action for a recorded finding; corrective PRs (linking `Closes #<finding>` and
+  `Refs #<reviewed-issue-or-pr>`) are delegated to a corrective lane by the parent orchestrator.
 
-The review session may not:
+The Review App may not:
 
-- merge a PR, mark a PR Ready, close the primary Issue, change its workflow label, or modify the primary session's
+- merge a PR, mark a PR Ready, close the primary Issue, change its workflow label, or modify a lane's
   active implementation branch, `main`, or worktree;
 - create or redefine global labels/milestones, or change the primary Issue's labels or milestone;
-- review or approve a corrective PR that it created. The primary session inspects, reviews, and merges that PR; the
+- review or approve a corrective PR that it created (it never creates corrective PRs). The parent orchestrator
+  delegates corrective PRs to a separate corrective lane; the primary lane inspects and reviews that PR, and the
   primary PR's new head SHA must then be independently reviewed again.
 
 Every Primary or reviewer audit binds `Issue/PR or commit + head SHA + scope + commands + full-gate evidence + acceptance gate`. Before a primary
-PR is Ready or merged, the primary session records `Primary audit result` on the PR (when one exists) and associated Issue;
-the primary may continue to Ready/merge after a passing Primary audit without waiting for the reviewer. It then posts
-`Review requested`; after the fixed snapshot is audited, the review session immediately appends one `Audit result` comment
+PR is Ready or merged, the Delivery App records `Primary audit result` on the PR (when one exists) and associated Issue;
+the lane may continue toward Ready/merge after a passing Primary audit without waiting for the reviewer. It then posts
+`Review requested`; after the fixed snapshot is audited, the Review App immediately appends one `Audit result` comment
 to the reviewed PR and associated Issue, even when there are no findings. Primary messages include Target, Head SHA,
 Scope, Commands, Full-gate evidence, Verdict, Findings, Gate impact, Limitations, and Next. Reviewer messages include
 those fields plus Root cause, Corrective action, Corrective PR, Regression evidence, Advisories, and Worktree. `Advisories`
@@ -184,16 +197,18 @@ when it cannot affect current acceptance and has an owner, follow-up Issue, targ
 implementation finding is normally a child/related Issue of the reviewed Issue; only a cross-stage or root-level finding is
 attached directly to root Issue #9.
 
-After implementation/conformance review passes, the reviewer may audit architecture and documentation. An optimization,
-terminology, link, plan, or maintainability suggestion is a HUMAN-only Issue with `ready-for-human` plus an appropriate
-`documentation`, `workflow`, or `enhancement` label. It is not a `review-finding`, does not enter `loop.md`'s acceptance
-ledger, and does not block I10. If evidence shows a normative contradiction, implementation defect, or current conformance
-violation, route it back through the standard finding contract instead.
+After implementation/conformance review passes, the Review App may audit architecture and documentation. An
+optimization, terminology, link, plan, or maintainability suggestion is a HUMAN-only Issue with `ready-for-human` plus an
+appropriate `documentation`, `workflow`, or `enhancement` label. It is not a `review-finding`, does not enter the
+workflow doc's acceptance ledger, and does not block I10. If evidence shows a normative contradiction, implementation
+defect, or current conformance violation, route it back through the standard finding contract instead.
 
-Every corrective PR uses an isolated worktree and `codex/<finding>-<slug>` branch:
+Every corrective PR is created by the parent orchestrator in an isolated corrective lane using a `/tmp` worktree and
+`codex/<finding>-<slug>` branch:
 
-- for an open PR, start from the reviewed PR's fixed head SHA and set the PR base to that active PR branch; the primary
-  session does not advance the active branch during the audit, and the new head is re-audited after the fix merges;
+- for an open PR, start from the reviewed PR's fixed head SHA and set the PR base to that active PR branch; the
+  primary lane does not advance the active branch during the audit, and the new head is re-audited after the fix
+  merges;
 - for a merged historical commit, start from the latest `origin/main` and set the PR base to `main`; do not reopen the
   original PR.
 

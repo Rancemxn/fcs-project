@@ -19,7 +19,7 @@ evidence. They are not the current merged-SHA claim after the post-closure corre
   specification or fixture semantics changed.
 - Independent review frontier: merged PR #92, PR #96, PR #98, and PR #102 have `Audit result: pass`; PR #97
   requires re-review after its former #99-blocked audit. This is an asynchronous reviewer residual under
-  `docs/loops/loop.md`, not a primary-session waiting gate.
+  `docs/loops/fcs5-parallel-pr-delivery.md`, not a primary-session waiting gate.
 - I2 implementation and public-conformance work is corrected; I3.1 Canonical IDs and I3.2 Time normalization
   are merged, and I3.3 Metadata graph is the next bounded frontier. The I2 stage claim remains explicitly
   provisional until the pending corrected-SHA audit closes;

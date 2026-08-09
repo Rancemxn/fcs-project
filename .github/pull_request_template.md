@@ -31,7 +31,7 @@ Explain the checked items and name affected files or gates.
 - Re-review triggers: <!-- any push, scope, command, dependency, or acceptance change -->
 
 The independent reviewer records the verdict in append-only comments on the PR (and associated Issue). Do not
-repeatedly edit this section; follow `docs/loops/review-loop.md`.
+repeatedly edit this section; follow `docs/loops/fcs5-parallel-pr-delivery.md`.
 
 ## Progress
 
@@ -65,7 +65,7 @@ cargo nextest run --workspace
 ```
 
 List every skipped or unavailable gate with its reason. Do not report a non-applicable gate as passed. The exact
-review/merge gate is defined by `docs/agents/issue-tracker.md` and `docs/loops/loop.md`.
+review/merge gate is defined by `docs/agents/issue-tracker.md` and `docs/loops/fcs5-parallel-pr-delivery.md`.
 
 ## Risks and follow-up
 
