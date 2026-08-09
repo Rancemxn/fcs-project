@@ -43,7 +43,7 @@ jobs:
             fuzz -> target
 
       - name: Install test tools
-        run: cargo binstall cargo-nextest cargo-fuzz --secure --no-confirm
+        run: cargo binstall cargo-nextest cargo-fuzz --secure --locked --no-confirm
 
       - name: Run full gate
         env:
