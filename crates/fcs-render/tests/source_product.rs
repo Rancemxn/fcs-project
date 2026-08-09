@@ -5,8 +5,8 @@ use fcs_model::{
     CanonicalArcDirection, CanonicalCompilation, CanonicalExpressionType, CanonicalGlyphPlacement,
     CanonicalGlyphRun, CanonicalImageRepeat, CanonicalImageSampling, CanonicalPathCommand,
     CanonicalPatternTransform, CanonicalRenderClip, CanonicalRenderFillRule,
-    CanonicalRenderGeometry, CanonicalRenderGeometryData, CanonicalRenderNode,
-    CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
+    CanonicalRenderGeometry, CanonicalRenderGeometryData, CanonicalRenderLayer,
+    CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
     CanonicalRenderPaintData, CanonicalRenderPath, CanonicalRenderScene, CanonicalRenderSceneSpec,
     CanonicalRenderStroke, CanonicalStrokeCap, CanonicalStrokeJoin, CanonicalTextualId, EntityKind,
     StableIdRegistry,
@@ -276,9 +276,18 @@ render profile 1.0.0 {
         composite: original_node.composite(),
     })
     .expect("canonical Rect node");
+    let source_layer = &original.layers()[0];
+    let layer = CanonicalRenderLayer::new(
+        source_layer.id().clone(),
+        source_layer.pass(),
+        source_layer.z_order(),
+        source_layer.document_order(),
+        vec![0],
+    )
+    .expect("canonical Rect layer");
     let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
         viewport: original.viewport(),
-        layers: original.layers().to_vec(),
+        layers: vec![layer],
         nodes: vec![node],
         geometries: vec![original.geometries()[geometry_index].clone()],
         paths: original.paths().to_vec(),
