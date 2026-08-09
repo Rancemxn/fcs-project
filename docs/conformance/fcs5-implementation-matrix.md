@@ -236,8 +236,27 @@ introduce source clip grammar or source lowering. Evidence is bound by
 ClipGroup traversal, inherited clip-chain semantics, and non-empty raster output.
 GitHub Actions Full Gate run 31286712377 (job 93176761343) passed on exact head
 `2d31b7bfc2dc346b9fbb92875f37966cafeaab04` (`workflow_dispatch`). Source
-ClipGroup/clip lowering, text/glyph coverage, and broader Render closure remain
-open; this unit does not change any Frozen or final I10 claim.
+ClipGroup/clip lowering and broader Render closure remain open; Text/GlyphRun
+writer coverage is recorded below. This unit does not change any Frozen or final
+I10 claim.
+
+## Bounded Render Text/GlyphRun writer delta
+
+The next bounded canonical unit closes the product writer handoff for Text
+Geometry and GlyphRunRecord. It emits the stable-ID-sorted glyph-run table,
+`glyphRunRefs`, the size descriptor, normalized placement metrics, and the
+`font/ttf` resource binding already validated by the product Render loader.
+The fixture is `source_product::canonical_text_writer_reaches_product_render_loader`;
+it uses the checked-in project font and verifies decoded font identity, glyph
+placement, Text geometry references, and the existing resource contract. It does
+not add source Text grammar or source lowering, and it does not claim Text
+semantic draw/raster support.
+
+GitHub Actions Full Gate run 31287462784 (job 93178786167) passed on exact head
+`a6ff197c276e25f3092bd0d4410ff13f22f21db3` (`workflow_dispatch`). Source Text
+grammar/lowering, fallback/shaping beyond `simple-ltr-1`, Text semantic/raster
+coverage, and broader Render closure remain open; this unit does not change any
+Frozen or final I10 claim.
 
 ## Credit stable identity delta
 
