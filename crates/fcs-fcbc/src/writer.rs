@@ -1172,8 +1172,7 @@ fn render_section(
             | fcs_model::CanonicalRenderNodeKind::Circle
             | fcs_model::CanonicalRenderNodeKind::Ellipse
             | fcs_model::CanonicalRenderNodeKind::Polyline
-            | fcs_model::CanonicalRenderNodeKind::Polygon
-            | fcs_model::CanonicalRenderNodeKind::Path => {
+            | fcs_model::CanonicalRenderNodeKind::Polygon => {
                 if node.stroke().is_some() {
                     return Err(FcbcError::new(
                         "fcbc.render-unsupported",
@@ -1187,6 +1186,12 @@ fn render_section(
                     None,
                 )
             }
+            fcs_model::CanonicalRenderNodeKind::Path => (
+                Some(node.fill_paint().ok_or_else(|| {
+                    FcbcError::new("fcbc.dangling-reference", "Render Path has no fill paint")
+                })?),
+                node.stroke(),
+            ),
             fcs_model::CanonicalRenderNodeKind::Line => {
                 if node.fill_paint().is_some() {
                     return Err(FcbcError::new(

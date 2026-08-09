@@ -206,9 +206,11 @@ fn line_stroke_caps_and_dash_boundaries_are_stable() {
 fn path_fill_rules_distinguish_nested_subpaths() {
     let outer = PathSubpath {
         points: vec![[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]],
+        closed: false,
     };
     let inner = PathSubpath {
         points: vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]],
+        closed: false,
     };
     assert!(path_contains(
         &[outer.clone(), inner.clone()],
@@ -216,6 +218,45 @@ fn path_fill_rules_distinguish_nested_subpaths() {
         [2.0, 2.0]
     ));
     assert!(!path_contains(&[outer, inner], 2, [2.0, 2.0]));
+}
+
+#[test]
+fn path_stroke_respects_close_dash_and_zero_length_segments() {
+    let path = LocalShape::Path {
+        subpaths: vec![PathSubpath {
+            points: vec![
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [4.0, 0.0],
+                [4.0, 4.0],
+                [0.0, 4.0],
+                [0.0, 0.0],
+            ],
+            closed: true,
+        }],
+        fill_rule: 1,
+    };
+    let stroke = StrokeDrawOp {
+        width: 1.0,
+        cap: 1,
+        join: 1,
+        miter_limit: 4.0,
+        dash_offset: 0.0,
+        dash: Vec::new(),
+        fill_rgba: Some([1.0, 1.0, 1.0, 1.0]),
+        linear_gradient: None,
+        radial_gradient: None,
+        image_pattern: None,
+    };
+    assert!(stroke_contains(&path, [2.0, 0.0], &stroke).unwrap());
+    assert!(stroke_contains(&path, [0.0, 2.0], &stroke).unwrap());
+
+    let dashed = StrokeDrawOp {
+        dash: vec![2.0, 2.0],
+        ..stroke
+    };
+    assert!(stroke_contains(&path, [1.0, 0.0], &dashed).unwrap());
+    assert!(!stroke_contains(&path, [3.0, 0.0], &dashed).unwrap());
 }
 
 #[test]

@@ -791,7 +791,8 @@ git diff --check
   Line geometry/StrokeRecord -> product FCBC writer -> Render loader round-trip evidence, plus #506 canonical
   ImagePattern paint -> product FCBC writer -> Render loader -> semantic/raster round-trip evidence, and #509 canonical
   Path geometry/PathRecord -> product FCBC writer -> Render loader command-topology evidence, followed by bounded
-  solid-fill Path descriptor evaluation, curve flattening, fill-rule containment, and reference-raster coverage;
-  source Line stroke lowering, source ImagePattern lowering, source Path lowering, Path stroke/text coverage, broader
-  canonical writer coverage, Polyline/Text geometry, broader resource semantics, isolated compositing, and
-  semantic/raster conformance remain open under #296/#9.
+  solid-fill and stroked Path descriptor evaluation, curve flattening, fill-rule containment, explicit Close/open-subpath
+  stroke behavior, dash/cap/join handling, and reference-raster coverage; source Line stroke lowering, source
+  ImagePattern lowering, source Path lowering, source Stroke grammar, Path text coverage, broader canonical writer
+  coverage, Polyline/Text geometry, broader resource semantics, isolated compositing, and semantic/raster conformance
+  remain open under #296/#9.

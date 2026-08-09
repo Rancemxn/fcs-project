@@ -8,14 +8,18 @@ e0140f7ca15cc21620ef3ad8e44b4ece03a346c2; it passed the repository Full Gate.
 
 This ledger binds the I10 product and domain obligations to checked-in executable
 surfaces. It records evidence scope, not a Frozen or final I10 claim. Local Rust
-tests are not run under the repository workflow; current rows cite the exact
-head Full Gate above as executable evidence for this assembly.
+tests, fuzz, and executable fixtures are not run; the complete Full Gate is run
+only by GitHub Actions on the exact target head SHA. Current rows cite the exact
+head Actions Full Gate as executable evidence for this assembly; Codespaces are
+not a verification environment for the current I10 work.
 
 The independent solid-fill Path semantic/raster follow-up passed GitHub Actions
 Full Gate run 31283895136, job 93169439677, on exact head
 a32ac311fb3171064e5c67967f160f93ab133e9c (`workflow_dispatch`). It covers Path
 descriptor evaluation, curve/arc flattening, fill-rule containment, and the
-reference raster path; Path stroke/text coverage remains open.
+reference raster path. The current Path stroke follow-up extends the same
+loader-validated FCBC surface and is pending its own exact-head Actions Full
+Gate; source Stroke grammar/lowering and Path text remain open.
 
 | Obligation | Executable evidence | Boundary and status |
 |---|---|---|
