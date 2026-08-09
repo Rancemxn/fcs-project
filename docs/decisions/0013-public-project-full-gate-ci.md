@@ -44,7 +44,7 @@ token、结果搬运或第二个仓库。稳定大版本/channel ref 会随上�
 
 ADR 0014（FCS5 Parallel PR Delivery）取代 §2 的触发器条款（首条决策）：`full-gate.yml` 只响应
 `workflow_dispatch`，不再有自动 `pull_request` 或 `push main` 触发器；Rust 证据只来自对明确提交的候选 SHA
-的 dispatch run，并必须回读核对 run `headSha` 与目标 SHA 完全一致。§3 中“pull request 可直接获得完整门禁结果”
+的 dispatch run，并必须回读核对 run `headSha` 与目标 SHA 完全一致。§3 中“pull request 可直接获得完整门禁结果”和“不再需要手工 dispatch”
 的表述随自动触发器一起退役；workflow 保持 §2 的其余决策（`contents: read`、单 job 顺序执行、`actions/checkout@v7`、
 `dtolnay/rust-toolchain@stable`、`cargo-bins/cargo-binstall@main`、`Swatinem/rust-cache@v2`）与 §4 的全部禁止
 条款，exact-SHA 验证步骤继续保留。成功的候选 SHA run 仍是 Ready/merge 前的强制前置条件，且不构成 merge 授权。

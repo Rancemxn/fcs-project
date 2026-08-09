@@ -92,10 +92,13 @@ Measurement Domain、worktree 清理与 Residual Routing 全部保留，只是�
 - 项目 `.pi/settings.json` 固定全部内置 agent：
   - model 统一为 `opencode-go/deepseek-v4-flash`；
   - thinking 默认 `max`；只有简单有界任务才允许 `high`；只有纯机械任务才允许 `off`；
-  - 工具为直接 FastCtx allowlist：`worker` 是 writer（含 `edit`/`write`/`replace`/`run`/`run_background`/
-    `job_*`），`reviewer`/`scout` 是 read-only（`read`/`grep`/`glob`/`run`），`researcher` 保留
-    `tavily_hikari`；
-  - 任何 agent 都不得通过 tool 绕过 lane 隔离或获得 Ready/merge/push `main` 能力。
+  - 工具为直接 FastCtx allowlist：`worker` 是唯一 writer（`acceptanceRole: writer`，含
+    `edit`/`write`/`replace`/`run`/`run_background`/`job_*`），是唯一 lane/仓库写入者；
+    `reviewer`/`scout` 是仓库只读（`acceptanceRole: read-only`，`read`/`grep`/`glob`/`run`），其中
+    `scout` 额外保留 `write`，但只限于非仓库 artifact 输出；`researcher` 仓库只读，保留
+    `tavily_hikari`（Tavily）与 artifact-only `write`；
+  - artifact-only `write`（`scout`/`researcher`）绝不授权仓库编辑或第二个 lane writer；任何 agent
+    都不得通过 tool 绕过 lane 隔离或获得 Ready/merge/push `main` 能力。
 
 # Termination Conditions
 
