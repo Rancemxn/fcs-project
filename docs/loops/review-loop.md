@@ -12,7 +12,7 @@
   residual；必要的 corrective PR 已链接 finding Issue，且主会话已经重新审查修复后的新 SHA；架构/文档建议
   均已创建 HUMAN-only Issue，不进入主 loop 的 acceptance ledger；当前 frontier 没有未审查目标，也没有
   未分配的 Critical/Important finding。
-- 所有已完成审查的 reviewer worktree 都已从 `/tmp` 安全清理；仍保留的 worktree 都有 owner、固定 SHA、
+- 所有已完成审查的 reviewer worktree 都已从系统临时目录安全清理；仍保留的 worktree 都有 owner、固定 SHA、
   未完成原因和明确的清理条件。
 - 审查 loop 不声明阶段、规范版本域或 FCS 5 RC 完成；它只产生独立审查证据和 finding 路由。最终完成
   仍由主 `docs/loops/loop.md` 根据规范、fixture、baseline、gate 和合并证据判定。
@@ -23,6 +23,11 @@
   `docs/specifications/fcs-conversion.md` 和
   `docs/specifications/governance.md` 是规范与状态权威；Accepted ADR 是架构/治理约束；计划、Issue、PR、
   实现、测试和本 loop 只能安排或证明工作，不能创造规范语义。
+- 搜索与代码理解默认排除 `.git/`、`refer/` 和任意层级的 `target/`；目录级 FastCtx 查询使用
+  `filter_mode: project` 和尽量窄的绝对路径，只有阅读路由明确要求时才进入参考快照或构建产物路径。
+- 本 loop 只使用根 `AGENTS.md` 定义的路径：`<local-workspace-root>\worktrees\<issue>-<slug>` 是非 main
+  实现 lane，系统临时目录下的 `fcs-review-*`/`fcs-finding-*` 是独立审查 snapshot；唯一允许本地编译反馈的
+  checkout 是 `<local-workspace-root>\main` 且分支严格为 `main`，reviewer worktree 永不编译。
 - 每次审查必须绑定一个不可漂移的快照：`Issue/PR 或 commit + head SHA + scope + commands + full-gate
   evidence + acceptance gate`。审查者不得把作者的结论、旧测试输出或未固定的工作树当作快照证据。
 - 审查会话是独立于主实现会话的第二个角色。主会话保留主实现分支的 owner 身份和唯一 merge owner 权限；
@@ -106,8 +111,8 @@
 
 1. **Bind:** 读取固定 Issue/PR/commit、head SHA、diff、规范/ADR/计划/fixture 路由和验收命令；记录
    不在 scope 内的内容。
-2. **Reproduce:** 适用时先复用目标同 SHA 的成功 full-gate evidence；主会话按根 `AGENTS.md` 的 Codespace Full
-   Gate 条款在用户 Codespace 对同 SHA 执行的完整命令序列等价于同 SHA 的 PR full-gate run，可作 full-gate evidence。
+2. **Reproduce:** 适用时先复用目标同 SHA 的成功 GitHub Actions full-gate evidence；push、PR 或
+   `workflow_dispatch` 对同 SHA 运行的 `.github/workflows/full-gate.yml` 均可作 full-gate evidence。
    只有纯文档或不改变执行逻辑的 workflow-policy
    metadata 才可标记 Rust gate non-applicable，其他 workflow 实现变化必须核对适用 gate，并在
    隔离 worktree 做不产生构建产物的静态检查。不为“独立”重复同一 gate。若竞争性假设必须靠执行区分，先创建记录 unknown root cause/evidence gap 的 finding，
@@ -212,8 +217,8 @@
   reviewer 先推送 finding branch 的诊断 SHA，以 `workflow_dispatch` full gate 取得 red evidence；只有根因确认后
   才能创建 corrective PR，随后以该 PR 新 SHA 的成功 run 取得 green evidence。两个 run 都必须记录 URL/ID、event、
   精确 `headSha` 和 conclusion。
-- 根 `AGENTS.md` 对主实现会话的本地编译放开（`cargo check`/`cargo clippy`/`cargo build`/`cargo fmt`）不适用于
-  本 loop：reviewer corrective worktree 保持完全不编译；审查的 test/conformance 证据仍只来自同 SHA full-gate run。
+- 根 `AGENTS.md` 只对 `<local-workspace-root>\main` 的 `main` 分支开放本地编译反馈；该权限不适用于
+  本 loop。reviewer corrective/read-only worktree 保持完全不编译；审查的 test/conformance 证据仍只来自同 SHA full-gate run。
 - corrective PR 创建前，reviewer 必须确认 worktree owner、用途、base/head SHA、分支、变更范围和验证命令；
   PR 正文或首条进度评论必须链接 finding、记录根因和实际验证结果。只创建分支或只提交猜测性 patch 不满足
   corrective delivery。
