@@ -1,10 +1,13 @@
 use std::path::Path;
 
 #[path = "../../fcs-source/tests/support/fcbc_reference_loader.rs"]
+#[allow(dead_code)]
 mod fcbc_reference_loader;
 #[path = "../../fcs-source/tests/support/fcbc_render_reference_assets.rs"]
+#[allow(dead_code)]
 mod fcbc_render_reference_assets;
 #[path = "../../fcs-source/tests/support/fcbc_render_reference_loader.rs"]
+#[allow(dead_code)]
 mod fcbc_render_reference_loader;
 
 use fcs_fcbc::write_from_compilation;
