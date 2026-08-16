@@ -1,5 +1,12 @@
 use std::path::Path;
 
+#[path = "../../fcs-source/tests/support/fcbc_reference_loader.rs"]
+mod fcbc_reference_loader;
+#[path = "../../fcs-source/tests/support/fcbc_render_reference_assets.rs"]
+mod fcbc_render_reference_assets;
+#[path = "../../fcs-source/tests/support/fcbc_render_reference_loader.rs"]
+mod fcbc_render_reference_loader;
+
 use fcs_fcbc::write_from_compilation;
 use fcs_model::{
     CanonicalArcDirection, CanonicalCompilation, CanonicalExpressionType, CanonicalImageRepeat,
@@ -978,6 +985,8 @@ render profile 1.0.0 {
     let scene = compilation.chart().render().expect("canonical Path scene");
     let bytes = write_from_compilation(&compilation).expect("canonical Path FCBC writing");
     let render = load_render(&bytes).expect("canonical Path product loader");
+    let reference = fcbc_render_reference_loader::load_render(&bytes)
+        .expect("canonical Path independent loader");
 
     let decoded_node_index = render
         .nodes
@@ -1007,6 +1016,75 @@ render profile 1.0.0 {
     assert_eq!(render.paths[0].fill_rule, 1);
     assert_eq!(render.paths[0].commands.len(), 7);
     assert_eq!(render.paints.len(), 2);
+
+    let reference_node = reference
+        .nodes
+        .iter()
+        .find(|node| node.id == scene.nodes()[path_node_index].id().value())
+        .expect("independently decoded Path node");
+    let reference_geometry_index = reference
+        .geometries
+        .iter()
+        .position(|geometry| geometry.id == scene.geometries()[path_geometry_index].id().value())
+        .expect("independently decoded Path geometry");
+    assert_eq!(
+        reference_node.kind,
+        fcbc_render_reference_loader::NodeKind::Path
+    );
+    assert_eq!(
+        reference_node.geometry_ref,
+        Some(reference_geometry_index as u32)
+    );
+    assert!(matches!(
+        reference.geometries[reference_geometry_index].data,
+        fcbc_render_reference_loader::GeometryData::Path { path_ref: 0 }
+    ));
+    assert_eq!(reference.paths.len(), 1);
+    assert_eq!(reference.paths[0].id, scene.paths()[0].id().value());
+    assert_eq!(reference.paths[0].fill_rule, 1);
+    use fcbc_render_reference_loader::PathCommand as ReferencePathCommand;
+    let [
+        ReferencePathCommand::MoveTo(move_to),
+        ReferencePathCommand::LineTo(line_to),
+        ReferencePathCommand::QuadraticTo(quadratic_control, quadratic_end),
+        ReferencePathCommand::CubicTo(cubic_control_1, cubic_control_2, _),
+        ReferencePathCommand::Arc {
+            center: arc_center,
+            radius: arc_radius,
+            start_angle: arc_start,
+            end_angle: arc_end,
+            direction: arc_direction,
+        },
+        ReferencePathCommand::EllipseArc {
+            center: ellipse_center,
+            radius_x,
+            radius_y,
+            rotation,
+            start_angle: ellipse_start,
+            end_angle: ellipse_end,
+            direction: ellipse_direction,
+        },
+        ReferencePathCommand::Close,
+    ] = reference.paths[0].commands.as_slice()
+    else {
+        panic!("independent loader must recover every canonical Path command in order");
+    };
+    assert_eq!((quadratic_control, quadratic_end), (move_to, line_to));
+    assert_eq!((cubic_control_1, cubic_control_2), (move_to, line_to));
+    assert_eq!(arc_start, arc_end);
+    assert_eq!(*arc_direction, 1);
+    assert_eq!(ellipse_center, arc_center);
+    assert_eq!(radius_x, arc_radius);
+    assert_eq!(radius_y, arc_radius);
+    assert_eq!(rotation, arc_start);
+    assert_eq!(ellipse_start, arc_start);
+    assert_eq!(ellipse_end, arc_start);
+    assert_eq!(*ellipse_direction, 2);
+    assert_eq!(
+        format!("{:?}", reference.paths[0].commands),
+        format!("{:?}", render.paths[0].commands),
+        "product and independent loaders must recover the same command sequence and descriptor references"
+    );
 
     let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Path semantic evaluation");
     assert!(
