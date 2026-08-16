@@ -15,10 +15,10 @@ use fcs_model::{
     CanonicalRenderComposite, CanonicalRenderGeometry, CanonicalRenderGeometryData,
     CanonicalRenderLayer, CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec,
     CanonicalRenderPaint, CanonicalRenderPaintData, CanonicalRenderPass, CanonicalRenderScene,
-    CanonicalRenderSceneSpec, CanonicalRequiredExtension, CanonicalResource, CanonicalResourceKind,
-    CanonicalSourceVersion, CanonicalSync, CanonicalTextualId, CanonicalValue, CanonicalValueType,
-    CanonicalViewport, ChartTimeMap, DeclaredSha256, DistributionMetadata, EntityKind, StableId,
-    StableIdRegistry,
+    CanonicalRenderSceneSpec, CanonicalRenderStroke, CanonicalRequiredExtension, CanonicalResource,
+    CanonicalResourceKind, CanonicalSourceVersion, CanonicalStrokeCap, CanonicalStrokeJoin,
+    CanonicalSync, CanonicalTextualId, CanonicalValue, CanonicalValueType, CanonicalViewport,
+    ChartTimeMap, DeclaredSha256, DistributionMetadata, EntityKind, StableId, StableIdRegistry,
 };
 
 use crate::ast::{
@@ -357,6 +357,17 @@ enum RenderPaintExpression {
     },
 }
 
+struct RenderStrokeSpec {
+    id: StableId,
+    paint: CanonicalRenderPaint,
+    width: usize,
+    cap: CanonicalStrokeCap,
+    join: CanonicalStrokeJoin,
+    miter_limit: f64,
+    dash_offset: usize,
+    dash: Vec<f64>,
+}
+
 fn render_gradient_stops(
     stops: &SourceExpression,
     field_span: SourceSpan,
@@ -504,7 +515,7 @@ fn render_paint_expression(field: &SchemaField) -> Result<RenderPaintExpression,
         });
     }
     Err(render_error(
-        "Render fill must use solid(color), linearGradient(start, end, stops, spread), or radialGradient(startCenter, startRadius, endCenter, endRadius, stops, spread)",
+        "Render paint must use solid(color), linearGradient(start, end, stops, spread), or radialGradient(startCenter, startRadius, endCenter, endRadius, stops, spread)",
         field.span,
     ))
 }
@@ -541,6 +552,61 @@ fn render_length(value: TypedValue, span: SourceSpan) -> Result<f64, Diagnostic>
             span,
         )),
     }
+}
+
+fn render_stroke_cap(
+    value: TypedValue,
+    span: SourceSpan,
+) -> Result<CanonicalStrokeCap, Diagnostic> {
+    match render_string(value, span)?.as_str() {
+        "butt" => Ok(CanonicalStrokeCap::Butt),
+        "round" => Ok(CanonicalStrokeCap::Round),
+        "square" => Ok(CanonicalStrokeCap::Square),
+        value => Err(render_error(
+            format!("unsupported Render stroke cap {value}"),
+            span,
+        )),
+    }
+}
+
+fn render_stroke_join(
+    value: TypedValue,
+    span: SourceSpan,
+) -> Result<CanonicalStrokeJoin, Diagnostic> {
+    match render_string(value, span)?.as_str() {
+        "miter" => Ok(CanonicalStrokeJoin::Miter),
+        "round" => Ok(CanonicalStrokeJoin::Round),
+        "bevel" => Ok(CanonicalStrokeJoin::Bevel),
+        value => Err(render_error(
+            format!("unsupported Render stroke join {value}"),
+            span,
+        )),
+    }
+}
+
+fn render_dash(value: TypedValue, span: SourceSpan) -> Result<Vec<f64>, Diagnostic> {
+    let TypedValue::Array { values, .. } = value else {
+        return Err(render_error(
+            "Render dash must be an array of lengths",
+            span,
+        ));
+    };
+    let mut dash = Vec::with_capacity(values.len());
+    for value in values {
+        let value = render_length(value, span)?;
+        if value < 0.0 {
+            return Err(render_error(
+                "Render dash elements must be non-negative",
+                span,
+            ));
+        }
+        dash.push(value);
+    }
+    if dash.len() % 2 == 1 {
+        let length = dash.len();
+        dash.extend_from_within(..length);
+    }
+    Ok(dash)
 }
 
 fn render_radius(value: TypedValue, span: SourceSpan) -> Result<f64, Diagnostic> {
@@ -756,6 +822,7 @@ struct RenderLowerer<'a> {
     nodes: Vec<CanonicalRenderNode>,
     geometries: Vec<CanonicalRenderGeometry>,
     paints: Vec<CanonicalRenderPaint>,
+    strokes: Vec<CanonicalRenderStroke>,
     descriptor_roots: Vec<(String, u64, usize)>,
 }
 
@@ -776,6 +843,7 @@ impl<'a> RenderLowerer<'a> {
             nodes: Vec::new(),
             geometries: Vec::new(),
             paints: Vec::new(),
+            strokes: Vec::new(),
             descriptor_roots: Vec::new(),
         }
     }
@@ -912,12 +980,17 @@ impl<'a> RenderLowerer<'a> {
         &mut self,
         node_path: &str,
         node: &crate::ast::RenderNodeDeclaration,
+        field_name: &str,
     ) -> Result<CanonicalRenderPaint, Diagnostic> {
-        let field = render_body_field(&node.items, "fill")
-            .ok_or_else(|| render_error("drawable Render node requires fill", node.span))?;
+        let field = render_body_field(&node.items, field_name).ok_or_else(|| {
+            render_error(
+                format!("drawable Render node requires {field_name}"),
+                node.span,
+            )
+        })?;
         let id = self.stable_id(
             EntityKind::RenderPaint,
-            format!("{node_path}/fill"),
+            format!("{node_path}/{field_name}"),
             field.span,
         )?;
         let data = match render_paint_expression(field)? {
@@ -1024,9 +1097,113 @@ impl<'a> RenderLowerer<'a> {
         CanonicalRenderPaint::new(id, data)
             .map_err(|error| render_error(format!("{error:?}"), node.span))
     }
+
+    fn add_paint_roots(&mut self, paint_index: usize) {
+        let owner = self.paints[paint_index].id().value();
+        let roots = match self.paints[paint_index].data() {
+            CanonicalRenderPaintData::Solid { color } => {
+                vec![("render.paint.color".to_owned(), *color)]
+            }
+            CanonicalRenderPaintData::LinearGradient {
+                start, end, stops, ..
+            } => {
+                let mut roots = vec![
+                    ("render.paint.start".to_owned(), *start),
+                    ("render.paint.end".to_owned(), *end),
+                ];
+                roots.extend(stops.iter().enumerate().map(|(index, stop)| {
+                    (format!("render.paint.stop[{index}].color"), stop.color())
+                }));
+                roots
+            }
+            CanonicalRenderPaintData::RadialGradient {
+                start_center,
+                start_radius,
+                end_center,
+                end_radius,
+                stops,
+                ..
+            } => {
+                let mut roots = vec![
+                    ("render.paint.startCenter".to_owned(), *start_center),
+                    ("render.paint.startRadius".to_owned(), *start_radius),
+                    ("render.paint.endCenter".to_owned(), *end_center),
+                    ("render.paint.endRadius".to_owned(), *end_radius),
+                ];
+                roots.extend(stops.iter().enumerate().map(|(index, stop)| {
+                    (format!("render.paint.stop[{index}].color"), stop.color())
+                }));
+                roots
+            }
+            _ => Vec::new(),
+        };
+        for (path, descriptor) in roots {
+            self.add_descriptor_root(&path, owner, descriptor);
+        }
+    }
+
+    fn add_stroke_roots(&mut self, stroke_index: usize) {
+        let (owner, width, dash_offset) = {
+            let stroke = &self.strokes[stroke_index];
+            (stroke.id().value(), stroke.width(), stroke.dash_offset())
+        };
+        self.add_descriptor_root("render.stroke.width", owner, width);
+        self.add_descriptor_root("render.stroke.dashOffset", owner, dash_offset);
+    }
 }
 
 impl<'a> RenderLowerer<'a> {
+    fn render_stroke(
+        &mut self,
+        node_path: &str,
+        node: &crate::ast::RenderNodeDeclaration,
+    ) -> Result<RenderStrokeSpec, Diagnostic> {
+        let stroke_field = render_body_field(&node.items, "stroke")
+            .ok_or_else(|| render_error("Line requires stroke", node.span))?;
+        let paint = self.add_paint(node_path, node, "stroke")?;
+        let width_field = render_body_field(&node.items, "width")
+            .ok_or_else(|| render_error("Render stroke requires width", node.span))?;
+        let width = render_length(render_value(width_field)?, width_field.span)?;
+        if width < 0.0 {
+            return Err(render_error(
+                "Render stroke width must be non-negative",
+                width_field.span,
+            ));
+        }
+        let cap_field = render_body_field(&node.items, "cap")
+            .ok_or_else(|| render_error("Render stroke requires cap", node.span))?;
+        let join_field = render_body_field(&node.items, "join")
+            .ok_or_else(|| render_error("Render stroke requires join", node.span))?;
+        let miter_field = render_body_field(&node.items, "miterLimit")
+            .ok_or_else(|| render_error("Render stroke requires miterLimit", node.span))?;
+        let dash_field = render_body_field(&node.items, "dash")
+            .ok_or_else(|| render_error("Render stroke requires dash", node.span))?;
+        let dash_offset_field = render_body_field(&node.items, "dashOffset")
+            .ok_or_else(|| render_error("Render stroke requires dashOffset", node.span))?;
+        let miter_limit = render_float(render_value(miter_field)?, miter_field.span)?;
+        if miter_limit < 1.0 {
+            return Err(render_error(
+                "Render stroke miterLimit must be at least 1",
+                miter_field.span,
+            ));
+        }
+        let dash_offset = render_length(render_value(dash_offset_field)?, dash_offset_field.span)?;
+        Ok(RenderStrokeSpec {
+            id: self.stable_id(
+                EntityKind::RenderStroke,
+                format!("{node_path}/stroke"),
+                stroke_field.span,
+            )?,
+            paint,
+            width: self.descriptor(TypedValue::Length(width))?,
+            cap: render_stroke_cap(render_value(cap_field)?, cap_field.span)?,
+            join: render_stroke_join(render_value(join_field)?, join_field.span)?,
+            miter_limit,
+            dash_offset: self.descriptor(TypedValue::Length(dash_offset))?,
+            dash: render_dash(render_value(dash_field)?, dash_field.span)?,
+        })
+    }
+
     fn lower_node(
         &mut self,
         node: &crate::ast::RenderNodeDeclaration,
@@ -1102,6 +1279,9 @@ impl<'a> RenderLowerer<'a> {
             |value| render_composite(value, node.span),
         )?;
         let active = render_active_interval(&node.items, self.time_map)?;
+        let stroke = matches!(node.kind, CanonicalRenderNodeKind::Line)
+            .then(|| self.render_stroke(node_path, node))
+            .transpose()?;
 
         let (geometry_data, paint) = match node.kind {
             CanonicalRenderNodeKind::Group => (None, None),
@@ -1126,7 +1306,7 @@ impl<'a> RenderLowerer<'a> {
                             .expect("homogeneous length vector"),
                         )?,
                     }),
-                    Some(self.add_paint(node_path, node)?),
+                    Some(self.add_paint(node_path, node, "fill")?),
                 )
             }
             CanonicalRenderNodeKind::RoundedRect => {
@@ -1159,7 +1339,7 @@ impl<'a> RenderLowerer<'a> {
                         size,
                         radii: [radius; 4],
                     }),
-                    Some(self.add_paint(node_path, node)?),
+                    Some(self.add_paint(node_path, node, "fill")?),
                 )
             }
             CanonicalRenderNodeKind::Circle => {
@@ -1183,7 +1363,7 @@ impl<'a> RenderLowerer<'a> {
                         center,
                         radius: self.descriptor(TypedValue::Length(radius))?,
                     }),
-                    Some(self.add_paint(node_path, node)?),
+                    Some(self.add_paint(node_path, node, "fill")?),
                 )
             }
             CanonicalRenderNodeKind::Ellipse => {
@@ -1212,7 +1392,37 @@ impl<'a> RenderLowerer<'a> {
                         radius_y: self.descriptor(TypedValue::Length(radius_y))?,
                         rotation,
                     }),
-                    Some(self.add_paint(node_path, node)?),
+                    Some(self.add_paint(node_path, node, "fill")?),
+                )
+            }
+            CanonicalRenderNodeKind::Line => {
+                if render_body_field(&node.items, "fill").is_some() {
+                    return Err(render_error("Line must not declare fill", node.span));
+                }
+                let start_field = render_body_field(&node.items, "start")
+                    .ok_or_else(|| render_error("Line requires start", node.span))?;
+                let end_field = render_body_field(&node.items, "end")
+                    .ok_or_else(|| render_error("Line requires end", node.span))?;
+                let start = render_vec2_length(render_value(start_field)?, start_field.span)?;
+                let end = render_vec2_length(render_value(end_field)?, end_field.span)?;
+                (
+                    Some(CanonicalRenderGeometryData::Line {
+                        start: self.descriptor(
+                            TypedValue::vec2(
+                                TypedValue::Length(start[0]),
+                                TypedValue::Length(start[1]),
+                            )
+                            .expect("homogeneous length vector"),
+                        )?,
+                        end: self.descriptor(
+                            TypedValue::vec2(
+                                TypedValue::Length(end[0]),
+                                TypedValue::Length(end[1]),
+                            )
+                            .expect("homogeneous length vector"),
+                        )?,
+                    }),
+                    None,
                 )
             }
             CanonicalRenderNodeKind::Polyline => {
@@ -1237,7 +1447,7 @@ impl<'a> RenderLowerer<'a> {
                     .collect::<Result<Vec<_>, _>>()?;
                 (
                     Some(CanonicalRenderGeometryData::Polyline { points }),
-                    Some(self.add_paint(node_path, node)?),
+                    Some(self.add_paint(node_path, node, "fill")?),
                 )
             }
             CanonicalRenderNodeKind::Polygon => {
@@ -1262,7 +1472,7 @@ impl<'a> RenderLowerer<'a> {
                     .collect::<Result<Vec<_>, _>>()?;
                 (
                     Some(CanonicalRenderGeometryData::Polygon { points }),
-                    Some(self.add_paint(node_path, node)?),
+                    Some(self.add_paint(node_path, node, "fill")?),
                 )
             }
             CanonicalRenderNodeKind::Image => {
@@ -1409,6 +1619,27 @@ impl<'a> RenderLowerer<'a> {
             self.paints.push(paint);
             index
         });
+        let stroke_index = if let Some(stroke) = stroke {
+            let paint_index = self.paints.len();
+            self.paints.push(stroke.paint);
+            let stroke_index = self.strokes.len();
+            self.strokes.push(
+                CanonicalRenderStroke::new(
+                    stroke.id,
+                    paint_index,
+                    stroke.width,
+                    stroke.cap,
+                    stroke.join,
+                    stroke.miter_limit,
+                    stroke.dash_offset,
+                    stroke.dash,
+                )
+                .map_err(|error| render_error(format!("{error:?}"), node.span))?,
+            );
+            Some(stroke_index)
+        } else {
+            None
+        };
         let node_index = self.nodes.len();
         let canonical_node = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
             id: node_id.clone(),
@@ -1429,7 +1660,7 @@ impl<'a> RenderLowerer<'a> {
             visibility,
             geometry: geometry_index,
             fill_paint,
-            stroke: None,
+            stroke: stroke_index,
             clip: None,
             composite,
         })
@@ -1444,47 +1675,12 @@ impl<'a> RenderLowerer<'a> {
             self.geometries.push(geometry);
         }
         if let Some(paint_index) = fill_paint {
-            let owner = self.paints[paint_index].id().value();
-            let roots = match self.paints[paint_index].data() {
-                CanonicalRenderPaintData::Solid { color } => {
-                    vec![("render.paint.color".to_owned(), *color)]
-                }
-                CanonicalRenderPaintData::LinearGradient {
-                    start, end, stops, ..
-                } => {
-                    let mut roots = vec![
-                        ("render.paint.start".to_owned(), *start),
-                        ("render.paint.end".to_owned(), *end),
-                    ];
-                    roots.extend(stops.iter().enumerate().map(|(index, stop)| {
-                        (format!("render.paint.stop[{index}].color"), stop.color())
-                    }));
-                    roots
-                }
-                CanonicalRenderPaintData::RadialGradient {
-                    start_center,
-                    start_radius,
-                    end_center,
-                    end_radius,
-                    stops,
-                    ..
-                } => {
-                    let mut roots = vec![
-                        ("render.paint.startCenter".to_owned(), *start_center),
-                        ("render.paint.startRadius".to_owned(), *start_radius),
-                        ("render.paint.endCenter".to_owned(), *end_center),
-                        ("render.paint.endRadius".to_owned(), *end_radius),
-                    ];
-                    roots.extend(stops.iter().enumerate().map(|(index, stop)| {
-                        (format!("render.paint.stop[{index}].color"), stop.color())
-                    }));
-                    roots
-                }
-                _ => Vec::new(),
-            };
-            for (path, descriptor) in roots {
-                self.add_descriptor_root(&path, owner, descriptor);
-            }
+            self.add_paint_roots(paint_index);
+        }
+        if let Some(stroke_index) = stroke_index {
+            let stroke_paint = self.strokes[stroke_index].paint();
+            self.add_paint_roots(stroke_paint);
+            self.add_stroke_roots(stroke_index);
         }
 
         if let Some(children) = node.items.iter().find_map(|item| match item {
@@ -1639,7 +1835,7 @@ fn lower_render_scene(
             geometries: lowerer.geometries,
             paths: Vec::new(),
             paints: lowerer.paints,
-            strokes: Vec::new(),
+            strokes: lowerer.strokes,
             clips: Vec::new(),
             glyph_runs: Vec::new(),
         })

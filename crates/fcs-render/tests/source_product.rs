@@ -261,6 +261,103 @@ fn canonical_line_stroke_writer_reaches_product_render_loader() {
 }
 
 #[test]
+fn source_line_stroke_reaches_product_render_loader() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 4px; height: 4px; }
+    layer main {
+        pass: "overlay";
+        children {
+            line guide {
+                start: vec2(-1px, 0px);
+                end: vec2(1px, 0px);
+                stroke: solid(#FFFFFFFF);
+                width: 1px;
+                cap: "round";
+                join: "bevel";
+                miterLimit: 4.0;
+                dash: [1px, 1px, 1px];
+                dashOffset: 0px;
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("source Line stroke parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| {
+            panic!("source Line stroke lowering failed: {diagnostics:?}")
+        });
+    let scene = compilation
+        .chart()
+        .render()
+        .expect("canonical Render scene");
+    assert_eq!(scene.nodes()[0].kind(), CanonicalRenderNodeKind::Line);
+    assert_eq!(scene.nodes()[0].fill_paint(), None);
+    assert_eq!(scene.nodes()[0].stroke(), Some(0));
+    assert!(matches!(
+        scene.geometries()[0].data(),
+        CanonicalRenderGeometryData::Line { .. }
+    ));
+    assert_eq!(scene.strokes().len(), 1);
+    assert_eq!(scene.strokes()[0].cap(), CanonicalStrokeCap::Round);
+    assert_eq!(scene.strokes()[0].join(), CanonicalStrokeJoin::Bevel);
+    assert_eq!(scene.strokes()[0].miter_limit().to_bits(), 4.0f64.to_bits());
+    assert_eq!(scene.strokes()[0].dash(), &[1.0, 1.0, 1.0, 1.0, 1.0, 1.0]);
+    let roots = compilation
+        .chart()
+        .descriptors()
+        .expect("Render descriptors")
+        .roots();
+    assert!(
+        ["render.stroke.width", "render.stroke.dashOffset"]
+            .into_iter()
+            .all(|path| roots.iter().any(|root| {
+                root.target_path() == path && root.owner() == scene.strokes()[0].id().value()
+            }))
+    );
+
+    let bytes = write_from_compilation(&compilation).expect("source Line stroke FCBC writing");
+    let render = load_render(&bytes).expect("source Line stroke product loader");
+    assert_eq!(render.nodes[0].kind, NodeKind::Line);
+    assert_eq!(render.nodes[0].fill_paint, None);
+    assert_eq!(render.nodes[0].stroke_ref, Some(0));
+    assert_eq!((render.strokes[0].cap, render.strokes[0].join), (2, 3));
+    assert_eq!(render.strokes[0].dash, vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0]);
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Line semantic draw list");
+    assert_eq!(draw.len(), 1);
+    assert!(draw[0].stroke.is_some());
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Line rasterization");
+    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
+
+    let invalid = source.replace("width: 1px;", "width: -1px;");
+    let document = parse_document(&invalid)
+        .into_result()
+        .expect("negative-width Line source parses");
+    assert!(
+        document
+            .canonical_compilation_with_source(
+                &invalid,
+                CompileTimeLimits::default(),
+                env!("CARGO_MANIFEST_DIR"),
+                ResourceLimits::default(),
+            )
+            .is_err(),
+        "negative stroke width must fail at canonical lowering"
+    );
+}
+
+#[test]
 fn linear_gradient_source_reaches_product_loader_semantics_and_raster() {
     let source = r#"#fcs 5.0.0
 format { profile: renderable; }

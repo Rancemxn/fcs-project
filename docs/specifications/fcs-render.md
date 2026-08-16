@@ -409,9 +409,10 @@ constructors. The product implementation currently supports `solid`,
 `linearGradient`, and `radialGradient`; its semantic/raster path also consumes
 loader-validated FCBC `ImagePattern` kind 4 records and kind 7 `Line` stroke
 records, and the canonical product writer covers those same bounded kind 4 and
-kind 7 records. Source `imagePattern` and Line stroke lowering remain separate
-bounded work; broader canonical writer coverage remains open after the bounded
-Line and ImagePattern writer paths. The
+kind 7 records. The bounded source Line lowering now covers compile-time solid strokes;
+dynamic stroke descriptors and source `imagePattern` remain separate bounded
+work; broader canonical writer coverage remains open after the bounded Line and
+ImagePattern writer paths. The
 gradient constructors take a
 compile-time array of `stop(offset, color)` calls and a compile-time spread
 string. `linearGradient` takes two `vec2<length>` expressions, while
