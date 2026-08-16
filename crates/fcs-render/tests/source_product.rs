@@ -1094,4 +1094,10 @@ render profile 1.0.0 {
         draw.iter()
             .any(|operation| operation.kind == NodeKind::Path)
     );
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Path rasterization");
+    assert_eq!(pixels.len(), 4 * 4 * 4);
+    assert!(
+        pixels.chunks_exact(4).any(|pixel| pixel[3] != 0),
+        "written Path should contribute raster coverage"
+    );
 }
