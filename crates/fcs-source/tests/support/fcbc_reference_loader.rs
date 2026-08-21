@@ -415,7 +415,14 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
     validate_lines(&lines, &descriptors, &constants, &distances)?;
     validate_notes(&notes, &lines, &descriptors, &resources)?;
     validate_distances(&distances, &lines, &descriptors, &constants)?;
-    validate_canonical_reachability(&descriptors, &expressions, &constants, &lines, &notes)?;
+    validate_canonical_reachability(
+        &descriptors,
+        &expressions,
+        &constants,
+        &lines,
+        &notes,
+        feature_flags & (1 << 1) != 0,
+    )?;
 
     Ok(DecodedChart {
         container_profile,
@@ -1818,6 +1825,7 @@ fn validate_canonical_reachability(
     constants: &[RuntimeValue],
     lines: &[LineRecord],
     notes: &[NoteRecord],
+    render_present: bool,
 ) -> Result<(), &'static str> {
     let mut roots = Vec::new();
     for line in lines {
@@ -1890,6 +1898,16 @@ fn validate_canonical_reachability(
             &mut visited_descriptors,
             &mut descriptor_order,
         )?;
+    }
+    if render_present {
+        for root in 0..descriptors.len() as u32 {
+            visit_descriptor(
+                root,
+                descriptors,
+                &mut visited_descriptors,
+                &mut descriptor_order,
+            )?;
+        }
     }
     if descriptor_order.len() != descriptors.len() {
         return Err("fcbc.invalid-track");
