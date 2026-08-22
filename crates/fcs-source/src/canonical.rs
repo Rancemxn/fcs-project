@@ -1159,7 +1159,7 @@ impl<'a> RenderLowerer<'a> {
         node: &crate::ast::RenderNodeDeclaration,
     ) -> Result<RenderStrokeSpec, Diagnostic> {
         let stroke_field = render_body_field(&node.items, "stroke")
-            .ok_or_else(|| render_error("Line requires stroke", node.span))?;
+            .ok_or_else(|| render_error("drawable Render node requires stroke", node.span))?;
         let paint = self.add_paint(node_path, node, "stroke")?;
         let width_field = render_body_field(&node.items, "width")
             .ok_or_else(|| render_error("Render stroke requires width", node.span))?;
@@ -1279,9 +1279,16 @@ impl<'a> RenderLowerer<'a> {
             |value| render_composite(value, node.span),
         )?;
         let active = render_active_interval(&node.items, self.time_map)?;
-        let stroke = matches!(node.kind, CanonicalRenderNodeKind::Line)
-            .then(|| self.render_stroke(node_path, node))
-            .transpose()?;
+        let stroke = match node.kind {
+            CanonicalRenderNodeKind::Line => Some(self.render_stroke(node_path, node)?),
+            // Render section 14.2 lets a fillable geometry carry a fill paint, a stroke, or
+            // both, so a Circle stroke is optional and only lowered when it is declared.
+            CanonicalRenderNodeKind::Circle => render_body_field(&node.items, "stroke")
+                .is_some()
+                .then(|| self.render_stroke(node_path, node))
+                .transpose()?,
+            _ => None,
+        };
 
         let (geometry_data, paint) = match node.kind {
             CanonicalRenderNodeKind::Group => (None, None),
@@ -1363,7 +1370,13 @@ impl<'a> RenderLowerer<'a> {
                         center,
                         radius: self.descriptor(TypedValue::Length(radius))?,
                     }),
-                    Some(self.add_paint(node_path, node, "fill")?),
+                    // Render section 14.2 requires at least one of the two, so a declared
+                    // stroke is what makes `fill` optional here.
+                    if stroke.is_some() && render_body_field(&node.items, "fill").is_none() {
+                        None
+                    } else {
+                        Some(self.add_paint(node_path, node, "fill")?)
+                    },
                 )
             }
             CanonicalRenderNodeKind::Ellipse => {
