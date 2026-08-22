@@ -751,8 +751,15 @@ fn source_circle_without_fill_or_stroke_is_rejected() {
     assert!(error.contains("fill"), "{error}");
 }
 
-/// A source `polyline` or `polygon` lowered with a canonical stroke attached to its node.
-fn canonical_polyline_stroke_compilation(keyword: &str, dash: Vec<f64>) -> CanonicalCompilation {
+/// Lower a source fixture whose hidden `circle ruler` supplies the scalar Length descriptor a
+/// stroke needs, then attach a canonical stroke to the second node in place. Replacing the node
+/// rather than rebuilding the scene keeps the layer roots and geometry indices valid, and
+/// `CanonicalRenderScene` rejects a node whose kind does not match its geometry.
+fn canonical_stroked_shape_compilation(
+    keyword: &str,
+    body: &str,
+    dash: Vec<f64>,
+) -> CanonicalCompilation {
     let source = format!(
         r#"#fcs 5.0.0
 format {{ profile: renderable; }}
@@ -762,8 +769,14 @@ render profile 1.0.0 {{
     layer main {{
         pass: "overlay";
         children {{
-            {keyword} trace {{
-                points: [vec2(-5px, 0px), vec2(0px, 0px), vec2(0px, 5px)];
+            circle ruler {{
+                center: vec2(0px, 0px);
+                radius: 2px;
+                visibility: false;
+                fill: solid(#FFFFFFFF);
+            }}
+            {keyword} target {{
+                {body}
                 fill: solid(#FFFFFFFF);
             }}
         }}
@@ -773,7 +786,7 @@ render profile 1.0.0 {{
     );
     let document = parse_document(&source)
         .into_result()
-        .expect("polyline stroke source parses");
+        .expect("stroked shape source parses");
     let base = document
         .canonical_compilation_with_source(
             &source,
@@ -781,9 +794,11 @@ render profile 1.0.0 {{
             env!("CARGO_MANIFEST_DIR"),
             ResourceLimits::default(),
         )
-        .expect("polyline stroke source lowers");
+        .unwrap_or_else(|diagnostics| {
+            panic!("stroked shape source lowering failed: {diagnostics:?}")
+        });
     let original = base.chart().render().expect("source Render scene");
-    let node = &original.nodes()[0];
+    let target = &original.nodes()[1];
     let width_descriptor = base
         .chart()
         .descriptors()
@@ -791,17 +806,20 @@ render profile 1.0.0 {{
         .descriptors()
         .iter()
         .position(|descriptor| descriptor.property_type() == &CanonicalExpressionType::Length)
-        .expect("source fixture must provide a Length descriptor");
+        .expect("the hidden ruler must provide a Length descriptor");
     let mut ids = StableIdRegistry::new();
     let stroke_id = ids
         .insert(
             EntityKind::RenderStroke,
-            CanonicalTextualId::explicit("trace-stroke").expect("stroke textual ID"),
+            CanonicalTextualId::explicit("target-stroke").expect("stroke textual ID"),
         )
         .expect("stroke stable ID");
+    // Section 14.2 forbids sharing a paint between a fill and a stroke, so the stroke takes over
+    // the target's own paint record while the node drops its fill.
+    let stroke_paint = target.fill_paint().expect("target fill paint");
     let stroke = CanonicalRenderStroke::new(
         stroke_id,
-        0,
+        stroke_paint,
         width_descriptor,
         CanonicalStrokeCap::Butt,
         CanonicalStrokeJoin::Miter,
@@ -809,38 +827,40 @@ render profile 1.0.0 {{
         width_descriptor,
         dash,
     )
-    .expect("canonical polyline stroke");
+    .expect("canonical stroke");
     let stroked = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
-        id: node.id().clone(),
-        kind: node.kind(),
-        parent: node.parent(),
-        layer: node.layer(),
-        document_order: node.document_order(),
-        z_order: node.z_order(),
-        attachment: node.attachment().clone(),
-        active: node.active(),
-        isolate: node.isolate(),
-        follow_hidden_attachment: node.follow_hidden_attachment(),
-        position: node.position(),
-        origin: node.origin(),
-        rotation: node.rotation(),
-        scale: node.scale(),
-        opacity: node.opacity(),
-        visibility: node.visibility(),
-        geometry: Some(0),
+        id: target.id().clone(),
+        kind: target.kind(),
+        parent: target.parent(),
+        layer: target.layer(),
+        document_order: target.document_order(),
+        z_order: target.z_order(),
+        attachment: target.attachment().clone(),
+        active: target.active(),
+        isolate: target.isolate(),
+        follow_hidden_attachment: target.follow_hidden_attachment(),
+        position: target.position(),
+        origin: target.origin(),
+        rotation: target.rotation(),
+        scale: target.scale(),
+        opacity: target.opacity(),
+        visibility: target.visibility(),
+        geometry: target.geometry(),
         fill_paint: None,
         stroke: Some(0),
         clip: None,
-        composite: node.composite(),
+        composite: target.composite(),
     })
     .expect("stroked canonical node");
+    let mut nodes = original.nodes().to_vec();
+    nodes[1] = stroked;
     let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
         viewport: original.viewport(),
         layers: original.layers().to_vec(),
-        nodes: vec![stroked],
+        nodes,
         geometries: original.geometries().to_vec(),
         paths: Vec::new(),
-        paints: vec![original.paints()[0].clone()],
+        paints: original.paints().to_vec(),
         strokes: vec![stroke],
         clips: Vec::new(),
         glyph_runs: Vec::new(),
@@ -853,9 +873,16 @@ render profile 1.0.0 {{
     )
 }
 
+const POLYLINE_POINTS: &str = "points: [vec2(-5px, 0px), vec2(0px, 0px), vec2(0px, 5px)];";
+
 #[test]
 fn canonical_polyline_and_polygon_strokes_reach_the_product_raster() {
-    let covered = |pixels: &[u8]| {
+    let raster = |keyword: &str, dash: Vec<f64>| {
+        let compilation = canonical_stroked_shape_compilation(keyword, POLYLINE_POINTS, dash);
+        let bytes = write_from_compilation(&compilation).expect("polyline stroke FCBC writing");
+        let render = load_render(&bytes).expect("polyline stroke product loader");
+        let pixels =
+            rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("polyline stroke raster");
         pixels
             .as_chunks::<4>()
             .0
@@ -863,73 +890,31 @@ fn canonical_polyline_and_polygon_strokes_reach_the_product_raster() {
             .filter(|pixel| pixel[3] != 0)
             .count()
     };
-    let raster = |keyword: &str, dash: Vec<f64>| {
-        let compilation = canonical_polyline_stroke_compilation(keyword, dash);
-        let bytes = write_from_compilation(&compilation).expect("polyline stroke FCBC writing");
-        let render = load_render(&bytes).expect("polyline stroke product loader");
-        assert_eq!(render.nodes[0].fill_paint, None);
-        assert_eq!(render.nodes[0].stroke_ref, Some(0));
-        covered(&rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("polyline stroke raster"))
-    };
 
     let polyline = raster("polyline", Vec::new());
     let polygon = raster("polygon", Vec::new());
     let dashed = raster("polyline", vec![1.0, 2.0]);
 
     // Render section 15.2 keeps a Polyline stroke open and closes a Polygon stroke, so the
-    // Polygon additionally strokes the implicit closing segment.
-    assert!(polyline > 0);
-    assert!(polygon > polyline);
+    // Polygon additionally strokes the implicit closing segment. The hidden ruler circle
+    // contributes nothing, so every covered pixel comes from the stroke.
+    assert!(polyline > 0, "a Polyline stroke must raster");
+    assert!(
+        polygon > polyline,
+        "polygon {polygon} vs polyline {polyline}"
+    );
     // One-on two-off leaves gaps in the same open path.
-    assert!(dashed > 0);
-    assert!(dashed < polyline);
+    assert!(dashed > 0, "a dashed Polyline stroke must raster");
+    assert!(dashed < polyline, "dashed {dashed} vs polyline {polyline}");
 }
 
 #[test]
 fn canonical_rect_stroke_is_still_rejected() {
-    let compilation = canonical_circle_stroke_compilation(Vec::new(), false);
-    let scene = compilation.chart().render().expect("scene");
-    let node = &scene.nodes()[0];
-    let rect = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
-        id: node.id().clone(),
-        kind: CanonicalRenderNodeKind::Rect,
-        parent: node.parent(),
-        layer: node.layer(),
-        document_order: node.document_order(),
-        z_order: node.z_order(),
-        attachment: node.attachment().clone(),
-        active: node.active(),
-        isolate: node.isolate(),
-        follow_hidden_attachment: node.follow_hidden_attachment(),
-        position: node.position(),
-        origin: node.origin(),
-        rotation: node.rotation(),
-        scale: node.scale(),
-        opacity: node.opacity(),
-        visibility: node.visibility(),
-        geometry: Some(0),
-        fill_paint: None,
-        stroke: Some(0),
-        clip: None,
-        composite: node.composite(),
-    })
-    .expect("Rect node with a stroke");
-    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
-        viewport: scene.viewport(),
-        layers: scene.layers().to_vec(),
-        nodes: vec![rect],
-        geometries: scene.geometries().to_vec(),
-        paths: Vec::new(),
-        paints: scene.paints().to_vec(),
-        strokes: scene.strokes().to_vec(),
-        clips: Vec::new(),
-        glyph_runs: Vec::new(),
-    })
-    .expect("Rect scene");
-    let compilation = CanonicalCompilation::new(
-        compilation.chart().clone().with_render(scene),
-        compilation.resources().clone(),
-        compilation.distribution().clone(),
+    let compilation = canonical_stroked_shape_compilation(
+        "rect",
+        "origin: vec2(-3px, -3px);
+                size: vec2(6px, 6px);",
+        Vec::new(),
     );
     // Adding Polyline and Polygon must not widen the writer to every fillable geometry.
     let error = write_from_compilation(&compilation).expect_err("a Rect stroke stays rejected");
