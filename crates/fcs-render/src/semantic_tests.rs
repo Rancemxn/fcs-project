@@ -200,3 +200,62 @@ fn line_stroke_caps_and_dash_boundaries_are_stable() {
         vec![(0.0, 0.5), (1.5, 2.5), (3.5, 4.0)]
     );
 }
+
+#[test]
+fn dashed_circle_stroke_starts_at_three_oclock_and_winds_clockwise() {
+    let quarter = std::f64::consts::FRAC_PI_2;
+    let diagonal = std::f64::consts::FRAC_1_SQRT_2;
+    let circle = LocalShape::Circle {
+        center: [0.0, 0.0],
+        radius: 1.0,
+    };
+    let mut stroke = StrokeDrawOp {
+        width: 0.2,
+        cap: 1,
+        join: 1,
+        miter_limit: 2.0,
+        dash_offset: 0.0,
+        dash: Vec::new(),
+        fill_rgba: Some([1.0, 1.0, 1.0, 1.0]),
+        linear_gradient: None,
+        radial_gradient: None,
+        image_pattern: None,
+    };
+    // With no dash the closed stroke is the whole annulus, so both diagonals are covered.
+    assert!(stroke_contains(&circle, [diagonal, -diagonal], &stroke).unwrap());
+    assert!(stroke_contains(&circle, [diagonal, diagonal], &stroke).unwrap());
+
+    // A quarter-on quarter-off pattern therefore covers the first and third quarter turns
+    // travelled from three o'clock. Under FCS Y-up, clockwise means the first quarter turn
+    // runs from three o'clock down to six o'clock, not up to twelve.
+    stroke.dash = vec![quarter, quarter];
+    assert!(stroke_contains(&circle, [diagonal, -diagonal], &stroke).unwrap());
+    assert!(!stroke_contains(&circle, [diagonal, diagonal], &stroke).unwrap());
+    assert!(stroke_contains(&circle, [-diagonal, diagonal], &stroke).unwrap());
+    assert!(!stroke_contains(&circle, [-diagonal, -diagonal], &stroke).unwrap());
+
+    // Each dash segment now has two endpoints, so cap participates at the six-o'clock end of
+    // the first segment. Butt truncates on that endpoint's radial line.
+    let just_past = -(quarter + 0.05);
+    let just_past = [just_past.cos(), just_past.sin()];
+    assert!(!stroke_contains(&circle, just_past, &stroke).unwrap());
+    stroke.cap = 2;
+    assert!(stroke_contains(&circle, just_past, &stroke).unwrap());
+    stroke.cap = 3;
+    assert!(stroke_contains(&circle, just_past, &stroke).unwrap());
+
+    // The square cap is a tangential rectangle rather than a disc, so it reaches a corner
+    // that lies `0.09` along and `0.09` across from the same endpoint while round does not.
+    let corner = [-0.09, -0.91];
+    assert!(stroke_contains(&circle, corner, &stroke).unwrap());
+    stroke.cap = 2;
+    assert!(!stroke_contains(&circle, corner, &stroke).unwrap());
+
+    // No cap reaches beyond `width/2` past the endpoint.
+    let beyond = -(quarter + 0.2);
+    let beyond = [beyond.cos(), beyond.sin()];
+    for cap in 1..=3 {
+        stroke.cap = cap;
+        assert!(!stroke_contains(&circle, beyond, &stroke).unwrap());
+    }
+}
