@@ -3,6 +3,11 @@
 .DS_Store
 /refer
 /examples/COPYRIGHT
-/.claude
+/.claude/
 /.ccg
 /.worktrees/
+/main/
+/worktree/
+/worktrees/
+/.pi/
+/.pi-subagents/

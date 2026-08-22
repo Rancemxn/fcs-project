@@ -209,9 +209,13 @@ evidence in `source_product::canonical_line_stroke_writer_reaches_product_render
 Issue #506 adds the bounded canonical ImagePattern paint path through the product
 FCBC writer and Render loader, with resource, transform, semantic, and raster
 round-trip evidence in `source_product::canonical_image_pattern_writer_reaches_product_render_loader`.
-Dynamic source Line stroke descriptors, source ImagePattern lowering, broader canonical writer
-coverage, Polyline/Path/Text, and descriptor-driven gradient stroke lowering remain outside these bounded units;
-no Frozen or final I10 claim changes.
+Issue #509 adds the bounded canonical Path geometry and PathRecord writer path
+through the product Render loader, including all seven command record variants and
+descriptor/table round-trip evidence in `source_product::canonical_path_writer_reaches_product_render_loader`.
+Dynamic source Line stroke descriptors, source ImagePattern lowering, source Path lowering,
+Path semantic/raster coverage, broader canonical writer coverage, Polyline/Text, and
+descriptor-driven gradient stroke lowering remain outside these bounded units; no
+Frozen or final I10 claim changes.
 
 ## Credit stable identity delta
 

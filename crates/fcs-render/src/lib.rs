@@ -1122,7 +1122,9 @@ mod tests {
 
         let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("ImagePattern raster");
         let mut colors = pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|rgba| rgba[3] > 0)
             .map(|rgba| [rgba[0], rgba[1], rgba[2]]);
         let first = colors.next().expect("ImagePattern coverage");
@@ -1249,8 +1251,8 @@ mod tests {
         assert_eq!(stroke.dash, vec![0.5, 0.5]);
 
         let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Line raster");
-        assert!(pixels.chunks_exact(4).any(|rgba| rgba[3] > 0));
-        assert!(pixels.chunks_exact(4).any(|rgba| rgba[3] == 0));
+        assert!(pixels.as_chunks::<4>().0.iter().any(|rgba| rgba[3] > 0));
+        assert!(pixels.as_chunks::<4>().0.iter().any(|rgba| rgba[3] == 0));
     }
 
     #[test]
@@ -1712,7 +1714,12 @@ mod tests {
             assert_eq!(draw[0].kind, kind);
 
             let pixels = rasterize_solid_rgba8(&render, 4, 4).expect("shape raster");
-            let alpha: Vec<_> = pixels.chunks_exact(4).map(|pixel| pixel[3]).collect();
+            let alpha: Vec<_> = pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|pixel| pixel[3])
+                .collect();
             assert!(alpha.iter().any(|value| *value > 0));
             assert!(alpha.iter().any(|value| *value < 255));
         }

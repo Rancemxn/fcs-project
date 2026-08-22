@@ -72,7 +72,8 @@
 
 ## 搜索与代码理解
 
-按用途选择搜索工具，优先从仓库根目录开始，并排除 `.git` 和生成目录：
+按用途选择搜索工具，优先从仓库根目录开始。默认排除 `.git/`、`refer/` 和任意层级的 `target/`；
+只有任务明确要求检查 Git 元数据、固定参考快照、依赖源码或构建产物时，才进入对应目录：
 
 - 用 `eza` 看目录结构，替代 `ls`。必须显式给出路径：省略路径时本仓库环境下不输出任何内容且退出码为
   0，容易被误读成目录为空。
@@ -87,14 +88,14 @@
 - 用 `fd` 找文件和目录：
 
   ```text
-  fd --hidden --exclude .git --type f
-  fd --hidden --exclude .git AGENTS.md
+  fd --hidden --exclude .git --exclude refer --exclude target --type f
+  fd --hidden --exclude .git --exclude refer --exclude target AGENTS.md
   ```
 
 - 用 `rg` 搜索文本、符号、错误信息和配置：
 
   ```text
-  rg -n --hidden -g '!/.git' 'pattern' .
+  rg -n --hidden -g '!/.git/**' -g '!/refer/**' -g '!**/target/**' 'pattern' .
   rg -n 'parse_document|nextest|tavily_hikari' crates docs
   ```
 
@@ -122,35 +123,36 @@
   实际编码读取并保留行号，避免 Windows PowerShell 默认编码造成证据误读；需要读多个文件时使用一次批量
   `read`。只有 FastCtx 报告编码不明确时才按其候选显式传入 `encoding`，不得用 `Get-Content`、`type` 或
   `Set-Content` 重写文件来“修复”显示问题。
+- FastCtx 的目录级 `grep`/`glob` 默认使用 `filter_mode: project` 并传入尽量窄的绝对路径；不要用
+  `filter_mode: all` 扫描仓库根目录，除非任务明确要求检查 `refer/` 或 `target/`。
 - 非必要不得使用 `Get-Content`；本地文件读取、搜索和定位直接使用 FastCtx。确需使用 PowerShell 读取时，
   必须显式指定并核对编码，避免把编码误读当成文件内容或改写依据。
 
 先用 `eza` 看结构、`fd` 定位范围，再用 `rg` 或 `sg` 缩小目标。阅读实现时同时查看调用方、对应测试和
-相关规范，避免只根据单个匹配结果推断行为。目标项目检查默认排除 `refer/`；只有“阅读路由”
-明确要求研究外部证据或依赖源码时才进入，并遵守对应快照、版本和参考仓库规则。
+相关规范，避免只根据单个匹配结果推断行为。所有搜索默认排除 `refer/` 和任意层级的 `target/`；只有
+“阅读路由”明确要求研究外部证据、依赖源码或构建产物时才进入，并遵守对应快照、版本和参考仓库规则。
 
 ## Rust 开发与验证
 
-- 本地工作树临时允许运行本地编译、lint 与格式检查：`cargo check`、`cargo clippy`、`cargo build`、`cargo fmt`
-  等（均可带 `--workspace`/`--all-targets`），但都不得带 `--release`。这只是加快编译错误与 lint 反馈的开发
-  手段，由用户放开、也可由用户随时撤回并恢复为完全不在本地编译。本地工作树仍不运行任何测试、fuzz 或
-  执行可执行 fixture；用户决定当前 I10 工作的完整 Full Gate 直接在该 GitHub Codespace 执行（见下方
-  “Codespace Full Gate”），GitHub runner 的 `.github/workflows/full-gate.yml` 仍是 PR/merge 的 required
-  gate。本地其余检查
-  仍限于 diff、链接、Markdown/YAML/JSON/schema、格式等静态检查。本地 Clippy 必须使用与 gate 相同的
-  `--workspace --all-targets -- -D warnings`，不得降低告警级别或临时加 `#[allow]` 让本地变绿。本条仅适用于
-  主实现会话的本地工作树及主会话明确授权的有界本地草稿；不适用于独立审查会话的 corrective worktree，后者
-  按 `docs/loops/review-loop.md` 保持完全不编译。本条同时更新 `docs/loops/loop.md` 的 Measurement Domain 与
-  `docs/loops/review-loop.md` 的对应表述，二者其余的门禁与证据规则不变。
+- 本地 Cargo 编译权限只授予唯一的 **main compile lane**：`<local-workspace-root>\main`，且该 checkout 的
+  `git branch --show-current` 必须严格为 `main`。只有该 lane 可以运行会生成 Cargo build artifact 的
+  `cargo check`、`cargo clippy`、`cargo build` 等开发命令，均不得带 `--release`；这只是开发反馈，不是门禁证据。
+  根目录协调 worktree、`<local-workspace-root>\worktrees\<issue>-<slug>` 实现 lane、系统临时目录下的 review snapshot
+  以及任何其他 worktree 都禁止运行 `cargo check`、`cargo clippy`、`cargo build`、`cargo test`、`cargo nextest`、
+  `cargo fuzz` 或可执行 fixture。非 main worktree 只允许 `cargo fmt --all -- --check` 和不生成 Cargo build
+  artifact 的 diff、链接、Markdown/YAML/JSON/schema 等静态检查；不得用 `CARGO_TARGET_DIR`、junction、symlink 或 `subst`
+  绕过这条限制。所有 worktree 都不在本地运行测试、fuzz 或可执行 fixture。完整 Full Gate 统一由
+  `.github/workflows/full-gate.yml` 在 GitHub Actions 执行；PR/merge required gate 仍适用。
+- 执行 main lane 本地编译前必须核对绝对路径、分支和 `git rev-parse --show-toplevel`；main lane 的
+  `target/` 是唯一允许的本地 Cargo 构建产物目录。任何其他 worktree 出现 `target/` 或 Cargo build artifact
+  时，先停止并按 Worktree Cleanup 规则处理，不得继续编译。
 - 本地编译、lint 与格式命令只产生开发反馈，不产生门禁证据：不得写成通过，不得替代任何
   full-gate step，不得进入 Primary audit 或 reviewer `Audit result` 的 full-gate evidence，也不改变“适用 gate
   必须由同一 head SHA 的成功 Action run 证明”这条要求。本地 Clippy 通过不代表 gate 的 Clippy step 通过：
   toolchain 版本不同会给出不同 lint 集合。`target/` 是 gitignore 的构建产物，不得进入提交。
-- 第一个需要 Rust 门禁反馈的完整 SHA 可以直接在该 GitHub Codespace 同步并执行完整 Full Gate，也可以推送到
-  draft PR 触发 `pull_request` full gate；用户已决定当前 I10 工作以 Codespace 直接执行为主。Codespace 执行前必须
-  `git fetch origin` 并 checkout 到与目标 SHA 完全一致的 ref，执行后回读并确认 `git rev-parse HEAD` 与目标 SHA
-  完全一致。没有可用 Codespace 或 PR run 时，可以对解析为目标 SHA 的 branch/tag ref 使用 `workflow_dispatch`，
-  但必须回读并确认 run 的 `headSha` 与目标 SHA 完全一致。
+- 第一个需要 Rust 门禁反馈的完整 SHA 推送到任意 branch 后，由 `.github/workflows/full-gate.yml` 自动触发
+  GitHub Actions；PR 仍可通过 `pull_request` 事件触发同一 workflow。每次都必须回读 run 的 `headSha`，确认
+  与目标 SHA 完全一致；`workflow_dispatch` 仅用于对已解析为目标 SHA 的 branch/tag ref 重跑或补充验证。
 - full gate 使用 cargo-nextest 而不是普通 `cargo test`，并且不使用 `--release`。其 Rust 检查顺序是：
 
   ```text
@@ -170,16 +172,8 @@
   ```
 
   workflow 还必须执行 ADR 0013 固定的 locked dependency、bounded fuzz、diff 和 clean-worktree gate。
-  不得用本地结果、cache 命中、部分 job 或旧 SHA 的 run 替代它。Codespace 直接执行时，以上序列必须在目标
-  SHA 的干净 checkout 上从头跑到尾，任一步失败即该 SHA gate 失败，重新同步到新 SHA 后重跑。
-- Codespace Full Gate：用户已打开 GitHub Codespace（`sturdy-potato-r4w5wrwjjq672p4xx`，仓库位于
-  `/workspaces/fcs-project`）作为当前 I10 工作的直接 Full Gate 执行环境；GitHub Actions 监督往返太慢。
-  执行步骤：`gh codespace ssh --codespace sturdy-potato-r4w5wrwjjq672p4xx -- '<remote script>'` 进入后，远程脚本首行必须
-  `export PATH="$HOME/.cargo/bin:$PATH"`（非交互 SSH 不保证加载 Cargo 用户 bin 路径），再执行 `git fetch origin`，
-  checkout 到目标 SHA（如 `git checkout -B codex/i10-final-assembly origin/codex/i10-final-assembly`），确认
-  `git rev-parse HEAD`，再按上方完整命令序列执行，并记录 exit code 与输出。Codespace 与 GitHub runner
-  一样只认精确 head SHA；同序列成功且 SHA 匹配的 Codespace 执行可以作为该 SHA 的 full-gate evidence，
-  与 `.github/workflows/full-gate.yml` 的 PR run 等价。
+  不得用本地结果、cache 命中、部分 job 或旧 SHA 的 run 替代它。GitHub Actions 必须在目标 SHA 的干净 checkout
+  上从头跑到尾，任一步失败即该 SHA gate 失败；修正后推送新 SHA 并重新触发。
 - 适用时，Primary audit 只接受同一 head SHA 的成功 run，并记录 workflow/run URL、run ID、event、`headSha` 和
   conclusion。`queued`/`in_progress`、缺失、失败或 SHA 不匹配都不能写成通过；GitHub 暂时不可用时只能继续
   不依赖远端结果的静态工作，不得 Ready 或 merge。
@@ -193,13 +187,28 @@
   converter、VM 和旧 bytecode 已不在活动
   workspace。未来跨格式语义变化必须针对 canonical model、ConversionReport、
   round-trip fixture 和 `examples/` 验证，converter 不得直接消费 source AST。
-- 交付说明必须分别列出本地检查（含临时放开的本地编译、lint 与格式检查）和远端 full-gate evidence，以及未运行门禁及
+- 交付说明必须分别列出本地检查（注明是否在唯一 main compile lane 使用了本地编译反馈）和远端 full-gate evidence，以及未运行门禁及
   原因。不得将 `queued`、缺失、失败或 non-applicable 写成通过。
 - 使用校验脚本或外部模拟器验证解析逻辑时，先确认校验脚本与模拟器的代码逻辑一致，不能用有问题的校验脚本得出结论。
 - 遇到规范未定义的外部谱面边界时，研究阶段可以记录候选假设，但规范性实现不得发明“通用
   语义”。Strict mode 必须失败或要求显式 semantic profile；repair 只能修复非法或矛盾输入，
   不能替用户选择多个合法解释。只有 package/profile 明确声明、用户显式选择，或所有候选对当前
   输入 canonical-semantic-equivalent 时，才能无询问继续；假设和潜在影响必须进入交付说明与报告设计。
+
+### 本地 worktree 路径约定
+
+- `<local-workspace-root>` 是本机统一放置 `main\` 与 `worktrees\` 的 FCS 目录，本身不是 compile lane。
+  直接位于该目录的非 main 协调 checkout 属于 legacy layout：不得编译或再承载新建 worktree，只能保留到
+  既有修改安全交付，随后按 cleanup 条件退出。
+- `<local-workspace-root>\main` 是唯一允许本地编译的 checkout，必须绑定本地 `main` 分支。
+- `<local-workspace-root>\worktrees\<issue>-<slug>` 是非 main 实现 lane 的唯一仓库内路径；这些 lane 不得本地编译。
+- 独立 review/corrective snapshot 使用系统临时目录下的
+  `<system-temp>\fcs-review-<target>` 或 `<system-temp>\fcs-finding-<finding>-<slug>`；这些目录不编译。
+- `.worktrees`、`worktree`、随机命名的 `fcs-*` 临时实现目录和其他散落路径属于 legacy layout；新建 worktree
+  不得使用它们，现有目录按 `docs/loops/loop.md` 的 cleanup 条件迁移或移除。
+- 每个保留的额外 worktree 都必须有 owner、用途、固定 base/head SHA、分支或 detached 状态和清理条件，
+  并能由 `git worktree list --porcelain` 复核。不得用 junction、symlink、`subst` 或 `CARGO_TARGET_DIR`
+  绕过路径与编译权限。
 
 ## Agent skills
 

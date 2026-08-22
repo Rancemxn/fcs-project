@@ -1,11 +1,22 @@
 use std::path::Path;
 
+#[path = "../../fcs-source/tests/support/fcbc_reference_loader.rs"]
+#[allow(dead_code)]
+mod fcbc_reference_loader;
+#[path = "../../fcs-source/tests/support/fcbc_render_reference_assets.rs"]
+#[allow(dead_code)]
+mod fcbc_render_reference_assets;
+#[path = "../../fcs-source/tests/support/fcbc_render_reference_loader.rs"]
+#[allow(dead_code)]
+mod fcbc_render_reference_loader;
+
 use fcs_fcbc::write_from_compilation;
 use fcs_model::{
-    CanonicalCompilation, CanonicalExpressionType, CanonicalImageRepeat, CanonicalImageSampling,
-    CanonicalPatternTransform, CanonicalRenderGeometry, CanonicalRenderGeometryData,
+    CanonicalArcDirection, CanonicalCompilation, CanonicalExpressionType, CanonicalImageRepeat,
+    CanonicalImageSampling, CanonicalPathCommand, CanonicalPatternTransform,
+    CanonicalRenderFillRule, CanonicalRenderGeometry, CanonicalRenderGeometryData,
     CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
-    CanonicalRenderPaintData, CanonicalRenderScene, CanonicalRenderSceneSpec,
+    CanonicalRenderPaintData, CanonicalRenderPath, CanonicalRenderScene, CanonicalRenderSceneSpec,
     CanonicalRenderStroke, CanonicalStrokeCap, CanonicalStrokeJoin, CanonicalTextualId, EntityKind,
     StableIdRegistry,
 };
@@ -338,7 +349,7 @@ render profile 1.0.0 {
     assert_eq!(draw.len(), 1);
     assert!(draw[0].stroke.is_some());
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Line rasterization");
-    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
+    assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
 
     let invalid = source.replace("width: 1px;", "width: -1px;");
     let document = parse_document(&invalid)
@@ -697,7 +708,7 @@ render profile 1.0.0 {
     let pixels =
         rasterize_solid_rgba8_at(&render, 0.75, 16, 16).expect("point geometry rasterization");
     assert!(
-        pixels.chunks_exact(4).any(|pixel| pixel[3] != 0),
+        pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0),
         "filled point geometry should contribute raster coverage"
     );
 }
@@ -792,7 +803,7 @@ render profile 1.0.0 {
 
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Image rasterization");
     assert_eq!(pixels.len(), 4 * 4 * 4);
-    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
+    assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
 }
 
 #[test]
@@ -922,5 +933,268 @@ render profile 1.0.0 {
     assert_eq!(pattern.sampling, 2);
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("ImagePattern rasterization");
     assert_eq!(pixels.len(), 4 * 4 * 4);
-    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
+    assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
+}
+
+#[test]
+fn canonical_path_writer_reaches_product_render_loader() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 4px; height: 4px; }
+    layer main {
+        pass: "overlay";
+        children {
+            polyline pathShape {
+                points: [
+                    vec2(-1px, -1px),
+                    vec2(1px, -1px),
+                    vec2(0px, 1px),
+                ];
+                fill: solid(#FFFFFFFF);
+            }
+            circle referenceShape {
+                center: vec2(0px, 0px);
+                radius: 1px;
+                fill: solid(#000000FF);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("Path Render source parses");
+    let base = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| panic!("Path canonical lowering failed: {diagnostics:?}"));
+    let original = base.chart().render().expect("source Render scene");
+    let path_node_index = original
+        .nodes()
+        .iter()
+        .position(|node| node.kind() == CanonicalRenderNodeKind::Polyline)
+        .expect("source fixture must provide a Polyline node");
+    let path_node = &original.nodes()[path_node_index];
+    let path_geometry_index = path_node.geometry().expect("Polyline geometry");
+    let points = match original.geometries()[path_geometry_index].data() {
+        CanonicalRenderGeometryData::Polyline { points } => points.clone(),
+        _ => panic!("source fixture must provide Polyline points"),
+    };
+    let reference_node = original
+        .nodes()
+        .iter()
+        .find(|node| node.kind() == CanonicalRenderNodeKind::Circle)
+        .expect("source fixture must provide a Circle node");
+    let reference_geometry_index = reference_node.geometry().expect("Circle geometry");
+    let CanonicalRenderGeometryData::Circle { center, radius } =
+        original.geometries()[reference_geometry_index].data()
+    else {
+        panic!("source fixture must provide Circle geometry");
+    };
+    let mut ids = StableIdRegistry::new();
+    let path_id = ids
+        .insert(
+            EntityKind::RenderPath,
+            CanonicalTextualId::explicit("writer-path").expect("path textual ID"),
+        )
+        .expect("path stable ID");
+    let path = CanonicalRenderPath::new(
+        path_id,
+        CanonicalRenderFillRule::NonZero,
+        vec![
+            CanonicalPathCommand::MoveTo(points[0]),
+            CanonicalPathCommand::LineTo(points[1]),
+            CanonicalPathCommand::QuadraticTo(points[0], points[1]),
+            CanonicalPathCommand::CubicTo(points[0], points[1], points[2]),
+            CanonicalPathCommand::Arc {
+                center: *center,
+                radius: *radius,
+                start_angle: path_node.rotation(),
+                end_angle: path_node.rotation(),
+                direction: CanonicalArcDirection::Clockwise,
+            },
+            CanonicalPathCommand::EllipseArc {
+                center: *center,
+                radius_x: *radius,
+                radius_y: *radius,
+                rotation: path_node.rotation(),
+                start_angle: path_node.rotation(),
+                end_angle: path_node.rotation(),
+                direction: CanonicalArcDirection::CounterClockwise,
+            },
+            CanonicalPathCommand::Close,
+        ],
+    )
+    .expect("canonical Path");
+    let node = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+        id: path_node.id().clone(),
+        kind: CanonicalRenderNodeKind::Path,
+        parent: path_node.parent(),
+        layer: path_node.layer(),
+        document_order: path_node.document_order(),
+        z_order: path_node.z_order(),
+        attachment: path_node.attachment().clone(),
+        active: path_node.active(),
+        isolate: path_node.isolate(),
+        follow_hidden_attachment: path_node.follow_hidden_attachment(),
+        position: path_node.position(),
+        origin: path_node.origin(),
+        rotation: path_node.rotation(),
+        scale: path_node.scale(),
+        opacity: path_node.opacity(),
+        visibility: path_node.visibility(),
+        geometry: Some(path_geometry_index),
+        fill_paint: path_node.fill_paint(),
+        stroke: None,
+        clip: None,
+        composite: path_node.composite(),
+    })
+    .expect("canonical Path node");
+    let geometry = CanonicalRenderGeometry::new(
+        original.geometries()[path_geometry_index].id().clone(),
+        CanonicalRenderGeometryData::Path { path: 0 },
+    )
+    .expect("canonical Path geometry");
+    let mut nodes = original.nodes().to_vec();
+    nodes[path_node_index] = node;
+    let mut geometries = original.geometries().to_vec();
+    geometries[path_geometry_index] = geometry;
+    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+        viewport: original.viewport(),
+        layers: original.layers().to_vec(),
+        nodes,
+        geometries,
+        paths: vec![path],
+        paints: original.paints().to_vec(),
+        strokes: original.strokes().to_vec(),
+        clips: original.clips().to_vec(),
+        glyph_runs: original.glyph_runs().to_vec(),
+    })
+    .expect("canonical Path scene");
+    let compilation = CanonicalCompilation::new(
+        base.chart().clone().with_render(scene),
+        base.resources().clone(),
+        base.distribution().clone(),
+    );
+    let scene = compilation.chart().render().expect("canonical Path scene");
+    let bytes = write_from_compilation(&compilation).expect("canonical Path FCBC writing");
+    let render = load_render(&bytes).expect("canonical Path product loader");
+    let reference = fcbc_render_reference_loader::load_render(&bytes)
+        .expect("canonical Path independent loader");
+
+    let decoded_node_index = render
+        .nodes
+        .iter()
+        .position(|node| node.id == scene.nodes()[path_node_index].id().value())
+        .expect("decoded Path node");
+    let decoded_geometry_index = render
+        .geometries
+        .iter()
+        .position(|geometry| geometry.kind == NodeKind::Path)
+        .expect("decoded Path geometry");
+    assert_eq!(render.nodes[decoded_node_index].kind, NodeKind::Path);
+    assert_eq!(
+        render.nodes[decoded_node_index].geometry_ref,
+        Some(decoded_geometry_index as u32)
+    );
+    assert_eq!(
+        render.geometries[decoded_geometry_index].kind,
+        NodeKind::Path
+    );
+    assert!(matches!(
+        render.geometries[decoded_geometry_index].data,
+        GeometryData::Path { path_ref: 0 }
+    ));
+    assert_eq!(render.paths.len(), 1);
+    assert_eq!(render.paths[0].id, scene.paths()[0].id().value());
+    assert_eq!(render.paths[0].fill_rule, 1);
+    assert_eq!(render.paths[0].commands.len(), 7);
+    assert_eq!(render.paints.len(), 2);
+
+    let reference_node = reference
+        .nodes
+        .iter()
+        .find(|node| node.id == scene.nodes()[path_node_index].id().value())
+        .expect("independently decoded Path node");
+    let reference_geometry_index = reference
+        .geometries
+        .iter()
+        .position(|geometry| geometry.id == scene.geometries()[path_geometry_index].id().value())
+        .expect("independently decoded Path geometry");
+    assert_eq!(
+        reference_node.kind,
+        fcbc_render_reference_loader::NodeKind::Path
+    );
+    assert_eq!(
+        reference_node.geometry_ref,
+        Some(reference_geometry_index as u32)
+    );
+    assert!(matches!(
+        reference.geometries[reference_geometry_index].data,
+        fcbc_render_reference_loader::GeometryData::Path { path_ref: 0 }
+    ));
+    assert_eq!(reference.paths.len(), 1);
+    assert_eq!(reference.paths[0].id, scene.paths()[0].id().value());
+    assert_eq!(reference.paths[0].fill_rule, 1);
+    use fcbc_render_reference_loader::PathCommand as ReferencePathCommand;
+    let [
+        ReferencePathCommand::MoveTo(move_to),
+        ReferencePathCommand::LineTo(line_to),
+        ReferencePathCommand::QuadraticTo(quadratic_control, quadratic_end),
+        ReferencePathCommand::CubicTo(cubic_control_1, cubic_control_2, _),
+        ReferencePathCommand::Arc {
+            center: arc_center,
+            radius: arc_radius,
+            start_angle: arc_start,
+            end_angle: arc_end,
+            direction: arc_direction,
+        },
+        ReferencePathCommand::EllipseArc {
+            center: ellipse_center,
+            radius_x,
+            radius_y,
+            rotation,
+            start_angle: ellipse_start,
+            end_angle: ellipse_end,
+            direction: ellipse_direction,
+        },
+        ReferencePathCommand::Close,
+    ] = reference.paths[0].commands.as_slice()
+    else {
+        panic!("independent loader must recover every canonical Path command in order");
+    };
+    assert_eq!((quadratic_control, quadratic_end), (move_to, line_to));
+    assert_eq!((cubic_control_1, cubic_control_2), (move_to, line_to));
+    assert_eq!(arc_start, arc_end);
+    assert_eq!(*arc_direction, 1);
+    assert_eq!(ellipse_center, arc_center);
+    assert_eq!(radius_x, arc_radius);
+    assert_eq!(radius_y, arc_radius);
+    assert_eq!(rotation, arc_start);
+    assert_eq!(ellipse_start, arc_start);
+    assert_eq!(ellipse_end, arc_start);
+    assert_eq!(*ellipse_direction, 2);
+    assert_eq!(
+        format!("{:?}", reference.paths[0].commands),
+        format!("{:?}", render.paths[0].commands),
+        "product and independent loaders must recover the same command sequence and descriptor references"
+    );
+
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Path semantic evaluation");
+    assert!(
+        draw.iter()
+            .any(|operation| operation.kind == NodeKind::Path)
+    );
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Path rasterization");
+    assert_eq!(pixels.len(), 4 * 4 * 4);
+    assert!(
+        pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0),
+        "written Path should contribute raster coverage"
+    );
 }
