@@ -921,6 +921,103 @@ fn canonical_rect_stroke_is_still_rejected() {
     assert_eq!(error.category(), "fcbc.render-unsupported");
 }
 
+/// A source `polyline` or `polygon` with the flat stroke fields Render uses for `line`.
+fn source_points_shape(keyword: &str, fill: &str, stroke: &str) -> String {
+    format!(
+        r#"#fcs 5.0.0
+format {{ profile: renderable; }}
+tempoMap {{ 0beat -> 120bpm; }}
+render profile 1.0.0 {{
+    viewport {{ width: 16px; height: 16px; }}
+    layer main {{
+        pass: "overlay";
+        children {{
+            {keyword} trace {{
+                points: [vec2(-5px, 0px), vec2(0px, 0px), vec2(0px, 5px)];
+{fill}{stroke}            }}
+        }}
+    }}
+}}
+"#
+    )
+}
+
+const SOURCE_POINTS_FILL: &str = "                fill: solid(#FF0000FF);
+";
+const SOURCE_POINTS_STROKE: &str = "                stroke: solid(#FFFFFFFF);
+                width: 2px;
+                cap: \"butt\";
+                join: \"miter\";
+                miterLimit: 4.0;
+                dash: [3px, 2px];
+                dashOffset: 0px;
+";
+
+fn lower_source_points_shape(
+    keyword: &str,
+    fill: &str,
+    stroke: &str,
+) -> Result<CanonicalCompilation, String> {
+    let source = source_points_shape(keyword, fill, stroke);
+    let document = parse_document(&source)
+        .into_result()
+        .expect("source points shape parses");
+    document
+        .canonical_compilation_with_source(
+            &source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .map_err(|diagnostics| format!("{diagnostics:?}"))
+}
+
+#[test]
+fn source_polyline_and_polygon_strokes_reach_the_product_raster() {
+    for keyword in ["polyline", "polygon"] {
+        let compilation = lower_source_points_shape(keyword, "", SOURCE_POINTS_STROKE)
+            .unwrap_or_else(|error| panic!("stroke-only source {keyword} must lower: {error}"));
+        let scene = compilation.chart().render().expect("Render scene");
+        // The stroke used to be silently dropped, because canonical lowering computed one only
+        // for Line and Circle.
+        assert_eq!(scene.strokes().len(), 1);
+        assert_eq!(scene.nodes()[0].stroke(), Some(0));
+        assert_eq!(scene.nodes()[0].fill_paint(), None);
+
+        let bytes = write_from_compilation(&compilation).expect("source stroke FCBC writing");
+        let render = load_render(&bytes).expect("source stroke product loader");
+        assert_eq!(render.nodes[0].fill_paint, None);
+        assert_eq!(render.nodes[0].stroke_ref, Some(0));
+        let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("semantic draw list");
+        assert!(draw[0].stroke.is_some());
+        let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("stroke raster");
+        assert!(
+            pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0),
+            "a source {keyword} stroke must raster"
+        );
+    }
+}
+
+#[test]
+fn source_polygon_fill_and_stroke_keep_separate_paint_records() {
+    let compilation =
+        lower_source_points_shape("polygon", SOURCE_POINTS_FILL, SOURCE_POINTS_STROKE)
+            .expect("fill-and-stroke source polygon must lower");
+    let scene = compilation.chart().render().expect("Render scene");
+    // Section 14.2 forbids sharing one paint record between a fill and a stroke.
+    assert_eq!(scene.paints().len(), 2);
+    assert!(scene.nodes()[0].fill_paint().is_some());
+    assert_eq!(scene.nodes()[0].stroke(), Some(0));
+    write_from_compilation(&compilation).expect("fill-and-stroke source polygon FCBC writing");
+}
+
+#[test]
+fn source_polyline_without_fill_or_stroke_is_rejected() {
+    let error = lower_source_points_shape("polyline", "", "")
+        .expect_err("a polyline with neither fill nor stroke must be rejected at lowering");
+    assert!(error.contains("fill"), "{error}");
+}
+
 #[test]
 fn source_line_without_a_stroke_is_still_rejected() {
     let source = r#"#fcs 5.0.0
