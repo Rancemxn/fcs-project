@@ -652,6 +652,139 @@ render profile 1.0.0 {
     );
 }
 
+/// A source `circle` with the flat stroke fields Render uses for `line`.
+fn source_circle(fill: &str, stroke: &str) -> String {
+    format!(
+        r#"#fcs 5.0.0
+format {{ profile: renderable; }}
+tempoMap {{ 0beat -> 120bpm; }}
+render profile 1.0.0 {{
+    viewport {{ width: 16px; height: 16px; }}
+    layer main {{
+        pass: "overlay";
+        children {{
+            circle ring {{
+                center: vec2(0px, 0px);
+                radius: 5px;
+{fill}{stroke}            }}
+        }}
+    }}
+}}
+"#
+    )
+}
+
+// A source stroke must declare `dash`, and a source `[]` is rejected because a Render node
+// body gives an empty array literal no expected element type, so this fixture dashes.
+const SOURCE_CIRCLE_FILL: &str = "                fill: solid(#FF0000FF);\n";
+const SOURCE_CIRCLE_STROKE: &str = "                stroke: solid(#FFFFFFFF);
+                width: 2px;
+                cap: \"butt\";
+                join: \"miter\";
+                miterLimit: 4.0;
+                dash: [3px, 2px];
+                dashOffset: 0px;
+";
+
+fn lower_source_circle(fill: &str, stroke: &str) -> Result<CanonicalCompilation, String> {
+    let source = source_circle(fill, stroke);
+    let document = parse_document(&source)
+        .into_result()
+        .expect("source Circle parses");
+    document
+        .canonical_compilation_with_source(
+            &source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .map_err(|diagnostics| format!("{diagnostics:?}"))
+}
+
+#[test]
+fn source_circle_stroke_reaches_product_render_loader() {
+    let compilation = lower_source_circle("", SOURCE_CIRCLE_STROKE)
+        .expect("stroke-only source Circle must lower");
+    let scene = compilation.chart().render().expect("Render scene");
+    // Render section 14.2 requires a fill paint or a stroke, so a declared stroke is what
+    // makes `fill` optional. Before this path existed the stroke was silently dropped.
+    assert_eq!(scene.strokes().len(), 1);
+    assert_eq!(scene.nodes()[0].stroke(), Some(0));
+    assert_eq!(scene.nodes()[0].fill_paint(), None);
+
+    let bytes = write_from_compilation(&compilation).expect("source Circle stroke FCBC writing");
+    let render = load_render(&bytes).expect("source Circle stroke product loader");
+    assert_eq!(render.nodes[0].kind, NodeKind::Circle);
+    assert_eq!(render.nodes[0].fill_paint, None);
+    assert_eq!(render.nodes[0].stroke_ref, Some(0));
+
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Circle semantic draw list");
+    assert_eq!(draw.len(), 1);
+    assert!(draw[0].stroke.is_some());
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Circle stroke raster");
+    // The 2px stroke dilates the 5px centre line into the ring `[4, 6]`, so the interior is
+    // empty and the dashed ring is not.
+    assert_eq!(centre_pixel(&pixels, 16)[3], 0);
+    assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
+}
+
+#[test]
+fn source_circle_fill_and_stroke_reach_the_product_raster() {
+    let compilation = lower_source_circle(SOURCE_CIRCLE_FILL, SOURCE_CIRCLE_STROKE)
+        .expect("fill-and-stroke source Circle must lower");
+    let scene = compilation.chart().render().expect("Render scene");
+    // Section 14.2 forbids sharing one paint record between a fill and a stroke.
+    assert_eq!(scene.paints().len(), 2);
+    assert!(scene.nodes()[0].fill_paint().is_some());
+    assert_eq!(scene.nodes()[0].stroke(), Some(0));
+
+    let bytes = write_from_compilation(&compilation).expect("source Circle FCBC writing");
+    let render = load_render(&bytes).expect("source Circle product loader");
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("source Circle raster");
+    assert_ne!(centre_pixel(&pixels, 16)[3], 0);
+}
+
+#[test]
+fn source_circle_without_fill_or_stroke_is_rejected() {
+    let error = lower_source_circle("", "")
+        .expect_err("a Circle with neither fill nor stroke must be rejected at lowering");
+    assert!(error.contains("fill"), "{error}");
+}
+
+#[test]
+fn source_line_without_a_stroke_is_still_rejected() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 4px; height: 4px; }
+    layer main {
+        pass: "overlay";
+        children {
+            line guide {
+                start: vec2(-1px, 0px);
+                end: vec2(1px, 0px);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("stroke-less Line source parses");
+    // Making the Circle stroke optional must not make the Line stroke optional.
+    assert!(
+        document
+            .canonical_compilation_with_source(
+                source,
+                CompileTimeLimits::default(),
+                env!("CARGO_MANIFEST_DIR"),
+                ResourceLimits::default(),
+            )
+            .is_err()
+    );
+}
+
 #[test]
 fn linear_gradient_source_reaches_product_loader_semantics_and_raster() {
     let source = r#"#fcs 5.0.0
