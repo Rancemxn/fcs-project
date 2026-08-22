@@ -2609,7 +2609,7 @@ fn geometry_evaluation(
             (bounds, Some(LocalShape::Line { start, end }), None)
         }
         GeometryData::Polyline { points } | GeometryData::Polygon { points } => {
-            let closed = matches!(geometry, GeometryData::Polygon { .. });
+            let closed = matches!(geometry.data, GeometryData::Polygon { .. });
             let mut values = Vec::with_capacity(points.len());
             for descriptor in points {
                 values.push(query_vec2_in(
