@@ -527,14 +527,32 @@ fn canonical_circle_without_fill_or_stroke_is_rejected() {
 }
 
 #[test]
-fn canonical_dashed_circle_stroke_is_rejected_until_the_dash_origin_is_specified() {
+fn canonical_dashed_circle_stroke_reaches_the_product_raster() {
+    let solid = write_from_compilation(&canonical_circle_stroke_compilation(Vec::new(), false))
+        .expect("solid Circle FCBC writing");
+    let solid = load_render(&solid).expect("solid Circle product loader");
+    let solid = rasterize_solid_rgba8_at(&solid, 0.0, 16, 16).expect("solid Circle raster");
+
+    // Render section 15.2 fixes the closed subpath's start at the local `+X` crossing and its
+    // direction as clockwise, so the writer no longer has an undefined dash origin to reject.
     let compilation = canonical_circle_stroke_compilation(vec![1.0, 2.0], false);
-    // Render section 15.2 restarts dash at each subpath start, but no clause gives a closed
-    // parametric geometry a subpath start or a winding direction, so the product writer
-    // refuses rather than choosing one of several legal seams.
-    let error = write_from_compilation(&compilation)
-        .expect_err("a dashed Circle stroke must be rejected while its dash origin is undefined");
-    assert_eq!(error.category(), "fcbc.render-unsupported");
+    let bytes = write_from_compilation(&compilation).expect("dashed Circle FCBC writing");
+    let render = load_render(&bytes).expect("dashed Circle product loader");
+    assert_eq!(render.strokes[0].dash.len(), 2);
+    let dashed = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("dashed Circle raster");
+
+    let covered = |pixels: &[u8]| {
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[3] != 0)
+            .count()
+    };
+    // One-on two-off leaves gaps in the annulus that the solid stroke covers, and the dash
+    // phase origin is what decides where those gaps fall.
+    assert!(covered(&dashed) > 0, "a dashed Circle stroke must raster");
+    assert!(covered(&dashed) < covered(&solid));
 }
 
 #[test]

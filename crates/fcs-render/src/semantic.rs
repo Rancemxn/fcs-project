@@ -1105,13 +1105,14 @@ fn stroke_contains(
 }
 
 /// Render section 15.2 dilates the centre line by `width/2`. A Circle is a closed
-/// parametric geometry, so it has no endpoint and therefore no cap, and no vertex and
-/// therefore no join: the solid stroke is exactly the closed annulus.
+/// parametric geometry, so with an empty dash array it has no endpoint and therefore no
+/// cap, and no vertex and therefore no join: the stroke is exactly the closed annulus.
 ///
-/// The specification restarts dash at each subpath start, but no clause assigns a closed
-/// parametric geometry a subpath start or a winding direction, so a dashed Circle has no
-/// determined dash phase origin. Fail closed instead of choosing one of several legal
-/// seams; the product writer rejects the same case before it can reach FCBC.
+/// With a dash array the single subpath starts at the local `+X` crossing and winds
+/// clockwise, which under FCS `Y-up` is the decreasing-angle direction. Each dash segment
+/// is then the annular sector its arc-length range projects to radially, because butt cap
+/// truncates on the endpoint's radial line; `round` adds a disc and `square` a tangential
+/// rectangle at each of the segment's two endpoints.
 fn stroke_circle_contains(
     center: [f64; 2],
     radius: f64,
@@ -1121,20 +1122,62 @@ fn stroke_circle_contains(
     if !radius.is_finite() || radius < 0.0 || !center.iter().all(|value| value.is_finite()) {
         return Err("render.invalid-geometry");
     }
-    if !stroke.dash.is_empty() {
-        return Err("render.invalid-stroke");
-    }
     if radius == 0.0 {
         return Ok(false);
     }
     let half_width = stroke.width / 2.0;
-    let distance = (point[0] - center[0]).hypot(point[1] - center[1]);
+    let offset = [point[0] - center[0], point[1] - center[1]];
+    let distance = offset[0].hypot(offset[1]);
     if !distance.is_finite() {
         return Err("render.invalid-geometry");
     }
     let inner = (radius - half_width).max(0.0);
     let outer = radius + half_width;
-    Ok(distance >= inner && distance <= outer)
+    let in_band = distance >= inner && distance <= outer;
+    if stroke.dash.is_empty() {
+        return Ok(in_band);
+    }
+
+    let circumference = std::f64::consts::TAU * radius;
+    let segments = stroke_segments(circumference, stroke.dash_offset, &stroke.dash)?;
+    if segments.is_empty() {
+        return Ok(false);
+    }
+    if distance == 0.0 {
+        // The centre lies on the radial boundary of every sector, and section 15.2 counts a
+        // boundary sample as inside, so any dash segment reaches it once the band does.
+        return Ok(in_band);
+    }
+    // Clockwise from the three-o'clock start: arc length grows as the angle decreases.
+    let arc = (-offset[1].atan2(offset[0])).rem_euclid(std::f64::consts::TAU) * radius;
+    for (segment_start, segment_end) in segments {
+        if in_band && arc >= segment_start && arc <= segment_end {
+            return Ok(true);
+        }
+        match stroke.cap {
+            1 => continue,
+            2 | 3 => {}
+            _ => return Err("render.invalid-stroke"),
+        }
+        for (end_arc, sign) in [(segment_start, -1.0), (segment_end, 1.0)] {
+            let (sin, cos) = (-end_arc / radius).sin_cos();
+            let to_point = [offset[0] - radius * cos, offset[1] - radius * sin];
+            if stroke.cap == 2 {
+                if to_point[0].hypot(to_point[1]) <= half_width {
+                    return Ok(true);
+                }
+                continue;
+            }
+            // Clockwise travel is `(sin, -cos)`, so `sign` turns it outward at either end.
+            let tangent = [sign * sin, -sign * cos];
+            let along = to_point[0] * tangent[0] + to_point[1] * tangent[1];
+            let across = to_point[0] * tangent[1] - to_point[1] * tangent[0];
+            if along >= 0.0 && along <= half_width && across.abs() <= half_width {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn stroke_line_contains(

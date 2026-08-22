@@ -409,16 +409,16 @@ constructors. The product implementation currently supports `solid`,
 `linearGradient`, and `radialGradient`; its semantic/raster path also consumes
 loader-validated FCBC `ImagePattern` kind 4 records, kind 7 `Line` stroke
 records, and bounded Path/PathRecord records, and the canonical product writer
-covers those same bounded kind 4, kind 7, and Path records, plus a solid stroke on a
-Circle. The bounded source
+covers those same bounded kind 4, kind 7, and Path records, plus a solid or dashed
+stroke on a Circle. The bounded source
 Line lowering now covers compile-time solid strokes; dynamic stroke descriptors,
 source `imagePattern`, source Circle stroke, and source Path lowering remain separate
 bounded work;
 Path semantic/raster coverage and broader canonical writer coverage remain open
 after the bounded Line, ImagePattern, and Path writer paths. A dashed stroke on a
-closed parametric geometry is rejected by the product writer, because this section
-restarts dash at each subpath start while no clause assigns such a geometry a subpath
-start or a winding direction; that gap is tracked as a specification Issue. The
+closed parametric geometry follows the subpath start and winding direction this
+section fixes below; Ellipse and RoundedRect strokes remain unimplemented in the
+product writer. The
 gradient constructors take a
 compile-time array of `stop(offset, color)` calls and a compile-time spread
 string. `linearGradient` takes two `vec2<length>` expressions, while
@@ -1253,6 +1253,23 @@ miter 使用两条外侧 offset line交点，miter length/halfWidth 大于 miter
 subpath起点重新开始，按第 8.2 节归一化 phase、沿 flatten 后弧长交替 on/off；Close 的 closing
 segment参与 dash。第 7 章的零长度 segment 不产生 sample coverage、cap、join 或 tangent，也不推进
 dash phase；join/cap 使用最近的非零 on-segment。Sample 恰在 stroke boundary 上算 inside。
+
+Circle、Ellipse 和 RoundedRect 是闭合 parametric geometry。它们的 stroke 只有一个 subpath，
+该 subpath 的起点和绕行方向固定为：
+
+- Circle：local `+X` 轴与轮廓的交点，即三点钟位置；
+- Ellipse：在椭圆自身未旋转的 local frame 取参数 `t=0` 点，即 `center + (radiusX, 0)`，再随
+  `rotation` 一同变换。Dash pattern 因此跟随椭圆旋转，不固定在 world `+X`；
+- RoundedRect：上边缘的左端，即左上角 corner arc 结束、上方直边开始的那一点。
+
+绕行方向是 clockwise，按第 7 章在 FCS Y-up 下的同一定义，即 signed angle difference 为负的方向。
+本节不引入新的方向词汇。
+
+Dash array 为空时，这三种 geometry 的 stroke 是闭合的：它没有 endpoint，因此 `cap` 不参与；
+Circle 与 Ellipse 也没有 vertex，因此 `join` 不参与，coverage 恰好是中心线按 `width/2` 扩张的
+闭集。Dash array 非空时，每个 dash segment 的两个端点都是 endpoint，按本节的 butt/square/round
+规则应用 `cap`。RoundedRect 的直边与 corner arc 交界处是真实 vertex，`join` 在那里按本节
+既有规则参与；该交界是切线连续的。
 
 ### 15.3 Paint 与 compositing
 

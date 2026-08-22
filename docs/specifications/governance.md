@@ -78,6 +78,35 @@ Profile 1.0.0 的旧 Frozen 状态并完成 Source grammar closure。随后用�
 profile 和 exact-first runtime expression 边界，因此五个版本域均进入本表所示的重新修订或联合
 复审状态。
 
+### 2.0.2 Closed parametric stroke dash amendment (2026-08-22)
+
+Issue #522 records the accepted decision for a stroke on a closed parametric
+geometry, which FCS Render 1.0 previously left undefined. Render §15.2 now fixes
+the subpath start for `Circle` at the local `+X` crossing, for `Ellipse` at the
+unrotated `t = 0` point carried through `rotation`, and for `RoundedRect` at the
+left end of the top edge where the top-left corner arc ends. The winding
+direction is `clockwise`, reusing the §7 definition under FCS `Y-up` rather than
+introducing new vocabulary. An empty dash array makes the stroke closed, so `cap`
+does not participate and, for `Circle` and `Ellipse`, neither does `join`. A
+non-empty dash array gives every dash segment two endpoints, which honour `cap`.
+
+The decision follows authoring-tool familiarity. `Arc` and `EllipseArc` carry an
+explicit `direction` field, so no implicit default arc direction constrained the
+choice. The `RoundedRect` start deliberately differs from the `+X` rule used by
+`Circle` and `Ellipse` because that is the path order authors already see for a
+dashed rounded rectangle.
+
+The affected candidate file is `fcs-render.md`. The FCS Render Profile candidate
+remains **Draft**: this amendment revises a Draft candidate and does not
+establish or restore any Frozen status. The exact-head Full Gate, Primary
+Self-Audit, and independent review continue to govern implementation delivery,
+and the I10 re-freeze gate is unchanged.
+
+Implementation follows only for `Circle`, which is the one closed parametric
+geometry with an existing product stroke path. `Ellipse` and `RoundedRect`
+strokes remain unimplemented in the product writer; the amendment fixes their
+semantics so a later bounded unit needs no further decision.
+
 ### 2.0.1 Credit identity amendment (2026-08-02)
 
 Issue #477 records the accepted Credit identity decision: FCS `Credit.id` is
