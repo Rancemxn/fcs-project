@@ -1283,7 +1283,9 @@ impl<'a> RenderLowerer<'a> {
             CanonicalRenderNodeKind::Line => Some(self.render_stroke(node_path, node)?),
             // Render section 14.2 lets a fillable geometry carry a fill paint, a stroke, or
             // both, so a Circle stroke is optional and only lowered when it is declared.
-            CanonicalRenderNodeKind::Circle => render_body_field(&node.items, "stroke")
+            CanonicalRenderNodeKind::Circle
+            | CanonicalRenderNodeKind::Polyline
+            | CanonicalRenderNodeKind::Polygon => render_body_field(&node.items, "stroke")
                 .is_some()
                 .then(|| self.render_stroke(node_path, node))
                 .transpose()?,
@@ -1460,7 +1462,13 @@ impl<'a> RenderLowerer<'a> {
                     .collect::<Result<Vec<_>, _>>()?;
                 (
                     Some(CanonicalRenderGeometryData::Polyline { points }),
-                    Some(self.add_paint(node_path, node, "fill")?),
+                    // Render section 14.2 requires at least one of the two, so a declared
+                    // stroke is what makes `fill` optional here.
+                    if stroke.is_some() && render_body_field(&node.items, "fill").is_none() {
+                        None
+                    } else {
+                        Some(self.add_paint(node_path, node, "fill")?)
+                    },
                 )
             }
             CanonicalRenderNodeKind::Polygon => {
@@ -1485,7 +1493,13 @@ impl<'a> RenderLowerer<'a> {
                     .collect::<Result<Vec<_>, _>>()?;
                 (
                     Some(CanonicalRenderGeometryData::Polygon { points }),
-                    Some(self.add_paint(node_path, node, "fill")?),
+                    // Render section 14.2 requires at least one of the two, so a declared
+                    // stroke is what makes `fill` optional here.
+                    if stroke.is_some() && render_body_field(&node.items, "fill").is_none() {
+                        None
+                    } else {
+                        Some(self.add_paint(node_path, node, "fill")?)
+                    },
                 )
             }
             CanonicalRenderNodeKind::Image => {

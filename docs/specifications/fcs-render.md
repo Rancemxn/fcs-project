@@ -411,7 +411,7 @@ loader-validated FCBC `ImagePattern` kind 4 records, kind 7 `Line` stroke
 records, and bounded Path/PathRecord records, and the canonical product writer
 covers those same bounded kind 4, kind 7, and Path records, plus a solid or dashed
 stroke on a Circle, Polyline, or Polygon. The bounded source
-Line and Circle lowering now cover compile-time strokes; dynamic stroke descriptors,
+Line, Circle, Polyline, and Polygon lowering now cover compile-time strokes; dynamic stroke descriptors,
 source `imagePattern`, and source Path lowering remain separate
 bounded work;
 Path semantic/raster coverage and broader canonical writer coverage remain open
