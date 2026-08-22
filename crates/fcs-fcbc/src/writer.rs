@@ -1169,7 +1169,6 @@ fn render_section(
         let (paint, stroke) = match node.kind() {
             fcs_model::CanonicalRenderNodeKind::Rect
             | fcs_model::CanonicalRenderNodeKind::RoundedRect
-            | fcs_model::CanonicalRenderNodeKind::Circle
             | fcs_model::CanonicalRenderNodeKind::Ellipse
             | fcs_model::CanonicalRenderNodeKind::Polyline
             | fcs_model::CanonicalRenderNodeKind::Polygon
@@ -1177,7 +1176,7 @@ fn render_section(
                 if node.stroke().is_some() {
                     return Err(FcbcError::new(
                         "fcbc.render-unsupported",
-                        "product Render writer only supports strokes on Line nodes",
+                        "product Render writer only supports strokes on Line and Circle nodes",
                     ));
                 }
                 (
@@ -1186,6 +1185,37 @@ fn render_section(
                     })?),
                     None,
                 )
+            }
+            fcs_model::CanonicalRenderNodeKind::Circle => {
+                // Render section 14.2 lets a fillable geometry carry a fill paint, a stroke, or
+                // both, so a Circle is rejected only when it carries neither.
+                let fill = node.fill_paint();
+                let stroke = node.stroke();
+                if fill.is_none() && stroke.is_none() {
+                    return Err(FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render Circle has no fill paint or stroke",
+                    ));
+                }
+                if let Some(index) = stroke {
+                    let record = scene.strokes().get(index).ok_or_else(|| {
+                        FcbcError::new(
+                            "fcbc.dangling-reference",
+                            "Render Circle references a missing stroke",
+                        )
+                    })?;
+                    // Render section 15.2 restarts dash at each subpath start, but no clause
+                    // gives a closed parametric geometry a subpath start or a winding
+                    // direction, so the dash phase origin of a Circle is undefined. Reject
+                    // rather than choose one of several legal seams.
+                    if !record.dash().is_empty() {
+                        return Err(FcbcError::new(
+                            "fcbc.render-unsupported",
+                            "product Render writer does not support a dashed Circle stroke",
+                        ));
+                    }
+                }
+                (fill, stroke)
             }
             fcs_model::CanonicalRenderNodeKind::Line => {
                 if node.fill_paint().is_some() {

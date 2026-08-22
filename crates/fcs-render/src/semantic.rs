@@ -976,10 +976,10 @@ struct RasterShape {
 }
 
 struct RasterOp {
-    kind: NodeKind,
     shape: RasterShape,
     clips: Vec<RasterShape>,
-    source: RasterSource,
+    source: Option<RasterSource>,
+    stroke_source: Option<RasterSource>,
     stroke: Option<StrokeDrawOp>,
     opacity: f64,
     composite: u16,
@@ -1075,9 +1075,6 @@ fn stroke_contains(
     point: [f64; 2],
     stroke: &StrokeDrawOp,
 ) -> Result<bool, &'static str> {
-    let LocalShape::Line { start, end } = shape else {
-        return Err("render.invalid-geometry");
-    };
     if !stroke.width.is_finite()
         || stroke.width < 0.0
         || !stroke.dash_offset.is_finite()
@@ -1095,10 +1092,61 @@ fn stroke_contains(
     if stroke.width == 0.0 {
         return Ok(false);
     }
+    if !point.iter().all(|value| value.is_finite()) {
+        return Err("render.invalid-geometry");
+    }
+    match shape {
+        LocalShape::Line { start, end } => stroke_line_contains(*start, *end, point, stroke),
+        LocalShape::Circle { center, radius } => {
+            stroke_circle_contains(*center, *radius, point, stroke)
+        }
+        _ => Err("render.invalid-geometry"),
+    }
+}
+
+/// Render section 15.2 dilates the centre line by `width/2`. A Circle is a closed
+/// parametric geometry, so it has no endpoint and therefore no cap, and no vertex and
+/// therefore no join: the solid stroke is exactly the closed annulus.
+///
+/// The specification restarts dash at each subpath start, but no clause assigns a closed
+/// parametric geometry a subpath start or a winding direction, so a dashed Circle has no
+/// determined dash phase origin. Fail closed instead of choosing one of several legal
+/// seams; the product writer rejects the same case before it can reach FCBC.
+fn stroke_circle_contains(
+    center: [f64; 2],
+    radius: f64,
+    point: [f64; 2],
+    stroke: &StrokeDrawOp,
+) -> Result<bool, &'static str> {
+    if !radius.is_finite() || radius < 0.0 || !center.iter().all(|value| value.is_finite()) {
+        return Err("render.invalid-geometry");
+    }
+    if !stroke.dash.is_empty() {
+        return Err("render.invalid-stroke");
+    }
+    if radius == 0.0 {
+        return Ok(false);
+    }
+    let half_width = stroke.width / 2.0;
+    let distance = (point[0] - center[0]).hypot(point[1] - center[1]);
+    if !distance.is_finite() {
+        return Err("render.invalid-geometry");
+    }
+    let inner = (radius - half_width).max(0.0);
+    let outer = radius + half_width;
+    Ok(distance >= inner && distance <= outer)
+}
+
+fn stroke_line_contains(
+    start: [f64; 2],
+    end: [f64; 2],
+    point: [f64; 2],
+    stroke: &StrokeDrawOp,
+) -> Result<bool, &'static str> {
     let dx = end[0] - start[0];
     let dy = end[1] - start[1];
     let length = dx.hypot(dy);
-    if !length.is_finite() || !point.iter().all(|value| value.is_finite()) {
+    if !length.is_finite() {
         return Err("render.invalid-geometry");
     }
     if length == 0.0 {
@@ -1442,28 +1490,43 @@ pub fn rasterize_solid_rgba8_with_limits_at(
             continue;
         };
         let source = if op.kind == NodeKind::Image {
-            RasterSource::Image(op.image.ok_or("render.invalid-geometry")?)
+            Some(RasterSource::Image(
+                op.image.ok_or("render.invalid-geometry")?,
+            ))
         } else if op.kind == NodeKind::Line {
-            let stroke = op.stroke.as_ref().ok_or("render.invalid-stroke")?;
-            raster_paint_source(
-                stroke.fill_rgba,
-                stroke.linear_gradient.clone(),
-                stroke.radial_gradient.clone(),
-                stroke.image_pattern,
-            )?
-            .ok_or("render.invalid-stroke")?
+            // Render section 14.2 keeps a Line's fill paint null.
+            None
         } else {
-            let Some(source) = raster_paint_source(
+            raster_paint_source(
                 op.fill_rgba,
                 op.linear_gradient.clone(),
                 op.radial_gradient.clone(),
                 op.image_pattern,
             )?
-            else {
-                continue;
-            };
-            source
         };
+        // Render section 8.2 binds every stroke to a paint, so a node that declares a
+        // stroke without a resolvable paint is invalid rather than merely unpainted.
+        let stroke_source = if matches!(op.kind, NodeKind::Line | NodeKind::Circle) {
+            match op.stroke.as_ref() {
+                Some(stroke) => Some(
+                    raster_paint_source(
+                        stroke.fill_rgba,
+                        stroke.linear_gradient.clone(),
+                        stroke.radial_gradient.clone(),
+                        stroke.image_pattern,
+                    )?
+                    .ok_or("render.invalid-stroke")?,
+                ),
+                // Render section 14.2 requires a Line stroke.
+                None if op.kind == NodeKind::Line => return Err("render.invalid-stroke"),
+                None => None,
+            }
+        } else {
+            None
+        };
+        if source.is_none() && stroke_source.is_none() {
+            continue;
+        }
         let mut clips = Vec::new();
         for clip_id in &op.clip_chain {
             let clip = scene.clips.get(clip_id).ok_or("render.invalid-reference")?;
@@ -1472,10 +1535,10 @@ pub fn rasterize_solid_rgba8_with_limits_at(
             }
         }
         raster_ops.push(RasterOp {
-            kind: op.kind,
             shape: raster_shape(shape),
             clips,
             source,
+            stroke_source,
             stroke: op.stroke.clone(),
             opacity: op.opacity,
             composite: op.composite,
@@ -1508,27 +1571,32 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                         let Some(local_point) = raster_shape_local_point(&op.shape, point) else {
                             continue;
                         };
-                        let covered = if op.kind == NodeKind::Line {
-                            stroke_contains(
+                        if !op
+                            .clips
+                            .iter()
+                            .all(|clip| raster_shape_contains(clip, point))
+                        {
+                            continue;
+                        }
+                        // Render section 7 emits the fill draw op before the stroke draw op
+                        // for the same node, so a node carrying both composites in that order.
+                        if let Some(source) = &op.source
+                            && local_shape_contains(&op.shape.shape, local_point)
+                            && let Some(value) =
+                                raster_source_at(chart, source, local_point, op.opacity)?
+                        {
+                            composite_premultiplied(&mut sample, value, op.composite)?;
+                        }
+                        if let Some(source) = &op.stroke_source
+                            && stroke_contains(
                                 &op.shape.shape,
                                 local_point,
                                 op.stroke.as_ref().ok_or("render.invalid-stroke")?,
                             )?
-                        } else {
-                            local_shape_contains(&op.shape.shape, local_point)
-                        };
-                        if !covered
-                            || !op
-                                .clips
-                                .iter()
-                                .all(|clip| raster_shape_contains(clip, point))
+                            && let Some(value) =
+                                raster_source_at(chart, source, local_point, op.opacity)?
                         {
-                            continue;
-                        }
-                        if let Some(source) =
-                            raster_source_at(chart, &op.source, local_point, op.opacity)?
-                        {
-                            composite_premultiplied(&mut sample, source, op.composite)?;
+                            composite_premultiplied(&mut sample, value, op.composite)?;
                         }
                     }
                     for component in 0..4 {
