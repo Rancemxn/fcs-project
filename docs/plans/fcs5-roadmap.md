@@ -793,8 +793,9 @@ git diff --check
   Path geometry/PathRecord -> product FCBC writer -> Render loader command-topology evidence, and #517 canonical
   Circle solid stroke -> product FCBC writer -> Render loader -> semantic/annulus raster evidence with fill-and-stroke
   draw order, and #522 the section 15.2 closed parametric dash seam plus the dashed Circle stroke it determines,
-  and #525 source `circle` stroke lowering with an optional fill;
+  and #525 source `circle` stroke lowering with an optional fill, and #529 Polyline and Polygon
+  strokes with section 15.2 joins, caps, closure and exact dash arc length;
   dynamic source Line stroke descriptors, Ellipse and RoundedRect strokes,
   source ImagePattern lowering, source Path lowering, Path semantic/raster coverage,
-  broader canonical writer coverage, Polyline/Text geometry, broader resource semantics, isolated compositing, and
+  broader canonical writer coverage, Text geometry, broader resource semantics, isolated compositing, and
   semantic/raster conformance remain open under #295.

@@ -751,6 +751,176 @@ fn source_circle_without_fill_or_stroke_is_rejected() {
     assert!(error.contains("fill"), "{error}");
 }
 
+/// Lower a source fixture whose hidden `circle ruler` supplies the scalar Length descriptor a
+/// stroke needs, then attach a canonical stroke to the second node in place. Replacing the node
+/// rather than rebuilding the scene keeps the layer roots and geometry indices valid, and
+/// `CanonicalRenderScene` rejects a node whose kind does not match its geometry.
+fn canonical_stroked_shape_compilation(
+    keyword: &str,
+    body: &str,
+    dash: Vec<f64>,
+) -> CanonicalCompilation {
+    let source = format!(
+        r#"#fcs 5.0.0
+format {{ profile: renderable; }}
+tempoMap {{ 0beat -> 120bpm; }}
+render profile 1.0.0 {{
+    viewport {{ width: 16px; height: 16px; }}
+    layer main {{
+        pass: "overlay";
+        children {{
+            circle ruler {{
+                center: vec2(0px, 0px);
+                radius: 2px;
+                visibility: false;
+                fill: solid(#FFFFFFFF);
+            }}
+            {keyword} target {{
+                {body}
+                fill: solid(#FFFFFFFF);
+            }}
+        }}
+    }}
+}}
+"#
+    );
+    let document = parse_document(&source)
+        .into_result()
+        .expect("stroked shape source parses");
+    let base = document
+        .canonical_compilation_with_source(
+            &source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| {
+            panic!("stroked shape source lowering failed: {diagnostics:?}")
+        });
+    let original = base.chart().render().expect("source Render scene");
+    let target = &original.nodes()[1];
+    let width_descriptor = base
+        .chart()
+        .descriptors()
+        .expect("source Render descriptors")
+        .descriptors()
+        .iter()
+        .position(|descriptor| descriptor.property_type() == &CanonicalExpressionType::Length)
+        .expect("the hidden ruler must provide a Length descriptor");
+    let mut ids = StableIdRegistry::new();
+    let stroke_id = ids
+        .insert(
+            EntityKind::RenderStroke,
+            CanonicalTextualId::explicit("target-stroke").expect("stroke textual ID"),
+        )
+        .expect("stroke stable ID");
+    // Section 14.2 forbids sharing a paint between a fill and a stroke, so the stroke takes over
+    // the target's own paint record while the node drops its fill.
+    let stroke_paint = target.fill_paint().expect("target fill paint");
+    let stroke = CanonicalRenderStroke::new(
+        stroke_id,
+        stroke_paint,
+        width_descriptor,
+        CanonicalStrokeCap::Butt,
+        CanonicalStrokeJoin::Miter,
+        4.0,
+        width_descriptor,
+        dash,
+    )
+    .expect("canonical stroke");
+    let stroked = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+        id: target.id().clone(),
+        kind: target.kind(),
+        parent: target.parent(),
+        layer: target.layer(),
+        document_order: target.document_order(),
+        z_order: target.z_order(),
+        attachment: target.attachment().clone(),
+        active: target.active(),
+        isolate: target.isolate(),
+        follow_hidden_attachment: target.follow_hidden_attachment(),
+        position: target.position(),
+        origin: target.origin(),
+        rotation: target.rotation(),
+        scale: target.scale(),
+        opacity: target.opacity(),
+        visibility: target.visibility(),
+        geometry: target.geometry(),
+        fill_paint: None,
+        stroke: Some(0),
+        clip: None,
+        composite: target.composite(),
+    })
+    .expect("stroked canonical node");
+    let mut nodes = original.nodes().to_vec();
+    nodes[1] = stroked;
+    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+        viewport: original.viewport(),
+        layers: original.layers().to_vec(),
+        nodes,
+        geometries: original.geometries().to_vec(),
+        paths: Vec::new(),
+        paints: original.paints().to_vec(),
+        strokes: vec![stroke],
+        clips: Vec::new(),
+        glyph_runs: Vec::new(),
+    })
+    .expect("stroked canonical scene");
+    CanonicalCompilation::new(
+        base.chart().clone().with_render(scene),
+        base.resources().clone(),
+        base.distribution().clone(),
+    )
+}
+
+const POLYLINE_POINTS: &str = "points: [vec2(-5px, 0px), vec2(0px, 0px), vec2(0px, 5px)];";
+
+#[test]
+fn canonical_polyline_and_polygon_strokes_reach_the_product_raster() {
+    let raster = |keyword: &str, dash: Vec<f64>| {
+        let compilation = canonical_stroked_shape_compilation(keyword, POLYLINE_POINTS, dash);
+        let bytes = write_from_compilation(&compilation).expect("polyline stroke FCBC writing");
+        let render = load_render(&bytes).expect("polyline stroke product loader");
+        let pixels =
+            rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("polyline stroke raster");
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[3] != 0)
+            .count()
+    };
+
+    let polyline = raster("polyline", Vec::new());
+    let polygon = raster("polygon", Vec::new());
+    let dashed = raster("polyline", vec![1.0, 2.0]);
+
+    // Render section 15.2 keeps a Polyline stroke open and closes a Polygon stroke, so the
+    // Polygon additionally strokes the implicit closing segment. The hidden ruler circle
+    // contributes nothing, so every covered pixel comes from the stroke.
+    assert!(polyline > 0, "a Polyline stroke must raster");
+    assert!(
+        polygon > polyline,
+        "polygon {polygon} vs polyline {polyline}"
+    );
+    // One-on two-off leaves gaps in the same open path.
+    assert!(dashed > 0, "a dashed Polyline stroke must raster");
+    assert!(dashed < polyline, "dashed {dashed} vs polyline {polyline}");
+}
+
+#[test]
+fn canonical_rect_stroke_is_still_rejected() {
+    let compilation = canonical_stroked_shape_compilation(
+        "rect",
+        "origin: vec2(-3px, -3px);
+                size: vec2(6px, 6px);",
+        Vec::new(),
+    );
+    // Adding Polyline and Polygon must not widen the writer to every fillable geometry.
+    let error = write_from_compilation(&compilation).expect_err("a Rect stroke stays rejected");
+    assert_eq!(error.category(), "fcbc.render-unsupported");
+}
+
 #[test]
 fn source_line_without_a_stroke_is_still_rejected() {
     let source = r#"#fcs 5.0.0

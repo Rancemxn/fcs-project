@@ -141,6 +141,9 @@ enum LocalShape {
     },
     Polygon {
         points: Vec<[f64; 2]>,
+        /// Render section 15.2 keeps a Polyline stroke open and closes a Polygon stroke. Fill
+        /// uses the implicit closing segment either way, so only the stroke reads this.
+        closed: bool,
     },
     Image {
         bounds: [f64; 4],
@@ -1058,7 +1061,7 @@ fn local_shape_contains(shape: &LocalShape, point: [f64; 2]) -> bool {
             rotation,
         } => ellipse_contains(*center, *radius_x, *radius_y, *rotation, point),
         LocalShape::Line { .. } => false,
-        LocalShape::Polygon { points } => polygon_contains(points, point),
+        LocalShape::Polygon { points, .. } => polygon_contains(points, point),
         LocalShape::Image { bounds } => {
             bounds[2] > bounds[0]
                 && bounds[3] > bounds[1]
@@ -1100,8 +1103,197 @@ fn stroke_contains(
         LocalShape::Circle { center, radius } => {
             stroke_circle_contains(*center, *radius, point, stroke)
         }
+        LocalShape::Polygon { points, closed } => {
+            stroke_polyline_contains(points, *closed, point, stroke)
+        }
         _ => Err("render.invalid-geometry"),
     }
+}
+
+/// Render section 15.2 dilates the centre line by `width/2`, keeps a Polyline stroke open and
+/// closes a Polygon stroke. Arc length is exact here, so the dash phase runs along the
+/// accumulated segment length from the first declared point in declared order.
+///
+/// A zero-length segment produces no coverage, cap, join or tangent and does not advance the
+/// dash phase, so it is dropped before anything else. `cap` applies at each dash segment's two
+/// endpoints, and for an undashed stroke only at the two ends of an open Polyline. `join`
+/// applies at every vertex the stroke covers on both sides.
+fn stroke_polyline_contains(
+    points: &[[f64; 2]],
+    closed: bool,
+    point: [f64; 2],
+    stroke: &StrokeDrawOp,
+) -> Result<bool, &'static str> {
+    if points.len() < 2 || points.iter().flatten().any(|value| !value.is_finite()) {
+        return Err("render.invalid-geometry");
+    }
+    let half_width = stroke.width / 2.0;
+    let mut segments = Vec::with_capacity(points.len());
+    let mut total = 0.0;
+    let wrap = usize::from(closed);
+    for index in 0..points.len().saturating_sub(1) + wrap {
+        let start = points[index];
+        let end = points[(index + 1) % points.len()];
+        let direction = [end[0] - start[0], end[1] - start[1]];
+        let length = direction[0].hypot(direction[1]);
+        if !length.is_finite() {
+            return Err("render.invalid-geometry");
+        }
+        if length == 0.0 {
+            continue;
+        }
+        segments.push(PolylineSegment {
+            start,
+            direction: [direction[0] / length, direction[1] / length],
+            offset: total,
+            length,
+        });
+        total += length;
+    }
+    if segments.is_empty() || !total.is_finite() {
+        return Ok(false);
+    }
+
+    let dash_intervals = stroke_segments(total, stroke.dash_offset, &stroke.dash)?;
+    // An undashed stroke covers the whole path, so every vertex joins and only an open path's
+    // two ends cap. Section 15.2 gives a closed undashed stroke no endpoint at all.
+    let whole_path_on = stroke.dash.is_empty();
+    for (dash_start, dash_end) in &dash_intervals {
+        for segment in &segments {
+            let along = (point[0] - segment.start[0]) * segment.direction[0]
+                + (point[1] - segment.start[1]) * segment.direction[1];
+            let across = (point[0] - segment.start[0]) * segment.direction[1]
+                - (point[1] - segment.start[1]) * segment.direction[0];
+            if across.abs() > half_width {
+                continue;
+            }
+            let low = (dash_start - segment.offset).max(0.0);
+            let high = (dash_end - segment.offset).min(segment.length);
+            if low <= high && along >= low && along <= high {
+                return Ok(true);
+            }
+        }
+        if whole_path_on && closed {
+            continue;
+        }
+        for (arc, forward) in [(*dash_start, false), (*dash_end, true)] {
+            let segment = segments
+                .iter()
+                .find(|segment| arc <= segment.offset + segment.length)
+                .unwrap_or(&segments[segments.len() - 1]);
+            let base = [
+                segment.start[0] + segment.direction[0] * (arc - segment.offset),
+                segment.start[1] + segment.direction[1] * (arc - segment.offset),
+            ];
+            let sign = if forward { 1.0 } else { -1.0 };
+            let tangent = [sign * segment.direction[0], sign * segment.direction[1]];
+            if cap_contains(base, tangent, point, half_width, stroke.cap)? {
+                return Ok(true);
+            }
+        }
+    }
+
+    for index in 0..segments.len().saturating_sub(1) + wrap {
+        let incoming = &segments[index];
+        let outgoing = &segments[(index + 1) % segments.len()];
+        let arc = incoming.offset + incoming.length;
+        let joined = whole_path_on
+            || dash_intervals
+                .iter()
+                .any(|(start, end)| arc > *start && arc < *end);
+        if !joined {
+            continue;
+        }
+        if join_contains(incoming, outgoing, point, half_width, stroke)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+struct PolylineSegment {
+    start: [f64; 2],
+    direction: [f64; 2],
+    offset: f64,
+    length: f64,
+}
+
+/// Render section 15.2: butt truncates at the endpoint, square extends `width/2` along the
+/// outward tangent, round adds a half disc. `tangent` points out of the stroke.
+fn cap_contains(
+    base: [f64; 2],
+    tangent: [f64; 2],
+    point: [f64; 2],
+    half_width: f64,
+    cap: u16,
+) -> Result<bool, &'static str> {
+    let offset = [point[0] - base[0], point[1] - base[1]];
+    let along = offset[0] * tangent[0] + offset[1] * tangent[1];
+    let across = offset[0] * tangent[1] - offset[1] * tangent[0];
+    match cap {
+        1 => Ok(false),
+        2 => Ok(offset[0].hypot(offset[1]) <= half_width),
+        3 => Ok(along >= 0.0 && along <= half_width && across.abs() <= half_width),
+        _ => Err("render.invalid-stroke"),
+    }
+}
+
+/// Render section 15.2: bevel connects the two outer offset endpoints, round uses a sector
+/// centred on the vertex, and miter uses the outer offset lines' intersection, degrading to
+/// bevel once `miterLength/halfWidth` exceeds `miterLimit`.
+fn join_contains(
+    incoming: &PolylineSegment,
+    outgoing: &PolylineSegment,
+    point: [f64; 2],
+    half_width: f64,
+    stroke: &StrokeDrawOp,
+) -> Result<bool, &'static str> {
+    let vertex = [
+        incoming.start[0] + incoming.direction[0] * incoming.length,
+        incoming.start[1] + incoming.direction[1] * incoming.length,
+    ];
+    match stroke.join {
+        1 | 3 => {}
+        2 => {
+            let offset = [point[0] - vertex[0], point[1] - vertex[1]];
+            return Ok(offset[0].hypot(offset[1]) <= half_width);
+        }
+        _ => return Err("render.invalid-stroke"),
+    }
+    // The outer side of the turn is the one the left normals do not point into.
+    let cross = incoming.direction[0] * outgoing.direction[1]
+        - incoming.direction[1] * outgoing.direction[0];
+    if cross == 0.0 {
+        return Ok(false);
+    }
+    let sign = if cross > 0.0 { -1.0 } else { 1.0 };
+    let outward = |direction: &[f64; 2]| [sign * -direction[1], sign * direction[0]];
+    let incoming_outward = outward(&incoming.direction);
+    let outgoing_outward = outward(&outgoing.direction);
+    let corner = |normal: [f64; 2]| {
+        [
+            vertex[0] + normal[0] * half_width,
+            vertex[1] + normal[1] * half_width,
+        ]
+    };
+    let bevel = [vertex, corner(incoming_outward), corner(outgoing_outward)];
+    if stroke.join == 3 {
+        let bisector = [
+            incoming_outward[0] + outgoing_outward[0],
+            incoming_outward[1] + outgoing_outward[1],
+        ];
+        let magnitude = bisector[0].hypot(bisector[1]);
+        // `2/|u+v|` is `miterLength/halfWidth` for unit outward normals `u` and `v`.
+        if magnitude > 0.0 && 2.0 / magnitude <= stroke.miter_limit {
+            let scale = 2.0 * half_width / (magnitude * magnitude);
+            let tip = [
+                vertex[0] + bisector[0] * scale,
+                vertex[1] + bisector[1] * scale,
+            ];
+            return Ok(polygon_contains(&[vertex, bevel[1], tip, bevel[2]], point));
+        }
+    }
+    Ok(polygon_contains(&bevel, point))
 }
 
 /// Render section 15.2 dilates the centre line by `width/2`. A Circle is a closed
@@ -1549,7 +1741,10 @@ pub fn rasterize_solid_rgba8_with_limits_at(
         };
         // Render section 8.2 binds every stroke to a paint, so a node that declares a
         // stroke without a resolvable paint is invalid rather than merely unpainted.
-        let stroke_source = if matches!(op.kind, NodeKind::Line | NodeKind::Circle) {
+        let stroke_source = if matches!(
+            op.kind,
+            NodeKind::Line | NodeKind::Circle | NodeKind::Polyline | NodeKind::Polygon
+        ) {
             match op.stroke.as_ref() {
                 Some(stroke) => Some(
                     raster_paint_source(
@@ -2417,6 +2612,7 @@ fn geometry_evaluation(
             (bounds, Some(LocalShape::Line { start, end }), None)
         }
         GeometryData::Polyline { points } | GeometryData::Polygon { points } => {
+            let closed = matches!(geometry.data, GeometryData::Polygon { .. });
             let mut values = Vec::with_capacity(points.len());
             for descriptor in points {
                 values.push(query_vec2_in(
@@ -2437,7 +2633,14 @@ fn geometry_evaluation(
                 bounds[2] = bounds[2].max(x);
                 bounds[3] = bounds[3].max(y);
             }
-            (bounds, Some(LocalShape::Polygon { points: values }), None)
+            (
+                bounds,
+                Some(LocalShape::Polygon {
+                    points: values,
+                    closed,
+                }),
+                None,
+            )
         }
         GeometryData::Image {
             resource_id,
