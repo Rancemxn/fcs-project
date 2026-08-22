@@ -1686,7 +1686,7 @@ impl CanonicalRenderScene {
             }
         }
         for stroke in &mut self.strokes {
-            remap(&mut stroke.paint)?;
+            // `paint` is a Render paint-table index, not a descriptor index.
             remap(&mut stroke.width)?;
             remap(&mut stroke.dash_offset)?;
         }

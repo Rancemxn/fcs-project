@@ -791,6 +791,6 @@ git diff --check
   Line geometry/StrokeRecord -> product FCBC writer -> Render loader round-trip evidence, plus #506 canonical
   ImagePattern paint -> product FCBC writer -> Render loader -> semantic/raster round-trip evidence, and #509 canonical
   Path geometry/PathRecord -> product FCBC writer -> Render loader command-topology evidence;
-  source Line stroke lowering, source ImagePattern lowering, source Path lowering, Path semantic/raster coverage,
+  dynamic source Line stroke descriptors, source ImagePattern lowering, source Path lowering, Path semantic/raster coverage,
   broader canonical writer coverage, Polyline/Text geometry, broader resource semantics, isolated compositing, and
   semantic/raster conformance remain open under #295.
