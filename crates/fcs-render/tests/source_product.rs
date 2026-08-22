@@ -751,6 +751,191 @@ fn source_circle_without_fill_or_stroke_is_rejected() {
     assert!(error.contains("fill"), "{error}");
 }
 
+/// A source `polyline` or `polygon` lowered with a canonical stroke attached to its node.
+fn canonical_polyline_stroke_compilation(keyword: &str, dash: Vec<f64>) -> CanonicalCompilation {
+    let source = format!(
+        r#"#fcs 5.0.0
+format {{ profile: renderable; }}
+tempoMap {{ 0beat -> 120bpm; }}
+render profile 1.0.0 {{
+    viewport {{ width: 16px; height: 16px; }}
+    layer main {{
+        pass: "overlay";
+        children {{
+            {keyword} trace {{
+                points: [vec2(-5px, 0px), vec2(0px, 0px), vec2(0px, 5px)];
+                fill: solid(#FFFFFFFF);
+            }}
+        }}
+    }}
+}}
+"#
+    );
+    let document = parse_document(&source)
+        .into_result()
+        .expect("polyline stroke source parses");
+    let base = document
+        .canonical_compilation_with_source(
+            &source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .expect("polyline stroke source lowers");
+    let original = base.chart().render().expect("source Render scene");
+    let node = &original.nodes()[0];
+    let width_descriptor = base
+        .chart()
+        .descriptors()
+        .expect("source Render descriptors")
+        .descriptors()
+        .iter()
+        .position(|descriptor| descriptor.property_type() == &CanonicalExpressionType::Length)
+        .expect("source fixture must provide a Length descriptor");
+    let mut ids = StableIdRegistry::new();
+    let stroke_id = ids
+        .insert(
+            EntityKind::RenderStroke,
+            CanonicalTextualId::explicit("trace-stroke").expect("stroke textual ID"),
+        )
+        .expect("stroke stable ID");
+    let stroke = CanonicalRenderStroke::new(
+        stroke_id,
+        0,
+        width_descriptor,
+        CanonicalStrokeCap::Butt,
+        CanonicalStrokeJoin::Miter,
+        4.0,
+        width_descriptor,
+        dash,
+    )
+    .expect("canonical polyline stroke");
+    let stroked = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+        id: node.id().clone(),
+        kind: node.kind(),
+        parent: node.parent(),
+        layer: node.layer(),
+        document_order: node.document_order(),
+        z_order: node.z_order(),
+        attachment: node.attachment().clone(),
+        active: node.active(),
+        isolate: node.isolate(),
+        follow_hidden_attachment: node.follow_hidden_attachment(),
+        position: node.position(),
+        origin: node.origin(),
+        rotation: node.rotation(),
+        scale: node.scale(),
+        opacity: node.opacity(),
+        visibility: node.visibility(),
+        geometry: Some(0),
+        fill_paint: None,
+        stroke: Some(0),
+        clip: None,
+        composite: node.composite(),
+    })
+    .expect("stroked canonical node");
+    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+        viewport: original.viewport(),
+        layers: original.layers().to_vec(),
+        nodes: vec![stroked],
+        geometries: original.geometries().to_vec(),
+        paths: Vec::new(),
+        paints: vec![original.paints()[0].clone()],
+        strokes: vec![stroke],
+        clips: Vec::new(),
+        glyph_runs: Vec::new(),
+    })
+    .expect("stroked canonical scene");
+    CanonicalCompilation::new(
+        base.chart().clone().with_render(scene),
+        base.resources().clone(),
+        base.distribution().clone(),
+    )
+}
+
+#[test]
+fn canonical_polyline_and_polygon_strokes_reach_the_product_raster() {
+    let covered = |pixels: &[u8]| {
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[3] != 0)
+            .count()
+    };
+    let raster = |keyword: &str, dash: Vec<f64>| {
+        let compilation = canonical_polyline_stroke_compilation(keyword, dash);
+        let bytes = write_from_compilation(&compilation).expect("polyline stroke FCBC writing");
+        let render = load_render(&bytes).expect("polyline stroke product loader");
+        assert_eq!(render.nodes[0].fill_paint, None);
+        assert_eq!(render.nodes[0].stroke_ref, Some(0));
+        covered(&rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("polyline stroke raster"))
+    };
+
+    let polyline = raster("polyline", Vec::new());
+    let polygon = raster("polygon", Vec::new());
+    let dashed = raster("polyline", vec![1.0, 2.0]);
+
+    // Render section 15.2 keeps a Polyline stroke open and closes a Polygon stroke, so the
+    // Polygon additionally strokes the implicit closing segment.
+    assert!(polyline > 0);
+    assert!(polygon > polyline);
+    // One-on two-off leaves gaps in the same open path.
+    assert!(dashed > 0);
+    assert!(dashed < polyline);
+}
+
+#[test]
+fn canonical_rect_stroke_is_still_rejected() {
+    let compilation = canonical_circle_stroke_compilation(Vec::new(), false);
+    let scene = compilation.chart().render().expect("scene");
+    let node = &scene.nodes()[0];
+    let rect = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+        id: node.id().clone(),
+        kind: CanonicalRenderNodeKind::Rect,
+        parent: node.parent(),
+        layer: node.layer(),
+        document_order: node.document_order(),
+        z_order: node.z_order(),
+        attachment: node.attachment().clone(),
+        active: node.active(),
+        isolate: node.isolate(),
+        follow_hidden_attachment: node.follow_hidden_attachment(),
+        position: node.position(),
+        origin: node.origin(),
+        rotation: node.rotation(),
+        scale: node.scale(),
+        opacity: node.opacity(),
+        visibility: node.visibility(),
+        geometry: Some(0),
+        fill_paint: None,
+        stroke: Some(0),
+        clip: None,
+        composite: node.composite(),
+    })
+    .expect("Rect node with a stroke");
+    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+        viewport: scene.viewport(),
+        layers: scene.layers().to_vec(),
+        nodes: vec![rect],
+        geometries: scene.geometries().to_vec(),
+        paths: Vec::new(),
+        paints: scene.paints().to_vec(),
+        strokes: scene.strokes().to_vec(),
+        clips: Vec::new(),
+        glyph_runs: Vec::new(),
+    })
+    .expect("Rect scene");
+    let compilation = CanonicalCompilation::new(
+        compilation.chart().clone().with_render(scene),
+        compilation.resources().clone(),
+        compilation.distribution().clone(),
+    );
+    // Adding Polyline and Polygon must not widen the writer to every fillable geometry.
+    let error = write_from_compilation(&compilation).expect_err("a Rect stroke stays rejected");
+    assert_eq!(error.category(), "fcbc.render-unsupported");
+}
+
 #[test]
 fn source_line_without_a_stroke_is_still_rejected() {
     let source = r#"#fcs 5.0.0

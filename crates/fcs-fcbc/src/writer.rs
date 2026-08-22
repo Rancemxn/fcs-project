@@ -1170,13 +1170,11 @@ fn render_section(
             fcs_model::CanonicalRenderNodeKind::Rect
             | fcs_model::CanonicalRenderNodeKind::RoundedRect
             | fcs_model::CanonicalRenderNodeKind::Ellipse
-            | fcs_model::CanonicalRenderNodeKind::Polyline
-            | fcs_model::CanonicalRenderNodeKind::Polygon
             | fcs_model::CanonicalRenderNodeKind::Path => {
                 if node.stroke().is_some() {
                     return Err(FcbcError::new(
                         "fcbc.render-unsupported",
-                        "product Render writer only supports strokes on Line and Circle nodes",
+                        "product Render writer supports strokes only on Line, Circle, Polyline, and Polygon nodes",
                     ));
                 }
                 (
@@ -1186,17 +1184,20 @@ fn render_section(
                     None,
                 )
             }
-            fcs_model::CanonicalRenderNodeKind::Circle => {
+            fcs_model::CanonicalRenderNodeKind::Circle
+            | fcs_model::CanonicalRenderNodeKind::Polyline
+            | fcs_model::CanonicalRenderNodeKind::Polygon => {
                 // Render section 14.2 lets a fillable geometry carry a fill paint, a stroke, or
-                // both, so a Circle is rejected only when it carries neither. Render section
-                // 15.2 fixes the closed subpath's start at the local `+X` crossing and its
-                // direction as clockwise, so a dashed Circle stroke needs no extra rejection.
+                // both, so one of these is rejected only when it carries neither. Section 15.2
+                // fixes the Circle dash seam at the local `+X` crossing winding clockwise, and
+                // a Polyline or Polygon already has an explicit point order, so a dashed stroke
+                // needs no extra rejection.
                 let fill = node.fill_paint();
                 let stroke = node.stroke();
                 if fill.is_none() && stroke.is_none() {
                     return Err(FcbcError::new(
                         "fcbc.dangling-reference",
-                        "Render Circle has no fill paint or stroke",
+                        "Render fillable geometry has no fill paint or stroke",
                     ));
                 }
                 (fill, stroke)

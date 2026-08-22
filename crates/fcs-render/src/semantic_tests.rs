@@ -202,6 +202,78 @@ fn line_stroke_caps_and_dash_boundaries_are_stable() {
 }
 
 #[test]
+fn polyline_stroke_joins_caps_and_closure_follow_section_15_2() {
+    let elbow = vec![[-2.0, 0.0], [0.0, 0.0], [0.0, 2.0]];
+    let open = LocalShape::Polygon {
+        points: elbow.clone(),
+        closed: false,
+    };
+    let mut stroke = StrokeDrawOp {
+        width: 1.0,
+        cap: 1,
+        join: 1,
+        miter_limit: 2.0,
+        dash_offset: 0.0,
+        dash: Vec::new(),
+        fill_rgba: Some([1.0, 1.0, 1.0, 1.0]),
+        linear_gradient: None,
+        radial_gradient: None,
+        image_pattern: None,
+    };
+    // Both legs are covered to `width/2`, and butt truncates at each open end.
+    assert!(stroke_contains(&open, [-1.0, 0.49], &stroke).unwrap());
+    assert!(stroke_contains(&open, [0.49, 1.0], &stroke).unwrap());
+    assert!(!stroke_contains(&open, [-1.0, 0.51], &stroke).unwrap());
+    assert!(!stroke_contains(&open, [-2.1, 0.0], &stroke).unwrap());
+
+    // The turn at the origin is a left turn, so its outer corner is `(0.5, -0.5)`. Bevel cuts
+    // that corner off, miter fills it, and round reaches only `width/2` from the vertex.
+    let corner = [0.45, -0.45];
+    assert!(!stroke_contains(&open, corner, &stroke).unwrap());
+    stroke.join = 2;
+    assert!(!stroke_contains(&open, corner, &stroke).unwrap());
+    stroke.join = 3;
+    assert!(stroke_contains(&open, corner, &stroke).unwrap());
+
+    // A right-angle turn has `miterLength/halfWidth = sqrt(2)`, so a limit below that degrades
+    // the miter to the same bevel that rejected this point.
+    stroke.miter_limit = 1.4;
+    assert!(!stroke_contains(&open, corner, &stroke).unwrap());
+    stroke.miter_limit = 2.0;
+
+    // Round reaches a point inside the disc that bevel excludes.
+    let near = [0.2, -0.4];
+    stroke.join = 1;
+    assert!(!stroke_contains(&open, near, &stroke).unwrap());
+    stroke.join = 2;
+    assert!(stroke_contains(&open, near, &stroke).unwrap());
+
+    // Section 15.2 closes a Polygon stroke, so the implicit closing segment is stroked and the
+    // open path's endpoints stop being endpoints.
+    stroke.join = 1;
+    let closed = LocalShape::Polygon {
+        points: elbow,
+        closed: true,
+    };
+    let closing = [-1.0, 1.0];
+    assert!(!stroke_contains(&open, closing, &stroke).unwrap());
+    assert!(stroke_contains(&closed, closing, &stroke).unwrap());
+
+    // Dash runs along exact accumulated arc length from the first declared point. The legs are
+    // 2 and 2 long, so a 1-on 1-off pattern covers `[0,1]` and `[2,3]`.
+    stroke.dash = vec![1.0, 1.0];
+    assert!(stroke_contains(&open, [-1.5, 0.0], &stroke).unwrap());
+    assert!(!stroke_contains(&open, [-0.6, 0.0], &stroke).unwrap());
+    assert!(stroke_contains(&open, [0.0, 0.5], &stroke).unwrap());
+    assert!(!stroke_contains(&open, [0.0, 1.5], &stroke).unwrap());
+
+    // Every dash endpoint is an endpoint, so a square cap extends past the `[0,1]` dash end.
+    assert!(!stroke_contains(&open, [-0.9, 0.0], &stroke).unwrap());
+    stroke.cap = 3;
+    assert!(stroke_contains(&open, [-0.9, 0.0], &stroke).unwrap());
+}
+
+#[test]
 fn dashed_circle_stroke_starts_at_three_oclock_and_winds_clockwise() {
     let quarter = std::f64::consts::FRAC_PI_2;
     let diagonal = std::f64::consts::FRAC_1_SQRT_2;
