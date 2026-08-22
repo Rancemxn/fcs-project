@@ -1741,7 +1741,10 @@ pub fn rasterize_solid_rgba8_with_limits_at(
         };
         // Render section 8.2 binds every stroke to a paint, so a node that declares a
         // stroke without a resolvable paint is invalid rather than merely unpainted.
-        let stroke_source = if matches!(op.kind, NodeKind::Line | NodeKind::Circle) {
+        let stroke_source = if matches!(
+            op.kind,
+            NodeKind::Line | NodeKind::Circle | NodeKind::Polyline | NodeKind::Polygon
+        ) {
             match op.stroke.as_ref() {
                 Some(stroke) => Some(
                     raster_paint_source(
