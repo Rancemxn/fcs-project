@@ -797,5 +797,5 @@ git diff --check
   strokes with section 15.2 joins, caps, closure and exact dash arc length;
   dynamic source Line stroke descriptors, Ellipse and RoundedRect strokes,
   source ImagePattern lowering, source Path lowering, Path semantic/raster coverage,
-  broader canonical writer coverage, Polyline/Text geometry, broader resource semantics, isolated compositing, and
+  broader canonical writer coverage, Text geometry, broader resource semantics, isolated compositing, and
   semantic/raster conformance remain open under #295.

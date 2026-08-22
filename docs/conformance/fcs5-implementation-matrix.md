@@ -240,7 +240,7 @@ non-`Path` parametric geometry. Its evidence is bound by
 and `semantic_tests::polyline_stroke_joins_caps_and_closure_follow_section_15_2`.
 Dynamic source Line stroke descriptors, source `polyline` and `polygon` stroke lowering,
 Ellipse and RoundedRect strokes, source ImagePattern lowering, source Path lowering,
-Path semantic/raster coverage, broader canonical writer coverage, Polyline/Text, and
+Path semantic/raster coverage, broader canonical writer coverage, Text, and
 descriptor-driven gradient stroke lowering remain outside these bounded units; no
 Frozen or final I10 claim changes.
 
