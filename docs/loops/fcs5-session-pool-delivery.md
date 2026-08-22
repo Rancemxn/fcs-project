@@ -298,10 +298,11 @@ workflow label, force-push, lower required checks, or update `main`.
 
 # Tool and Credential Boundary
 
-Role is stable across assignments; model, effort, prompt detail, and task-specific read-only context are
-selected by the parent coordinator per assignment. Historical model names or old `.pi/settings.json` overrides
-are not implicit policy. The coordinator must keep the role capability and tool boundary fixed even when a
-different model is selected.
+Role is stable across assignments. Every warm or temporary child session uses the fixed
+`local/gpt-5.6-luna` model with `effort=max` and `thinkingLevel=max`; only the assignment prompt,
+read-only context and scope vary. Historical model names or old `.pi/settings.json` overrides
+are not implicit policy. The coordinator must reassert these values when registering or assigning a
+session.
 
 新开的 child session 默认排除直接 `bash`、`find`、`grep` 工具，文件读取和搜索使用
 FastCtx `read`、`grep`、`glob`。deliver 可使用受限 `fastctx_run` 做 Git、Delivery
