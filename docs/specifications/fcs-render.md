@@ -452,6 +452,23 @@ ImagePattern 的 `transform` 不是宿主 matrix blob，而是固定四字段
 Node transform 相同；这些字段可以是 exact descriptor。`repeat` 是 compile-time enum
 `"none" | "x" | "y" | "both"`，默认 `"both"`；`sampling` 与 Image 使用同一 enum和像素约定。
 
+Render source 里 `imagePattern` 只接一个 resource 参数，transform 四字段、`repeat` 与 `sampling`
+是 owning node body 的兄弟 field，与 Stroke 在 source 中的摊平方式相同。固定拼写是：
+
+```text
+fill: imagePattern(@resourceName);
+patternPosition: vec2<length>      // 默认同 Node position
+patternOrigin: vec2<length>        // 默认同 Node origin
+patternRotation: angle             // 默认同 Node rotation
+patternScale: vec2<float>          // 默认同 Node scale
+patternRepeat: "none" | "x" | "y" | "both"   // 默认 "both"
+patternSampling                    // 与 Image 同一 enum，默认同 Image
+```
+
+六个 field 都可省略并取上述默认值。前缀 `pattern` 是必需的，因为 `position`、`origin`、`rotation`、
+`scale` 在 node body 中已经是 Node transform 自身的 field 名。同一 node 上的 fill 与 stroke 各自
+绑定独立 Paint record，因此两者都使用 ImagePattern 时共享这一组 `pattern*` field。
+
 ### 8.2 Stroke
 
 ```text
@@ -464,7 +481,8 @@ dashOffset: length
 ```
 
 Stroke 必须显式绑定一个 Paint。`width` 和 `dashOffset` 可以是 exact descriptor；`cap`、`join`、
-`miterLimit` 与 dash element 必须 compile-time 确定。Dash 总长度必须大于 0；奇数长度数组在
+`miterLimit` 与 dash element 必须 compile-time 确定。非空 dash array 的总长度必须大于 0；空
+dash array 合法，表示实线 stroke，其行为见第 15.2 节；奇数长度数组在
 canonical lowering 时复制一次成为偶数，因此 RenderSection 只保存偶数 count。Width=0 表示不
 绘制 stroke，不表示 device hairline。Dash phase 先以总长度做
 `offset - floor(offset / total) * total` 归一化到 `[0,total)`；零长度 dash element 合法，但整个数组
@@ -1246,6 +1264,11 @@ stroke 保持 open；Polygon fill/stroke 都 closed。Path 的每个 open subpat
 参数曲线；reference 实现可以按 source order递归二分，直到 control hull/arc sagitta 到 chord 的最大
 距离不超过 `1/1024` logical px，最大 depth 32，left half先于right half。超过 depth仍不满足是
 `render.limit-exceeded`，不能放宽 tolerance。
+
+上一段的 flatten 规则适用于每一个参数化几何，不只是 Path，因此 Ellipse 和 RoundedRect 的 corner
+arc 使用同一 sagitta 界、同一 depth 上限、同一 left-before-right 细分顺序，coverage 与 dash 弧长都
+由它决定。弧长有精确闭式的几何可以直接使用闭式而不 flatten：Circle 的弧长精确为 `θ · radius`，
+在本节的 tolerance 界内与 flatten 弧长的差异低于 sample grid 间距，两种做法都 conforming。
 
 Stroke 是路径中心线以 `width/2` 扩张的闭集。Butt cap 在 endpoint 截断；square 沿切线再扩
 `width/2`；round 加半圆。Bevel 连接两个外侧 offset endpoint；round 使用以 vertex为中心的扇形；

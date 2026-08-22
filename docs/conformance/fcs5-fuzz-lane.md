@@ -84,3 +84,27 @@ with `--sanitizer none`, the corpus grown across runs via the Actions cache,
 and crash inputs uploaded as run artifacts on failure. The weekly workflow is
 separate from the ADR 0013 full gate and is not merge evidence; a crash it
 finds is triaged as a review finding against the owning surface.
+
+## Known residual: brace-only parser recovery cost
+
+Issue #520 reported that `document_bytes` and `document_utf8` timed out on `main` for five
+consecutive weekly runs. The root cause was the document-level recovery in
+`crates/fcs-source/src/parser/document.rs`: `nested_delimiters` matches only a complete balanced
+group, so an unclosed `{` or `[` degraded `skip_then_retry_until` into skipping one token and
+re-attempting the whole `top_level_item_parser()` alternation, which is polynomial in the token
+count after the first unclosed delimiter. Issue #523, merged as `b518eab`, made
+`delimiter_balance` report the innermost unclosed delimiter that is not a brace whenever one
+exists, so those inputs are now rejected at the lexical gate. The brace-only exemption that
+document-level recovery depends on is preserved verbatim, and
+`robustness::an_unfinished_block_still_reaches_document_level_recovery` pins it.
+
+A document whose **only** imbalance is an unclosed brace still reaches the per-token retry loop.
+A `Weekly fuzz` dispatch on `b518eab`, run 32552513637, succeeded on all ten targets, so 30
+minutes of coverage-guided search per parser target did not reach that class. That is negative
+evidence, not a bound. Issue #520 was closed on it rather than left open as a hypothesis: if a
+future weekly run goes red, triage whether the input is brace-only, and if it is, choose between
+resynchronizing recovery on top-level boundaries without disturbing `misplaced_item_parser`,
+`unknown_item_parser`, or `trailing_item_parser`, and publishing a parse-work limit, which would
+need a specification amendment. The 10-second assertion in
+`robustness::unclosed_brackets_are_reported_even_when_a_brace_is_innermost` guards the fixed route,
+and is a guard rather than a performance budget.

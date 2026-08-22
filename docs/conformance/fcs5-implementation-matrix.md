@@ -229,13 +229,17 @@ unconditionally required. A declared stroke now lowers and makes `fill` optional
 `circle` with neither is rejected at lowering. Its evidence is bound by
 `source_product::{source_circle_stroke_reaches_product_render_loader,source_circle_fill_and_stroke_reach_the_product_raster,source_circle_without_fill_or_stroke_is_rejected,source_line_without_a_stroke_is_still_rejected}`.
 A source stroke cannot yet declare an empty `dash`, because a Render node body gives an
-empty array literal no expected element type, so a source-authored stroke is always dashed;
-that turned out to be a contradiction between sections 8.2 and 15.2 and is tracked as #527.
+empty array literal no expected element type, so a source-authored stroke is always dashed.
+That was a contradiction between sections 8.2 and 15.2; #527 resolved it in favour of the empty
+array being legal, recorded as governance amendment 2.0.3, and the source path follows in a
+separate unit.
 Issue #529 adds `Polyline` and `Polygon` strokes to the writer and the reference rasterizer.
 Their arc length is exact and section 15.2 already fixes their joins, caps, closure and
 zero-length segment handling, so unlike `Ellipse` and `RoundedRect` they carry no open
-decision; those two wait on #528, the missing flatten tolerance for arc length on a
-non-`Path` parametric geometry. Its evidence is bound by
+decision. #528 resolved the missing flatten tolerance for `Ellipse` and `RoundedRect` by
+extending section 15.2's existing `Path` rule to every parametric geometry, and #533 fixed the
+source spelling of `imagePattern`; both are recorded as governance amendment 2.0.3, and both
+implementations follow in separate units. Its evidence is bound by
 `source_product::{canonical_polyline_and_polygon_strokes_reach_the_product_raster,canonical_rect_stroke_is_still_rejected}`
 and `semantic_tests::polyline_stroke_joins_caps_and_closure_follow_section_15_2`.
 Issue #531 then makes a source `polyline` or `polygon` able to declare that stroke on the same

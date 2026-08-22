@@ -78,6 +78,42 @@ Profile 1.0.0 的旧 Frozen 状态并完成 Source grammar closure。随后用�
 profile 和 exact-first runtime expression 边界，因此五个版本域均进入本表所示的重新修订或联合
 复审状态。
 
+### 2.0.3 Render dash, flatten, and imagePattern spelling amendment (2026-08-22)
+
+Issues #527, #528, and #533 recorded three Render gaps found while delivering the stroke units.
+The project owner delegated this class of technical judgement to the agent on 2026-08-22, so each
+decision is recorded on its Issue as an agent decision with its evidence and its rejected
+alternatives rather than as an owner ruling.
+
+`fcs-render.md` section 8.2 now reads that a **non-empty** dash array's total length must exceed 0
+and that an empty dash array is legal and means a solid stroke. This is an erratum, not a semantic
+change: section 15.2 as amended in 2.0.2 already describes empty-dash behaviour, FCBC
+`StrokeRecord.dashCount` already admits 0, and the loader already applies the total-length rule only
+to a non-empty array. The earlier wording made an approved clause unreachable.
+
+Section 15.2 now applies its existing flatten rule to every parametric geometry rather than only to
+`Path`, so `Ellipse` and `RoundedRect` corner arcs use the same `1/1024` logical px sagitta bound,
+the same depth 32 limit, and the same left-before-right subdivision order for both coverage and dash
+arc length. A geometry whose arc length has an exact closed form may use it instead of flattening,
+which keeps the merged `Circle` implementation conforming. No new vocabulary or constant is
+introduced.
+
+Section 8.1 now fixes the Render source spelling of `imagePattern`: the constructor takes only the
+resource, and the transform's four fields plus `repeat` and `sampling` are sibling fields on the
+owning node body, named `patternPosition`, `patternOrigin`, `patternRotation`, `patternScale`,
+`patternRepeat`, and `patternSampling`. All six are optional and default per section 8.1. This
+follows the flattening that source Stroke already established, so paint constructors keep a fixed
+argument count and no optional-argument rule is added.
+
+The affected candidate file is `fcs-render.md`. The FCS Render Profile candidate remains **Draft**:
+this amendment revises a Draft candidate and does not establish or restore any Frozen status. The
+exact-head Full Gate, Primary Self-Audit, and independent review continue to govern implementation
+delivery, and the I10 re-freeze gate is unchanged.
+
+Implementation follows in separate bounded units: the source empty-`dash` path, source
+`imagePattern` lowering, and `Ellipse`/`RoundedRect` strokes built on the flatten rule plus the
+polyline stroke kernel merged in #530.
+
 ### 2.0.2 Closed parametric stroke dash amendment (2026-08-22)
 
 Issue #522 records the accepted decision for a stroke on a closed parametric
