@@ -271,6 +271,272 @@ fn canonical_line_stroke_writer_reaches_product_render_loader() {
     assert!(draw[0].stroke.is_some());
 }
 
+fn canonical_circle_stroke_compilation(dash: Vec<f64>, keep_fill: bool) -> CanonicalCompilation {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 16px; height: 16px; }
+    layer main {
+        pass: "overlay";
+        children {
+            circle ring {
+                center: vec2(0px, 0px);
+                radius: 5px;
+                fill: solid(#FFFFFFFF);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("canonical Circle stroke source parses");
+    let base = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .expect("canonical Circle stroke source lowers");
+    let original = base.chart().render().expect("source Render scene");
+    let original_node = &original.nodes()[0];
+    let width_descriptor = base
+        .chart()
+        .descriptors()
+        .expect("source Render descriptors")
+        .descriptors()
+        .iter()
+        .position(|descriptor| descriptor.property_type() == &CanonicalExpressionType::Length)
+        .expect("source fixture must provide a Length descriptor");
+    let mut ids = StableIdRegistry::new();
+    let stroke_id = ids
+        .insert(
+            EntityKind::RenderStroke,
+            CanonicalTextualId::explicit("circle-stroke").expect("stroke textual ID"),
+        )
+        .expect("stroke stable ID");
+    let stroke_paint_id = ids
+        .insert(
+            EntityKind::RenderPaint,
+            CanonicalTextualId::explicit("circle-stroke-paint").expect("stroke paint textual ID"),
+        )
+        .expect("stroke paint stable ID");
+    // Render section 14.2 forbids sharing one paint record between a fill and a stroke, so
+    // the stroke gets its own table entry with the same payload.
+    let stroke_paint =
+        CanonicalRenderPaint::new(stroke_paint_id, original.paints()[0].data().clone())
+            .expect("canonical Circle stroke paint");
+    let (paints, fill_paint, stroke_paint_index) = if keep_fill {
+        (
+            vec![original.paints()[0].clone(), stroke_paint],
+            Some(0usize),
+            1usize,
+        )
+    } else {
+        (vec![stroke_paint], None, 0usize)
+    };
+    let stroke = CanonicalRenderStroke::new(
+        stroke_id,
+        stroke_paint_index,
+        width_descriptor,
+        CanonicalStrokeCap::Butt,
+        CanonicalStrokeJoin::Miter,
+        4.0,
+        width_descriptor,
+        dash,
+    )
+    .expect("canonical Circle stroke");
+    let node = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+        id: original_node.id().clone(),
+        kind: CanonicalRenderNodeKind::Circle,
+        parent: original_node.parent(),
+        layer: original_node.layer(),
+        document_order: original_node.document_order(),
+        z_order: original_node.z_order(),
+        attachment: original_node.attachment().clone(),
+        active: original_node.active(),
+        isolate: original_node.isolate(),
+        follow_hidden_attachment: original_node.follow_hidden_attachment(),
+        position: original_node.position(),
+        origin: original_node.origin(),
+        rotation: original_node.rotation(),
+        scale: original_node.scale(),
+        opacity: original_node.opacity(),
+        visibility: original_node.visibility(),
+        geometry: Some(0),
+        fill_paint,
+        stroke: Some(0),
+        clip: None,
+        composite: original_node.composite(),
+    })
+    .expect("canonical Circle node");
+    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+        viewport: original.viewport(),
+        layers: original.layers().to_vec(),
+        nodes: vec![node],
+        geometries: original.geometries().to_vec(),
+        paths: Vec::new(),
+        paints,
+        strokes: vec![stroke],
+        clips: Vec::new(),
+        glyph_runs: Vec::new(),
+    })
+    .expect("canonical Circle scene");
+    CanonicalCompilation::new(
+        base.chart().clone().with_render(scene),
+        base.resources().clone(),
+        base.distribution().clone(),
+    )
+}
+
+/// The sample whose centre is nearest the viewport centre, as a premultiplied RGBA8 quad.
+fn centre_pixel(pixels: &[u8], width: usize) -> [u8; 4] {
+    let index = ((width / 2) * width + (width / 2)) * 4;
+    [
+        pixels[index],
+        pixels[index + 1],
+        pixels[index + 2],
+        pixels[index + 3],
+    ]
+}
+
+#[test]
+fn canonical_circle_stroke_writer_reaches_product_render_loader() {
+    let compilation = canonical_circle_stroke_compilation(Vec::new(), false);
+    let scene = compilation
+        .chart()
+        .render()
+        .expect("canonical Circle scene");
+    let bytes = write_from_compilation(&compilation).expect("canonical Circle FCBC writing");
+    let render = load_render(&bytes).expect("canonical Circle product loader");
+
+    assert_eq!(render.nodes.len(), 1);
+    assert_eq!(render.nodes[0].kind, NodeKind::Circle);
+    assert_eq!(render.nodes[0].fill_paint, None);
+    assert_eq!(render.nodes[0].stroke_ref, Some(0));
+    assert!(matches!(
+        render.geometries[0].data,
+        GeometryData::Circle { center, radius } if center != u32::MAX && radius != u32::MAX
+    ));
+    assert_eq!(render.paints.len(), 1);
+    assert_eq!(render.strokes.len(), 1);
+    assert_eq!(render.strokes[0].id, scene.strokes()[0].id().value());
+    assert_eq!(render.strokes[0].cap, 1);
+    assert_eq!(render.strokes[0].join, 1);
+    assert_eq!(render.strokes[0].miter_limit.to_bits(), 4.0f64.to_bits());
+    assert!(render.strokes[0].dash.is_empty());
+    assert_eq!(
+        render.core.descriptors[render.strokes[0].width_descriptor as usize].property_type,
+        fcs_fcbc::ValueType::Length
+    );
+
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Circle semantic draw list");
+    assert_eq!(draw.len(), 1);
+    assert_eq!(draw[0].kind, NodeKind::Circle);
+    let stroke = draw[0].stroke.as_ref().expect("Circle stroke draw op");
+    // The only Length descriptor in the fixture is the 5px radius, so the ring the raster
+    // assertions below rely on is exactly `[radius - width/2, radius + width/2]`.
+    assert_eq!(stroke.width.to_bits(), 5.0f64.to_bits());
+
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Circle stroke raster");
+    assert_eq!(pixels.len(), 16 * 16 * 4);
+    // Render section 15.2 dilates the centre line, so a stroke-only Circle covers the
+    // annulus and leaves the interior empty.
+    assert_eq!(centre_pixel(&pixels, 16)[3], 0);
+    assert!(
+        pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0),
+        "a solid Circle stroke must contribute annulus coverage"
+    );
+}
+
+#[test]
+fn canonical_circle_fill_and_stroke_both_reach_the_raster() {
+    let compilation = canonical_circle_stroke_compilation(Vec::new(), true);
+    let bytes = write_from_compilation(&compilation).expect("canonical Circle FCBC writing");
+    let render = load_render(&bytes).expect("canonical Circle product loader");
+
+    // The writer orders the paint table by stable id, so the encoded indices are not the
+    // canonical table order. Assert the invariant that matters: both references resolve and
+    // Render section 14.2 keeps the fill and the stroke on separate paint records.
+    assert_eq!(render.paints.len(), 2);
+    assert_eq!(render.strokes.len(), 1);
+    assert_eq!(render.nodes[0].stroke_ref, Some(0));
+    let fill_paint = render.nodes[0].fill_paint.expect("Circle fill paint");
+    assert_ne!(fill_paint, render.strokes[0].paint_ref);
+
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Circle raster");
+    // Render section 7 emits the fill draw op before the stroke draw op for the same node,
+    // so declaring both keeps the interior covered instead of replacing it.
+    assert_ne!(centre_pixel(&pixels, 16)[3], 0);
+}
+
+#[test]
+fn canonical_circle_without_fill_or_stroke_is_rejected() {
+    let compilation = canonical_circle_stroke_compilation(Vec::new(), false);
+    let scene = compilation
+        .chart()
+        .render()
+        .expect("canonical Circle scene");
+    let node = &scene.nodes()[0];
+    let bare = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+        id: node.id().clone(),
+        kind: CanonicalRenderNodeKind::Circle,
+        parent: node.parent(),
+        layer: node.layer(),
+        document_order: node.document_order(),
+        z_order: node.z_order(),
+        attachment: node.attachment().clone(),
+        active: node.active(),
+        isolate: node.isolate(),
+        follow_hidden_attachment: node.follow_hidden_attachment(),
+        position: node.position(),
+        origin: node.origin(),
+        rotation: node.rotation(),
+        scale: node.scale(),
+        opacity: node.opacity(),
+        visibility: node.visibility(),
+        geometry: Some(0),
+        fill_paint: None,
+        stroke: None,
+        clip: None,
+        composite: node.composite(),
+    })
+    .expect("bare canonical Circle node");
+    let bare_scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+        viewport: scene.viewport(),
+        layers: scene.layers().to_vec(),
+        nodes: vec![bare],
+        geometries: scene.geometries().to_vec(),
+        paths: Vec::new(),
+        paints: Vec::new(),
+        strokes: Vec::new(),
+        clips: Vec::new(),
+        glyph_runs: Vec::new(),
+    })
+    .expect("bare canonical Circle scene");
+    let bare_compilation = CanonicalCompilation::new(
+        compilation.chart().clone().with_render(bare_scene),
+        compilation.resources().clone(),
+        compilation.distribution().clone(),
+    );
+    let error = write_from_compilation(&bare_compilation)
+        .expect_err("a Circle with neither fill nor stroke must be rejected");
+    assert_eq!(error.category(), "fcbc.dangling-reference");
+}
+
+#[test]
+fn canonical_dashed_circle_stroke_is_rejected_until_the_dash_origin_is_specified() {
+    let compilation = canonical_circle_stroke_compilation(vec![1.0, 2.0], false);
+    // Render section 15.2 restarts dash at each subpath start, but no clause gives a closed
+    // parametric geometry a subpath start or a winding direction, so the product writer
+    // refuses rather than choosing one of several legal seams.
+    let error = write_from_compilation(&compilation)
+        .expect_err("a dashed Circle stroke must be rejected while its dash origin is undefined");
+    assert_eq!(error.category(), "fcbc.render-unsupported");
+}
+
 #[test]
 fn source_line_stroke_reaches_product_render_loader() {
     let source = r#"#fcs 5.0.0
