@@ -811,8 +811,16 @@ fn delimiter_balance(tokens: &[SpannedToken]) -> Option<DelimiterError> {
             expected_closers.push((expected, source_span(*span)));
         }
     }
+    // The unclosed-brace exemption below keeps document-level recovery for unfinished
+    // blocks, so report the innermost unclosed delimiter that is *not* a brace when one
+    // exists. Reporting only the innermost delimiter let a document whose innermost
+    // unclosed delimiter happened to be a brace carry unclosed brackets or parentheses
+    // past this gate into the recovering parser, which has no cheap path for them.
     expected_closers
-        .last()
+        .iter()
+        .rev()
+        .find(|(expected, _)| *expected != Punctuation::RightBrace)
+        .or_else(|| expected_closers.last())
         .map(|(expected, span)| DelimiterError::Unclosed {
             expected: *expected,
             span: *span,
