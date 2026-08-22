@@ -120,3 +120,19 @@ review-unit 分配并生成后继审查 handoff，不把空 frontier 标记为 `
 该 amendment 取代第 8 节关于“最多 10 次后返回 `waiting-for-main` residual 并结束 reviewer turn”的表述；其余
 权限、分支隔离、重试、进度消息、规范权威边界和 I10 success signal 保持不变。具体执行契约以本节、`AGENTS.md`、
 `docs/agents/issue-tracker.md`、`docs/loops/loop.md` 和 `docs/loops/review-loop.md` 的一致文本为准。
+
+## 10. 2026-08-23 dated amendment：session-pool delivery
+
+用户进一步接受以 session-pool 承载并行交付：主 Rancemxn 会话是持久 coordinator 和唯一可以执行
+`gh pr ready`、merge 或更新 `main` 的角色；两个 `deliver` slot 可以在不重叠的 writer scope
+内并发实现；`reviewer`、`researcher` 和 `scout` 是只读角色。`deliver` 负责 assigned branch
+的实现、commit、push、draft PR、Primary audit 和 exact-head-SHA Action handoff；reviewer
+不写代码、不创建 corrective PR，已确认 finding 由新的 isolated `deliver` corrective lane
+处理。所有本地 lane 只执行 fmt/static，Cargo build/test/lint/fuzz 和 executable fixture
+统一由 GitHub Actions 执行。
+
+本 amendment 由 ADR 0014 和 `docs/loops/fcs5-session-pool-delivery.md` 实施，并明确取代第 7–9 节中
+与以下角色/执行边界冲突的表述：当前主会话是唯一实现者、reviewer 可以自行创建 corrective PR、
+以及旧 loop 文件是当前执行契约。第 7–9 节的 GitHub Issue/PR authority、append-only progress、
+固定 SHA、finding 严重度、retry/outbox、I10 success signal 和规范权威边界仍然有效。旧 loop
+路径保留为 superseded pointer 以维护历史链接，不恢复其旧权限模型；未来变化须新建 ADR。
