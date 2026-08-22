@@ -145,7 +145,9 @@ pub fn decode_image_with_limits(
         ColorType::L16 | ColorType::Rgb16 | ColorType::La16 | ColorType::Rgba16 => {
             let rgba = image.to_rgba16();
             rgba.as_raw()
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|pixel| {
                     [
                         f64::from(pixel[0]) / 65_535.0,
@@ -159,7 +161,9 @@ pub fn decode_image_with_limits(
         _ => {
             let rgba = image.to_rgba8();
             rgba.as_raw()
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|pixel| {
                     [
                         f64::from(pixel[0]) / 255.0,

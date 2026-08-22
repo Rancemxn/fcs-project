@@ -611,7 +611,7 @@ render profile 1.0.0 {
     let pixels =
         rasterize_solid_rgba8_at(&render, 0.75, 16, 16).expect("point geometry rasterization");
     assert!(
-        pixels.chunks_exact(4).any(|pixel| pixel[3] != 0),
+        pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0),
         "filled point geometry should contribute raster coverage"
     );
 }
@@ -706,7 +706,7 @@ render profile 1.0.0 {
 
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Image rasterization");
     assert_eq!(pixels.len(), 4 * 4 * 4);
-    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
+    assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
 }
 
 #[test]
@@ -836,7 +836,7 @@ render profile 1.0.0 {
     assert_eq!(pattern.sampling, 2);
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("ImagePattern rasterization");
     assert_eq!(pixels.len(), 4 * 4 * 4);
-    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
+    assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
 }
 
 #[test]
@@ -1097,7 +1097,7 @@ render profile 1.0.0 {
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Path rasterization");
     assert_eq!(pixels.len(), 4 * 4 * 4);
     assert!(
-        pixels.chunks_exact(4).any(|pixel| pixel[3] != 0),
+        pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0),
         "written Path should contribute raster coverage"
     );
 }

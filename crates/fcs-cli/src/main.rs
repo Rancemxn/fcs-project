@@ -1671,7 +1671,7 @@ fn read_fcbc_bytes(path: &Path) -> Result<Vec<u8>, ExitCategory> {
             return Err(ExitCategory::InputInvalid);
         }
         let mut out = Vec::with_capacity(filtered.len() / 2);
-        for pair in filtered.chunks_exact(2) {
+        for pair in filtered.as_chunks::<2>().0 {
             let pair = std::str::from_utf8(pair).map_err(|_| {
                 eprintln!("error: invalid hex");
                 ExitCategory::InputInvalid

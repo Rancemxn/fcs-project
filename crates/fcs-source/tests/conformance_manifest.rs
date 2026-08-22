@@ -528,7 +528,9 @@ fn decode_lower_hex(value: &str, description: &str) -> Vec<u8> {
 
     value
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let digit = |byte: u8| match byte {
                 b'0'..=b'9' => byte - b'0',
@@ -554,7 +556,9 @@ fn decode_hex_file(path: &Path) -> Vec<u8> {
     );
 
     digits
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let high = (pair[0] as char).to_digit(16).unwrap_or_else(|| {
                 panic!("hex fixture contains a non-hex byte: {}", path.display())
