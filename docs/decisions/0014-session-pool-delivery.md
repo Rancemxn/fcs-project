@@ -120,3 +120,43 @@ contract：
 - Markdown、YAML/JSON/schema/reference checks 与 `git diff --check` 通过；
 - 不运行本地 Cargo build/test/lint/fuzz；没有同 SHA Full Gate 的要求，除非本 PR 改动
   workflow 执行逻辑或 Rust/build/dependency/test/executable fixture。
+
+## 7. 2026-08-23 dated amendment: unattended four-slot dispatcher delivery
+
+This append-only amendment repairs the active operating contract without rewriting the historical
+decision above or changing any FCS domain semantics. It supersedes only conflicting active execution
+wording in this ADR, the active loop, and its references:
+
+- The coordinator/main session is dispatcher, gatekeeper, allocator, and merge owner only. It selects
+  frontier, assigns bounded Issues, receives child reports, checks acceptance and remote state, routes
+  follow-ups, and performs the final Ready/merge decision. It does not implement, investigate, gather
+  ordinary product evidence, or run ordinary product commands.
+- All implementation, research, and review work is assigned through `session_pool`. Four assignments
+  may be active in parallel. Each assignment has its own monitor with `wake` policy, its own recorded
+  monitor ID, and a deadline at least one hour after assignment start. An aggregate monitor is forbidden.
+  After coordinator acceptance and remote read-back, release immediately makes the slot reusable for the
+  next bounded Issue.
+- Children are unattended and never call `ask_user_question`. A genuine unresolved choice is reported
+  as `needs-decision` or `blocked` with exact evidence, alternatives, impact, and recommendation. The
+  coordinator assigns follow-up investigation or opens a `ready-for-human` HUMAN-only Issue, skips the
+  blocked frontier, and continues independent work.
+- `deliver` uses the Delivery logical identity; `reviewer` uses the Review logical identity; researcher
+  and scout remain read-only. If the required broker identity is unavailable or uncertain, the child
+  reports `needs-info`, stops remote writes, and never falls back to coordinator credentials. Secrets,
+  tokens, App identifiers, and broker endpoints remain outside prompts, metadata, Issues, PRs, and files.
+- Children never run local Cargo check, Clippy, build, test, nextest, fuzz, or executable fixtures. They
+  push a fixed SHA and use GitHub Actions Full Gate; local worktrees run only fmt/static checks. An
+  exceptional main-lane compilation need is reported to the coordinator with the exact command and reason,
+  not run by the child.
+- The lifecycle is deliver draft PR → exact-head Full Gate → Primary Self-Audit → coordinator assignment
+  of the fixed head to reviewer → reviewer pass or request-changes/findings. Disagreement creates a new
+  corrective deliver assignment from the fixed reviewed SHA; after corrective gate and Primary audit, the
+  coordinator sends the new SHA back to reviewer. This repeats until reviewer pass and no unresolved
+  Critical/Important finding. Only then does the coordinator perform the final diff/required-check/
+  mergeability/scope gate and merge. Reviewer never implements corrective code or merges.
+- Issue and PR comments/reports are append-only English Markdown. Assignment completion, monitor completion,
+  or child report is not remote acceptance; the coordinator must read back GitHub Issue/PR/Action state before
+  accepting or merging.
+
+The prior historical role, topology, and monitor wording remains preserved above as decision history;
+this amendment is the active clarification and is implemented by the current loop and active references.

@@ -136,7 +136,7 @@ gh pr view <number> --json reviewDecision,mergeable,statusCheckRollup,files |
 gh pr ready <number>
 ```
 
-Do not merge until required checks pass, review requirements are satisfied, the branch is mergeable, a passing `Primary audit result` is recorded, and all Primary-audit Critical/Important findings in the applicable gate are closed. The independent reviewer may still be pending; any reviewer finding that arrives before or after merge follows the routing rules below. Never use `gh pr merge --admin` to bypass protection. Merge only when the user has authorized it.
+Do not merge until required checks pass, review requirements are satisfied, the branch is mergeable, a passing `Primary audit result` is recorded, the fixed-head reviewer returns pass, and all Critical/Important findings in the applicable gate are closed. Never use `gh pr merge --admin` to bypass protection. Merge only when the user has authorized it.
 
 ## Session-pool delivery and review
 
@@ -146,12 +146,16 @@ supersedes the current execution-role clauses in the former `docs/loops/loop.md`
 kept only as superseded pointers so historical plan and review links remain resolvable.
 
 The parent Rancemxn session is the persistent coordinator and the only actor allowed to run `gh pr ready`,
-merge a PR, close the delivery Issue when appropriate, or update `main`. It does not act as the ordinary
-implementation writer. Two warm `deliver` slots may implement independent bounded assignments concurrently;
-`reviewer`, `researcher`, and `scout` are read-only roles. Session-pool slots are reusable, session IDs are
-per-run, and every assignment must carry the Issue, base/head SHA, branch, absolute worktree, owner, allowed
-paths, authority, acceptance, non-goals, validation, and handoff fields. Session-pool state does not replace
-remote Issue/PR/Action state and does not provide file locking.
+merge a PR, close the delivery Issue when appropriate, or update `main`. It is dispatcher, gatekeeper,
+allocator, and merge owner only: it selects frontier, assigns bounded Issues, receives child reports, checks
+acceptance/remote state, routes follow-ups, and performs the final Ready/merge decision. It does not implement,
+investigate, gather ordinary product evidence, or run ordinary product commands. All implementation, research,
+and review work is assigned through `session_pool` to unattended children. Four active assignments are allowed;
+each has its own slot, monitor with `wake` policy, and deadline of at least one hour. Slots are reusable after
+coordinator acceptance and release; session IDs are per-run. Every assignment must carry the Issue, base/head
+SHA, branch, absolute worktree, owner, slot/monitor, deadline, allowed paths, authority, acceptance, non-goals,
+validation, and handoff fields. Session-pool state does not replace remote Issue/PR/Action state and does not
+provide file locking.
 
 `deliver` may modify only its assigned worktree, commit and push its branch as the Delivery logical identity,
 create/update the draft PR, append progress and Primary audit, and wait for exact-head-SHA Action evidence.
@@ -164,27 +168,29 @@ by Rancemxn. Running, missing, failed, old-SHA, or mismatched runs are not passe
 Before Ready/merge, `deliver` records `Primary audit result` on the PR and associated Issue when applicable.
 The record binds `Issue/PR or commit + head SHA + scope + commands + full-gate evidence + acceptance gate`
 and includes Target, Head SHA, Scope, Commands, Full-gate evidence, Verdict, Findings, Gate impact,
-Limitations, and Next. Rancemxn reviews the diff and remote state and may proceed after a passing Primary audit
-without waiting for the asynchronous reviewer, unless a current Critical/Important finding or other gate blocker
-has arrived.
+Limitations, and Next. After Primary audit, the coordinator assigns that exact fixed head to `reviewer`.
+Ready/merge remains blocked until reviewer returns pass and no unresolved Critical/Important finding remains.
 
-After Primary audit, Rancemxn sends `Review requested` for the fixed SHA. The warm `reviewer` reads and audits
-that snapshot, may comment, request changes, and create a finding Issue, but may not edit code, commit, push,
-or create a corrective PR. A confirmed current-stage Critical/Important finding is assigned to a new isolated
-`deliver` corrective lane. Open-PR corrective work starts at the reviewed fixed head SHA and targets the active
-PR branch; historical merged-commit corrective work starts at latest `origin/main` and targets `main`. Rancemxn
-reviews and merges the corrective PR; its new head SHA receives a new Primary audit and reviewer re-review.
-The reviewer records an append-only `Audit result` on the fixed target even when there are no findings. Any
-push, scope, command, dependency, or acceptance change invalidates the affected audit and requires a new fixed
-snapshot and superseding/re-review record. Reviewer advisories are HUMAN-only Issues and do not block the gate
-unless evidence upgrades them to an implementation, conformance, or normative finding.
+The unattended reviewer reads and audits the fixed snapshot, may comment, request changes, and create a finding
+Issue, but may not call `ask_user_question`, edit code, commit, push, or create a corrective PR. A disagreement
+or confirmed current-stage Critical/Important finding is assigned by the coordinator to a new isolated `deliver`
+corrective lane from the fixed reviewed SHA. Open-PR corrective work targets the active PR branch; historical
+merged-commit corrective work targets `main`. After corrective gate and Primary audit, the coordinator sends the
+new SHA to reviewer again. Repeat until reviewer pass and no unresolved Critical/Important finding; only then does
+Rancemxn perform the final diff/required-check/mergeability/scope gate and merge. Reviewer advisories are HUMAN-only
+Issues and do not block the gate unless evidence upgrades them to an implementation, conformance, or normative
+finding.
 
-All local worktrees are limited to `cargo fmt --all -- --check` and non-building static checks. Do not run
-local Cargo check, Clippy, build, test, nextest, fuzz, or executable fixtures; those checks come from GitHub
-Actions. A documentation/workflow-policy-metadata-only change has Rust Full Gate `non-applicable`; changing
-`.github/workflows/full-gate.yml` execution logic or Rust/build/dependency/test/executable-fixture content makes
-the applicable gate mandatory. Do not report session reports, local results, cached output, or pending remote
-sync as GitHub success.
+All local worktrees are limited to `cargo fmt --all -- --check` and non-building static checks. Children never
+run local Cargo check, Clippy, build, test, nextest, fuzz, or executable fixtures; those checks come from GitHub
+Actions. If a child has an exceptional need for main-lane compilation, it reports the exact command and reason
+to the coordinator instead of running it. Unattended children never call `ask_user_question`; they return
+`needs-decision`/`blocked` with exact evidence, alternatives, impact, and recommendation. The coordinator either
+assigns follow-up investigation or opens a `ready-for-human` HUMAN-only Issue, skips that blocked frontier, and
+continues independent work. A documentation/workflow-policy-metadata-only change has Rust Full Gate
+`non-applicable`; changing `.github/workflows/full-gate.yml` execution logic or Rust/build/dependency/test/
+executable-fixture content makes the applicable gate mandatory. Do not report session reports, monitor completion,
+local results, cached output, or pending remote sync as GitHub success.
 
 Use `.github/ISSUE_TEMPLATE/review_finding.md` for reviewer-created findings so the fixed snapshot, severity, gate
 impact, reproduction, owner, target stage, and corrective acceptance conditions are not omitted. The reviewer does not

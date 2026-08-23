@@ -14,16 +14,21 @@
   `docs/specifications/governance.md` 管理。本文件不声明阶段完成、版本 Frozen 或公开发布。
 - ADR 0014 是本工作流的 Accepted decision。后续改变角色权限、session 拓扑、lane
   生命周期、验证门禁或 supersession 关系时，必须新建 ADR 和新的命名 workflow 文档；
-  不得静默修改本文件形成第二套隐含流程。
+  不得静默修改本文件形成第二套隐含流程。经明确授权的 documentation-only contract repair
+  可以追加 dated amendment 到 ADR 0014 并同步修正本 active contract，但不得改写历史决定；
+  本次四-slot unattended delivery repair 由 ADR 0014 §7 记录。
 - GitHub Issue、PR、session-pool assignment、agent 报告、实现和测试只安排或证明工作，
   不得创造规范语义。
 - 历史的 `1ae7ab7` 和已关闭 Issue #511 只作为旧 workflow 的来源证据，不是当前状态入口。
 
 # Goal & Success Signal
 
-目标是在不把主会话变成普通实现 worker 的情况下，持续交付可审查的 FCS work unit：
-主会话选择和分配任务，`deliver` 完成实现，`reviewer` 对固定 SHA 独立复审，
-只有 Rancemxn 可以把 PR 标记 Ready、合并 PR 或更新 `main`。
+目标是在不把主会话变成普通实现 worker 的情况下，持续交付可审查的 FCS work unit。
+Coordinator/main session 是 dispatcher、gatekeeper、allocator 和 merge owner only：它选择
+frontier、分配 bounded Issue、接收 child report、检查 acceptance/remote state、路由
+follow-up，并执行最终 Ready/merge；它不实现、不调查、不收集普通 product evidence，也不运行
+ordinary product commands。所有 implementation、research 和 review work 通过 `session_pool`
+分配给 unattended child；只有 coordinator 可以把 PR 标记 Ready、合并 PR 或更新 `main`。
 
 一个 work unit 只有同时满足以下条件才算交付：
 
@@ -31,10 +36,9 @@
 - deliver 的首个可审查 commit 已建立 draft PR，后续 push 的 branch/PR 状态可回读；
 - 适用的 GitHub Full Gate 对目标 SHA 成功，且 run 的 `headSha` 与目标 SHA 完全一致；纯 workflow/documentation metadata work unit 明确记录 Rust gate `non-applicable`；
 - deliver 已在 PR 和 Issue（若有）追加 Primary audit result；
-- 主会话已检查 diff、Issue/PR、required checks、mergeability、finding 和 scope，
-  并由 Rancemxn 执行 Ready/merge；
-- reviewer 已收到固定 SHA 的 Review requested，或在合并后按 review frontier 排队；
-- worktree 的 owner、dirty 状态、后续清理条件和残余已记录。
+- coordinator 已将固定 head 交给 reviewer，reviewer 已返回 pass，且没有未解决的 Critical/Important finding；
+- coordinator/main session 已检查 acceptance、diff、Issue/PR、required checks、mergeability、scope 和远端状态，并执行最终 Ready/merge；
+- worktree 的 owner、dirty 状态、assignment monitor、后续清理条件和残余已记录。
 
 该信号不代表阶段完成、规范 Frozen 或公开发布完成。阶段和发布仍由路线图、治理、
 conformance、独立 review 和最终 gate 判定。
@@ -72,40 +76,48 @@ conformance、独立 review 和最终 gate 判定。
 
 | 角色 | GitHub 身份 | 允许 | 禁止 |
 |---|---|---|---|
-| Parent coordinator | `Rancemxn` | 选择 frontier、分配 lane、审 diff、Ready、merge、更新 `main`、处理 approval gate | 不把主会话当作普通实现 writer；不在共享 lane 代写实现 |
-| `deliver` | 逻辑身份 `deliver`，由 Delivery App broker 提供凭据 | 在已分配 worktree 修改文件、commit、push branch、创建/更新 draft PR、写 progress 和 Primary audit、等待并核对 Action | Ready、merge、push `main`、关闭主 Issue、修改主 Issue workflow label、绕过 branch protection |
-| `reviewer` | 逻辑身份 `reviewer`，由 Review App broker 提供凭据 | 读取固定 Issue/PR/commit、review、comment、request changes、创建 finding Issue 和审查记录 | 修改代码、commit、push、创建 corrective PR、Ready、merge、写主实现 worktree |
-| `researcher` | 无独立交付身份 | 读取固定来源、使用允许的 Tavily 查询、返回版本/hash/路径/行为证据 | 写规范、写仓库、选 semantic profile、创建交付状态 |
-| `scout` | 无独立交付身份 | 读取代码、跟踪调用链、做静态范围调查、返回文件/行号/风险 | 写仓库、commit、push、创建或修改 Issue/PR |
+| Parent coordinator | `Rancemxn` | 选择 frontier、分配 bounded Issue、分配/释放 slot、检查 acceptance/remote state、路由 follow-up、执行最终 diff/required-check/mergeability/scope gate、Ready、merge、更新 `main` | 实现、调查、收集普通 product evidence、运行 ordinary product commands、在共享 lane 代写实现 |
+| `deliver` | 逻辑身份 `deliver`，由 Delivery broker 提供凭据 | 在已分配 worktree 修改文件、commit、push branch、创建/更新 draft PR、写 progress 和 Primary audit、等待并核对 Action | Ready、merge、push `main`、关闭主 Issue、修改主 Issue workflow label、绕过 branch protection |
+| `reviewer` | 逻辑身份 `reviewer`，由 Review broker 提供凭据 | 读取固定 Issue/PR/commit、review、comment、request changes、创建 finding Issue 和审查记录 | 修改代码、commit、push、实现 corrective code、创建 corrective PR、Ready、merge、写主实现 worktree |
+| `researcher` | 只读 logical role | 读取固定来源、使用允许的 Tavily 查询、返回版本/hash/路径/行为证据 | 写规范、写仓库、选 semantic profile、创建交付状态或远端写入 |
+| `scout` | 只读 logical role | 读取代码、跟踪调用链、做静态范围调查、返回文件/行号/风险 | 写规范、写仓库、commit、push、创建或修改 Issue/PR |
+
+所有 implementation、research 和 review assignment 都必须通过 `session_pool`。Children
+是 unattended：不得调用 `ask_user_question`。遇到真实未决选择时，child 必须返回
+`needs-decision` 或 `blocked`，并给出 exact evidence、alternatives、impact 和 recommendation；
+coordinator 要么分配 follow-up investigation 给 child，要么创建 `ready-for-human` HUMAN-only
+Issue，跳过 blocked frontier 并继续独立 work。`deliver` 必须使用 Delivery identity，`reviewer`
+必须使用 Review identity；researcher/scout 保持只读。required broker identity 缺失或不确定时，
+child 必须报告 `needs-info`、停止远端写入，绝不能静默使用 coordinator credentials。
 
 Bot display names and badges are outside this workflow; existing App display names and the default GitHub identicons remain unchanged.
 Repository files record only logical identities. App ID, installation ID, private key, token,
 broker endpoint and secret do not enter the repository, Issue, PR, session metadata or prompt.
 
 工具 allowlist 不是安全边界。实际权限由 broker 身份、GitHub App permission、branch
-protection 和主会话的 merge owner 共同保证。
+protection 和 coordinator 的 merge owner 共同保证。
 
 # Session Pool Topology
 
-## Warm slots
+## Four active assignment slots
 
-主会话保持长期运行，正常使用 `/compact`，不主动 `/new`。默认手工预热以下窗口：
+Coordinator/main session maintains four parallel active assignment slots. A slot is a reusable
+capability slot, not a permanent Issue or role; each occupied slot binds one child session, one
+bounded assignment, one logical role, one worktree/snapshot, and one acceptance contract. The pool
+may contain idle sessions for `deliver`, `reviewer`, `researcher`, or `scout`, but no fifth active
+assignment is silently treated as part of the batch. If fewer than four frontiers are ready, the
+unused slot stays idle rather than inventing work.
 
-```text
-deliver-1
-deliver-2
-reviewer
-researcher
-scout
-```
+Each of the four active assignments receives its own independent `session_pool.monitor_start`:
+`wakePolicy=wake`, one monitor ID recorded in assignment metadata, and an explicit deadline at least
+one hour after assignment start (`timeoutMs >= 3_600_000` when expressed through the tool). Never
+replace these monitors with one aggregate monitor. A monitor observes the Pi session only and never
+replaces GitHub Issue/PR/Action read-back.
 
-窗口是可复用的能力槽位，不绑定永久 Issue。两个 deliver 槽位可以同时领取两个互不
-冲突的写 lane；reviewer、researcher 和 scout 可以同时工作。并发受 writer scope、
-固定 snapshot、远端 gate 和本机资源约束，而不是只按窗口数量放行。
-
-临时 `session_pool.spawn` 只用于短、明确、一次性的任务或热槽故障恢复，不作为主 lane
-的常驻来源。managed child 的停止和 coordinator shutdown 语义不得影响手工预热的
-常驻窗口。
+When a child completes, the coordinator must first read back remote state and acceptance, then call
+`session_pool.release`. The released slot is immediately reusable for the next bounded Issue. A
+child report, monitor completion, or release without coordinator acceptance is not remote success.
+Temporary `session_pool.spawn` is limited to short, explicit work or slot recovery.
 
 ## Discovery and cwd
 
@@ -134,43 +146,44 @@ session pool 不创建、删除或锁定这些 worktree。owner、branch、base/
 
 ## Slot registration and reuse
 
-窗口首次启动或 `/new` 后执行：
+窗口首次启动或 `/new` 后，按可复用 slot 登记；role 在 assignment 时绑定：
 
 ```text
-/pool-ready deliver-1
-/pool-meta role=deliver notes="slot=deliver-1"
+/pool-ready slot-1
+/pool-meta role=deliver notes="active-slot=slot-1"
 ```
 
-其他槽位使用对应的 display name 和 role。coordinator 在分配前必须调用
-`session_pool.list`，确认 session 新鲜、idle、同 cwd、role/slot 正确，再调用 `assign`。
+同样登记 `slot-2`、`slot-3` 和 `slot-4`。Coordinator 在分配前必须调用
+`session_pool.list`，确认 session 新鲜、idle、同 cwd、role/slot 正确，再调用 `assign`；
+随后为该 assignment 启动独立 monitor，`wakePolicy=wake`，deadline 至少一小时。
 
-assignment 结束后，child 先使用 `report` 提交短 handoff，主会话完成远端 Frontier Sync，
-确认 worktree 和 assignment 可释放，再调用 `release`。child 随后可以 `/new`，新的
-session ID 必须重新登记原 slot；不得把旧 session ID 当作永久身份。
+Assignment 结束时，child 先用 `report` 提交短 handoff；coordinator read-back Issue/PR/Action
+和 acceptance，确认 worktree 可释放后调用 `release`，然后立即把该 slot 复用到下一个 bounded
+Issue。child 随后可以 `/new`，新的 session ID 必须重新登记原 slot；不得把旧 session ID 当作
+永久身份。Assignment 中途正常禁止 `/new`。崩溃、凭据污染、上下文不可恢复时，child 先报告
+worktree、dirty 状态、最近 commit、未完成 acceptance 和恢复点；coordinator 检查现场后创建
+successor assignment。旧 assignment 不因 session report 或 monitor transition 自动成功。
 
-assignment 中途正常禁止 `/new`。崩溃、凭据污染、上下文不可恢复时，child 先报告
-worktree、dirty 状态、最近 commit、未完成 acceptance 和恢复点；主会话检查现场后
-创建 successor assignment。旧 assignment 不因 session 报告而自动变成成功。
-
-`monitor_start` 只监控 Pi session，不替代 GitHub Action 查询。普通 progress 使用
-`queue` 或 `silent`；`needs_attention`、`needs_decision`、failed Action 和最终交付
-才使用 `wake`。
+每个 active assignment 恰好一个 monitor；不得建立 aggregate monitor。Monitor 只监控 Pi
+session，不替代 GitHub Action 查询。
 
 # Assignment Contract
 
 每个非机械 assignment 必须绑定一个 Issue 和一个独立 lane，并把以下字段传给 child：
 
-- assignment、Issue、branch、base SHA、worktree 和 slot；
-- role、GitHub logical identity、owner 和允许修改路径；
+- assignment、Issue、branch、base SHA、worktree、slot 和独立 monitor ID；
+- role、GitHub logical identity、owner、deadline（至少一小时）和允许修改路径；
 - 规范、ADR、计划、fixture 和 review 的入口；
 - numbered acceptance criteria、明确 non-goals 和 dependency residual；
 - 本地允许的 fmt/static 命令与必须通过的 GitHub Action evidence；
-- 禁止的远端动作、禁止的文件范围和 scope conflict stop condition；
-- 输出格式：changed paths、commit、PR、Action URL/run ID/event/headSha/conclusion、
+- 禁止的远端动作、禁止的文件范围、禁止 `ask_user_question` 和 scope conflict stop condition；
+- needs-decision/blocked 输出格式：exact evidence、alternatives、impact、recommendation；
+- 最终输出格式：changed paths、commit、PR、Action URL/run ID/event/headSha/conclusion、
   Primary audit 或 review verdict、blocker 和 Next。
 
-Prompt 只传固定入口和边界，不复制整份规范或主会话历史。child 必须使用 FastCtx
-读取仓库文件；报告是交接材料，不是规范或 GitHub 状态的替代品。
+Prompt 只传固定入口和边界，不复制整份规范或主会话历史。Child 必须使用 FastCtx
+读取仓库文件，保持 unattended，不调用 `ask_user_question`；报告是交接材料，不是规范或
+GitHub 状态的替代品。
 
 ## Writer scope
 
@@ -204,10 +217,12 @@ Primary/reviewer verdict 失效，必须追加 superseding/re-review。
    checks、finding 和当前 worktree，选择最早 dependency-ready bounded Issue。
 2. **Prepare**：从最新 `origin/main` 建立 `codex/<issue>-<slug>` 和对应
    `worktrees/<issue>-<slug>`，固定 base SHA、scope、owner 和验收条件。
-3. **Assign**：把 assignment contract 发给空闲 deliver 槽位；并行 lane 必须通过 writer
-   scope 检查。
-4. **Implement**：deliver 只在自己的 worktree 中修改、commit 和静态检查。首次出现
-   可审查 commit 时创建 draft PR；PR body 和第一条 Progress 记录稳定契约和 non-goals。
+3. **Assign**：把 assignment contract 发给四个 active slot 之一；implementation、research
+   和 review 都必须经过 `session_pool`，并为每个 assignment 建立独立 `wake` monitor。
+   并行 lane 必须通过 writer scope 检查。
+4. **Implement**：unattended deliver 只在自己的 worktree 中修改、commit 和静态检查。首次
+   出现可审查 commit 时创建 draft PR；PR body 和第一条 Progress 记录稳定契约和 non-goals。
+   Unattended reviewer/researcher/scout 只执行各自只读或审查职责。
 5. **Push and gate**：deliver 使用 Delivery broker push branch。当前 Full Gate 保留
    `push`、`pull_request` 和 `workflow_dispatch`；每次 branch push 都是候选 SHA。
    deliver 等待 Action 并回读 run 的精确 `headSha`。
@@ -218,15 +233,21 @@ Primary/reviewer verdict 失效，必须追加 superseding/re-review。
 7. **Primary audit**：deliver 在 PR 和 Issue（若有）追加 `Primary audit result`，
    固定 Target、Head SHA、Scope、Commands、Full-gate evidence、Verdict、Findings、
    Gate impact、Limitations 和 Next。Primary audit 不是 reviewer 的独立证据。
-8. **Main gate**：主会话审查完整 diff、Issue/PR、required checks、mergeability、
-   review threads、scope 和 audit。只有 `pass` 且没有当前 gate 的 Critical/Important
-   finding 时，Rancemxn 才能 `gh pr ready` 和 merge。主会话不等待 reviewer 返回后才可
-   进行普通 merge，但任何已到达的阻塞 finding 都优先冻结交付。
-9. **Review request**：deliver/主会话在 Primary audit 后发送固定 SHA 的 `Review requested`。
-   reviewer 异步审查开放 PR 或已合并的固定 commit；后续 push、scope、命令、依赖或
-   acceptance 变化使旧请求失效。
-10. **Release**：主会话确认远端 handoff 和 worktree 状态后释放 assignment；lane worktree
-    只有在 owner 确认 clean、commit/PR 已记录且清理条件满足后才能 remove/prune。
+8. **Review request**：Primary audit 后，coordinator 把 exact fixed head 分配给 reviewer。
+   Reviewer 对固定 SHA 返回 pass 或 request-changes/findings；后续 push、scope、命令、依赖
+   或 acceptance 变化使旧请求失效。
+9. **Corrective loop**：reviewer disagreement 或 Critical/Important finding 冻结当前 gate。
+   Coordinator 从 reviewer 固定 SHA 分配新的 corrective `deliver` assignment；deliver 重新
+   通过适用 gate 和 Primary audit，coordinator 再把新 SHA 送 reviewer。Reviewer 永远不实现
+   corrective code、不创建 corrective PR、不 merge。重复直到 reviewer pass 且无未解决的
+   Critical/Important finding。
+10. **Main gate**：reviewer pass 后，coordinator/main session 执行最终 diff、acceptance、
+    required-check、mergeability、review-thread、scope 和 remote-state gate；只有全部通过时
+    coordinator 才能 `gh pr ready` 和 merge。Coordinator 不实施、不调查、不收集普通 product
+    evidence、不运行 ordinary product commands。
+11. **Release**：coordinator read-back remote handoff 和 worktree 状态，确认 clean 后释放
+    assignment；slot 立即复用到下一个 bounded Issue，lane worktree 只有清理条件满足后才能
+    remove/prune。
 
 ## Local and remote validation
 
@@ -238,8 +259,9 @@ Primary/reviewer verdict 失效，必须追加 superseding/re-review。
 
 任何 worktree 都不运行本地 `cargo check`、`cargo clippy`、`cargo build`、`cargo test`、
 `cargo nextest`、`cargo fuzz` 或 executable fixture。测试、Clippy、build、fuzz 和可执行
-fixture 只在 GitHub Actions 的干净 checkout 中执行。Local fmt/static 结果不构成 Full Gate
-证据。
+fixture 只在 GitHub Actions 的干净 checkout 中执行。Child 如认为必须使用 main compile lane，
+只能报告 exact command 和 reason 给 coordinator，不能自行运行。Local fmt/static 结果不构成
+Full Gate 证据。
 
 纯 workflow/documentation metadata 改动的 Rust Full Gate 为 non-applicable，但仍须运行
 适用的 Markdown、链接、YAML/JSON/schema 和 diff 检查。`.github/workflows/full-gate.yml`
@@ -350,6 +372,7 @@ normative conflict.
 | Two writers overlap or worktree is foreign/dirty | LOCAL | freeze; create integration/corrective lane; never reset or force-remove |
 | Normative/profile choice has materially different valid outcomes | HUMAN | present evidence/options/impact; stop dependent implementation |
 | Remote write or broker fails after retry budget | LOCAL/WAIT | preserve payload, stable identity, error and `pending remote sync`; do not claim success |
+| Child reports `needs-decision`/`blocked` | PLANNER/HUMAN | preserve exact evidence/options/impact/recommendation; assign follow-up investigation or open `ready-for-human` HUMAN-only Issue, skip blocked frontier |
 | Credential, system, release, destructive or license action | HUMAN | apply the matching Approval Gate before acting |
 
 # Worktree Cleanup
@@ -370,7 +393,7 @@ worktree. lane、review snapshot 和 corrective snapshot 都必须有 owner、�
 修改本文件、ADR 或 active workflow references 后，至少运行：
 
 ```text
-markdownlint-cli2 --config <temporary-config> docs/loops/fcs5-session-pool-delivery.md docs/decisions/0014-session-pool-delivery.md
+markdownlint-cli2 --config <temporary-config> docs/loops/fcs5-session-pool-delivery.md docs/decisions/0014-session-pool-delivery.md AGENTS.md docs/agents/issue-tracker.md
 <applicable link/reference and YAML/JSON/schema checks>
 git diff --check
 git status --short

@@ -219,21 +219,30 @@
 
 #### Session-pool delivery
 
-当前交付角色、权限、并发、slot/assignment/session 生命周期、writer scope、worktree、验证和
-recovery 统一由 `docs/loops/fcs5-session-pool-delivery.md` 与 ADR 0014 定义：Rancemxn 是
-coordinator 和唯一 Ready/merge/main owner；`deliver` 是可并发的实现 writer；`reviewer`、
-`researcher` 和 `scout` 是只读角色。reviewer 不创建或实现 corrective PR，finding 由新的
-`deliver` corrective lane 处理。旧 loop 文件只保留 superseded pointer，不能作为当前执行契约。
+当前交付角色、权限、四-slot 并发、独立 monitor、assignment/session 生命周期、writer scope、
+worktree、验证和 recovery 统一由 `docs/loops/fcs5-session-pool-delivery.md` 与 ADR 0014 定义。
+Rancemxn coordinator/main session 是 dispatcher、gatekeeper、allocator 和唯一 Ready/merge/main
+owner；它不实现、不调查、不收集普通 product evidence、不运行 ordinary product commands。
+所有 implementation、research 和 review work 必须通过 `session_pool` 分配给 unattended child；
+`deliver` 使用 Delivery identity，`reviewer` 使用 Review identity，researcher/scout 只读。
+Reviewer 不实现 corrective code、不创建 corrective PR，finding 由新的 `deliver` corrective
+assignment 处理。四个 active assignment 各自拥有独立 `wake` monitor 和至少一小时 deadline；
+slot 在 coordinator read-back acceptance/release 后立即复用。旧 loop 文件只保留 superseded pointer，
+不能作为当前执行契约。
 
-所有非机械 assignment 都必须固定 Issue、base/head SHA、branch、绝对 worktree、allowed
-paths、authority、acceptance、non-goals、validation 和输出格式。两个 deliver writer 可以并发，
-但相同文件、规范域或全局路径必须经过 coordinator 的 scope lease；session-pool 不提供文件锁。
-`deliver` 首次产生可审查 commit 时建立 draft PR；任何后续 audit/review 以精确 head SHA 绑定，
+所有非机械 assignment 都必须固定 Issue、base/head SHA、branch、绝对 worktree、slot/monitor、
+owner、allowed paths、authority、acceptance、non-goals、validation、deadline 和输出格式。
+同一文件、规范域或全局路径必须经过 coordinator 的 scope lease；session-pool 不提供文件锁。
+Unattended child 禁止 `ask_user_question`；needs-decision/blocked 必须包含 exact evidence、
+alternatives、impact 和 recommendation，coordinator 路由 follow-up 或 HUMAN-only Issue。
+`deliver` 首次产生可审查 commit 时建立 draft PR；后续 audit/review 以精确 head SHA 绑定，
 SHA、scope、命令、依赖或 acceptance 变化会使旧 verdict 失效。
 
 本地所有 worktree 只做 fmt/static；Cargo check、Clippy、build、test、nextest、fuzz 和可执行
-fixture 统一由 GitHub Actions 执行。适用 gate、Primary audit、required checks、mergeability、
-review finding 和远端状态的具体字段见新 loop；不得把 session report 或本地结果写成远端成功。
+fixture 统一由 GitHub Actions 执行。子会话如需 main compile lane，只能向 coordinator 报告
+exact command/reason，不能自行运行。适用 gate、Primary audit、required checks、mergeability、
+review finding 和远端状态的具体字段见新 loop；不得把 session report、monitor completion 或
+本地结果写成远端成功。
 
 ### Domain docs
 
