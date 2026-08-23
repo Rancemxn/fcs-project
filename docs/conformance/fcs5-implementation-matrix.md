@@ -261,7 +261,9 @@ existing `tests::every_public_render_limit_has_focused_boundary_evidence`.
 
 Source Text grammar/lowering, shaping beyond `simple-ltr-1`, Text stroke,
 Path/ImagePattern/dynamic descriptor work, and broader Render closure remain
-outside this unit. This delta does not change any Frozen or final I10 claim.
+outside this unit. GitHub Actions Full Gate run `32621285244` (`push`) passed on
+exact head `620980611f5e985a179b90911f6ec1e097fe17a2`; this delta does not change
+any Frozen or final I10 claim.
 
 ## Credit stable identity delta
 
