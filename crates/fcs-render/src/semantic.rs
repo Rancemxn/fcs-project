@@ -118,6 +118,7 @@ struct EvaluatedShape {
 
 const GLYPH_FLATTEN_TOLERANCE: f64 = 1.0 / 1024.0;
 const GLYPH_MAX_FLATTEN_DEPTH: u8 = 32;
+type TextContours = Vec<Vec<[f64; 2]>>;
 
 #[derive(Clone)]
 enum LocalShape {
@@ -2800,7 +2801,7 @@ fn evaluate_text(
     origin_descriptor: u32,
     chart_time: f64,
     environment: EvaluationEnvironment,
-) -> Result<([f64; 4], Vec<Vec<[f64; 2]>>), &'static str> {
+) -> Result<([f64; 4], TextContours), &'static str> {
     let origin = query_vec2_in(
         chart,
         origin_descriptor,
