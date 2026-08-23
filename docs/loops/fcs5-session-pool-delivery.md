@@ -78,9 +78,9 @@ conformance、独立 review 和最终 gate 判定。
 | `researcher` | 无独立交付身份 | 读取固定来源、使用允许的 Tavily 查询、返回版本/hash/路径/行为证据 | 写规范、写仓库、选 semantic profile、创建交付状态 |
 | `scout` | 无独立交付身份 | 读取代码、跟踪调用链、做静态范围调查、返回文件/行号/风险 | 写仓库、commit、push、创建或修改 Issue/PR |
 
-Bot display name 可以从历史 App 名称迁移为 `deliver` 和 `reviewer`，头像使用 GitHub
-identicon。仓库文件只记录逻辑身份；App ID、installation ID、private key、token、
-broker endpoint 和 secret 不进入仓库、Issue、PR、session metadata 或 prompt。
+Bot display names and badges are outside this workflow; existing App display names and the default GitHub identicons remain unchanged.
+Repository files record only logical identities. App ID, installation ID, private key, token,
+broker endpoint and secret do not enter the repository, Issue, PR, session metadata or prompt.
 
 工具 allowlist 不是安全边界。实际权限由 broker 身份、GitHub App permission、branch
 protection 和主会话的 merge owner 共同保证。
