@@ -1,0 +1,52 @@
+#fcs 5.0.0
+format { profile: renderable; }
+resources {
+    image linearSprite {
+        source: "assets/fcs-test-rgba8.png";
+        hash: "sha256:a108791d9edc1d9c37644a45ce29d4a20e479711db97daf85375b82924e8fa22";
+        mediaType: "image/png";
+        colorSpace: "srgb";
+        alpha: "straight";
+        sampling: "linear";
+    }
+    image nearestSprite {
+        source: "assets/fcs-test-rgba8.png";
+        hash: "sha256:a108791d9edc1d9c37644a45ce29d4a20e479711db97daf85375b82924e8fa22";
+        mediaType: "image/png";
+        colorSpace: "srgb";
+        alpha: "straight";
+        sampling: "nearest";
+    }
+}
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport {
+        width: 4px;
+        height: 4px;
+        colorSpace: "linear-srgb";
+    }
+    layer main {
+        pass: "overlay";
+        space: "screen";
+        children {
+            rect patterned {
+                origin: vec2(-2px, -2px);
+                size: vec2(4px, 4px);
+                position: vec2(0px, 0px);
+                fill: imagePattern(@linearSprite);
+                stroke: imagePattern(@nearestSprite);
+                width: 1px;
+                cap: "round";
+                join: "round";
+                miterLimit: 4.0;
+                dash: [];
+                dashOffset: 0px;
+                patternPosition: vec2(0px, 0px);
+                patternOrigin: vec2(0px, 0px);
+                patternRotation: 0deg;
+                patternScale: vec2(1.0, 1.0);
+                patternRepeat: "both";
+            }
+        }
+    }
+}

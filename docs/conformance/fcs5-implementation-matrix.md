@@ -228,20 +228,18 @@ silently dropped because canonical lowering computed one only for `Line`, and `f
 unconditionally required. A declared stroke now lowers and makes `fill` optional, while a
 `circle` with neither is rejected at lowering. Its evidence is bound by
 `source_product::{source_circle_stroke_reaches_product_render_loader,source_circle_fill_and_stroke_reach_the_product_raster,source_circle_without_fill_or_stroke_is_rejected,source_line_without_a_stroke_is_still_rejected}`.
-A source stroke cannot yet declare an empty `dash`, because a Render node body gives an
-empty array literal no expected element type, so a source-authored stroke is always dashed.
-That was a contradiction between sections 8.2 and 15.2; #527 resolved it in favour of the empty
-array being legal, recorded as governance amendment 2.0.3, and the source path follows in a
-separate unit.
+The source empty-`dash` path is not implemented in this matrix yet. #527 resolved the
+specification contradiction in favour of an empty array being legal and directly meaning a
+solid stroke; its source fixture therefore remains owned by the separate source-lowering unit.
 Issue #529 adds `Polyline` and `Polygon` strokes to the writer and the reference rasterizer.
-Their arc length is exact and section 15.2 already fixes their joins, caps, closure and
-zero-length segment handling, so unlike `Ellipse` and `RoundedRect` they carry no open
-decision. #528 resolved the missing flatten tolerance for `Ellipse` and `RoundedRect` by
-extending section 15.2's existing `Path` rule to every parametric geometry, and #533 fixed the
-source spelling of `imagePattern`; both are recorded as governance amendment 2.0.3, and both
-implementations follow in separate units. Its evidence is bound by
-`source_product::{canonical_polyline_and_polygon_strokes_reach_the_product_raster,canonical_rect_stroke_is_still_rejected}`
-and `semantic_tests::polyline_stroke_joins_caps_and_closure_follow_section_15_2`.
+Their line-segment arclength is exact and section 15.2 fixes their joins, caps, closure and
+zero-length segment handling. #528 resolved the missing flatten tolerance for the remaining
+parametric curves, and #533 fixed the source spelling of `imagePattern`; the corrective governance
+record now makes exact-arclength priority and the shared pattern configuration explicit.
+Neither amendment is implementation evidence. The checked-in source and expected contract
+`render/image-pattern-sibling-fields.{fcs,contract.md}` is intentionally not in the active manifest
+until the I9 Render source/canonical ImagePattern-lowering owner activates it with machine expected
+output. The contract has no Full Gate or product-pass claim.
 Issue #531 then makes a source `polyline` or `polygon` able to declare that stroke on the same
 terms as #525 gave `circle`, bound by
 `source_product::{source_polyline_and_polygon_strokes_reach_the_product_raster,source_polygon_fill_and_stroke_keep_separate_paint_records,source_polyline_without_fill_or_stroke_is_rejected}`.
