@@ -30,8 +30,8 @@ Explain the checked items and name affected files or gates.
 - Fixed head SHA at request time: <!-- fill in the Review requested comment; do not rewrite history -->
 - Re-review triggers: <!-- any push, scope, command, dependency, or acceptance change -->
 
-The independent reviewer records the verdict in append-only comments on the PR (and associated Issue). Do not
-repeatedly edit this section; follow `docs/loops/review-loop.md`.
+The fixed-SHA reviewer records the verdict in append-only comments on the PR (and associated Issue). Do not
+repeatedly edit this section; follow `docs/loops/fcs5-session-pool-delivery.md`.
 
 ## Progress
 
@@ -56,16 +56,17 @@ Focused checks actually run:
 <!-- commands and results -->
 ```
 
-Full Rust checkpoint, when applicable:
+Full Rust checkpoint, when applicable, runs in GitHub Actions rather than a local worktree:
 
 ```text
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo nextest run --workspace
+scripts/fcs5-fuzz-smoke.sh bounded
 ```
 
 List every skipped or unavailable gate with its reason. Do not report a non-applicable gate as passed. The exact
-review/merge gate is defined by `docs/agents/issue-tracker.md` and `docs/loops/loop.md`.
+review/merge gate is defined by `docs/agents/issue-tracker.md` and `docs/loops/fcs5-session-pool-delivery.md`.
 
 ## Risks and follow-up
 
