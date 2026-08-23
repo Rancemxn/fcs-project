@@ -116,6 +116,9 @@ struct EvaluatedShape {
     world_matrix: [f64; 9],
 }
 
+const GLYPH_FLATTEN_TOLERANCE: f64 = 1.0 / 1024.0;
+const GLYPH_MAX_FLATTEN_DEPTH: u8 = 32;
+
 #[derive(Clone)]
 enum LocalShape {
     Rect {
@@ -144,6 +147,9 @@ enum LocalShape {
         /// Render section 15.2 keeps a Polyline stroke open and closes a Polygon stroke. Fill
         /// uses the implicit closing segment either way, so only the stroke reads this.
         closed: bool,
+    },
+    Text {
+        contours: Vec<Vec<[f64; 2]>>,
     },
     Image {
         bounds: [f64; 4],
@@ -1062,6 +1068,7 @@ fn local_shape_contains(shape: &LocalShape, point: [f64; 2]) -> bool {
         } => ellipse_contains(*center, *radius_x, *radius_y, *rotation, point),
         LocalShape::Line { .. } => false,
         LocalShape::Polygon { points, .. } => polygon_contains(points, point),
+        LocalShape::Text { contours } => text_contains(contours, point),
         LocalShape::Image { bounds } => {
             bounds[2] > bounds[0]
                 && bounds[3] > bounds[1]
@@ -1071,6 +1078,39 @@ fn local_shape_contains(shape: &LocalShape, point: [f64; 2]) -> bool {
                 && point[1] < bounds[3]
         }
     }
+}
+
+fn text_contains(contours: &[Vec<[f64; 2]>], point: [f64; 2]) -> bool {
+    let mut winding = 0i32;
+    for contour in contours {
+        // Glyph outlines use the same nonzero fill rule as Render 1.0 Text.
+        // Keeping the winding accumulator across contours preserves holes.
+
+        if contour.len() < 2 {
+            continue;
+        }
+        for index in 0..contour.len() {
+            let [x0, y0] = contour[index];
+            let [x1, y1] = contour[(index + 1) % contour.len()];
+            let cross = (x1 - x0) * (point[1] - y0) - (point[0] - x0) * (y1 - y0);
+            if cross == 0.0
+                && point[0] >= x0.min(x1)
+                && point[0] <= x0.max(x1)
+                && point[1] >= y0.min(y1)
+                && point[1] <= y0.max(y1)
+            {
+                return true;
+            }
+            if y0 <= point[1] {
+                if y1 > point[1] && cross > 0.0 {
+                    winding += 1;
+                }
+            } else if y1 <= point[1] && cross < 0.0 {
+                winding -= 1;
+            }
+        }
+    }
+    winding != 0
 }
 
 fn stroke_contains(
@@ -1656,8 +1696,7 @@ fn composite_premultiplied(
 /// Rasterize supported fill and Line stroke geometry to tightly packed RGBA8 bytes.
 ///
 /// The Render 1.0 reference sample grid is used for Rect, RoundedRect, Circle,
-/// Ellipse, Line, Polyline, and Polygon geometry; path/text coverage remains
-/// outside this bounded path.
+/// Ellipse, Line, Polyline, Polygon, and Text geometry with solid paint.
 pub fn rasterize_solid_rgba8(
     chart: &DecodedRenderChart,
     width: u32,
@@ -1711,6 +1750,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                 | NodeKind::Line
                 | NodeKind::Polyline
                 | NodeKind::Polygon
+                | NodeKind::Text
                 | NodeKind::Image
         ) {
             continue;
@@ -2642,6 +2682,11 @@ fn geometry_evaluation(
                 None,
             )
         }
+        GeometryData::Text { glyph_runs, origin } => {
+            let (bounds, contours) =
+                evaluate_text(chart, glyph_runs, *origin, chart_time, environment)?;
+            (bounds, Some(LocalShape::Text { contours }), None)
+        }
         GeometryData::Image {
             resource_id,
             destination,
@@ -2747,6 +2792,211 @@ fn source_axis_has_texel_center(origin: f64, size: f64, dimension: u32) -> bool 
         .floor()
         .min(f64::from(dimension.saturating_sub(1)));
     first <= last
+}
+
+fn evaluate_text(
+    chart: &DecodedRenderChart,
+    glyph_run_refs: &[u32],
+    origin_descriptor: u32,
+    chart_time: f64,
+    environment: EvaluationEnvironment,
+) -> Result<([f64; 4], Vec<Vec<[f64; 2]>>), &'static str> {
+    let origin = query_vec2_in(
+        chart,
+        origin_descriptor,
+        chart_time,
+        ValueType::Vec2Length,
+        environment,
+    )?;
+    let mut contours = Vec::new();
+    for glyph_run_ref in glyph_run_refs {
+        let run = chart
+            .glyph_runs
+            .get(*glyph_run_ref as usize)
+            .ok_or("render.invalid-reference")?;
+        let size = query_scalar_in(
+            chart,
+            run.size_descriptor,
+            chart_time,
+            ValueType::Length,
+            environment,
+        )?;
+        if size <= 0.0 {
+            return Err("render.invalid-geometry");
+        }
+        let font = chart
+            .decoded_fonts
+            .get(&run.font_resource_id)
+            .ok_or("render.resource-not-found")?;
+        if font.units_per_em == 0 || !run.run_offset.iter().all(|value| value.is_finite()) {
+            return Err("render.invalid-geometry");
+        }
+        let scale = size / f64::from(font.units_per_em);
+        let mut pen = [run.run_offset[0] * size, run.run_offset[1] * size];
+        if !pen.iter().all(|value| value.is_finite()) {
+            return Err("render.invalid-geometry");
+        }
+        for placement in &run.glyphs {
+            if ![
+                placement.x_advance,
+                placement.y_advance,
+                placement.x_offset,
+                placement.y_offset,
+            ]
+            .iter()
+            .all(|value| value.is_finite())
+            {
+                return Err("render.invalid-geometry");
+            }
+            let glyph = font
+                .glyphs
+                .get(placement.glyph_id as usize)
+                .ok_or("render.invalid-geometry")?;
+            let glyph_origin = [
+                origin[0] + pen[0] + placement.x_offset * size,
+                origin[1] + pen[1] + placement.y_offset * size,
+            ];
+            if !glyph_origin.iter().all(|value| value.is_finite()) {
+                return Err("render.invalid-geometry");
+            }
+            for contour in &glyph.contours {
+                let points = glyph_contour(contour, glyph_origin, scale)?;
+                if points.len() >= 3 {
+                    contours.push(points);
+                }
+            }
+            pen[0] += placement.x_advance * size;
+            pen[1] += placement.y_advance * size;
+            if !pen.iter().all(|value| value.is_finite()) {
+                return Err("render.invalid-geometry");
+            }
+        }
+    }
+    let mut bounds = [origin[0], origin[1], origin[0], origin[1]];
+    for [x, y] in contours.iter().flat_map(|contour| contour.iter()) {
+        bounds[0] = bounds[0].min(*x);
+        bounds[1] = bounds[1].min(*y);
+        bounds[2] = bounds[2].max(*x);
+        bounds[3] = bounds[3].max(*y);
+    }
+    if !bounds.iter().all(|value| value.is_finite()) {
+        return Err("render.invalid-geometry");
+    }
+    Ok((bounds, contours))
+}
+
+fn glyph_contour(
+    contour: &[crate::assets::OutlinePoint],
+    origin: [f64; 2],
+    scale: f64,
+) -> Result<Vec<[f64; 2]>, &'static str> {
+    if contour.len() < 2 || !scale.is_finite() {
+        return Err("render.invalid-geometry");
+    }
+    let points: Vec<_> = contour
+        .iter()
+        .map(|point| {
+            (
+                [
+                    origin[0] + f64::from(point.x) * scale,
+                    origin[1] + f64::from(point.y) * scale,
+                ],
+                point.on_curve,
+            )
+        })
+        .collect();
+    if points
+        .iter()
+        .any(|(point, _)| !point.iter().all(|value| value.is_finite()))
+    {
+        return Err("render.invalid-geometry");
+    }
+    let last = points.len() - 1;
+    let (start_index, start) = if points[0].1 {
+        (1, points[0].0)
+    } else if points[last].1 {
+        (0, points[last].0)
+    } else {
+        (0, midpoint(points[last].0, points[0].0))
+    };
+    let mut output = vec![start];
+    let mut current = start;
+    let mut pending_control = None;
+    for offset in 0..points.len() {
+        let (point, on_curve) = points[(start_index + offset) % points.len()];
+        if on_curve {
+            if let Some(control) = pending_control.take() {
+                append_quadratic(&mut output, current, control, point, 0)?;
+            } else if point != current {
+                output.push(point);
+            }
+            current = point;
+        } else if let Some(control) = pending_control.replace(point) {
+            let implied = midpoint(control, point);
+            append_quadratic(&mut output, current, control, implied, 0)?;
+            current = implied;
+        }
+    }
+    if let Some(control) = pending_control {
+        append_quadratic(&mut output, current, control, start, 0)?;
+    } else if output.last().copied() != Some(start) {
+        output.push(start);
+    }
+    Ok(output)
+}
+
+fn append_quadratic(
+    points: &mut Vec<[f64; 2]>,
+    start: [f64; 2],
+    control: [f64; 2],
+    end: [f64; 2],
+    depth: u8,
+) -> Result<(), &'static str> {
+    let flatness = distance_to_segment(control, start, end);
+    if !flatness.is_finite() {
+        return Err("render.invalid-geometry");
+    }
+    if flatness <= GLYPH_FLATTEN_TOLERANCE {
+        points.push(end);
+        return Ok(());
+    }
+    if depth >= GLYPH_MAX_FLATTEN_DEPTH {
+        return Err("render.limit-exceeded");
+    }
+    let first = midpoint(start, control);
+    let second = midpoint(control, end);
+    let middle = midpoint(first, second);
+    append_quadratic(points, start, first, middle, depth + 1)?;
+    append_quadratic(points, middle, second, end, depth + 1)
+}
+
+fn midpoint(first: [f64; 2], second: [f64; 2]) -> [f64; 2] {
+    [
+        first[0] / 2.0 + second[0] / 2.0,
+        first[1] / 2.0 + second[1] / 2.0,
+    ]
+}
+
+fn distance_to_segment(point: [f64; 2], start: [f64; 2], end: [f64; 2]) -> f64 {
+    let dx = end[0] - start[0];
+    let dy = end[1] - start[1];
+    let length = dx.hypot(dy);
+    if length == 0.0 {
+        return (point[0] - start[0]).hypot(point[1] - start[1]);
+    }
+    if !length.is_finite() {
+        return f64::INFINITY;
+    }
+    let projection = (((point[0] - start[0]) * dx) + ((point[1] - start[1]) * dy)) / length;
+    if !projection.is_finite() {
+        return f64::INFINITY;
+    }
+    let along = projection.clamp(0.0, length);
+    let nearest = [
+        start[0] + along * dx / length,
+        start[1] + along * dy / length,
+    ];
+    (point[0] - nearest[0]).hypot(point[1] - nearest[1])
 }
 
 fn rounded_rect_scale(width: f64, height: f64, radii: [f64; 4]) -> f64 {

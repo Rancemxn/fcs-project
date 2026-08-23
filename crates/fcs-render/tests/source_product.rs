@@ -10,7 +10,7 @@ mod fcbc_render_reference_assets;
 #[allow(dead_code)]
 mod fcbc_render_reference_loader;
 
-use fcs_fcbc::write_from_compilation;
+use fcs_fcbc::{write_from_compilation, write_nonempty_execution};
 use fcs_model::{
     CanonicalArcDirection, CanonicalCompilation, CanonicalExpressionType, CanonicalImageRepeat,
     CanonicalImageSampling, CanonicalPathCommand, CanonicalPatternTransform,
@@ -25,8 +25,8 @@ use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
 
 use fcs_render::{
-    GeometryData, NodeKind, PaintData, evaluate_semantic_draw_list_at, load_render,
-    rasterize_solid_rgba8_at,
+    GeometryData, NodeKind, PaintData, RenderAssets, encode_test_png, encode_test_webp,
+    evaluate_semantic_draw_list_at, load_render, rasterize_solid_rgba8_at, write_nonempty_render,
 };
 
 fn u32_at(bytes: &[u8], offset: usize) -> u32 {
@@ -1881,4 +1881,46 @@ render profile 1.0.0 {
         pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0),
         "written Path should contribute raster coverage"
     );
+}
+
+#[test]
+fn checked_in_text_fixture_reaches_product_raster() {
+    let core = write_nonempty_execution();
+    let png = encode_test_png();
+    let webp = encode_test_webp();
+    let font = include_bytes!("../../../docs/conformance/render/assets/fcs-test-font.ttf");
+    let mut render = load_render(&write_nonempty_render(
+        &core,
+        RenderAssets {
+            png: &png,
+            webp: &webp,
+            font,
+            malformed: b"not-an-image",
+        },
+    ))
+    .expect("checked-in Text fixture");
+
+    for node in &mut render.nodes {
+        if node.kind != NodeKind::Text {
+            node.geometry_ref = None;
+            node.fill_paint = None;
+            node.stroke_ref = None;
+            node.clip_ref = None;
+        }
+    }
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Text semantic evaluation");
+    let text = draw
+        .iter()
+        .find(|operation| operation.kind == NodeKind::Text)
+        .expect("Text draw op");
+    assert_eq!(
+        draw,
+        evaluate_semantic_draw_list_at(&render, 0.0).expect("repeat Text query")
+    );
+    assert_eq!(text.fill_rgba, Some([1.0, 1.0, 1.0, 1.0]));
+    assert!(text.bounds[2] > text.bounds[0]);
+    assert!(text.bounds[3] > text.bounds[1]);
+
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Text rasterization");
+    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
 }

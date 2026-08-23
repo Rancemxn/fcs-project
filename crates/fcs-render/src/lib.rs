@@ -1459,6 +1459,31 @@ mod tests {
     }
 
     #[test]
+    fn text_evaluation_keeps_font_and_glyph_diagnostics_stable() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        let text_geometry = render
+            .geometries
+            .iter()
+            .find_map(|geometry| match &geometry.data {
+                GeometryData::Text { glyph_runs, .. } => glyph_runs.first().copied(),
+                _ => None,
+            })
+            .expect("fixture Text geometry");
+        render.glyph_runs[text_geometry as usize].font_resource_id = 0;
+        assert_eq!(
+            evaluate_semantic_draw_list_at(&render, 0.0).expect_err("missing font"),
+            "render.resource-not-found"
+        );
+
+        let mut render = load_render(&render_fixture()).expect("render reload");
+        render.glyph_runs[text_geometry as usize].glyphs[0].glyph_id = u32::MAX;
+        assert_eq!(
+            evaluate_semantic_draw_list_at(&render, 0.0).expect_err("invalid glyph"),
+            "render.invalid-geometry"
+        );
+    }
+
+    #[test]
     fn isolated_group_own_opacity_does_not_multiply_into_descendant_draw_ops() {
         let mut render = load_render(&render_fixture()).expect("render load");
         // The fixture's only isolated Group root wraps a Text child

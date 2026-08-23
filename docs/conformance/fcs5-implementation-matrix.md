@@ -243,9 +243,25 @@ terms as #525 gave `circle`, bound by
 `source_product::{source_polyline_and_polygon_strokes_reach_the_product_raster,source_polygon_fill_and_stroke_keep_separate_paint_records,source_polyline_without_fill_or_stroke_is_rejected}`.
 Dynamic source Line stroke descriptors,
 Ellipse and RoundedRect strokes, source ImagePattern lowering, source Path lowering,
-Path semantic/raster coverage, broader canonical writer coverage, Text, and
-descriptor-driven gradient stroke lowering remain outside these bounded units; no
-Frozen or final I10 claim changes.
+Path semantic/raster coverage, broader canonical writer coverage, source Text
+grammar/lowering, Text stroke coverage, and descriptor-driven gradient stroke
+lowering remain outside these bounded units; no Frozen or final I10 claim changes.
+
+## Bounded Render Text fill semantic/raster delta
+
+Issue #539 adds the bounded product Text fill path from existing loader-validated
+GlyphRun records and decoded `truetype-glyf-1` outlines into semantic DrawOps and
+the 8x8 reference raster. It applies Text origin, runOffset, pen, placement
+metrics, and size, expands TrueType quadratic contours with the specified
+`1/1024` tolerance and depth-32 limit, and uses the existing nonzero fill and
+ordinary Paint path. Evidence is bound by
+`source_product::checked_in_text_fixture_reaches_product_raster`,
+`tests::text_evaluation_keeps_font_and_glyph_diagnostics_stable`, and the
+existing `tests::every_public_render_limit_has_focused_boundary_evidence`.
+
+Source Text grammar/lowering, shaping beyond `simple-ltr-1`, Text stroke,
+Path/ImagePattern/dynamic descriptor work, and broader Render closure remain
+outside this unit. This delta does not change any Frozen or final I10 claim.
 
 ## Credit stable identity delta
 
