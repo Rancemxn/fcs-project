@@ -276,6 +276,16 @@ mod tests {
         for node in &mut render.nodes {
             node.attachment = Attachment { kind: 1, id: 0 };
         }
+        let size = add_descriptor_constant(
+            render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 1.0,
+            },
+        );
+        for run in &mut render.glyph_runs {
+            run.size_descriptor = size;
+        }
     }
 
     fn isolate_solid_shape(render: &mut DecodedRenderChart, kind: NodeKind) {
@@ -1341,6 +1351,16 @@ mod tests {
                 kind: 3,
                 id: line_id,
             };
+        }
+        let text_size = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 1.0,
+            },
+        );
+        for run in &mut render.glyph_runs {
+            run.size_descriptor = text_size;
         }
         let line_rect = evaluate_semantic_draw_list_at(&render, 0.0)
             .expect("Line attachment query")
