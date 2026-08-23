@@ -1922,5 +1922,5 @@ fn checked_in_text_fixture_reaches_product_raster() {
     assert!(text.bounds[3] > text.bounds[1]);
 
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Text rasterization");
-    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
+    assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
 }
