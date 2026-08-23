@@ -286,7 +286,7 @@ fn path_fill_rules_cover_implicit_subpath_closures() {
         points: vec![[-1.0, -1.0], [-1.0, 1.0], [1.0, 1.0], [1.0, -1.0]],
     };
 
-    assert!(path_contains(&[outer.clone()], 1, [0.0, 0.0]));
+    assert!(path_contains(std::slice::from_ref(&outer), 1, [0.0, 0.0]));
     assert!(path_contains(
         &[outer.clone(), inner_same_direction.clone()],
         1,
