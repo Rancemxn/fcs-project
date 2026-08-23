@@ -414,8 +414,9 @@ stroke on a Circle, Polyline, or Polygon. The bounded source
 Line, Circle, Polyline, and Polygon lowering now cover compile-time strokes; dynamic stroke descriptors,
 source `imagePattern`, and source Path lowering remain separate
 bounded work;
-Path semantic/raster coverage and broader canonical writer coverage remain open
-after the bounded Line, ImagePattern, and Path writer paths. A dashed stroke on a
+Path semantic/raster coverage is implemented for the loader-validated fill path;
+Path stroke and broader canonical writer coverage remain open after the bounded
+Line, ImagePattern, and Path writer paths. A dashed stroke on a
 closed parametric geometry follows the subpath start and winding direction this
 section fixes below; Ellipse and RoundedRect strokes remain unimplemented in the
 product writer. The

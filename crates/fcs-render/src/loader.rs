@@ -1122,20 +1122,30 @@ fn parse_path(cursor: &mut Cursor<'_>, limits: &RenderLimits) -> Result<PathReco
         return Err("render.invalid-geometry");
     }
     let count = limited_count(record.u32()?, limits.max_path_commands)?;
+    if count == 0 {
+        return Err("render.invalid-geometry");
+    }
     let mut commands = Vec::with_capacity(count);
     let mut open = false;
     let mut closed = false;
+    let mut has_drawing = false;
     for _ in 0..count {
         let command = parse_path_command(&mut record)?;
         match command {
             PathCommand::MoveTo(_) => {
                 open = true;
                 closed = false;
+                has_drawing = false;
             }
-            PathCommand::Close if !open || closed => return Err("render.invalid-geometry"),
+            PathCommand::Close if !open || closed || !has_drawing => {
+                return Err("render.invalid-geometry");
+            }
             PathCommand::Close => closed = true,
             _ if !open => return Err("render.invalid-geometry"),
-            _ => closed = false,
+            _ => {
+                closed = false;
+                has_drawing = true;
+            }
         }
         commands.push(command);
     }

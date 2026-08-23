@@ -241,9 +241,11 @@ and `semantic_tests::polyline_stroke_joins_caps_and_closure_follow_section_15_2`
 Issue #531 then makes a source `polyline` or `polygon` able to declare that stroke on the same
 terms as #525 gave `circle`, bound by
 `source_product::{source_polyline_and_polygon_strokes_reach_the_product_raster,source_polygon_fill_and_stroke_keep_separate_paint_records,source_polyline_without_fill_or_stroke_is_rejected}`.
-Dynamic source Line stroke descriptors,
-Ellipse and RoundedRect strokes, source ImagePattern lowering, source Path lowering,
-Path semantic/raster coverage, broader canonical writer coverage, Text, and
+Issue #537 adds loader-validated Path fill semantic evaluation and reference raster coverage,
+including all seven existing command forms, fill rules, recursive flattening diagnostics, and
+product semantic/raster evidence in `source_product::canonical_path_writer_reaches_product_render_loader`.
+Dynamic source Line stroke descriptors, Ellipse and RoundedRect strokes, source ImagePattern lowering,
+source Path lowering, Path stroke, broader canonical writer coverage, Text, and
 descriptor-driven gradient stroke lowering remain outside these bounded units; no
 Frozen or final I10 claim changes.
 

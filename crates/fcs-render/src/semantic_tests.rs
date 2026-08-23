@@ -1,6 +1,7 @@
 use super::{
-    GradientStopDrawOp, ImagePatternDrawOp, LinearGradientDrawOp, LocalShape, RadialGradientDrawOp,
-    StrokeDrawOp, gradient_color, linear_axis, pattern_local_point, pattern_repeat_axes,
+    GradientStopDrawOp, ImagePatternDrawOp, LinearGradientDrawOp, LocalShape, PathCurve,
+    PathSubpath, RadialGradientDrawOp, StrokeDrawOp, flatten_curve, gradient_color, linear_axis,
+    local_shape_contains, path_contains, pattern_local_point, pattern_repeat_axes,
     pattern_texel_index, radial_gradient_color, stroke_contains, stroke_segments,
 };
 
@@ -271,6 +272,76 @@ fn polyline_stroke_joins_caps_and_closure_follow_section_15_2() {
     assert!(!stroke_contains(&open, [-0.9, 0.0], &stroke).unwrap());
     stroke.cap = 3;
     assert!(stroke_contains(&open, [-0.9, 0.0], &stroke).unwrap());
+}
+
+#[test]
+fn path_fill_rules_cover_implicit_subpath_closures() {
+    let outer = PathSubpath {
+        points: vec![[-2.0, -2.0], [2.0, -2.0], [2.0, 2.0], [-2.0, 2.0]],
+    };
+    let inner_same_direction = PathSubpath {
+        points: vec![[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
+    };
+    let inner_reverse_direction = PathSubpath {
+        points: vec![[-1.0, -1.0], [-1.0, 1.0], [1.0, 1.0], [1.0, -1.0]],
+    };
+
+    assert!(path_contains(&[outer.clone()], 1, [0.0, 0.0]));
+    assert!(path_contains(
+        &[outer.clone(), inner_same_direction.clone()],
+        1,
+        [0.0, 0.0]
+    ));
+    assert!(!path_contains(
+        &[outer.clone(), inner_same_direction],
+        2,
+        [0.0, 0.0]
+    ));
+    assert!(!path_contains(
+        &[outer, inner_reverse_direction],
+        1,
+        [0.0, 0.0]
+    ));
+
+    let polygon = LocalShape::Polygon {
+        points: vec![[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0]],
+        closed: false,
+    };
+    assert!(local_shape_contains(&polygon, [0.0, -0.5]));
+}
+
+#[test]
+fn path_flattening_is_ordered_and_depth_bounded() {
+    let curve = PathCurve::Quadratic {
+        start: [0.0, 0.0],
+        control: [0.0, 1.0],
+        end: [1.0, 1.0],
+    };
+    let mut points = vec![curve.point(0.0).unwrap()];
+    flatten_curve(curve, &mut points, 0).expect("quadratic flatten");
+    assert_eq!(points.first(), Some(&[0.0, 0.0]));
+    assert_eq!(points.last(), Some(&[1.0, 1.0]));
+    assert!(points.windows(2).all(|pair| pair[0][0] <= pair[1][0]));
+
+    let overshoot = PathCurve::Quadratic {
+        start: [0.0, 0.0],
+        control: [10.0, 0.0],
+        end: [1.0, 0.0],
+    };
+    let mut points = vec![[0.0, 0.0]];
+    flatten_curve(overshoot, &mut points, 0).expect("collinear overshoot flatten");
+    assert!(points.iter().any(|point| point[0] > 1.0));
+
+    let pathological = PathCurve::Quadratic {
+        start: [0.0, 0.0],
+        control: [1.0e150, 1.0e150],
+        end: [2.0e150, 0.0],
+    };
+    let mut points = vec![[0.0, 0.0]];
+    assert_eq!(
+        flatten_curve(pathological, &mut points, 0),
+        Err("render.limit-exceeded")
+    );
 }
 
 #[test]

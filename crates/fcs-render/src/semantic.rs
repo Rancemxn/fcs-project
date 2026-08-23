@@ -9,7 +9,9 @@ use fcs_fcbc::{
 
 use crate::{
     RenderLimits,
-    loader::{DecodedRenderChart, GeometryData, NodeKind, PaintData, PaintRecord},
+    loader::{
+        DecodedRenderChart, GeometryData, NodeKind, PaintData, PaintRecord, PathCommand, PathRecord,
+    },
 };
 
 /// One drawable operation after semantic attachment/visibility filtering.
@@ -117,6 +119,11 @@ struct EvaluatedShape {
 }
 
 #[derive(Clone)]
+struct PathSubpath {
+    points: Vec<[f64; 2]>,
+}
+
+#[derive(Clone)]
 enum LocalShape {
     Rect {
         bounds: [f64; 4],
@@ -144,6 +151,10 @@ enum LocalShape {
         /// Render section 15.2 keeps a Polyline stroke open and closes a Polygon stroke. Fill
         /// uses the implicit closing segment either way, so only the stroke reads this.
         closed: bool,
+    },
+    Path {
+        subpaths: Vec<PathSubpath>,
+        fill_rule: u16,
     },
     Image {
         bounds: [f64; 4],
@@ -1062,6 +1073,10 @@ fn local_shape_contains(shape: &LocalShape, point: [f64; 2]) -> bool {
         } => ellipse_contains(*center, *radius_x, *radius_y, *rotation, point),
         LocalShape::Line { .. } => false,
         LocalShape::Polygon { points, .. } => polygon_contains(points, point),
+        LocalShape::Path {
+            subpaths,
+            fill_rule,
+        } => path_contains(subpaths, *fill_rule, point),
         LocalShape::Image { bounds } => {
             bounds[2] > bounds[0]
                 && bounds[3] > bounds[1]
@@ -1508,28 +1523,85 @@ fn polygon_contains(points: &[[f64; 2]], point: [f64; 2]) -> bool {
     if points.len() < 3 {
         return false;
     }
+    winding_contains(std::iter::once(points), 1, point)
+}
+
+fn path_contains(subpaths: &[PathSubpath], fill_rule: u16, point: [f64; 2]) -> bool {
+    if !matches!(fill_rule, 1 | 2) {
+        return false;
+    }
+    winding_contains(
+        subpaths.iter().map(|subpath| subpath.points.as_slice()),
+        fill_rule,
+        point,
+    )
+}
+
+fn winding_contains<'a>(
+    polygons: impl IntoIterator<Item = &'a [[f64; 2]]>,
+    fill_rule: u16,
+    point: [f64; 2],
+) -> bool {
+    if !point.iter().all(|value| value.is_finite()) {
+        return false;
+    }
     let mut winding = 0i32;
-    for index in 0..points.len() {
-        let [x0, y0] = points[index];
-        let [x1, y1] = points[(index + 1) % points.len()];
-        let cross = (x1 - x0) * (point[1] - y0) - (point[0] - x0) * (y1 - y0);
-        if cross == 0.0
-            && point[0] >= x0.min(x1)
-            && point[0] <= x0.max(x1)
-            && point[1] >= y0.min(y1)
-            && point[1] <= y0.max(y1)
-        {
-            return true;
+    let mut crossings = 0u32;
+    for points in polygons {
+        if points.len() < 2 {
+            continue;
         }
-        if y0 <= point[1] {
-            if y1 > point[1] && cross > 0.0 {
-                winding += 1;
+        let has_area = path_has_area(points);
+        for index in 0..points.len() {
+            let [x0, y0] = points[index];
+            let [x1, y1] = points[(index + 1) % points.len()];
+            if x0 == x1 && y0 == y1 {
+                continue;
             }
-        } else if y1 <= point[1] && cross < 0.0 {
-            winding -= 1;
+            let cross = (x1 - x0) * (point[1] - y0) - (point[0] - x0) * (y1 - y0);
+            if has_area
+                && cross == 0.0
+                && point[0] >= x0.min(x1)
+                && point[0] <= x0.max(x1)
+                && point[1] >= y0.min(y1)
+                && point[1] <= y0.max(y1)
+            {
+                return true;
+            }
+            if y0 <= point[1] {
+                if y1 > point[1] && cross > 0.0 {
+                    if fill_rule == 1 {
+                        winding += 1;
+                    } else {
+                        crossings ^= 1;
+                    }
+                }
+            } else if y1 <= point[1] && cross < 0.0 {
+                if fill_rule == 1 {
+                    winding -= 1;
+                } else {
+                    crossings ^= 1;
+                }
+            }
         }
     }
-    winding != 0
+    if fill_rule == 1 {
+        winding != 0
+    } else {
+        crossings != 0
+    }
+}
+
+fn path_has_area(points: &[[f64; 2]]) -> bool {
+    if points.len() < 3 {
+        return false;
+    }
+    let first = points[0];
+    points[1..].windows(2).any(|pair| {
+        (pair[0][0] - first[0]) * (pair[1][1] - first[1])
+            - (pair[0][1] - first[1]) * (pair[1][0] - first[0])
+            != 0.0
+    })
 }
 
 fn rounded_rect_contains(bounds: [f64; 4], radii: [f64; 4], point: [f64; 2]) -> bool {
@@ -1656,7 +1728,7 @@ fn composite_premultiplied(
 /// Rasterize supported fill and Line stroke geometry to tightly packed RGBA8 bytes.
 ///
 /// The Render 1.0 reference sample grid is used for Rect, RoundedRect, Circle,
-/// Ellipse, Line, Polyline, and Polygon geometry; path/text coverage remains
+/// Ellipse, Line, Polyline, Polygon, and flattened Path geometry; text coverage remains
 /// outside this bounded path.
 pub fn rasterize_solid_rgba8(
     chart: &DecodedRenderChart,
@@ -1711,6 +1783,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                 | NodeKind::Line
                 | NodeKind::Polyline
                 | NodeKind::Polygon
+                | NodeKind::Path
                 | NodeKind::Image
         ) {
             continue;
@@ -2431,6 +2504,628 @@ fn paint_rgba(
     }
 }
 
+const PATH_FLATTEN_TOLERANCE: f64 = 1.0 / 1024.0;
+const PATH_FLATTEN_MAX_DEPTH: u8 = 32;
+// ponytail: cap adaptive output to bound hostile-but-depth-valid curves; raise only with measured
+// large-path fixtures.
+const PATH_FLATTEN_MAX_POINTS: usize = 1 << 16;
+
+type Point = [f64; 2];
+
+#[derive(Clone, Copy)]
+enum PathCurve {
+    Quadratic {
+        start: Point,
+        control: Point,
+        end: Point,
+    },
+    Cubic {
+        start: Point,
+        control1: Point,
+        control2: Point,
+        end: Point,
+    },
+    Arc {
+        center: Point,
+        radius: f64,
+        start_angle: f64,
+        end_angle: f64,
+    },
+    EllipseArc {
+        center: Point,
+        radius_x: f64,
+        radius_y: f64,
+        rotation: f64,
+        start_angle: f64,
+        end_angle: f64,
+    },
+}
+
+impl PathCurve {
+    fn point(self, parameter: f64) -> Result<Point, &'static str> {
+        let point = match self {
+            Self::Quadratic {
+                start,
+                control,
+                end,
+            } => {
+                let first = lerp(start, control, parameter)?;
+                let second = lerp(control, end, parameter)?;
+                lerp(first, second, parameter)?
+            }
+            Self::Cubic {
+                start,
+                control1,
+                control2,
+                end,
+            } => {
+                let first = lerp(start, control1, parameter)?;
+                let second = lerp(control1, control2, parameter)?;
+                let third = lerp(control2, end, parameter)?;
+                let first = lerp(first, second, parameter)?;
+                let second = lerp(second, third, parameter)?;
+                lerp(first, second, parameter)?
+            }
+            Self::Arc {
+                center,
+                radius,
+                start_angle,
+                end_angle,
+            } => circle_arc_point(center, radius, start_angle, end_angle, parameter)?,
+            Self::EllipseArc {
+                center,
+                radius_x,
+                radius_y,
+                rotation,
+                start_angle,
+                end_angle,
+            } => ellipse_arc_point(
+                center,
+                radius_x,
+                radius_y,
+                rotation,
+                start_angle,
+                end_angle,
+                parameter,
+            )?,
+        };
+        finite_point(point)
+    }
+
+    fn flat_enough(self) -> Result<bool, &'static str> {
+        let start = self.point(0.0)?;
+        let end = self.point(1.0)?;
+        let flatness = match self {
+            Self::Quadratic { control, .. } => distance_to_chord(control, start, end)?,
+            Self::Cubic {
+                control1, control2, ..
+            } => distance_to_chord(control1, start, end)?
+                .max(distance_to_chord(control2, start, end)?),
+            Self::Arc {
+                radius,
+                start_angle,
+                end_angle,
+                ..
+            } => {
+                let sweep = (end_angle - start_angle).abs();
+                if sweep == 0.0 || radius == 0.0 {
+                    0.0
+                } else if sweep > std::f64::consts::PI {
+                    return Ok(false);
+                } else {
+                    radius * (1.0 - (sweep / 2.0).cos())
+                }
+            }
+            Self::EllipseArc {
+                radius_x,
+                radius_y,
+                start_angle,
+                end_angle,
+                ..
+            } => {
+                let sweep = (end_angle - start_angle).abs();
+                if sweep == 0.0 || (radius_x == 0.0 && radius_y == 0.0) {
+                    0.0
+                } else if sweep > std::f64::consts::PI {
+                    return Ok(false);
+                } else {
+                    radius_x.max(radius_y) * (1.0 - (sweep / 2.0).cos())
+                }
+            }
+        };
+        if flatness.is_finite() {
+            Ok(flatness <= PATH_FLATTEN_TOLERANCE)
+        } else {
+            Err("render.invalid-geometry")
+        }
+    }
+
+    fn split(self) -> Result<(Self, Self), &'static str> {
+        let halves = match self {
+            Self::Quadratic {
+                start,
+                control,
+                end,
+            } => {
+                let first = midpoint(start, control)?;
+                let second = midpoint(control, end)?;
+                let middle = midpoint(first, second)?;
+                (
+                    Self::Quadratic {
+                        start,
+                        control: first,
+                        end: middle,
+                    },
+                    Self::Quadratic {
+                        start: middle,
+                        control: second,
+                        end,
+                    },
+                )
+            }
+            Self::Cubic {
+                start,
+                control1,
+                control2,
+                end,
+            } => {
+                let first = midpoint(start, control1)?;
+                let second = midpoint(control1, control2)?;
+                let third = midpoint(control2, end)?;
+                let fourth = midpoint(first, second)?;
+                let fifth = midpoint(second, third)?;
+                let middle = midpoint(fourth, fifth)?;
+                (
+                    Self::Cubic {
+                        start,
+                        control1: first,
+                        control2: fourth,
+                        end: middle,
+                    },
+                    Self::Cubic {
+                        start: middle,
+                        control1: fifth,
+                        control2: third,
+                        end,
+                    },
+                )
+            }
+            Self::Arc {
+                center,
+                radius,
+                start_angle,
+                end_angle,
+            } => {
+                let middle = midpoint_scalar(start_angle, end_angle)?;
+                (
+                    Self::Arc {
+                        center,
+                        radius,
+                        start_angle,
+                        end_angle: middle,
+                    },
+                    Self::Arc {
+                        center,
+                        radius,
+                        start_angle: middle,
+                        end_angle,
+                    },
+                )
+            }
+            Self::EllipseArc {
+                center,
+                radius_x,
+                radius_y,
+                rotation,
+                start_angle,
+                end_angle,
+            } => {
+                let middle = midpoint_scalar(start_angle, end_angle)?;
+                (
+                    Self::EllipseArc {
+                        center,
+                        radius_x,
+                        radius_y,
+                        rotation,
+                        start_angle,
+                        end_angle: middle,
+                    },
+                    Self::EllipseArc {
+                        center,
+                        radius_x,
+                        radius_y,
+                        rotation,
+                        start_angle: middle,
+                        end_angle,
+                    },
+                )
+            }
+        };
+        Ok(halves)
+    }
+}
+
+fn flatten_curve(curve: PathCurve, points: &mut Vec<Point>, depth: u8) -> Result<(), &'static str> {
+    if points.len() >= PATH_FLATTEN_MAX_POINTS {
+        return Err("render.limit-exceeded");
+    }
+    if curve.flat_enough()? {
+        points.push(curve.point(1.0)?);
+        return Ok(());
+    }
+    if depth >= PATH_FLATTEN_MAX_DEPTH {
+        return Err("render.limit-exceeded");
+    }
+    let (left, right) = curve.split()?;
+    flatten_curve(left, points, depth + 1)?;
+    flatten_curve(right, points, depth + 1)
+}
+
+fn evaluate_path(
+    chart: &DecodedRenderChart,
+    path: &PathRecord,
+    chart_time: f64,
+    environment: EvaluationEnvironment,
+) -> Result<(Vec<PathSubpath>, [f64; 4]), &'static str> {
+    if !matches!(path.fill_rule, 1 | 2) {
+        return Err("render.invalid-geometry");
+    }
+    let mut subpaths = Vec::new();
+    let mut active = None;
+    let mut current = [0.0; 2];
+    let mut start = [0.0; 2];
+    let mut bounds = None;
+    let mut has_command = false;
+    let mut has_drawing = false;
+    let mut closed = false;
+
+    for command in &path.commands {
+        match command {
+            PathCommand::MoveTo(point) => {
+                if let Some(subpath) = active.take() {
+                    subpaths.push(subpath);
+                }
+                let point = query_vec2_in(
+                    chart,
+                    *point,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?;
+                update_bounds(&mut bounds, point);
+                active = Some(PathSubpath {
+                    points: vec![point],
+                });
+                current = point;
+                start = point;
+                has_command = true;
+                has_drawing = false;
+                closed = false;
+            }
+            PathCommand::LineTo(point) => {
+                let point = query_vec2_in(
+                    chart,
+                    *point,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?;
+                append_path_point(active.as_mut(), point, &mut bounds)?;
+                current = point;
+                has_command = true;
+                has_drawing = true;
+                closed = false;
+            }
+            PathCommand::QuadraticTo(control, end) => {
+                let control = query_vec2_in(
+                    chart,
+                    *control,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?;
+                let end =
+                    query_vec2_in(chart, *end, chart_time, ValueType::Vec2Length, environment)?;
+                append_curve(
+                    active.as_mut(),
+                    PathCurve::Quadratic {
+                        start: current,
+                        control,
+                        end,
+                    },
+                    &mut bounds,
+                )?;
+                current = end;
+                has_command = true;
+                has_drawing = true;
+                closed = false;
+            }
+            PathCommand::CubicTo(control1, control2, end) => {
+                let control1 = query_vec2_in(
+                    chart,
+                    *control1,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?;
+                let control2 = query_vec2_in(
+                    chart,
+                    *control2,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?;
+                let end =
+                    query_vec2_in(chart, *end, chart_time, ValueType::Vec2Length, environment)?;
+                append_curve(
+                    active.as_mut(),
+                    PathCurve::Cubic {
+                        start: current,
+                        control1,
+                        control2,
+                        end,
+                    },
+                    &mut bounds,
+                )?;
+                current = end;
+                has_command = true;
+                has_drawing = true;
+                closed = false;
+            }
+            PathCommand::Arc {
+                center,
+                radius,
+                start_angle,
+                end_angle,
+                direction,
+            } => {
+                let center = query_vec2_in(
+                    chart,
+                    *center,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?;
+                let radius =
+                    query_scalar_in(chart, *radius, chart_time, ValueType::Length, environment)?;
+                let start_angle = query_scalar_in(
+                    chart,
+                    *start_angle,
+                    chart_time,
+                    ValueType::Angle,
+                    environment,
+                )?;
+                let end_angle =
+                    query_scalar_in(chart, *end_angle, chart_time, ValueType::Angle, environment)?;
+                validate_arc_angles(start_angle, end_angle, *direction, radius)?;
+                let curve = PathCurve::Arc {
+                    center,
+                    radius,
+                    start_angle,
+                    end_angle,
+                };
+                append_path_point(active.as_mut(), curve.point(0.0)?, &mut bounds)?;
+                append_curve(active.as_mut(), curve, &mut bounds)?;
+                current = curve.point(1.0)?;
+                has_command = true;
+                has_drawing = true;
+                closed = false;
+            }
+            PathCommand::EllipseArc {
+                center,
+                radius_x,
+                radius_y,
+                rotation,
+                start_angle,
+                end_angle,
+                direction,
+            } => {
+                let center = query_vec2_in(
+                    chart,
+                    *center,
+                    chart_time,
+                    ValueType::Vec2Length,
+                    environment,
+                )?;
+                let radius_x =
+                    query_scalar_in(chart, *radius_x, chart_time, ValueType::Length, environment)?;
+                let radius_y =
+                    query_scalar_in(chart, *radius_y, chart_time, ValueType::Length, environment)?;
+                let rotation =
+                    query_scalar_in(chart, *rotation, chart_time, ValueType::Angle, environment)?;
+                let start_angle = query_scalar_in(
+                    chart,
+                    *start_angle,
+                    chart_time,
+                    ValueType::Angle,
+                    environment,
+                )?;
+                let end_angle =
+                    query_scalar_in(chart, *end_angle, chart_time, ValueType::Angle, environment)?;
+                if radius_x < 0.0 || radius_y < 0.0 {
+                    return Err("render.invalid-geometry");
+                }
+                validate_arc_angles(start_angle, end_angle, *direction, radius_x.max(radius_y))?;
+                let curve = PathCurve::EllipseArc {
+                    center,
+                    radius_x,
+                    radius_y,
+                    rotation,
+                    start_angle,
+                    end_angle,
+                };
+                append_path_point(active.as_mut(), curve.point(0.0)?, &mut bounds)?;
+                append_curve(active.as_mut(), curve, &mut bounds)?;
+                current = curve.point(1.0)?;
+                has_command = true;
+                has_drawing = true;
+                closed = false;
+            }
+            PathCommand::Close => {
+                if !has_drawing || closed {
+                    return Err("render.invalid-geometry");
+                }
+                append_path_point(active.as_mut(), start, &mut bounds)?;
+                current = start;
+                has_command = true;
+                closed = true;
+            }
+        }
+    }
+    if !has_command {
+        return Err("render.invalid-geometry");
+    }
+    if let Some(subpath) = active {
+        subpaths.push(subpath);
+    }
+    Ok((subpaths, bounds.unwrap_or([0.0; 4])))
+}
+
+fn append_curve(
+    active: Option<&mut PathSubpath>,
+    curve: PathCurve,
+    bounds: &mut Option<[f64; 4]>,
+) -> Result<(), &'static str> {
+    let subpath = active.ok_or("render.invalid-geometry")?;
+    let length = subpath.points.len();
+    flatten_curve(curve, &mut subpath.points, 0)?;
+    for point in &subpath.points[length..] {
+        update_bounds(bounds, *point);
+    }
+    Ok(())
+}
+
+fn append_path_point(
+    active: Option<&mut PathSubpath>,
+    point: Point,
+    bounds: &mut Option<[f64; 4]>,
+) -> Result<(), &'static str> {
+    let subpath = active.ok_or("render.invalid-geometry")?;
+    let point = finite_point(point)?;
+    subpath.points.push(point);
+    update_bounds(bounds, point);
+    Ok(())
+}
+
+fn update_bounds(bounds: &mut Option<[f64; 4]>, point: Point) {
+    let [x, y] = point;
+    if let Some(bounds) = bounds {
+        bounds[0] = bounds[0].min(x);
+        bounds[1] = bounds[1].min(y);
+        bounds[2] = bounds[2].max(x);
+        bounds[3] = bounds[3].max(y);
+    } else {
+        *bounds = Some([x, y, x, y]);
+    }
+}
+
+fn validate_arc_angles(
+    start_angle: f64,
+    end_angle: f64,
+    direction: u16,
+    radius: f64,
+) -> Result<(), &'static str> {
+    let sweep = end_angle - start_angle;
+    if !matches!(direction, 1 | 2)
+        || radius < 0.0
+        || !sweep.is_finite()
+        || (direction == 1 && sweep > 0.0)
+        || (direction == 2 && sweep < 0.0)
+    {
+        return Err("render.invalid-geometry");
+    }
+    Ok(())
+}
+
+fn circle_arc_point(
+    center: Point,
+    radius: f64,
+    start_angle: f64,
+    end_angle: f64,
+    parameter: f64,
+) -> Result<Point, &'static str> {
+    let angle = start_angle + (end_angle - start_angle) * parameter;
+    let (sin, cos) = angle.sin_cos();
+    finite_point([center[0] + radius * cos, center[1] + radius * sin])
+}
+
+fn ellipse_arc_point(
+    center: Point,
+    radius_x: f64,
+    radius_y: f64,
+    rotation: f64,
+    start_angle: f64,
+    end_angle: f64,
+    parameter: f64,
+) -> Result<Point, &'static str> {
+    let angle = start_angle + (end_angle - start_angle) * parameter;
+    let (sin, cos) = angle.sin_cos();
+    let (rotation_sin, rotation_cos) = rotation.sin_cos();
+    let x = (radius_x * cos) * rotation_cos - (radius_y * sin) * rotation_sin;
+    let y = (radius_x * cos) * rotation_sin + (radius_y * sin) * rotation_cos;
+    finite_point([center[0] + x, center[1] + y])
+}
+
+fn finite_point(point: Point) -> Result<Point, &'static str> {
+    point
+        .iter()
+        .all(|value| value.is_finite())
+        .then_some(point)
+        .ok_or("render.invalid-geometry")
+}
+
+fn lerp(start: Point, end: Point, parameter: f64) -> Result<Point, &'static str> {
+    finite_point([
+        start[0] + (end[0] - start[0]) * parameter,
+        start[1] + (end[1] - start[1]) * parameter,
+    ])
+}
+
+fn midpoint(start: Point, end: Point) -> Result<Point, &'static str> {
+    finite_point([
+        start[0] + (end[0] - start[0]) * 0.5,
+        start[1] + (end[1] - start[1]) * 0.5,
+    ])
+}
+
+fn midpoint_scalar(start: f64, end: f64) -> Result<f64, &'static str> {
+    let middle = start + (end - start) * 0.5;
+    middle
+        .is_finite()
+        .then_some(middle)
+        .ok_or("render.invalid-geometry")
+}
+
+fn distance_to_chord(point: Point, start: Point, end: Point) -> Result<f64, &'static str> {
+    let dx = end[0] - start[0];
+    let dy = end[1] - start[1];
+    let length = dx.hypot(dy);
+    if !length.is_finite() {
+        return Err("render.invalid-geometry");
+    }
+    if length == 0.0 {
+        let distance = (point[0] - start[0]).hypot(point[1] - start[1]);
+        return distance
+            .is_finite()
+            .then_some(distance)
+            .ok_or("render.invalid-geometry");
+    }
+    let projection = (((point[0] - start[0]) * dx) + ((point[1] - start[1]) * dy)) / length;
+    if !projection.is_finite() {
+        return Err("render.invalid-geometry");
+    }
+    let along = projection.clamp(0.0, length);
+    let nearest = [
+        start[0] + along * dx / length,
+        start[1] + along * dy / length,
+    ];
+    let distance = (point[0] - nearest[0]).hypot(point[1] - nearest[1]);
+    distance
+        .is_finite()
+        .then_some(distance)
+        .ok_or("render.invalid-geometry")
+}
+
 struct GeometryEvaluation {
     world_bounds: [f64; 4],
     shape: Option<LocalShape>,
@@ -2638,6 +3333,21 @@ fn geometry_evaluation(
                 Some(LocalShape::Polygon {
                     points: values,
                     closed,
+                }),
+                None,
+            )
+        }
+        GeometryData::Path { path_ref } => {
+            let path = chart
+                .paths
+                .get(*path_ref as usize)
+                .ok_or("render.invalid-reference")?;
+            let (subpaths, bounds) = evaluate_path(chart, path, chart_time, environment)?;
+            (
+                bounds,
+                Some(LocalShape::Path {
+                    subpaths,
+                    fill_rule: path.fill_rule,
                 }),
                 None,
             )
