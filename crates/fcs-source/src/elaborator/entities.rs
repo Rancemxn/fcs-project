@@ -262,8 +262,7 @@ fn line_name_from_field(
     field: &crate::ast::EntityField,
     definitions: Option<&DefinitionsBlock>,
 ) -> Option<(String, SourceSpan)> {
-    // An unvalidated reference cannot create the namespace entry that would validate it.
-    if validate_line_references(&field.value, &BTreeSet::new()).is_err() {
+    if !line_name_dependencies_are_reference_free(&field.value, definitions, &mut BTreeSet::new()) {
         return None;
     }
     let name = match &field.value {
@@ -277,6 +276,116 @@ fn line_name_from_field(
         },
     };
     Some((name, field.path.span))
+}
+
+fn line_name_dependencies_are_reference_free(
+    expression: &SourceExpression,
+    definitions: Option<&DefinitionsBlock>,
+    visiting: &mut BTreeSet<String>,
+) -> bool {
+    match expression {
+        SourceExpression::Reference { .. } => false,
+        SourceExpression::Name { name, .. } => {
+            definition_is_reference_free(name, false, definitions, visiting)
+        }
+        SourceExpression::Call {
+            callee, arguments, ..
+        } => {
+            arguments.iter().all(|argument| {
+                line_name_dependencies_are_reference_free(argument, definitions, visiting)
+            }) && match callee.as_ref() {
+                SourceExpression::Name { name, .. } => {
+                    definition_is_reference_free(name, true, definitions, visiting)
+                }
+                callee => line_name_dependencies_are_reference_free(callee, definitions, visiting),
+            }
+        }
+        SourceExpression::Unary { operand, .. }
+        | SourceExpression::FieldAccess { base: operand, .. } => {
+            line_name_dependencies_are_reference_free(operand, definitions, visiting)
+        }
+        SourceExpression::Binary { left, right, .. }
+        | SourceExpression::Vec2 {
+            x: left, y: right, ..
+        } => {
+            line_name_dependencies_are_reference_free(left, definitions, visiting)
+                && line_name_dependencies_are_reference_free(right, definitions, visiting)
+        }
+        SourceExpression::Array { elements, .. } => elements.iter().all(|element| {
+            line_name_dependencies_are_reference_free(element, definitions, visiting)
+        }),
+        SourceExpression::Object { entries, .. } => entries.iter().all(|entry| {
+            line_name_dependencies_are_reference_free(&entry.value, definitions, visiting)
+        }),
+        SourceExpression::Index { base, index, .. } => {
+            line_name_dependencies_are_reference_free(base, definitions, visiting)
+                && line_name_dependencies_are_reference_free(index, definitions, visiting)
+        }
+        SourceExpression::Choose {
+            arms, else_value, ..
+        } => {
+            arms.iter().all(|arm| {
+                line_name_dependencies_are_reference_free(&arm.condition, definitions, visiting)
+                    && line_name_dependencies_are_reference_free(&arm.value, definitions, visiting)
+            }) && line_name_dependencies_are_reference_free(else_value, definitions, visiting)
+        }
+        SourceExpression::Literal { .. } => true,
+    }
+}
+
+fn definition_is_reference_free(
+    name: &str,
+    function: bool,
+    definitions: Option<&DefinitionsBlock>,
+    visiting: &mut BTreeSet<String>,
+) -> bool {
+    let Some(definition) = definitions.and_then(|definitions| {
+        definitions.declarations.iter().find(|definition| {
+            matches!(
+                (function, definition),
+                (false, Definition::Const(constant)) if constant.name == name
+            ) || matches!(
+                (function, definition),
+                (true, Definition::Function(declaration)) if declaration.name == name
+            )
+        })
+    }) else {
+        return true;
+    };
+    if !visiting.insert(name.to_owned()) {
+        return true;
+    }
+    let result = match definition {
+        Definition::Const(constant) => {
+            line_name_dependencies_are_reference_free(&constant.initializer, definitions, visiting)
+        }
+        Definition::Function(function) => {
+            function_body_is_reference_free(&function.body, definitions, visiting)
+        }
+        Definition::Template(_) => true,
+    };
+    visiting.remove(name);
+    result
+}
+
+fn function_body_is_reference_free(
+    statements: &[FunctionStatement],
+    definitions: Option<&DefinitionsBlock>,
+    visiting: &mut BTreeSet<String>,
+) -> bool {
+    statements.iter().all(|statement| match statement {
+        FunctionStatement::Let(statement) => {
+            line_name_dependencies_are_reference_free(&statement.initializer, definitions, visiting)
+        }
+        FunctionStatement::Return(statement) => {
+            line_name_dependencies_are_reference_free(&statement.value, definitions, visiting)
+        }
+        FunctionStatement::If(statement) => {
+            line_name_dependencies_are_reference_free(&statement.condition, definitions, visiting)
+                && function_body_is_reference_free(&statement.then_branch, definitions, visiting)
+                && function_body_is_reference_free(&statement.else_branch, definitions, visiting)
+        }
+    })
 }
 
 fn insert_line_name(
