@@ -239,6 +239,23 @@ fn section_table_mutations_reject_with_the_layout_categories() {
     );
 }
 
+#[test]
+fn section_range_overflow_is_rejected_by_both_product_loaders() {
+    let base = native_bytes();
+    let container = load_container(&base).expect("pristine native bytes must frame");
+    let first = entry_offset(&container, STRING_TABLE);
+    assert_eq!(container.sections[0].section_type, STRING_TABLE);
+
+    // Section range arithmetic must reject overflow before checksum or Core decode.
+    let mut bytes = base;
+    bytes[first + 24..first + 32].copy_from_slice(&u64::MAX.to_le_bytes());
+
+    let framing =
+        load_container(&bytes).expect_err("overflowing section range unexpectedly framed");
+    assert_eq!(framing.category(), "fcbc.section-table-bounds");
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.section-table-bounds");
+}
+
 /// Core content corruptions mirroring `nonempty-execution-mutations.toml`
 /// (forbidden descriptor kind, unknown expression opcode, forbidden distance
 /// classification) and `embedded-resource-mutations.toml` (hash mismatch,
