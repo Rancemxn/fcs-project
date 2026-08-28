@@ -15,4 +15,5 @@ ttf-parser = { workspace = true, features = ["std"] }
 fcs-model = { path = "../fcs-model" }
 fcs-source = { path = "../fcs-source" }
 serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 toml.workspace = true
