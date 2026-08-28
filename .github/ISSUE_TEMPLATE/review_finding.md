@@ -36,8 +36,9 @@ assignees: ""
 - Corrective PR:
 - Acceptance conditions:
 
-The reviewer may create this Issue and a corrective PR, but may not merge or mark the corrective PR Ready. The primary
-session owns review, merge, and re-review of the new head SHA.
+The reviewer may create and report this finding Issue. The coordinator assigns corrective implementation and PR creation to
+a `deliver` child. The reviewer may not implement code, create a corrective PR, mark it Ready, or merge. The coordinator
+owns review, merge, and re-review of the new head SHA.
 
 ## Progress
 
