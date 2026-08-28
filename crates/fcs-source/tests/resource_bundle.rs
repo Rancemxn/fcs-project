@@ -3,7 +3,7 @@ use std::fs;
 
 use fcs_model::CanonicalValue;
 use fcs_source::ResourceLimits;
-use fcs_source::diagnostic::DiagnosticCode;
+use fcs_source::diagnostic::{DiagnosticCode, DiagnosticStage};
 use fcs_source::parser::parse_document;
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
