@@ -993,7 +993,7 @@ fn parse_render_font<'a>(
         .map_err(|error| render_error(format!("font resource cannot be parsed: {error}"), span))?;
     let tables = face.tables();
     if tables.glyf.is_none()
-        || tables.loca.is_none()
+        || raw_font_table(&face, ttf_parser::Tag::from_bytes(b"loca")).is_none()
         || tables.hmtx.is_none()
         || tables.cmap.is_none()
         || tables.cff.is_some()
