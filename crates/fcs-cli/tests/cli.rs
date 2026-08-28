@@ -1568,6 +1568,66 @@ fn inspect_executes_every_fcbc_golden_through_declared_core_contract() {
 }
 
 #[test]
+fn inspect_executes_every_declared_fcbc_mutation() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let conformance = root.join("docs/conformance/fcbc");
+    let manifest = load_toml(&conformance.join("manifest.toml"));
+    let directory = tempfile::tempdir().unwrap();
+    let mut checked = 0;
+
+    for fixture in manifest["fixture"].as_array().unwrap() {
+        let fixture_id = fixture["id"].as_str().unwrap();
+        let mutations = load_toml(&conformance.join(fixture["mutations"].as_str().unwrap()));
+        let base = decode_hex_file(&conformance.join(mutations["base"].as_str().unwrap()));
+
+        for mutation in mutations["mutation"].as_array().unwrap() {
+            let mutation_id = mutation["id"].as_str().unwrap();
+            let mut bytes = base.clone();
+            for patch in mutation["patch"].as_array().unwrap() {
+                let offset = patch["offset"].as_integer().unwrap() as usize;
+                let replacement = decode_hex_string(patch["replace_hex"].as_str().unwrap());
+                let end = offset.checked_add(replacement.len()).unwrap();
+                assert!(
+                    end <= bytes.len(),
+                    "{fixture_id}/{mutation_id}: mutation patch exceeds base"
+                );
+                bytes[offset..end].copy_from_slice(&replacement);
+            }
+
+            let path = directory
+                .path()
+                .join(format!("{fixture_id}-{mutation_id}.hex"));
+            fs::write(&path, lower_hex(&bytes)).unwrap();
+            let output = bin()
+                .arg("inspect")
+                .arg(&path)
+                .arg("--json")
+                .output()
+                .unwrap();
+            let expected = mutation["diagnostic"].as_str().unwrap();
+            assert_eq!(
+                output.status.code(),
+                Some(3),
+                "{fixture_id}/{mutation_id}: expected invalid-input exit, stderr={}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                output.stdout.is_empty(),
+                "{fixture_id}/{mutation_id}: failed inspect must not emit JSON"
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains(expected),
+                "{fixture_id}/{mutation_id}: expected {expected}, stderr={}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            checked += 1;
+        }
+    }
+
+    assert!(checked > 0, "FCBC mutation manifest must not be empty");
+}
+
+#[test]
 fn render_manifest_source_and_product_paths_are_exercised() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let render = root.join("docs/conformance/render");
