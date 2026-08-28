@@ -346,6 +346,41 @@ collections { notes { selected(@main); } }"#;
 }
 
 #[test]
+fn definition_line_references_use_the_document_namespace() {
+    let valid = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const main_id: string = @main.id;
+  fn read_id() -> string { return @main.id; }
+}
+lines { line main {} }"#;
+    elaborate_source(valid).expect("declared definition Line references should elaborate");
+
+    for source in [
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const missing_line: Line = @missing; }
+lines { line main {} }"#,
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  fn hidden(flag: bool) -> string {
+    if flag { return @missing.id; } else { return @main.id; }
+  }
+}
+lines { line main {} }"#,
+    ] {
+        let errors = elaborate_source(source).expect_err("unknown definition Line reference");
+        assert_eq!(errors[0].code(), DiagnosticCode::NAME_UNKNOWN);
+        let start = source.find("@missing").expect("missing Line reference");
+        assert_eq!(
+            errors[0].primary_span(),
+            SourceSpan::new(start, start + "@missing".len())
+        );
+    }
+}
+
+#[test]
 fn pure_functions_route_unavailable_static_entity_field_evaluation() {
     let source = r#"#fcs 5.0.0
 format { profile: chart; }

@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{
     CollectionBlock, CollectionItem, Definition, DefinitionsBlock, Document, EntityConstructor,
-    EntityExpression, ExpandedCollection, ExpandedEntity, ExpandedField, Generator, GeneratorItem,
-    GeneratorOwner, SourceExpression, SourceLiteral, SourceSpan, TemplateDeclaration,
-    TemplateStatement, Type, TypedValue, WithExpression,
+    EntityExpression, ExpandedCollection, ExpandedEntity, ExpandedField, FunctionStatement,
+    Generator, GeneratorItem, GeneratorOwner, SourceExpression, SourceLiteral, SourceSpan,
+    TemplateDeclaration, TemplateStatement, Type, TypedValue, WithExpression,
 };
 use crate::diagnostic::{ExpansionTraceFrame, ExpansionTraceKind};
 use crate::expression::lower_runtime_expression_with_resolver;
@@ -26,6 +26,7 @@ pub(super) fn validate_static_entities_with_context(
     let functions = function_map(document.definitions.as_ref());
     let root = definition_scope(document.definitions.as_ref())?;
     let line_names = collect_line_names(document)?;
+    validate_definition_line_references(document.definitions.as_ref(), &line_names)?;
     let validator = StaticEntityValidator {
         document,
         schema,
@@ -865,6 +866,49 @@ fn require_static_type(expected: &Type, actual: &Type, span: SourceSpan) -> Resu
             span,
         })
     }
+}
+
+fn validate_definition_line_references(
+    definitions: Option<&DefinitionsBlock>,
+    line_names: &BTreeSet<String>,
+) -> Result<(), Diagnostic> {
+    let Some(definitions) = definitions else {
+        return Ok(());
+    };
+    for definition in &definitions.declarations {
+        match definition {
+            Definition::Const(declaration) => {
+                validate_line_references(&declaration.initializer, line_names)?;
+            }
+            Definition::Function(declaration) => {
+                validate_function_line_references(&declaration.body, line_names)?;
+            }
+            Definition::Template(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_function_line_references(
+    statements: &[FunctionStatement],
+    line_names: &BTreeSet<String>,
+) -> Result<(), Diagnostic> {
+    for statement in statements {
+        match statement {
+            FunctionStatement::Let(statement) => {
+                validate_line_references(&statement.initializer, line_names)?;
+            }
+            FunctionStatement::Return(statement) => {
+                validate_line_references(&statement.value, line_names)?;
+            }
+            FunctionStatement::If(statement) => {
+                validate_line_references(&statement.condition, line_names)?;
+                validate_function_line_references(&statement.then_branch, line_names)?;
+                validate_function_line_references(&statement.else_branch, line_names)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_line_references(
