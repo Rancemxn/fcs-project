@@ -25,11 +25,10 @@ fn decode_hex_file(path: &Path) -> Vec<u8> {
         filtered.len().is_multiple_of(2),
         "odd hex string length in {path:?}"
     );
-    filtered
-        .as_bytes()
-        .chunks_exact(2)
-        .map(|pair| {
-            let pair = std::str::from_utf8(pair).expect("hex fixture is ASCII");
+    (0..filtered.len())
+        .step_by(2)
+        .map(|index| {
+            let pair = &filtered[index..index + 2];
             u8::from_str_radix(pair, 16)
                 .unwrap_or_else(|error| panic!("invalid hex byte {pair:?} in {path:?}: {error}"))
         })
