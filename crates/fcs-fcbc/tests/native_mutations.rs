@@ -175,6 +175,16 @@ fn header_mutations_reject_on_both_product_surfaces() {
 }
 
 #[test]
+fn declared_header_size_must_be_128_on_both_product_surfaces() {
+    let mut bytes = native_bytes();
+    bytes[4..6].copy_from_slice(&127u16.to_le_bytes());
+
+    let framing = load_container(&bytes).expect_err("invalid header size unexpectedly framed");
+    assert_eq!(framing.category(), "fcbc.invalid-header");
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.invalid-header");
+}
+
+#[test]
 fn header_flags_must_be_zero_on_both_product_surfaces() {
     let mut bytes = native_bytes();
     bytes[6..8].copy_from_slice(&1u16.to_le_bytes());
