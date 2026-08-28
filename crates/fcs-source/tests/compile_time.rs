@@ -506,6 +506,25 @@ collections {
 }
 
 #[test]
+fn unselected_collection_generator_range_is_not_evaluated() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections {
+  notes {
+    if false {
+      generate i: int in 0..=1 step 1 / 0 {
+        emit tap { gameplay.time: 0beat; };
+      }
+    } else {
+      tap { gameplay.time: 1beat; };
+    }
+  }
+}"#;
+
+    elaborate_source(source).expect("unselected generator range must not be evaluated");
+}
+
+#[test]
 fn template_unselected_branch_is_schema_checked_before_instantiation() {
     let source = r#"#fcs 5.0.0
 format { profile: chart; }

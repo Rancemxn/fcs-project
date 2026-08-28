@@ -654,12 +654,7 @@ impl<'a> StaticEntityValidator<'a> {
             None,
             Some(generator.range.span),
         ));
-        let range_result = super::generator::evaluate_range_with_context(
-            self.document,
-            generator,
-            self.schema,
-            &self.context,
-        );
+        let range_result = self.validate_generator_range_types(generator);
         self.context.pop_trace();
         self.context.pop_trace();
         if has_owner_frame {
@@ -692,6 +687,29 @@ impl<'a> StaticEntityValidator<'a> {
             },
         )?;
         self.validate_generator_items(&generator.body, &scope, expected_type, schema)
+    }
+
+    fn validate_generator_range_types(&self, generator: &Generator) -> Result<(), Diagnostic> {
+        if !matches!(generator.variable_type, Type::Int | Type::Beat) {
+            return Err(Diagnostic::InvalidGeneratorRange {
+                span: generator.range.span,
+                message: "generator range values must match an int or beat variable",
+            });
+        }
+        for expression in [
+            &generator.range.start,
+            &generator.range.end,
+            &generator.range.step,
+        ] {
+            let actual = self.validate_expression(expression, &self.root)?;
+            if actual != generator.variable_type {
+                return Err(Diagnostic::InvalidGeneratorRange {
+                    span: generator.range.span,
+                    message: "generator range values must match an int or beat variable",
+                });
+            }
+        }
+        Ok(())
     }
 
     fn validate_generator_items(

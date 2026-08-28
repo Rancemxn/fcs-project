@@ -36,7 +36,7 @@ nonempty binary/semantic/raster/mutation artifact。`image` 与 `serde_json` 在
 semantic evaluator、reference rasterizer 或产品 codec。
 
 FCS authoring/canonical closure 当时新增 7 项 canonical/error fixture，使 manifest 达到 39 entries；
-后续 I3–I5 stage-scoped vectors，以及 I10 Appendix A fixture，已使当前 manifest 达到 55 entries。I5.3 现已执行 explicit-root
+后续 I3–I5 stage-scoped vectors，以及 I10 Appendix A fixture，已使当前 manifest 达到 56 entries。I5.3 现已执行 explicit-root
 workspace resource resolution、opaque bytes/computed SHA-256 和 bundle binding；Note policy、exact DAG
 以及其他已交付边界按下表记录，不能再用历史 I0 状态替代当前 implementation evidence。
 
