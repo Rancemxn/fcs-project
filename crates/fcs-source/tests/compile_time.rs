@@ -522,6 +522,69 @@ collections {
 }
 
 #[test]
+fn statically_evaluated_judgeline_ids_join_the_line_namespace() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  const DIRECT_ID: string = "direct";
+  const OVERRIDE_ID: string = "override";
+  template Line makeJudge() {
+    return Line { id: "base"; };
+  }
+}
+collections {
+  judgelines {
+    Line { id: DIRECT_ID; };
+    makeJudge() with { id: OVERRIDE_ID; };
+  }
+  notes {
+    tap { line: @direct; gameplay.time: 1beat; };
+    tap { line: @override; gameplay.time: 2beat; };
+  }
+}"#;
+    let document = parse_document(source).into_result().unwrap();
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect("static Line IDs should be visible to document references");
+    let ids = expanded
+        .collections()
+        .find(|collection| collection.name() == "judgelines")
+        .expect("judgelines")
+        .entities()
+        .map(|entity| entity.field("id").expect("Line ID").value().clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        vec![
+            TypedValue::String("direct".into()),
+            TypedValue::String("override".into()),
+        ]
+    );
+
+    let duplicate_source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions { const ID: string = "judge"; }
+lines { line judge {} }
+collections { judgelines { Line { id: ID; }; } }"#;
+    let duplicate_document = parse_document(duplicate_source).into_result().unwrap();
+    let errors = elaborate(
+        &duplicate_document,
+        phase2_schema(),
+        CompileTimeLimits::default(),
+    )
+    .expect_err("static Line IDs must participate in duplicate checks");
+    assert_eq!(errors[0].code(), DiagnosticCode::NAME_DUPLICATE);
+    assert_eq!(errors[0].labels().len(), 1);
+    assert_eq!(errors[0].labels()[0].message(), "previous Line ID");
+    let id_path = duplicate_source.find("id: ID").expect("Line ID field");
+    assert_eq!(
+        errors[0].primary_span(),
+        SourceSpan::new(id_path, id_path + "id".len())
+    );
+}
+
+#[test]
 fn template_produced_line_ids_are_referenceable_from_judgelines() {
     let source = r#"#fcs 5.0.0
 format { profile: chart; }
