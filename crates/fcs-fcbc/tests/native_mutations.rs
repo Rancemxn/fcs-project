@@ -175,6 +175,16 @@ fn header_mutations_reject_on_both_product_surfaces() {
 }
 
 #[test]
+fn header_flags_must_be_zero_on_both_product_surfaces() {
+    let mut bytes = native_bytes();
+    bytes[6..8].copy_from_slice(&1u16.to_le_bytes());
+
+    let framing = load_container(&bytes).expect_err("nonzero headerFlags unexpectedly framed");
+    assert_eq!(framing.category(), "fcbc.invalid-header");
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.invalid-header");
+}
+
+#[test]
 fn reserved_feature_flag_bit_is_rejected_on_both_product_surfaces() {
     let base = native_bytes();
     let feature_flags = u64::from_le_bytes(base[28..36].try_into().unwrap());
