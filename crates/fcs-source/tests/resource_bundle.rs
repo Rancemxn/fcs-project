@@ -215,6 +215,37 @@ fn rejects_missing_directory_and_non_regular_workspace_members() {
     }
 }
 
+#[test]
+fn rejects_unavailable_and_non_directory_workspace_roots() {
+    let workspace = tempdir().expect("temporary workspace");
+    fs::write(workspace.path().join("payload.bin"), b"payload").expect("fixture payload");
+    let source = one_binary("payload.bin", None);
+    let document = parse(&source);
+
+    let missing_root = workspace.path().join("missing-root");
+    let cases = [
+        (missing_root, "unavailable workspace root"),
+        (workspace.path().join("payload.bin"), "file workspace root"),
+    ];
+    for (root, description) in cases {
+        let diagnostics = document
+            .canonical_resource_bundle(root, ResourceLimits::default())
+            .expect_err(description);
+        assert_eq!(diagnostics.len(), 1, "{description}");
+        assert_eq!(
+            diagnostics[0].code(),
+            DiagnosticCode::RESOURCE_UNKNOWN_REFERENCE,
+            "{description}"
+        );
+        assert_eq!(diagnostics[0].stage(), DiagnosticStage::Canonical);
+        assert!(diagnostics.iter().all(|diagnostic| {
+            diagnostic.primary_span().end <= source.len()
+                && source.is_char_boundary(diagnostic.primary_span().start)
+                && source.is_char_boundary(diagnostic.primary_span().end)
+        }));
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn accepts_in_root_symlink_and_rejects_symlink_escape() {
