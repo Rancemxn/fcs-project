@@ -46,6 +46,14 @@ expected = "expected/compile-time-generator.json"
 clauses = ["6.1", "6.3", "6.6", "6.7", "6.8"]
 
 [[fixture]]
+id = "source.valid.compile-time-unselected-range"
+path = "source/valid/compile-time-unselected-range.fcs"
+stage = "elaborate"
+expect = "success"
+expected = "expected/compile-time-unselected-range.json"
+clauses = ["6.5", "6.6", "6.8"]
+
+[[fixture]]
 id = "source.valid.track-boundaries"
 path = "source/valid/track-boundaries.fcs"
 stage = "canonical"
