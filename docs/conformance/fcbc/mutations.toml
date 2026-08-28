@@ -70,8 +70,8 @@ id = "unknown-required-section"
 diagnostic = "fcbc.unknown-required-section"
 
 [[mutation.patch]]
-offset = 648
-replace_hex = "15000000"
+offset = 132
+replace_hex = "0200"
 
 [[mutation]]
 id = "missing-resource-data"
