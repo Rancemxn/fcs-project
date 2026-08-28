@@ -22,10 +22,10 @@ use fcs_model::{
 };
 
 use crate::ast::{
-    Definition, Document, DocumentProfile, ExtensionRequirement, FieldPath, MetaBlock,
-    OrderedObject, ProfileFeature, RenderBodyItem, RenderItem, ResourceKind, SchemaField,
-    SchemaValue, SourceExpression, SourceLiteral, SourceSpan, SyncBlock, TopLevelBlockKind,
-    TypedValue,
+    Definition, DefinitionsBlock, Document, DocumentProfile, ExtensionRequirement, FieldPath,
+    MetaBlock, OrderedObject, ProfileFeature, RenderBodyItem, RenderItem, ResourceKind,
+    SchemaField, SchemaValue, SourceExpression, SourceLiteral, SourceSpan, SyncBlock,
+    TopLevelBlockKind, TypedValue,
 };
 use crate::custom::CustomValueLimits;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLabel, DiagnosticStage};
@@ -156,6 +156,7 @@ impl Document {
             &scene,
             chart.metadata().resources(),
             chart.time_map(),
+            self.definitions.as_ref(),
             self.format.span,
         )?;
         let (descriptors, mapping) =
@@ -814,9 +815,9 @@ fn render_stable_id(
 struct RenderLowerer<'a> {
     resources: &'a BTreeMap<String, CanonicalResource>,
     time_map: &'a ChartTimeMap,
+    definitions: Option<&'a DefinitionsBlock>,
     span: SourceSpan,
     descriptors: Vec<CanonicalPropertyDescriptor>,
-    descriptor_values: Vec<(CanonicalExpressionType, CanonicalExpressionValue)>,
     registry: StableIdRegistry,
     resource_ids: BTreeMap<String, StableId>,
     nodes: Vec<CanonicalRenderNode>,
@@ -830,14 +831,15 @@ impl<'a> RenderLowerer<'a> {
     fn new(
         resources: &'a BTreeMap<String, CanonicalResource>,
         time_map: &'a ChartTimeMap,
+        definitions: Option<&'a DefinitionsBlock>,
         span: SourceSpan,
     ) -> Self {
         Self {
             resources,
             time_map,
+            definitions,
             span,
             descriptors: Vec::new(),
-            descriptor_values: Vec::new(),
             registry: StableIdRegistry::new(),
             resource_ids: BTreeMap::new(),
             nodes: Vec::new(),
@@ -859,8 +861,59 @@ impl<'a> RenderLowerer<'a> {
             )
             .map_err(|error| render_error(error.to_string(), self.span))?,
         );
-        self.descriptor_values.push((ty, canonical));
         Ok(index)
+    }
+
+    fn dynamic_opacity_descriptor(&mut self, field: &SchemaField) -> Result<usize, Diagnostic> {
+        let SchemaValue::Expression(expression) = &field.value else {
+            return Err(render_error(
+                "Render field must be a compile-time expression",
+                field.span,
+            ));
+        };
+        let evaluation =
+            crate::elaborator::evaluate_metadata_expression(expression, self.definitions);
+        match evaluation {
+            Ok(value) => {
+                let opacity = render_float(value, field.span)?;
+                if !(0.0..=1.0).contains(&opacity) {
+                    return Err(render_error(
+                        "Render opacity must be within [0, 1]",
+                        field.span,
+                    ));
+                }
+                self.descriptor(TypedValue::Float(opacity))
+            }
+            Err(error) => {
+                let definitions = self.definitions;
+                let dag = crate::expression::lower_runtime_expression_with_resolver(
+                    expression,
+                    |candidate| {
+                        crate::elaborator::evaluate_metadata_expression(candidate, definitions).ok()
+                    },
+                )?;
+                if dag.required_environment().is_empty() {
+                    return Err(error);
+                }
+                if dag.result_type() != &CanonicalExpressionType::Float {
+                    return Err(render_error(
+                        "Render opacity expression must return a float",
+                        field.span,
+                    ));
+                }
+                let index = self.descriptors.len();
+                self.descriptors.push(
+                    CanonicalPropertyDescriptor::new(
+                        CanonicalExpressionType::Float,
+                        CanonicalDescriptorDomain::new(None, None, false)
+                            .expect("unbounded domain"),
+                        CanonicalDescriptorKind::Expression(dag),
+                    )
+                    .map_err(|descriptor| render_error(descriptor.to_string(), field.span))?,
+                );
+                Ok(index)
+            }
+        }
     }
 
     fn stable_id(
@@ -1246,16 +1299,10 @@ impl<'a> RenderLowerer<'a> {
             one_float_vec(),
             Ok::<_, Diagnostic>,
         )?)?;
-        let opacity_value = render_body_value_or(&node.items, "opacity", 1.0, |value| {
-            render_float(value, node.span)
-        })?;
-        if !(0.0..=1.0).contains(&opacity_value) {
-            return Err(render_error(
-                "Render opacity must be within [0, 1]",
-                render_body_field(&node.items, "opacity").map_or(node.span, |field| field.span),
-            ));
-        }
-        let opacity = self.descriptor(TypedValue::Float(opacity_value))?;
+        let opacity = match render_body_field(&node.items, "opacity") {
+            Some(field) => self.dynamic_opacity_descriptor(field)?,
+            None => self.descriptor(TypedValue::Float(1.0))?,
+        };
         let visibility = self.descriptor(TypedValue::Bool(render_body_value_or(
             &node.items,
             "visibility",
@@ -1739,6 +1786,7 @@ fn lower_render_scene(
     scene: &crate::ast::RenderScene,
     resources: &BTreeMap<String, CanonicalResource>,
     time_map: &ChartTimeMap,
+    definitions: Option<&DefinitionsBlock>,
     span: SourceSpan,
 ) -> Result<(CanonicalRenderScene, CanonicalDescriptorTable), Vec<Diagnostic>> {
     let result = (|| {
@@ -1765,7 +1813,7 @@ fn lower_render_scene(
                 ));
             }
         };
-        let mut lowerer = RenderLowerer::new(resources, time_map, span);
+        let mut lowerer = RenderLowerer::new(resources, time_map, definitions, span);
         let mut layers = Vec::new();
         for (layer_index, layer) in scene.layers.iter().enumerate() {
             let pass = render_body_field(&layer.items, "pass")
@@ -1835,22 +1883,16 @@ fn lower_render_scene(
                     .map_err(|error| render_error(format!("{error:?}"), span))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let descriptor_values = lowerer.descriptor_values;
+        let local_descriptors = lowerer.descriptors.clone();
         let table = CanonicalDescriptorTable::new(lowerer.descriptors, descriptor_roots)
             .map_err(|error| render_error(format!("{error:?}"), span))?;
-        let mapping = descriptor_values
+        let mapping = local_descriptors
             .iter()
-            .map(|(ty, value)| {
-                let expected = CanonicalPropertyDescriptor::new(
-                    ty.clone(),
-                    CanonicalDescriptorDomain::new(None, None, false).expect("unbounded domain"),
-                    CanonicalDescriptorKind::Constant(value.clone()),
-                )
-                .expect("descriptor already validated");
+            .map(|descriptor| {
                 table
                     .descriptors()
                     .iter()
-                    .position(|candidate| candidate == &expected)
+                    .position(|candidate| candidate == descriptor)
                     .ok_or_else(|| render_error("descriptor interning lost a Render value", span))
             })
             .collect::<Result<Vec<_>, _>>()?;
