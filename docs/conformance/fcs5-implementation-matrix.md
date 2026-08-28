@@ -36,7 +36,7 @@ nonempty binary/semantic/raster/mutation artifact。`image` 与 `serde_json` 在
 semantic evaluator、reference rasterizer 或产品 codec。
 
 FCS authoring/canonical closure 当时新增 7 项 canonical/error fixture，使 manifest 达到 39 entries；
-后续 I3–I5 stage-scoped vectors，以及 I10 Appendix A fixture，已使当前 manifest 达到 55 entries。I5.3 现已执行 explicit-root
+后续 I3–I5 stage-scoped vectors，以及 I10 Appendix A fixture，已使当前 manifest 达到 56 entries。I5.3 现已执行 explicit-root
 workspace resource resolution、opaque bytes/computed SHA-256 和 bundle binding；Note policy、exact DAG
 以及其他已交付边界按下表记录，不能再用历史 I0 状态替代当前 implementation evidence。
 
@@ -243,9 +243,27 @@ terms as #525 gave `circle`, bound by
 `source_product::{source_polyline_and_polygon_strokes_reach_the_product_raster,source_polygon_fill_and_stroke_keep_separate_paint_records,source_polyline_without_fill_or_stroke_is_rejected}`.
 Dynamic source Line stroke descriptors,
 Ellipse and RoundedRect strokes, source ImagePattern lowering, source Path lowering,
-Path semantic/raster coverage, broader canonical writer coverage, Text, and
-descriptor-driven gradient stroke lowering remain outside these bounded units; no
-Frozen or final I10 claim changes.
+Path semantic/raster coverage, broader canonical writer coverage, source Text
+grammar/lowering, Text stroke coverage, and descriptor-driven gradient stroke
+lowering remain outside these bounded units; no Frozen or final I10 claim changes.
+
+## Bounded Render Text fill semantic/raster delta
+
+Issue #539 adds the bounded product Text fill path from existing loader-validated
+GlyphRun records and decoded `truetype-glyf-1` outlines into semantic DrawOps and
+the 8x8 reference raster. It applies Text origin, runOffset, pen, placement
+metrics, and size, expands TrueType quadratic contours with the specified
+`1/1024` tolerance and depth-32 limit, and uses the existing nonzero fill and
+ordinary Paint path. Evidence is bound by
+`source_product::checked_in_text_fixture_reaches_product_raster`,
+`tests::text_evaluation_keeps_font_and_glyph_diagnostics_stable`, and the
+existing `tests::every_public_render_limit_has_focused_boundary_evidence`.
+
+Source Text grammar/lowering, shaping beyond `simple-ltr-1`, Text stroke,
+Path/ImagePattern/dynamic descriptor work, and broader Render closure remain
+outside this unit. GitHub Actions Full Gate run `32621285244` (`push`) passed on
+exact head `620980611f5e985a179b90911f6ec1e097fe17a2`; this delta does not change
+any Frozen or final I10 claim.
 
 ## Credit stable identity delta
 
