@@ -39,3 +39,12 @@ token、结果搬运或第二个仓库。稳定大版本/channel ref 会随上�
 - 不得恢复已删除的公开执行仓库、私有 checkout token、sccache 或自定义跨仓库 cache。
 - 不得用 cache、取消策略或 workflow 条件跳过、缩短或掩盖完整门禁。
 - 不得把 Action success 描述为规范性 conformance、独立 reviewer verdict 或 merge 授权。
+
+## 5. Dated amendment: all-branch push trigger
+
+On 2026-08-16, the project reaffirmed GitHub Actions as the only Full Gate execution
+environment and expanded the `full-gate.yml` push trigger from `main` only to every
+branch (`push.branches: ['**']`). The existing `pull_request` and
+`workflow_dispatch` triggers remain available and use the same exact-head SHA check.
+This amendment supersedes only the original trigger scope in section 2; it does not
+change the gate command sequence, required evidence, or merge/audit ownership.

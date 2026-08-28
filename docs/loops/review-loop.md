@@ -10,9 +10,9 @@
   Critical/Important implementation/conformance finding 都有根因证据、owner、修复路径和最新状态；安全
   可修复的 finding 有已提交的 corrective PR 和回归证据，不能安全修复的 finding 有明确的 PLANNER/HUMAN
   residual；必要的 corrective PR 已链接 finding Issue，且主会话已经重新审查修复后的新 SHA；架构/文档建议
-  均已创建 HUMAN-only Issue，不进入主 loop 的 acceptance ledger；当前 frontier 没有未审查目标，也没有
-  未分配的 Critical/Important finding。
-- 所有已完成审查的 reviewer worktree 都已从 `/tmp` 安全清理；仍保留的 worktree 都有 owner、固定 SHA、
+  均已创建 HUMAN-only Issue，不进入主 loop 的 acceptance ledger；最终 `main` RC 精确 SHA 已完成五域联合
+  复审且没有未关闭 Critical/Important finding；当前 frontier 没有未审查目标，也没有未分配的同等级 finding。
+- 所有已完成审查的 reviewer worktree 都已从系统临时目录安全清理；仍保留的 worktree 都有 owner、固定 SHA、
   未完成原因和明确的清理条件。
 - 审查 loop 不声明阶段、规范版本域或 FCS 5 RC 完成；它只产生独立审查证据和 finding 路由。最终完成
   仍由主 `docs/loops/loop.md` 根据规范、fixture、baseline、gate 和合并证据判定。
@@ -41,8 +41,9 @@
   Important finding；需要修复的 finding 都已链接 owner、目标 stage、依赖、根因证据、验收条件和 corrective
   PR 或明确的 HUMAN/PLANNER residual；架构/文档 advisory 都已标为 HUMAN-only 并从主 loop ledger 排除。仍在
   写入中的目标不算未完成审查目标，必须等待其固定快照。
-- **Terminal completion:** reviewer 只有在 root Issue 的 I10 success signal 已满足，并且 Frontier Sync 同时确认
-  没有新的固定 review target、未分配的 Critical/Important finding、待复审的 corrective PR/merged SHA，或
+- **Terminal completion:** reviewer 只有在 root Issue 的 I10 success signal 已满足、最终 `main` RC 精确 SHA 的
+  五域联合复审已记录为无未关闭 Critical/Important finding，并且 Frontier Sync 同时确认没有新的固定 review
+  target、未分配的同等级 finding、待复审的 corrective PR/merged SHA，或
   reviewer 自己保留的未清理 worktree 时，才可以终止并报告审查 frontier 闭合。I10 未完成时，空的 review
   frontier 不是成功、失败或 blocker；任何 `blocked` finding、等待主会话的 corrective PR、dirty corrective
   worktree、未确认的远端同步或旧状态都只能保持 reviewer 持久目标运行并进入轮询。
@@ -106,8 +107,8 @@
 
 1. **Bind:** 读取固定 Issue/PR/commit、head SHA、diff、规范/ADR/计划/fixture 路由和验收命令；记录
    不在 scope 内的内容。
-2. **Reproduce:** 适用时先复用目标同 SHA 的成功 full-gate evidence；主会话按根 `AGENTS.md` 的 Codespace Full
-   Gate 条款在用户 Codespace 对同 SHA 执行的完整命令序列等价于同 SHA 的 PR full-gate run，可作 full-gate evidence。
+2. **Reproduce:** 适用时先复用目标同 SHA 的成功 GitHub Actions full-gate evidence；push、PR 或
+   `workflow_dispatch` 对同 SHA 运行的 `.github/workflows/full-gate.yml` 均可作 full-gate evidence。
    只有纯文档或不改变执行逻辑的 workflow-policy
    metadata 才可标记 Rust gate non-applicable，其他 workflow 实现变化必须核对适用 gate，并在
    隔离 worktree 做不产生构建产物的静态检查。不为“独立”重复同一 gate。若竞争性假设必须靠执行区分，先创建记录 unknown root cause/evidence gap 的 finding，
@@ -212,8 +213,8 @@
   reviewer 先推送 finding branch 的诊断 SHA，以 `workflow_dispatch` full gate 取得 red evidence；只有根因确认后
   才能创建 corrective PR，随后以该 PR 新 SHA 的成功 run 取得 green evidence。两个 run 都必须记录 URL/ID、event、
   精确 `headSha` 和 conclusion。
-- 根 `AGENTS.md` 对主实现会话的本地编译放开（`cargo check`/`cargo clippy`/`cargo build`/`cargo fmt`）不适用于
-  本 loop：reviewer corrective worktree 保持完全不编译；审查的 test/conformance 证据仍只来自同 SHA full-gate run。
+- 根 `AGENTS.md` 只对 `<local-workspace-root>\main` 的 `main` 分支开放本地编译反馈；该权限不适用于
+  本 loop。reviewer corrective/read-only worktree 保持完全不编译；审查的 test/conformance 证据仍只来自同 SHA full-gate run。
 - corrective PR 创建前，reviewer 必须确认 worktree owner、用途、base/head SHA、分支、变更范围和验证命令；
   PR 正文或首条进度评论必须链接 finding、记录根因和实际验证结果。只创建分支或只提交猜测性 patch 不满足
   corrective delivery。

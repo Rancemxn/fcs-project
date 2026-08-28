@@ -253,6 +253,10 @@ independent Render normative review、executable RenderSection binary/raster art
 重新走完整审查；必须保留旧审计记录并标记其已撤回。依赖新语义的 I1–I9 实现必须等受影响阶段
 baseline 重新建立，I10/发布必须等版本重新 Frozen。已经公开的版本不得使用该例外。
 
+**2026-08-15 amendment:** 用户再次确认 FCS 5 尚未公开且兼容成本为零；该政策持续有效，直到用户
+手动宣布改变。五域 Frozen 和本地 RC 完成都不会自动结束该政策；在同一手动宣布前，不创建 public tag、
+GitHub Release、crate publish 或公开 release/conformance bundle。
+
 FCS、FCBC、Execution ABI、Render Profile、Conversion Specification 和 extension schema
 独立版本化。一个完全在编译期消失的 source 功能不必提升 FCBC 或 ABI；容器 framing
 变化不必提升 FCS source；新增 Render 节点不必改变 FCS Core major。

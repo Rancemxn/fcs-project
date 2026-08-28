@@ -391,6 +391,18 @@ coverage、cap、join 或 tangent。求 join tangent 时跳过连续零长度 se
 直到到达正长度 element，整个 array 总长大于 0 保证该过程有限。Arc/EllipseArc 的零长度概念性
 connector 遵守同一规则：保留有序边界但不制造额外 cap/join/coverage。
 
+The source spelling for a Path uses a compile-time `commands` array and a
+required `fillRule` field. Each array element is one of
+`moveTo(point)`, `lineTo(point)`, `quadraticTo(control, end)`,
+`cubicTo(control1, control2, end)`,
+`arc(center, radius, startAngle, endAngle, direction)`,
+`ellipseArc(center, radiusX, radiusY, rotation, startAngle, endAngle, direction)`,
+or `close()`. Points use `vec2<length>`, radii use `length`, angles use
+`angle`, and `direction` is the compile-time string `"clockwise"` or
+`"counterClockwise"`. Command count, command kind, `direction`, and
+`fillRule` are compile-time; numeric command arguments may be exact runtime
+descriptors. `fillRule` is `"nonzero"` or `"evenodd"`.
+
 ---
 
 ## 8. Paint 和 Stroke
@@ -405,14 +417,17 @@ ImagePattern(resource,transform,repeat,sampling)
 ```
 
 Render source uses the following fixed spellings for the bounded Core paint
-constructors. The product implementation currently supports `solid`,
-`linearGradient`, and `radialGradient`; its semantic/raster path also consumes
-loader-validated FCBC `ImagePattern` kind 4 records and kind 7 `Line` stroke
-records, and the canonical product writer covers those same bounded kind 4 and
-kind 7 records. Source `imagePattern` and Line stroke lowering remain separate
-bounded work; broader canonical writer coverage remains open after the bounded
-Line and ImagePattern writer paths. The
-gradient constructors take a
+constructors. The product implementation supports `solid`, `linearGradient`,
+and `radialGradient`; its canonical writer and semantic/raster path also cover
+loader-validated FCBC `ImagePattern`, `Line` stroke, `Path`, `Clip`, and
+`Text`/`GlyphRun` records. Source `imagePattern` lowering and source
+Line/Rect/RoundedRect/Circle/Ellipse/Polyline/Polygon stroke lowering and
+the source Path command array are covered by the canonical source path. Source
+Text and Clip lowering and full conformance evidence remain separate bounded
+work; product
+semantic/raster evaluation also applies isolated Group/ClipGroup boundaries
+through an offscreen sample stack. The gradient
+constructors take a
 compile-time array of `stop(offset, color)` calls and a compile-time spread
 string. `linearGradient` takes two `vec2<length>` expressions, while
 `radialGradient` takes two `vec2<length>` centers and two non-negative
@@ -428,8 +443,13 @@ fill: linearGradient(
 ```
 
 The array, stop offsets, and radial radii are compile-time topology. This
-bounded source lowering accepts finite compile-time geometry and colors;
-descriptor-driven gradient geometry remains a separate source-lowering unit.
+bounded source lowering accepts finite compile-time geometry and colors, and
+source Node `position`, `origin`, `rotation`, `scale`, `opacity`, and
+`visibility` fields, geometry numeric fields, and stroke `width`/`dashOffset`
+may use type-checked runtime expressions. Descriptor-backed paint values cover
+gradient geometry, stop colors, and ImagePattern transform fields; paint
+topology and the remaining compile-time-only paint/stroke fields stay fixed at
+compile time.
 An unsupported paint constructor is an error and does not fall back to a solid
 paint.
 

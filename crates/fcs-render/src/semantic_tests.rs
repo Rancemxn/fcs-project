@@ -1,7 +1,8 @@
 use super::{
-    GradientStopDrawOp, ImagePatternDrawOp, LinearGradientDrawOp, LocalShape, RadialGradientDrawOp,
-    StrokeDrawOp, gradient_color, linear_axis, pattern_local_point, pattern_repeat_axes,
-    pattern_texel_index, radial_gradient_color, stroke_contains, stroke_segments,
+    GradientStopDrawOp, ImagePatternDrawOp, IsolationDrawOp, LinearGradientDrawOp, LocalShape,
+    RadialGradientDrawOp, RasterIsolationBuffer, StrokeDrawOp, composite_raster_sample,
+    gradient_color, linear_axis, pattern_local_point, pattern_repeat_axes, pattern_texel_index,
+    radial_gradient_color, stroke_contains, stroke_segments, sync_isolation_stack,
 };
 
 #[test]
@@ -199,4 +200,20 @@ fn line_stroke_caps_and_dash_boundaries_are_stable() {
         stroke_segments(4.0, 0.5, &[1.0, 1.0]).unwrap(),
         vec![(0.0, 0.5), (1.5, 2.5), (3.5, 4.0)]
     );
+}
+
+#[test]
+fn isolated_opacity_is_applied_after_descendants_are_composited() {
+    let boundary = IsolationDrawOp {
+        node_id: 1,
+        opacity: 0.5,
+        composite: 1,
+    };
+    let mut destination = [0.0; 4];
+    let mut stack: Vec<RasterIsolationBuffer> = Vec::new();
+    sync_isolation_stack(&mut destination, &mut stack, &[boundary]).unwrap();
+    composite_raster_sample(&mut destination, &mut stack, [0.5, 0.0, 0.0, 0.5], 1).unwrap();
+    composite_raster_sample(&mut destination, &mut stack, [0.5, 0.0, 0.0, 0.5], 1).unwrap();
+    sync_isolation_stack(&mut destination, &mut stack, &[]).unwrap();
+    assert_eq!(destination, [0.375, 0.0, 0.0, 0.375]);
 }

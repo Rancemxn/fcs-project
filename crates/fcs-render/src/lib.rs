@@ -18,8 +18,8 @@ pub use loader::{
     DecodedRenderChart, GeometryData, NodeKind, PaintData, load_render, load_render_with_limits,
 };
 pub use semantic::{
-    DrawOp, GradientStopDrawOp, ImageDrawOp, ImagePatternDrawOp, LinearGradientDrawOp,
-    RadialGradientDrawOp, StrokeDrawOp, evaluate_semantic_draw_list,
+    DrawOp, GradientStopDrawOp, ImageDrawOp, ImagePatternDrawOp, IsolationDrawOp,
+    LinearGradientDrawOp, RadialGradientDrawOp, StrokeDrawOp, evaluate_semantic_draw_list,
     evaluate_semantic_draw_list_at, rasterize_solid_rgba8, rasterize_solid_rgba8_at,
     rasterize_solid_rgba8_with_limits, rasterize_solid_rgba8_with_limits_at,
 };
@@ -1493,14 +1493,17 @@ mod tests {
             .expect("isolated query")
             .into_iter()
             .find(|op| op.kind == NodeKind::Text)
-            .expect("fixture Text under isolated Group")
-            .opacity;
+            .expect("fixture Text under isolated Group");
 
-        // The isolated Group's own opacity must not multiply into descendants
-        // in this bounded DrawOp. If the boundary had been applied correctly
-        // via an offscreen pass the value would differ; we explicitly do not
-        // claim that behavior here.
-        assert_eq!(bounded_text, baseline_text);
+        assert_eq!(bounded_text.opacity, baseline_text);
+        assert_eq!(
+            bounded_text.isolation_chain,
+            vec![IsolationDrawOp {
+                node_id: render.nodes[isolated_index].id,
+                opacity: 0.5,
+                composite: render.nodes[isolated_index].composite,
+            }]
+        );
     }
 
     #[test]

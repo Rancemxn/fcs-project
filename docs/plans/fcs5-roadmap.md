@@ -24,6 +24,14 @@ Reviewed Implementation Baseline 驱动 Rust 参考实现，再在完整 executa
   条件满足后自动进入下一阶段，无需逐阶段取得用户确认；该 baseline 不改变版本状态。
 - I10 conformance RC 仍要求五个版本域全部 Frozen、最终联合独立复审和完整 executable
   conformance 通过。
+- Render Profile 1.0 的交付目标是确定的 scene/resource/raster 语义以及正确、player-callable 的 runtime、
+  Execution ABI 和 reference evaluator；编辑器 UI、具体 Phigros/商业客户端整合、每个平台的生产级 GPU
+  backend、真实设备帧率和商业播放器体验不是 FCS 5.0 gate。
+- Render/Execution 性能验收以确定性、规范误差/栅格容差和已声明资源上限为准，不设置商业级 FPS、
+  设备或吞吐 benchmark。所有最终 SHA 上已登记且版本化的 Conversion profile 必须完成；未登记社区变体
+  不自动获得 FCS 5 语义。
+- I10 只形成 `main` 上可复现的未发布 RC。用户手动宣布前，不创建 public tag、GitHub Release、crate publish
+  或公开 conformance bundle，也不改变当前兼容政策。
 - 直接第三方依赖使用精确 Cargo 版本，并按
   `docs/plans/fcs5-dependency-baseline.md` 固定 crates.io 发布 commit、feature 和用途边界；
   `refer/dependencies/` 只提供同版本源码证据，不作为 path dependency，也不能替代规范语义。
@@ -329,7 +337,8 @@ properties 和独立 fuzz lane，当前 root workspace gate 为 218 tests，I1 T
 - software reference renderer 和 raster fixtures；
 - GPU backend interface，但不让 backend 行为成为规范。
 
-完成条件：semantic 与 raster conformance 通过，Render 不影响 gameplay。
+完成条件：semantic 与 reference raster conformance 通过，Render 不影响 gameplay；GPU/realtime interface
+可消费 canonical display data，但无需证明具体平台 backend 已生产化。
 
 ### I10：CLI、发行组合与 Conformance Release Candidate
 
@@ -340,7 +349,7 @@ properties 和独立 fuzz lane，当前 root workspace gate 为 218 tests，I1 T
 - 完成 workspace、fuzz、property 和版权 fixture 验证。
 
 完成条件：CLI 只消费 `fcs-source`、`fcs-model`、`fcs-runtime`、`fcs-fcbc`、
-`fcs-converter` 和 `fcs-render` 的规范边界；四份权威规范与工具输出版本一致。
+`fcs-conversion` 和 `fcs-render` 的规范边界；四份权威规范与工具输出版本一致。
 
 ## 6. 实现任务账本
 
@@ -665,7 +674,7 @@ distance、canonical assembly 或整体 I6 完成。固定 `serde` 1.0.228、
   release artifact 内容与 Frozen 版本表一致。
 - **I10.6 文档/fixture闭环**：四规范每个 normative example 可执行，CLI `--version` 同版本表。
 - **I10.7 最终验证**：workspace gates、all profiles/goldens/round-trips/rasters、property/fuzz smoke、
-  optional copyright fixtures；发布 conformance manifest。
+  optional copyright fixtures；固定未公开 RC 的 conformance manifest，不上传公开 bundle。
 
 `tempfile` 可用于 filesystem fixture 和 CLI 同目录原子输出；`thiserror` 可用于新建或正在实质修改的
 typed error boundary。二者都不能把稳定 diagnostic category、rule ID、JSON schema 或 source span
@@ -674,7 +683,8 @@ typed error boundary。二者都不能把稳定 diagnostic category、rule ID、
 
 ## 7. 每个实施阶段的质量门
 
-必须按顺序执行：
+以下序列必须由根 `AGENTS.md` 定义的精确 SHA Full Gate 按顺序执行；本地只有 main compile lane 可运行
+不构成门禁证据的编译/lint/格式开发反馈，任何本地 worktree 都不运行测试、fuzz 或可执行 fixture：
 
 ```text
 cargo fmt --all

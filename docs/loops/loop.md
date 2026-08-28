@@ -7,16 +7,20 @@
 - **Observable success signal:** 以下条件同时成立：
   - FCS Core、FCBC Container、Execution ABI、Render Profile 和 Conversion Specification 五个版本域
     均满足 `docs/specifications/governance.md` 的 Frozen 条件；
+  - FCS、FCBC、Execution ABI、Render 和 Conversion 的实现以及必需的 runtime、reference evaluator、
+    player-callable public API 与 CLI assembly 都在产品 workspace 中，不以空壳、manifest integrity test
+    或 test-only oracle 冒充能力；
   - 路线图 I1–I10 的每个 task 和阶段完成条件都有已合并实现、测试、fixture、review 与治理证据；
-  - source、canonical、runtime、FCBC、converter、Render 和 CLI 都是产品实现，不以空壳、manifest
-    integrity test 或 test-only oracle 冒充能力；
   - S15 的 Core fixture execution、Conversion round-trip、FCBC/Execution ABI 和 Render executable
     blocker 均由 owning stage 的机器可执行 artifact 关闭；
   - implementation matrix 不含无 owner、无下一阶段或与实际证据不符的 `partial`/`blocked` 项；
   - 所有适用的 source/canonical/runtime、golden/mutation、round-trip、semantic/raster、property/fuzz、
-    CLI end-to-end、hash、link、UTF-8 和 workspace gate 通过；
-  - 最终联合独立复审没有未关闭的 Critical/Important finding；
-  - 所有 RC 内工作均通过 PR 合并到 `main`，root Issue 的最终证据与实际 merge/hash/gate 一致并已关闭；
+    CLI end-to-end、hash、link、UTF-8 和 workspace executable conformance 通过；
+  - 所有 RC 内工作均已合并到 `main`；同一个最终 `main` 精确 SHA 上的完整 Full Gate 成功，且该 SHA
+    可以从干净 checkout 可复现未发布 RC；
+  - 主会话对该最终精确 SHA 的 Primary Self-Audit 为 `pass`；
+  - 独立审查会话对该最终精确 SHA 的五域联合复审没有未关闭的 Critical/Important finding；
+  - root Issue 的最终证据与实际 merge/hash/gate 一致并已关闭；
   - 每个非机械实现 PR 都有主会话针对固定 `Issue/PR + head SHA + scope + commands + full-gate evidence` 的
     append-only `Primary audit result`，并在通过后才 Ready/merge；独立 reviewer 可以随后追加
     `Audit result` 二审，审查失效时已重新审查，且最终 I10 frontier 没有未关闭的 Critical/Important finding；
@@ -24,7 +28,8 @@
     SHA 和明确的清理条件，不存在无人负责的 stale worktree；
   - 不存在影响规范、conformance、路线图验收、安全性、正确性或可复现性的 open Issue。只有明确属于
     RC 非目标的 Minor/增强 follow-up 可以继续开放；
-  - 未为本 RC 创建公开 tag、GitHub Release，未发布 crate，也未上传公开 release/conformance bundle。
+  - 未为本 RC 创建公开 tag、GitHub Release，未发布 crate，也未上传公开 release/conformance bundle；
+    在用户手动宣布前，不进入公开发布或兼容政策变化。
 - **Observable failure signal:** 达到 240 个 work-unit iterations、满足全局 no-progress、只剩无法解除的
   HUMAN residual，或任一声称完成的 gate 仍有失败检查、过期 hash、未关闭 Critical/Important finding、
   未授权公开语义选择、未合并交付或由计划/Issue/测试偷偷创造的规范行为。
@@ -50,6 +55,11 @@
   独立复审和完整 executable conformance。
 - 精确表达式、FCS authoring workspace、自包含单谱面 FCBC、原始资源 bytes、版本化 Conversion
   semantic profile、无默认 baking、无 FCBC source snapshot/player cache 等已接受边界必须保持。
+- FCS 5.0 的 Render 验收证明渲染语义确定：runtime、Execution ABI、Render Profile 与 reference evaluator
+  必须正确并可由播放器调用；编辑器 UI、真实 Phigros/具体商业客户端整合、各平台生产级 GPU backend、
+  真实设备帧率和商业播放器体验均不是 RC gate。
+- Conversion 验收覆盖最终 SHA 上所有已登记且版本化的 profile；未登记社区变体不自动获得 FCS 5 语义。
+  性能验收只要求确定性、规范误差/栅格容差和已声明资源上限，不设置商业级 FPS、设备或吞吐 benchmark gate。
 - 不覆盖或回退无关修改，不把 `refer/` 作为 Cargo path dependency，不恢复 FCS 4 compatibility
   facade；后续领域 crate 和依赖只在 owning stage 的 gate 允许后创建或激活。
 
@@ -97,8 +107,8 @@
   criteria 和未决 decision residual；任何非终止 iteration 必须关闭至少一个 criterion、消除一个
   decision residual、完成保持原验收覆盖的严格缩小拆分，或按 Residual Routing 退出该路径。主 loop 的 240 预算
   同时单调递减；reviewer 的独立 480 review-unit 预算由 `review-loop.md` 单独管理。
-- **Remote gate state:** 需要编译或测试反馈的修改以 draft PR 上的新固定 SHA 触发 GitHub full gate，或按
-  根 `AGENTS.md` 的 Codespace Full Gate 条款直接在用户 GitHub Codespace 对同 SHA 执行完整命令序列；
+- **Remote gate state:** 需要编译或测试反馈的修改推送到任意 branch 后由 GitHub Actions full-gate workflow 自动触发；
+  draft PR、普通 PR 和 `workflow_dispatch` 也可触发同一 workflow，但不在本地执行 Full Gate。
   `queued`/`in_progress` 只是待验证状态，不算通过或 iteration 进展。成功的同 SHA run 可以关闭验证项；失败 run
   必须产生决定性证据并由修正后的新 SHA 推进，否则按 no-progress 路由。同 SHA 的瞬时基础设施重跑和等待 Action
   都不消耗 work-unit；新 SHA 取消的旧 run 是过期证据，不算当前 gate 失败；cache miss 也不改变 gate。
@@ -117,6 +127,11 @@
 
 # Worktree Lifecycle
 
+- 本地路径只使用根 `AGENTS.md` 定义的三个 lane：`<local-workspace-root>\main` 是唯一 main compile lane，
+  `<local-workspace-root>\worktrees\<issue>-<slug>` 保存非 main 实现 worktree，系统临时目录下的
+  `fcs-review-*`/`fcs-finding-*` 保存独立审查 snapshot。非 main lane 不运行会生成 Cargo build artifact 的命令。
+- 直接位于 `<local-workspace-root>` 的非 main 协调 worktree 是 legacy exception：只保留既有未交付修改，
+  不在该路径新建 worktree 或编译；安全交付后迁出该布局。
 - 主实现 worktree 是活动 workspace，不在实现会话中途删除。任何额外 worktree 都必须有 owner、用途、
   固定起点 SHA、允许写入的路径和清理条件；路径、分支或 detached 状态必须能由
   `git worktree list --porcelain` 复现。
@@ -158,10 +173,10 @@
   审查 scope、规范/ADR 条款、复现命令、full-gate evidence、已知 residual 和验收 gate，并继续不依赖 reviewer
   即时返回的安全交付。
 - 审查会话的 corrective/read-only worktree 不运行任何编译、测试、fuzz 或生成 Cargo build artifact 的命令；需要
-  执行证据时通过 GitHub `.github/workflows/full-gate.yml` 对解析为目标 SHA 的 ref 运行（`workflow_dispatch` 或 PR
-  run），不在本地跑测试或逐次烧 gate 迭代；审查的 test/conformance 证据只来自同 SHA full-gate run。主会话本地
-  允许的编译/lint/格式命令只作开发反馈（见 `AGENTS.md` 的 Rust 开发与验证），test/conformance 证据仍只来自
-  full gate。
+  执行证据时通过 GitHub `.github/workflows/full-gate.yml` 对解析为目标 SHA 的 ref 运行（push、`workflow_dispatch` 或 PR
+  run），不在本地跑测试或逐次烧 gate 迭代；审查的 test/conformance 证据只来自同 SHA full-gate run。只有
+  `<local-workspace-root>\main` 且分支为 `main` 的 checkout 可以运行本地编译/lint 开发反馈；其他主会话
+  worktree 也不得编译，且任何本地结果都不能替代 full gate。
 - 审查期间若 head SHA、scope、验收命令或依赖证据变化，原审查立即失效；当前会话必须追加新的
   `Review requested`，审查会话必须追加 `superseding/re-review` 说明并以新快照重新开始。旧评论和
   finding 不得被编辑或静默覆盖。
@@ -260,17 +275,18 @@ Routine GitHub delivery 和满足 Authorized Change & Delivery 条件的普通 m
 
 | Gate | Trigger | If approved | If denied |
 |---|---|---|---|
-| Public release | 创建公开 tag、GitHub Release、发布 crate、上传发行物或公开 conformance bundle | 只按批准范围发布并执行发布后校验 | 保留已合并的本地 RC，不把它描述为已公开发布 |
+| Public release | 用户手动宣布后创建公开 tag、GitHub Release、发布 crate、上传发行物或公开 conformance bundle | 只按宣布和批准范围发布并执行发布后校验 | 保留已合并的本地 RC，不把 Frozen 或 RC 描述为已公开发布 |
 | Destructive history/data operation | 删除或重写已有 Git 历史、branch、archive、用户数据或外部数据 | 仅对明确目标执行，并先验证作用域 | 不执行；采用非破坏替代或保留 residual |
 | Credential/system mutation | 使用签名密钥、付费服务、修改远端保护/配置、安装系统级软件/驱动或改机器全局配置 | 在最小权限和明确作用域内执行 | 继续所有不依赖该能力的工作，必要时路由 HUMAN |
 | Copyright/license distribution | 把许可证或版权状态不明确的谱面、音频、图片、字体等纳入公开分发 | 仅分发获批且有证据记录的材料 | 只保留本地 opt-in fixture lane，不进入公开 artifact |
 
 # Measurement Domain
 
-本地允许运行编译、lint 与格式检查（`cargo check`、`cargo clippy`、`cargo build`、`cargo fmt`，详见根
-`AGENTS.md` 的 Rust 开发与验证）；本地工作树不运行测试。测试、fuzz 和可执行 fixture 反馈按用户决定直接在该
-GitHub Codespace 对精确 head SHA 执行完整 Full Gate 命令序列（等价于 `.github/workflows/full-gate.yml`），
-GitHub runner 的 PR run 仍是 PR/merge required gate。验证记录必须区分
+只有 `<local-workspace-root>\main` 且当前分支严格为 `main` 的 checkout 允许运行本地 `cargo check`、
+`cargo clippy`、`cargo build` 和格式开发反馈（详见根 `AGENTS.md`）；其他 worktree 不生成 Cargo artifact。
+所有本地工作树都不运行测试、fuzz 或可执行 fixture。相关反馈统一由
+`.github/workflows/full-gate.yml` 在 GitHub Actions 对精确 head SHA 执行；push、PR 和手动 dispatch 运行均
+使用同一 gate。验证记录必须区分
 passed、failed、queued、skipped 和 non-applicable，不能把缺失或运行中的 gate 写成通过。
 
 | Output domain | Verification method | Required artifact |
@@ -284,7 +300,7 @@ passed、failed、queued、skipped 和 non-applicable，不能把缺失或运行
 | Conversion | 真实固定来源 PGR v1/v3、RPE、PEC 经 exact ProfileBinding 完成 parse→canonical→target→同 profile reparse；验证 capability/error budget | source/package fixture、canonical golden、resource bundle、ConversionReport/Fidelity bytes、round-trip 报告 |
 | Render | RenderSection codec、resource decode/shaping、semantic draw list 和 reference raster 容差比较 | 非空 RenderSection golden、固定 image/font、semantic snapshot、raster/diff |
 | CLI 与发行组合 | 命令、profile/resource/capability/budget 参数、exit category、JSON/text diagnostic 和端到端组合 | command transcript、expected output/exit、package/tree/version 审计 |
-| Rust workspace | draft PR 的每个验证 SHA 运行 ADR 0013 的完整 GitHub gate；必要时对解析为目标 SHA 的 ref 人工 dispatch，并核对 run `headSha`；不在本地运行测试或 fuzz，本地编译/lint/格式只作开发反馈 | workflow/run URL、run ID、event、精确 head SHA、conclusion、step 结果和跳过原因 |
+| Rust workspace | draft PR 的每个验证 SHA 运行 ADR 0013 的完整 GitHub gate；必要时对解析为目标 SHA 的 ref 人工 dispatch，并核对 run `headSha`；不在本地运行测试或 fuzz，只有 main compile lane 的编译/lint/格式可作开发反馈 | workflow/run URL、run ID、event、精确 head SHA、conclusion、step 结果和跳过原因 |
 | Repository/conformance integrity | file/suite/tree hash 独立复算；UTF-8/NUL/链接；archive/main/workspace/refer 边界 | hash ledger、路径计数、`git status`、结构与链接审计 |
 
 # Residual Routing

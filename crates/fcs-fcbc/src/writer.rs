@@ -3,12 +3,12 @@ use fcs_model::{
     CanonicalCreditRole, CanonicalDescriptorKind, CanonicalDescriptorTable, CanonicalExpressionDag,
     CanonicalExpressionOpcode, CanonicalExpressionType, CanonicalExpressionValue,
     CanonicalGradientSpread, CanonicalJudgeShape, CanonicalNoteKind, CanonicalNoteScorePolicy,
-    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalProfile,
-    CanonicalProfileFeature, CanonicalRenderGeometryData, CanonicalRenderPaintData,
-    CanonicalRenderScene, CanonicalRequiredExtension, CanonicalResourceKind, CanonicalTrack,
-    CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece,
-    CanonicalTrackSegment, CanonicalTrackTarget, CanonicalTrackValue, CanonicalValue,
-    CanonicalValueType, DistributionMetadata,
+    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalPathCommand,
+    CanonicalProfile, CanonicalProfileFeature, CanonicalRenderGeometryData,
+    CanonicalRenderPaintData, CanonicalRenderScene, CanonicalRequiredExtension,
+    CanonicalResourceKind, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
+    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget,
+    CanonicalTrackValue, CanonicalValue, CanonicalValueType, DistributionMetadata,
 };
 use fcs_runtime::EasingId;
 use sha2::{Digest, Sha256};
@@ -911,6 +911,7 @@ fn assemble_package(
             "centerDescriptor",
             "destinationDescriptors",
             "originDescriptor",
+            "pathRef",
             "pointDescriptors",
             "radiusDescriptor",
             "radiusXDescriptor",
@@ -923,6 +924,7 @@ fn assemble_package(
             "sourceDescriptors",
             "startDescriptor",
             "endDescriptor",
+            "glyphRunRefs",
         ]);
         strings.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
         strings.dedup();
@@ -1035,15 +1037,6 @@ fn render_section(
     strings: &[&str],
     resources: &[ResourceFixture<'_>],
 ) -> FcbcResult<Vec<u8>> {
-    if scene.paths().iter().next().is_some()
-        || scene.clips().iter().next().is_some()
-        || scene.glyph_runs().iter().next().is_some()
-    {
-        return Err(FcbcError::new(
-            "fcbc.render-unsupported",
-            "product Render writer currently supports only root Rect and Image scenes",
-        ));
-    }
     let descriptor = |index: usize| {
         descriptor_indices.get(index).copied().ok_or_else(|| {
             FcbcError::new(
@@ -1063,6 +1056,12 @@ fn render_section(
     for (index, geometry) in geometry_order.iter().enumerate() {
         geometry_indices[*geometry] = index as u32;
     }
+    let mut path_order: Vec<usize> = (0..scene.paths().len()).collect();
+    path_order.sort_by_key(|index| scene.paths()[*index].id().value());
+    let mut path_indices = vec![NULL_INDEX; scene.paths().len()];
+    for (index, path) in path_order.iter().enumerate() {
+        path_indices[*path] = index as u32;
+    }
     let mut paint_order: Vec<usize> = (0..scene.paints().len()).collect();
     paint_order.sort_by_key(|index| scene.paints()[*index].id().value());
     let mut paint_indices = vec![0u32; scene.paints().len()];
@@ -1074,6 +1073,18 @@ fn render_section(
     let mut stroke_indices = vec![NULL_INDEX; scene.strokes().len()];
     for (index, stroke) in stroke_order.iter().enumerate() {
         stroke_indices[*stroke] = index as u32;
+    }
+    let mut clip_order: Vec<usize> = (0..scene.clips().len()).collect();
+    clip_order.sort_by_key(|index| scene.clips()[*index].id().value());
+    let mut clip_indices = vec![NULL_INDEX; scene.clips().len()];
+    for (index, clip) in clip_order.iter().enumerate() {
+        clip_indices[*clip] = index as u32;
+    }
+    let mut glyph_run_order: Vec<usize> = (0..scene.glyph_runs().len()).collect();
+    glyph_run_order.sort_by_key(|index| scene.glyph_runs()[*index].id().value());
+    let mut glyph_run_indices = vec![NULL_INDEX; scene.glyph_runs().len()];
+    for (index, glyph_run) in glyph_run_order.iter().enumerate() {
+        glyph_run_indices[*glyph_run] = index as u32;
     }
 
     let mut roots = Vec::<(usize, usize)>::new();
@@ -1129,8 +1140,8 @@ fn render_section(
     put_u32(&mut payload, scene.paths().len() as u32);
     put_u32(&mut payload, scene.paints().len() as u32);
     put_u32(&mut payload, scene.strokes().len() as u32);
-    put_u32(&mut payload, 0);
-    put_u32(&mut payload, 0);
+    put_u32(&mut payload, scene.clips().len() as u32);
+    put_u32(&mut payload, scene.glyph_runs().len() as u32);
     for (encoded, source_layer) in layer_order.iter().enumerate() {
         let layer = &scene.layers()[*source_layer];
         let (first_root, root_count) = layer_root_ranges[encoded];
@@ -1163,24 +1174,42 @@ fn render_section(
         };
         let geometry = node.geometry();
         let (paint, stroke) = match node.kind() {
-            fcs_model::CanonicalRenderNodeKind::Rect
-            | fcs_model::CanonicalRenderNodeKind::RoundedRect
-            | fcs_model::CanonicalRenderNodeKind::Circle
-            | fcs_model::CanonicalRenderNodeKind::Ellipse
-            | fcs_model::CanonicalRenderNodeKind::Polyline
-            | fcs_model::CanonicalRenderNodeKind::Polygon => {
-                if node.stroke().is_some() {
+            fcs_model::CanonicalRenderNodeKind::Rect => {
+                let fill = node.fill_paint();
+                let stroke = node.stroke();
+                if fill.is_none() && stroke.is_none() {
                     return Err(FcbcError::new(
-                        "fcbc.render-unsupported",
-                        "product Render writer only supports strokes on Line nodes",
+                        "fcbc.dangling-reference",
+                        "Render Rect has no fill paint or stroke",
                     ));
                 }
-                (
-                    Some(node.fill_paint().ok_or_else(|| {
-                        FcbcError::new("fcbc.dangling-reference", "Render Rect has no fill paint")
-                    })?),
-                    None,
-                )
+                (fill, stroke)
+            }
+            fcs_model::CanonicalRenderNodeKind::RoundedRect
+            | fcs_model::CanonicalRenderNodeKind::Circle
+            | fcs_model::CanonicalRenderNodeKind::Ellipse => {
+                let fill = node.fill_paint();
+                let stroke = node.stroke();
+                if fill.is_none() && stroke.is_none() {
+                    return Err(FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render shape has no fill paint or stroke",
+                    ));
+                }
+                (fill, stroke)
+            }
+            fcs_model::CanonicalRenderNodeKind::Polyline
+            | fcs_model::CanonicalRenderNodeKind::Polygon
+            | fcs_model::CanonicalRenderNodeKind::Path => {
+                let fill = node.fill_paint();
+                let stroke = node.stroke();
+                if fill.is_none() && stroke.is_none() {
+                    return Err(FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render point geometry has no fill paint or stroke",
+                    ));
+                }
+                (fill, stroke)
             }
             fcs_model::CanonicalRenderNodeKind::Line => {
                 if node.fill_paint().is_some() {
@@ -1196,7 +1225,16 @@ fn render_section(
                     })?),
                 )
             }
-            fcs_model::CanonicalRenderNodeKind::Group => (None, None),
+            fcs_model::CanonicalRenderNodeKind::Group => {
+                if node.clip().is_some() {
+                    return Err(FcbcError::new(
+                        "fcbc.render-unsupported",
+                        "Render Group cannot carry a clip",
+                    ));
+                }
+                (None, None)
+            }
+            fcs_model::CanonicalRenderNodeKind::ClipGroup => (None, None),
             fcs_model::CanonicalRenderNodeKind::Image => {
                 if node.fill_paint().is_some() || node.stroke().is_some() {
                     return Err(FcbcError::new(
@@ -1206,11 +1244,16 @@ fn render_section(
                 }
                 (None, None)
             }
-            _ => {
-                return Err(FcbcError::new(
-                    "fcbc.render-unsupported",
-                    "product Render writer does not support this node kind",
-                ));
+            fcs_model::CanonicalRenderNodeKind::Text => {
+                let fill = node.fill_paint();
+                let stroke = node.stroke();
+                if fill.is_none() && stroke.is_none() {
+                    return Err(FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render Text has no fill paint or stroke",
+                    ));
+                }
+                (fill, stroke)
             }
         };
         let geometry = geometry
@@ -1246,6 +1289,18 @@ fn render_section(
             })
             .transpose()?
             .unwrap_or(NULL_INDEX);
+        let clip = node
+            .clip()
+            .map(|clip| {
+                clip_indices.get(clip).copied().ok_or_else(|| {
+                    FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render node references a missing clip",
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(NULL_INDEX);
         let attachment_id = node.attachment().target().map_or(0, |id| id.value());
         let active = node.active();
         let flags = u16::from(active.unbounded_before())
@@ -1274,7 +1329,7 @@ fn render_section(
         put_u32(&mut record_payload, geometry);
         put_u32(&mut record_payload, paint);
         put_u32(&mut record_payload, stroke);
-        put_u32(&mut record_payload, NULL_INDEX);
+        put_u32(&mut record_payload, clip);
         put_u16(&mut record_payload, node.composite().ordinal());
         put_u16(&mut record_payload, 0);
         record_payload.extend_from_slice(&empty_object());
@@ -1365,6 +1420,21 @@ fn render_section(
             | CanonicalRenderGeometryData::Polygon { points } => {
                 value_object(&[("pointDescriptors", descriptor_array(points)?)], strings)
             }
+            CanonicalRenderGeometryData::Path { path } => {
+                let path_ref = path_indices.get(*path).copied().ok_or_else(|| {
+                    FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render geometry references a missing path",
+                    )
+                })?;
+                if path_ref == NULL_INDEX {
+                    return Err(FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render geometry references a missing path",
+                    ));
+                }
+                value_object(&[("pathRef", value_int(i64::from(path_ref)))], strings)
+            }
             CanonicalRenderGeometryData::Image {
                 resource,
                 destination,
@@ -1397,11 +1467,33 @@ fn render_section(
                 fields.push(("sampling", value_int(i64::from(sampling.ordinal()))));
                 value_object(&fields, strings)
             }
-            _ => {
-                return Err(FcbcError::new(
-                    "fcbc.render-unsupported",
-                    "Render geometry is not supported by the product writer",
-                ));
+            CanonicalRenderGeometryData::Text { glyph_runs, origin } => {
+                let runs = glyph_runs
+                    .iter()
+                    .map(|glyph_run| {
+                        glyph_run_indices
+                            .get(*glyph_run)
+                            .copied()
+                            .filter(|index| *index != NULL_INDEX)
+                            .map(|index| value_int(i64::from(index)))
+                            .ok_or_else(|| {
+                                FcbcError::new(
+                                    "fcbc.dangling-reference",
+                                    "Render Text geometry references a missing glyph run",
+                                )
+                            })
+                    })
+                    .collect::<FcbcResult<Vec<_>>>()?;
+                value_object(
+                    &[
+                        ("glyphRunRefs", value_array(2, runs)),
+                        (
+                            "originDescriptor",
+                            value_int(i64::from(descriptor(*origin)?)),
+                        ),
+                    ],
+                    strings,
+                )
             }
         };
         let mut record_payload = Vec::new();
@@ -1409,6 +1501,84 @@ fn render_section(
         put_u16(&mut record_payload, geometry.kind().ordinal());
         put_u16(&mut record_payload, 0);
         record_payload.extend_from_slice(&fields);
+        payload.extend_from_slice(&record(record_payload));
+    }
+    for path_index in &path_order {
+        let path = &scene.paths()[*path_index];
+        let mut record_payload = Vec::new();
+        put_u64(&mut record_payload, path.id().value());
+        put_u16(&mut record_payload, 0);
+        put_u16(&mut record_payload, path.fill_rule().ordinal());
+        put_u32(&mut record_payload, path.commands().len() as u32);
+        for command in path.commands() {
+            let mut command_payload = Vec::new();
+            match command {
+                CanonicalPathCommand::MoveTo(point) => {
+                    put_u16(&mut command_payload, 1);
+                    put_u16(&mut command_payload, 0);
+                    put_u32(&mut command_payload, descriptor(*point)?);
+                }
+                CanonicalPathCommand::LineTo(point) => {
+                    put_u16(&mut command_payload, 2);
+                    put_u16(&mut command_payload, 0);
+                    put_u32(&mut command_payload, descriptor(*point)?);
+                }
+                CanonicalPathCommand::QuadraticTo(control, end) => {
+                    put_u16(&mut command_payload, 3);
+                    put_u16(&mut command_payload, 0);
+                    put_u32(&mut command_payload, descriptor(*control)?);
+                    put_u32(&mut command_payload, descriptor(*end)?);
+                }
+                CanonicalPathCommand::CubicTo(first, second, end) => {
+                    put_u16(&mut command_payload, 4);
+                    put_u16(&mut command_payload, 0);
+                    put_u32(&mut command_payload, descriptor(*first)?);
+                    put_u32(&mut command_payload, descriptor(*second)?);
+                    put_u32(&mut command_payload, descriptor(*end)?);
+                }
+                CanonicalPathCommand::Arc {
+                    center,
+                    radius,
+                    start_angle,
+                    end_angle,
+                    direction,
+                } => {
+                    put_u16(&mut command_payload, 5);
+                    put_u16(&mut command_payload, 0);
+                    put_u32(&mut command_payload, descriptor(*center)?);
+                    put_u32(&mut command_payload, descriptor(*radius)?);
+                    put_u32(&mut command_payload, descriptor(*start_angle)?);
+                    put_u32(&mut command_payload, descriptor(*end_angle)?);
+                    put_u16(&mut command_payload, direction.ordinal());
+                    put_u16(&mut command_payload, 0);
+                }
+                CanonicalPathCommand::EllipseArc {
+                    center,
+                    radius_x,
+                    radius_y,
+                    rotation,
+                    start_angle,
+                    end_angle,
+                    direction,
+                } => {
+                    put_u16(&mut command_payload, 6);
+                    put_u16(&mut command_payload, 0);
+                    put_u32(&mut command_payload, descriptor(*center)?);
+                    put_u32(&mut command_payload, descriptor(*radius_x)?);
+                    put_u32(&mut command_payload, descriptor(*radius_y)?);
+                    put_u32(&mut command_payload, descriptor(*rotation)?);
+                    put_u32(&mut command_payload, descriptor(*start_angle)?);
+                    put_u32(&mut command_payload, descriptor(*end_angle)?);
+                    put_u16(&mut command_payload, direction.ordinal());
+                    put_u16(&mut command_payload, 0);
+                }
+                CanonicalPathCommand::Close => {
+                    put_u16(&mut command_payload, 7);
+                    put_u16(&mut command_payload, 0);
+                }
+            }
+            record_payload.extend_from_slice(&record(command_payload));
+        }
         payload.extend_from_slice(&record(record_payload));
     }
     for paint_index in &paint_order {
@@ -1535,6 +1705,64 @@ fn render_section(
         put_u32(&mut record_payload, stroke.dash().len() as u32);
         for dash in stroke.dash() {
             put_f64(&mut record_payload, *dash);
+        }
+        payload.extend_from_slice(&record(record_payload));
+    }
+    for clip_index in &clip_order {
+        let clip = &scene.clips()[*clip_index];
+        let geometry = geometry_indices
+            .get(clip.geometry())
+            .copied()
+            .ok_or_else(|| {
+                FcbcError::new(
+                    "fcbc.dangling-reference",
+                    "Render clip references a missing geometry",
+                )
+            })?;
+        let mut record_payload = Vec::new();
+        put_u64(&mut record_payload, clip.id().value());
+        put_u16(&mut record_payload, 0);
+        put_u16(&mut record_payload, clip.fill_rule().ordinal());
+        put_u32(&mut record_payload, geometry);
+        payload.extend_from_slice(&record(record_payload));
+    }
+    for glyph_run_index in &glyph_run_order {
+        let glyph_run = &scene.glyph_runs()[*glyph_run_index];
+        let resource_id = glyph_run.font().value();
+        let resource = resources
+            .iter()
+            .find(|candidate| candidate.id == resource_id)
+            .ok_or_else(|| {
+                FcbcError::new(
+                    "fcbc.render-resource-not-found",
+                    format!("Render GlyphRun references resource {resource_id}"),
+                )
+            })?;
+        if resource.kind != 3 || resource.media_type != "font/ttf" {
+            return Err(FcbcError::new(
+                "fcbc.render-resource-type-mismatch",
+                "Render GlyphRun requires a font/ttf resource",
+            ));
+        }
+        let mut record_payload = Vec::new();
+        put_u64(&mut record_payload, glyph_run.id().value());
+        put_u64(&mut record_payload, resource_id);
+        put_u32(&mut record_payload, glyph_run.face_index());
+        put_u16(&mut record_payload, 0);
+        put_u16(&mut record_payload, 1);
+        put_u32(&mut record_payload, descriptor(glyph_run.size())?);
+        let [run_offset_x, run_offset_y] = glyph_run.run_offset();
+        put_f64(&mut record_payload, run_offset_x);
+        put_f64(&mut record_payload, run_offset_y);
+        put_u32(&mut record_payload, glyph_run.glyphs().len() as u32);
+        put_u32(&mut record_payload, 0);
+        for glyph in glyph_run.glyphs() {
+            put_u32(&mut record_payload, glyph.glyph_id);
+            put_u32(&mut record_payload, 0);
+            put_f64(&mut record_payload, glyph.x_advance);
+            put_f64(&mut record_payload, glyph.y_advance);
+            put_f64(&mut record_payload, glyph.x_offset);
+            put_f64(&mut record_payload, glyph.y_offset);
         }
         payload.extend_from_slice(&record(record_payload));
     }
