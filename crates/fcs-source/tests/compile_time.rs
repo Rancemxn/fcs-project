@@ -1248,6 +1248,28 @@ definitions { const value: float = sin(1); }"#;
 }
 
 #[test]
+fn polymorphic_builtin_arity_diagnostics_use_the_complete_call_span() {
+    for expression in [
+        "abs()",
+        "min(1.0)",
+        "max(1.0, 2.0, 3.0)",
+        "clamp(1.0, 2.0, 3.0, 4.0)",
+    ] {
+        let source = format!(
+            "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ const value: float = {expression}; }}"
+        );
+        let errors = elaborate_source(&source).expect_err("wrong polymorphic builtin arity");
+        let start = source.find(expression).expect("builtin call");
+        assert_eq!(errors[0].code(), DiagnosticCode::TYPE_MISMATCH);
+        assert_eq!(
+            errors[0].primary_span(),
+            SourceSpan::new(start, start + expression.len()),
+            "{expression}"
+        );
+    }
+}
+
+#[test]
 fn supports_forward_const_and_pure_function_references() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }
