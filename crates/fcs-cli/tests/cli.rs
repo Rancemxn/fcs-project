@@ -1193,7 +1193,7 @@ fn format_executes_all_declared_source_fixtures_at_parser_boundary() {
         formatted_count += 1;
     }
 
-    assert_eq!(formatted_count, 46, "parser-accepted source fixture count");
+    assert_eq!(formatted_count, 47, "parser-accepted source fixture count");
     assert_eq!(rejected_count, 9, "parser-rejected source fixture count");
 }
 
