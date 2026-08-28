@@ -26,6 +26,7 @@ const NOTES: u32 = 10;
 const TRACKS: u32 = 11;
 const EXPRESSIONS: u32 = 12;
 const DISTANCES: u32 = 13;
+const EXTENSIONS: u32 = 15;
 const RESOURCE_DATA: u32 = 20;
 
 /// Sections 6/10/11/13 payloads open with a `count` u32 followed by an 8-byte
