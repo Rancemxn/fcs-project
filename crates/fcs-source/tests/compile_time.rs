@@ -369,6 +369,10 @@ definitions {
   }
 }
 lines { line main {} }"#,
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const generated_id: string = @missing.id; }
+collections { judgelines { Line { id: generated_id; }; } }"#,
     ] {
         let errors = elaborate_source(source).expect_err("unknown definition Line reference");
         assert_eq!(errors[0].code(), DiagnosticCode::NAME_UNKNOWN);
