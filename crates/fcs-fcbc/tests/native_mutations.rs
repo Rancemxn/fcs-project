@@ -239,6 +239,25 @@ fn section_table_mutations_reject_with_the_layout_categories() {
     );
 }
 
+#[test]
+fn section_extent_beyond_file_is_rejected_by_both_product_loaders() {
+    let base = native_bytes();
+    let container = load_container(&base).expect("pristine native bytes must frame");
+    let first = entry_offset(&container, STRING_TABLE);
+    let first_section = &container.sections[0];
+    assert_eq!(first_section.section_type, STRING_TABLE);
+
+    // Keep offset+length representable while extending the declared extent one byte past the file.
+    let declared_length = base.len() as u64 - first_section.offset + 1;
+    let mut bytes = base;
+    bytes[first + 24..first + 32].copy_from_slice(&declared_length.to_le_bytes());
+
+    let framing =
+        load_container(&bytes).expect_err("out-of-file section extent unexpectedly framed");
+    assert_eq!(framing.category(), "fcbc.section-table-bounds");
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.section-table-bounds");
+}
+
 /// Core content corruptions mirroring `nonempty-execution-mutations.toml`
 /// (forbidden descriptor kind, unknown expression opcode, forbidden distance
 /// classification) and `embedded-resource-mutations.toml` (hash mismatch,
