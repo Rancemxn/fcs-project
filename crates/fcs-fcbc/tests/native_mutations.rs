@@ -26,7 +26,6 @@ const NOTES: u32 = 10;
 const TRACKS: u32 = 11;
 const EXPRESSIONS: u32 = 12;
 const DISTANCES: u32 = 13;
-const EXTENSIONS: u32 = 15;
 const RESOURCE_DATA: u32 = 20;
 
 /// Sections 6/10/11/13 payloads open with a `count` u32 followed by an 8-byte
@@ -175,6 +174,38 @@ fn header_mutations_reject_on_both_product_surfaces() {
     }
 }
 
+#[test]
+fn declared_header_size_must_be_128_on_both_product_surfaces() {
+    let mut bytes = native_bytes();
+    bytes[4..6].copy_from_slice(&127u16.to_le_bytes());
+
+    let framing = load_container(&bytes).expect_err("invalid header size unexpectedly framed");
+    assert_eq!(framing.category(), "fcbc.invalid-header");
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.invalid-header");
+}
+
+#[test]
+fn header_flags_must_be_zero_on_both_product_surfaces() {
+    let mut bytes = native_bytes();
+    bytes[6..8].copy_from_slice(&1u16.to_le_bytes());
+
+    let framing = load_container(&bytes).expect_err("nonzero headerFlags unexpectedly framed");
+    assert_eq!(framing.category(), "fcbc.invalid-header");
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.invalid-header");
+}
+
+#[test]
+fn reserved_feature_flag_bit_is_rejected_on_both_product_surfaces() {
+    let base = native_bytes();
+    let feature_flags = u64::from_le_bytes(base[28..36].try_into().unwrap());
+    let mut bytes = base;
+    bytes[28..36].copy_from_slice(&(feature_flags | (1 << 7)).to_le_bytes());
+
+    let framing = load_container(&bytes).expect_err("reserved feature flag unexpectedly framed");
+    assert_eq!(framing.category(), "fcbc.invalid-header");
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.invalid-header");
+}
+
 /// Section-table corruptions mirroring the layout mutations of
 /// `mutations.toml` (misaligned offset, corrupted checksum, overlap, unknown
 /// or missing required section), located structurally instead of by golden
@@ -258,6 +289,42 @@ fn duplicate_known_section_identity_is_rejected_by_both_product_loaders() {
         "fcbc.invalid-record"
     );
     assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.invalid-record");
+}
+
+#[test]
+fn section_extent_beyond_file_is_rejected_by_both_product_loaders() {
+    let base = native_bytes();
+    let container = load_container(&base).expect("pristine native bytes must frame");
+    let first = entry_offset(&container, STRING_TABLE);
+    let first_section = &container.sections[0];
+    assert_eq!(first_section.section_type, STRING_TABLE);
+
+    // Keep offset+length representable while extending the declared extent one byte past the file.
+    let declared_length = base.len() as u64 - first_section.offset + 1;
+    let mut bytes = base;
+    bytes[first + 24..first + 32].copy_from_slice(&declared_length.to_le_bytes());
+
+    let framing =
+        load_container(&bytes).expect_err("out-of-file section extent unexpectedly framed");
+    assert_eq!(framing.category(), "fcbc.section-table-bounds");
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.section-table-bounds");
+}
+
+#[test]
+fn section_range_overflow_is_rejected_by_both_product_loaders() {
+    let base = native_bytes();
+    let container = load_container(&base).expect("pristine native bytes must frame");
+    let first = entry_offset(&container, STRING_TABLE);
+    assert_eq!(container.sections[0].section_type, STRING_TABLE);
+
+    // Section range arithmetic must reject overflow before checksum or Core decode.
+    let mut bytes = base;
+    bytes[first + 24..first + 32].copy_from_slice(&u64::MAX.to_le_bytes());
+
+    let framing =
+        load_container(&bytes).expect_err("overflowing section range unexpectedly framed");
+    assert_eq!(framing.category(), "fcbc.section-table-bounds");
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.section-table-bounds");
 }
 
 /// Core content corruptions mirroring `nonempty-execution-mutations.toml`
