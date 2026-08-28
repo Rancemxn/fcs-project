@@ -174,6 +174,18 @@ fn header_mutations_reject_on_both_product_surfaces() {
     }
 }
 
+#[test]
+fn reserved_feature_flag_bit_is_rejected_on_both_product_surfaces() {
+    let base = native_bytes();
+    let feature_flags = u64::from_le_bytes(base[28..36].try_into().unwrap());
+    let mut bytes = base;
+    bytes[28..36].copy_from_slice(&(feature_flags | (1 << 7)).to_le_bytes());
+
+    let framing = load_container(&bytes).expect_err("reserved feature flag unexpectedly framed");
+    assert_eq!(framing.category(), "fcbc.invalid-header");
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.invalid-header");
+}
+
 /// Section-table corruptions mirroring the layout mutations of
 /// `mutations.toml` (misaligned offset, corrupted checksum, overlap, unknown
 /// or missing required section), located structurally instead of by golden
