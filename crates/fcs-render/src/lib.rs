@@ -276,6 +276,16 @@ mod tests {
         for node in &mut render.nodes {
             node.attachment = Attachment { kind: 1, id: 0 };
         }
+        let size = add_descriptor_constant(
+            render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 1.0,
+            },
+        );
+        for run in &mut render.glyph_runs {
+            run.size_descriptor = size;
+        }
     }
 
     fn isolate_solid_shape(render: &mut DecodedRenderChart, kind: NodeKind) {
@@ -1342,6 +1352,16 @@ mod tests {
                 id: line_id,
             };
         }
+        let text_size = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 1.0,
+            },
+        );
+        for run in &mut render.glyph_runs {
+            run.size_descriptor = text_size;
+        }
         let line_rect = evaluate_semantic_draw_list_at(&render, 0.0)
             .expect("Line attachment query")
             .into_iter()
@@ -1455,6 +1475,31 @@ mod tests {
             evaluate_semantic_draw_list_at(&render, 0.0)
                 .expect_err("opacity descriptor execution failure"),
             "render.invalid-descriptor"
+        );
+    }
+
+    #[test]
+    fn text_evaluation_keeps_font_and_glyph_diagnostics_stable() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        let text_geometry = render
+            .geometries
+            .iter()
+            .find_map(|geometry| match &geometry.data {
+                GeometryData::Text { glyph_runs, .. } => glyph_runs.first().copied(),
+                _ => None,
+            })
+            .expect("fixture Text geometry");
+        render.glyph_runs[text_geometry as usize].font_resource_id = 0;
+        assert_eq!(
+            evaluate_semantic_draw_list_at(&render, 0.0).expect_err("missing font"),
+            "render.resource-not-found"
+        );
+
+        let mut render = load_render(&render_fixture()).expect("render reload");
+        render.glyph_runs[text_geometry as usize].glyphs[0].glyph_id = u32::MAX;
+        assert_eq!(
+            evaluate_semantic_draw_list_at(&render, 0.0).expect_err("invalid glyph"),
+            "render.invalid-geometry"
         );
     }
 

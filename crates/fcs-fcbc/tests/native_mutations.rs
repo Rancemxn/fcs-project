@@ -20,12 +20,14 @@ use fcs_source::parser::parse_document;
 use tempfile::tempdir;
 
 const STRING_TABLE: u32 = 1;
+const CONSTANT_POOL: u32 = 2;
 const RESOURCES: u32 = 6;
 const TEMPO: u32 = 8;
 const NOTES: u32 = 10;
 const TRACKS: u32 = 11;
 const EXPRESSIONS: u32 = 12;
 const DISTANCES: u32 = 13;
+const EXTENSIONS: u32 = 15;
 const RESOURCE_DATA: u32 = 20;
 
 /// Sections 6/10/11/13 payloads open with a `count` u32 followed by an 8-byte
@@ -174,6 +176,38 @@ fn header_mutations_reject_on_both_product_surfaces() {
     }
 }
 
+#[test]
+fn declared_header_size_must_be_128_on_both_product_surfaces() {
+    let mut bytes = native_bytes();
+    bytes[4..6].copy_from_slice(&127u16.to_le_bytes());
+
+    let framing = load_container(&bytes).expect_err("invalid header size unexpectedly framed");
+    assert_eq!(framing.category(), "fcbc.invalid-header");
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.invalid-header");
+}
+
+#[test]
+fn header_flags_must_be_zero_on_both_product_surfaces() {
+    let mut bytes = native_bytes();
+    bytes[6..8].copy_from_slice(&1u16.to_le_bytes());
+
+    let framing = load_container(&bytes).expect_err("nonzero headerFlags unexpectedly framed");
+    assert_eq!(framing.category(), "fcbc.invalid-header");
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.invalid-header");
+}
+
+#[test]
+fn reserved_feature_flag_bit_is_rejected_on_both_product_surfaces() {
+    let base = native_bytes();
+    let feature_flags = u64::from_le_bytes(base[28..36].try_into().unwrap());
+    let mut bytes = base;
+    bytes[28..36].copy_from_slice(&(feature_flags | (1 << 7)).to_le_bytes());
+
+    let framing = load_container(&bytes).expect_err("reserved feature flag unexpectedly framed");
+    assert_eq!(framing.category(), "fcbc.invalid-header");
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.invalid-header");
+}
+
 /// Section-table corruptions mirroring the layout mutations of
 /// `mutations.toml` (misaligned offset, corrupted checksum, overlap, unknown
 /// or missing required section), located structurally instead of by golden
@@ -237,6 +271,82 @@ fn section_table_mutations_reject_with_the_layout_categories() {
         load_chart(&missing).unwrap_err(),
         "fcbc.missing-required-section"
     );
+}
+
+#[test]
+fn misordered_section_table_is_rejected_by_both_product_loaders() {
+    let base = native_bytes();
+    let container = load_container(&base).expect("pristine native bytes must frame");
+    let first = entry_offset(&container, STRING_TABLE);
+    let second = entry_offset(&container, CONSTANT_POOL);
+
+    // Swapping the first two known types keeps both entries present but violates
+    // the required ascending (sectionType, offset) table order.
+    let mut bytes = base;
+    bytes[first..first + 4].copy_from_slice(&CONSTANT_POOL.to_le_bytes());
+    bytes[second..second + 4].copy_from_slice(&STRING_TABLE.to_le_bytes());
+
+    assert_eq!(
+        load_container(&bytes).unwrap_err().category(),
+        "fcbc.section-order"
+    );
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.section-order");
+}
+
+#[test]
+fn duplicate_known_section_identity_is_rejected_by_both_product_loaders() {
+    let base = native_bytes();
+    let container = load_container(&base).expect("pristine native bytes must frame");
+    let distance_entry = entry_offset(&container, DISTANCES);
+    let extensions_entry = entry_offset(&container, EXTENSIONS);
+    assert!(distance_entry < extensions_entry);
+
+    // Retyping Extensions as a second Distance keeps the table's offsets and
+    // ascending order valid, isolating the duplicate-identity validation.
+    let mut bytes = base;
+    bytes[extensions_entry..extensions_entry + 4].copy_from_slice(&DISTANCES.to_le_bytes());
+
+    assert_eq!(
+        load_container(&bytes).unwrap_err().category(),
+        "fcbc.invalid-record"
+    );
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.invalid-record");
+}
+
+#[test]
+fn section_extent_beyond_file_is_rejected_by_both_product_loaders() {
+    let base = native_bytes();
+    let container = load_container(&base).expect("pristine native bytes must frame");
+    let first = entry_offset(&container, STRING_TABLE);
+    let first_section = &container.sections[0];
+    assert_eq!(first_section.section_type, STRING_TABLE);
+
+    // Keep offset+length representable while extending the declared extent one byte past the file.
+    let declared_length = base.len() as u64 - first_section.offset + 1;
+    let mut bytes = base;
+    bytes[first + 24..first + 32].copy_from_slice(&declared_length.to_le_bytes());
+
+    let framing =
+        load_container(&bytes).expect_err("out-of-file section extent unexpectedly framed");
+    assert_eq!(framing.category(), "fcbc.section-table-bounds");
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.section-table-bounds");
+}
+
+#[test]
+fn section_range_overflow_is_rejected_by_both_product_loaders() {
+    let base = native_bytes();
+    let container = load_container(&base).expect("pristine native bytes must frame");
+    let first = entry_offset(&container, STRING_TABLE);
+    assert_eq!(container.sections[0].section_type, STRING_TABLE);
+
+    // Section range arithmetic must reject overflow before checksum or Core decode.
+    let mut bytes = base;
+    bytes[first + 24..first + 32].copy_from_slice(&u64::MAX.to_le_bytes());
+
+    let framing =
+        load_container(&bytes).expect_err("overflowing section range unexpectedly framed");
+    assert_eq!(framing.category(), "fcbc.section-table-bounds");
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.section-table-bounds");
 }
 
 /// Core content corruptions mirroring `nonempty-execution-mutations.toml`
@@ -331,6 +441,64 @@ fn core_mutations_reject_with_the_content_categories() {
             load_chart(&bytes).expect_err(&format!("native mutation {id} unexpectedly loaded"));
         assert_eq!(error, category, "{id} diagnostic mismatch");
     }
+}
+
+#[test]
+fn unknown_optional_section_is_skipped_by_both_product_loaders() {
+    const UNKNOWN_TYPE: u32 = 21;
+    const UNKNOWN_PAYLOAD: [u8; 4] = [0xde, 0xad, 0xbe, 0xef];
+
+    let base = native_bytes();
+    let original = load_container(&base).expect("pristine native bytes must frame");
+    let table_start = original.header.section_table_offset as usize;
+    let table_end = table_start + original.sections.len() * SECTION_ENTRY_SIZE;
+
+    // Insert one table entry before the body, then repair every shifted section offset.
+    let mut bytes = Vec::with_capacity(base.len() + SECTION_ENTRY_SIZE + UNKNOWN_PAYLOAD.len() + 8);
+    bytes.extend_from_slice(&base[..table_end]);
+    bytes.resize(bytes.len() + SECTION_ENTRY_SIZE, 0);
+    bytes.extend_from_slice(&base[table_end..]);
+    for index in 0..original.sections.len() {
+        let entry = table_start + index * SECTION_ENTRY_SIZE;
+        let offset = u64::from_le_bytes(bytes[entry + 16..entry + 24].try_into().unwrap());
+        bytes[entry + 16..entry + 24]
+            .copy_from_slice(&(offset + SECTION_ENTRY_SIZE as u64).to_le_bytes());
+    }
+
+    let unknown_offset = bytes.len().checked_add(7).unwrap() & !7;
+    bytes.resize(unknown_offset, 0);
+    bytes.extend_from_slice(&UNKNOWN_PAYLOAD);
+    let unknown_entry = table_end;
+    bytes[unknown_entry..unknown_entry + 4].copy_from_slice(&UNKNOWN_TYPE.to_le_bytes());
+    bytes[unknown_entry + 4..unknown_entry + 6].copy_from_slice(&1u16.to_le_bytes());
+    bytes[unknown_entry + 12] = 3;
+    bytes[unknown_entry + 16..unknown_entry + 24]
+        .copy_from_slice(&(unknown_offset as u64).to_le_bytes());
+    bytes[unknown_entry + 24..unknown_entry + 32]
+        .copy_from_slice(&(UNKNOWN_PAYLOAD.len() as u64).to_le_bytes());
+    bytes[unknown_entry + 32..unknown_entry + 36]
+        .copy_from_slice(&section_crc32_iso_hdlc(&UNKNOWN_PAYLOAD).to_le_bytes());
+    bytes[36..40].copy_from_slice(&((original.sections.len() + 1) as u32).to_le_bytes());
+    let file_length = bytes.len() as u64;
+    bytes[48..56].copy_from_slice(&file_length.to_le_bytes());
+
+    let framed = load_container(&bytes).expect("unknown optional section must be skippable");
+    assert_eq!(framed.sections.len(), original.sections.len() + 1);
+    assert_eq!(framed.section_types().last(), Some(&UNKNOWN_TYPE));
+    assert_eq!(
+        framed.section_payload(&bytes, UNKNOWN_TYPE),
+        Some(UNKNOWN_PAYLOAD.as_slice())
+    );
+
+    let original_chart = load_chart(&base).expect("pristine native bytes must load");
+    let chart = load_chart(&bytes).expect("Core loader must skip unknown optional section");
+    assert_eq!(chart.lines, original_chart.lines);
+    assert_eq!(chart.notes, original_chart.notes);
+    assert_eq!(chart.descriptors, original_chart.descriptors);
+    assert_eq!(chart.expressions, original_chart.expressions);
+    assert_eq!(chart.distances, original_chart.distances);
+    assert_eq!(chart.sections.len(), original_chart.sections.len() + 1);
+    assert_eq!(chart.sections.last().unwrap().section_type, UNKNOWN_TYPE);
 }
 
 #[test]

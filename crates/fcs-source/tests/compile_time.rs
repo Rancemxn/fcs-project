@@ -346,6 +346,59 @@ collections { notes { selected(@main); } }"#;
 }
 
 #[test]
+fn definition_line_references_use_the_document_namespace() {
+    let valid = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const main_id: string = @main.id;
+  fn read_id() -> string { return @main.id; }
+}
+lines { line main {} }"#;
+    elaborate_source(valid).expect("declared definition Line references should elaborate");
+
+    for source in [
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const missing_line: Line = @missing; }
+lines { line main {} }"#,
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  fn hidden(flag: bool) -> string {
+    if flag { return @missing.id; } else { return @main.id; }
+  }
+}
+lines { line main {} }"#,
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const generated_id: string = @missing.id; }
+collections { judgelines { Line { id: generated_id; }; } }"#,
+    ] {
+        let errors = elaborate_source(source).expect_err("unknown definition Line reference");
+        assert_eq!(errors[0].code(), DiagnosticCode::NAME_UNKNOWN);
+        let start = source.find("@missing").expect("missing Line reference");
+        assert_eq!(
+            errors[0].primary_span(),
+            SourceSpan::new(start, start + "@missing".len())
+        );
+    }
+}
+
+#[test]
+fn definition_line_references_include_constant_backed_judgeline_ids() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  const JUDGE_ID: string = "judge";
+  fn read_id() -> string { return @judge.id; }
+}
+collections { judgelines { Line { id: JUDGE_ID; }; } }"#;
+
+    elaborate_source(source).expect("constant-backed Line IDs should resolve in definitions");
+}
+
+#[test]
 fn pure_functions_route_unavailable_static_entity_field_evaluation() {
     let source = r#"#fcs 5.0.0
 format { profile: chart; }
@@ -453,6 +506,25 @@ collections {
 }
 
 #[test]
+fn unselected_collection_generator_range_is_not_evaluated() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections {
+  notes {
+    if false {
+      generate i: int in 0..=1 step 1 / 0 {
+        emit tap { gameplay.time: 0beat; };
+      }
+    } else {
+      tap { gameplay.time: 1beat; };
+    }
+  }
+}"#;
+
+    elaborate_source(source).expect("unselected generator range must not be evaluated");
+}
+
+#[test]
 fn template_unselected_branch_is_schema_checked_before_instantiation() {
     let source = r#"#fcs 5.0.0
 format { profile: chart; }
@@ -528,22 +600,40 @@ format { profile: chart; }
 tempoMap { 0beat -> 120bpm; }
 definitions {
   const DIRECT_ID: string = "direct";
-  const TEMPLATE_ID: string = "templated";
   const OVERRIDE_ID: string = "override";
-  template Line makeJudge() {
-    return Line { id: TEMPLATE_ID; };
+  fn generatedId(value: int) -> string {
+    if value == 0 { return "generated"; } else { return "unexpected"; }
+  }
+  template Line makeJudge(id: string) {
+    let local_id: string = id;
+    return Line { id: "base"; } with { id: local_id; };
   }
 }
 collections {
   judgelines {
     Line { id: DIRECT_ID; };
-    makeJudge();
-    makeJudge() with { id: OVERRIDE_ID; };
+    makeJudge("templated");
+    makeJudge("ignored") with { id: OVERRIDE_ID; };
+    if true {
+      Line { id: "branch"; };
+    } else {
+      Line { id: "unused-branch"; };
+    }
+    generate i: int in 0..=0 step 1 {
+      let local_id: string = generatedId(i + index + range.start);
+      if true {
+        emit Line { id: local_id; };
+      } else {
+        emit Line { id: "unused-generator"; };
+      }
+    }
   }
   notes {
     tap { line: @direct; gameplay.time: 1beat; };
     tap { line: @templated; gameplay.time: 2beat; };
     tap { line: @override; gameplay.time: 3beat; };
+    tap { line: @branch; gameplay.time: 4beat; };
+    tap { line: @generated; gameplay.time: 5beat; };
   }
 }"#;
     let document = parse_document(source).into_result().unwrap();
@@ -562,6 +652,8 @@ collections {
             TypedValue::String("direct".into()),
             TypedValue::String("templated".into()),
             TypedValue::String("override".into()),
+            TypedValue::String("branch".into()),
+            TypedValue::String("generated".into()),
         ]
     );
 
@@ -585,6 +677,29 @@ collections { judgelines { Line { id: ID; }; } }"#;
     assert_eq!(
         errors[0].primary_span(),
         SourceSpan::new(id_path, id_path + "id".len())
+    );
+}
+
+#[test]
+fn reference_backed_template_ids_cannot_bootstrap_or_fall_back_to_their_base() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  template Line rename(id: string) {
+    let local_id: string = id;
+    return Line { id: "base"; } with { id: local_id; };
+  }
+}
+lines { line base {} }
+collections { judgelines { rename(@missing.id); } }"#;
+
+    let errors = elaborate_source(source).expect_err("unknown Line references cannot create IDs");
+    assert_eq!(errors[0].code(), DiagnosticCode::NAME_UNKNOWN);
+    let start = source.find("@missing").expect("missing Line reference");
+    assert_eq!(
+        errors[0].primary_span(),
+        SourceSpan::new(start, start + "@missing".len())
     );
 }
 
