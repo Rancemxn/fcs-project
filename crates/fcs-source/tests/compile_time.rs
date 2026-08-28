@@ -528,19 +528,22 @@ format { profile: chart; }
 tempoMap { 0beat -> 120bpm; }
 definitions {
   const DIRECT_ID: string = "direct";
+  const TEMPLATE_ID: string = "template";
   const OVERRIDE_ID: string = "override";
   template Line makeJudge() {
-    return Line { id: "base"; };
+    return Line { id: TEMPLATE_ID; };
   }
 }
 collections {
   judgelines {
     Line { id: DIRECT_ID; };
+    makeJudge();
     makeJudge() with { id: OVERRIDE_ID; };
   }
   notes {
     tap { line: @direct; gameplay.time: 1beat; };
-    tap { line: @override; gameplay.time: 2beat; };
+    tap { line: @template; gameplay.time: 2beat; };
+    tap { line: @override; gameplay.time: 3beat; };
   }
 }"#;
     let document = parse_document(source).into_result().unwrap();
@@ -557,6 +560,7 @@ collections {
         ids,
         vec![
             TypedValue::String("direct".into()),
+            TypedValue::String("template".into()),
             TypedValue::String("override".into()),
         ]
     );
