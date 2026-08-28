@@ -293,6 +293,9 @@ pub(crate) fn evaluate_metadata_expression(
     expression: &crate::ast::SourceExpression,
     definitions: Option<&crate::ast::DefinitionsBlock>,
 ) -> Result<crate::ast::TypedValue, Diagnostic> {
+    if let Some(definitions) = definitions {
+        cycle::reject_cycles(definitions).map_err(ElaboratorError::into_diagnostic)?;
+    }
     let context = CompileTimeContext::new(CompileTimeLimits::default());
     eval::evaluate_with_context(
         expression,

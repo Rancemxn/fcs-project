@@ -2308,6 +2308,31 @@ definitions {
 }
 
 #[test]
+fn direct_metadata_evaluation_rejects_function_cycles_before_recursion() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  fn first() -> string { return second(); }
+  fn second() -> string { return first(); }
+}
+meta { title: first(); }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let diagnostics = document
+        .canonical_metadata()
+        .expect_err("direct metadata evaluation must reject recursive functions");
+
+    assert_eq!(diagnostics[0].code(), DiagnosticCode::NAME_CYCLE);
+    assert_eq!(
+        diagnostics[0]
+            .expansion_trace()
+            .iter()
+            .map(|frame| frame.subject().unwrap())
+            .collect::<Vec<_>>(),
+        ["first", "second", "first"]
+    );
+}
+
+#[test]
 fn dependency_cycle_diagnostic_retains_related_edge_spans() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }
