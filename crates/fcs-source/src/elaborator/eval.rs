@@ -555,7 +555,7 @@ pub(super) fn infer_expression_with_expected(
                 });
             };
             if let Some(return_type) =
-                infer_polymorphic_builtin(name, arguments, scope, functions, schema)?
+                infer_polymorphic_builtin(name, arguments, *span, scope, functions, schema)?
             {
                 return Ok(return_type);
             }
@@ -712,6 +712,7 @@ fn signature(
 fn infer_polymorphic_builtin(
     name: &str,
     arguments: &[SourceExpression],
+    span: SourceSpan,
     scope: &Scope,
     functions: &BTreeMap<String, &FunctionDeclaration>,
     schema: &ConstructionSchema,
@@ -734,10 +735,7 @@ fn infer_polymorphic_builtin(
             callee: name.to_owned(),
             expected: expected_arity,
             actual: types.len(),
-            span: arguments
-                .first()
-                .map(SourceExpression::span)
-                .unwrap_or(SourceSpan::new(0, 0)),
+            span,
         });
     }
     if !types.iter().all(is_ordered_scalar_type) {
