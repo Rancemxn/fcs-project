@@ -942,7 +942,7 @@ fn parse_cmap4(
                 .ok_or(AssetError::DecodeFailed)?,
         )
         .ok_or(AssetError::DecodeFailed)?;
-    if segment_count == 0 || table.len() != expected_length {
+    if segment_count == 0 || table.len() < expected_length || !table.len().is_multiple_of(2) {
         return Err(AssetError::DecodeFailed);
     }
     let end_codes = 14;
@@ -956,6 +956,7 @@ fn parse_cmap4(
     let mut cmap = BTreeMap::new();
     let mut mapping_count = 0usize;
     let mut previous_end = None;
+    let mut has_unsupported_range = false;
     for segment in 0..segment_count {
         let end = be_u16(table, end_codes + segment * 2)?;
         let start = be_u16(table, start_codes + segment * 2)?;
@@ -972,19 +973,42 @@ fn parse_cmap4(
             .checked_add(usize::from(end - start) + 1)
             .filter(|count| *count <= limits.max_font_cmap_mappings)
             .ok_or(AssetError::LimitExceeded)?;
+        if range != 0 {
+            has_unsupported_range = true;
+            let glyph_array_start = ranges
+                .checked_add(segment * 2)
+                .and_then(|offset| offset.checked_add(usize::from(range)))
+                .ok_or(AssetError::DecodeFailed)?;
+            if glyph_array_start < expected_length {
+                return Err(AssetError::DecodeFailed);
+            }
+            let glyph_array_end = glyph_array_start
+                .checked_add(
+                    (usize::from(end - start) + 1)
+                        .checked_mul(2)
+                        .ok_or(AssetError::DecodeFailed)?,
+                )
+                .ok_or(AssetError::DecodeFailed)?;
+            if glyph_array_end > table.len() {
+                return Err(AssetError::DecodeFailed);
+            }
+            continue;
+        }
         for code in start..=end {
             if code == 0xffff {
                 continue;
             }
-            let glyph = if range == 0 {
-                ((i32::from(code) + delta) & 0xffff) as u16
-            } else {
-                return Err(AssetError::CapabilityMissing);
-            };
+            let glyph = ((i32::from(code) + delta) & 0xffff) as u16;
             cmap.insert(u32::from(code), glyph);
         }
     }
-    Ok(cmap)
+    if has_unsupported_range {
+        Err(AssetError::CapabilityMissing)
+    } else if table.len() != expected_length {
+        Err(AssetError::DecodeFailed)
+    } else {
+        Ok(cmap)
+    }
 }
 
 fn table_checksum(tag: &[u8; 4], table: &[u8]) -> u32 {
@@ -1358,6 +1382,24 @@ mod tests {
         assert_eq!(
             shape_simple_ltr(&decode_font(&font).expect("valid font"), "\0"),
             Err(AssetError::CapabilityMissing)
+        );
+    }
+
+    #[test]
+    fn cmap4_glyph_arrays_are_capability_missing_but_malformed_tables_fail() {
+        let mut supported_shape = cmap_table();
+        write_be_u16(&mut supported_shape, 14, 34);
+        write_be_u16(&mut supported_shape, 40, 4);
+        supported_shape.extend_from_slice(&[0, 0]);
+        assert_eq!(
+            parse_cmap(&supported_shape, &RenderLimits::default()),
+            Err(AssetError::CapabilityMissing)
+        );
+
+        write_be_u16(&mut supported_shape, 40, 6);
+        assert_eq!(
+            parse_cmap(&supported_shape, &RenderLimits::default()),
+            Err(AssetError::DecodeFailed)
         );
     }
 
