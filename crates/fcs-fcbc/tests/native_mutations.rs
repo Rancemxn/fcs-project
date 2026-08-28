@@ -20,6 +20,7 @@ use fcs_source::parser::parse_document;
 use tempfile::tempdir;
 
 const STRING_TABLE: u32 = 1;
+const CONSTANT_POOL: u32 = 2;
 const RESOURCES: u32 = 6;
 const TEMPO: u32 = 8;
 const NOTES: u32 = 10;
@@ -270,6 +271,26 @@ fn section_table_mutations_reject_with_the_layout_categories() {
         load_chart(&missing).unwrap_err(),
         "fcbc.missing-required-section"
     );
+}
+
+#[test]
+fn misordered_section_table_is_rejected_by_both_product_loaders() {
+    let base = native_bytes();
+    let container = load_container(&base).expect("pristine native bytes must frame");
+    let first = entry_offset(&container, STRING_TABLE);
+    let second = entry_offset(&container, CONSTANT_POOL);
+
+    // Swapping the first two known types keeps both entries present but violates
+    // the required ascending (sectionType, offset) table order.
+    let mut bytes = base;
+    bytes[first..first + 4].copy_from_slice(&CONSTANT_POOL.to_le_bytes());
+    bytes[second..second + 4].copy_from_slice(&STRING_TABLE.to_le_bytes());
+
+    assert_eq!(
+        load_container(&bytes).unwrap_err().category(),
+        "fcbc.section-order"
+    );
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.section-order");
 }
 
 #[test]
