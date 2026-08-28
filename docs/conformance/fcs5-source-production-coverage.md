@@ -3,7 +3,7 @@
 This ledger is the I1.8 production-coverage evidence for the active `fcs-source` parser. It records
 parser-boundary evidence only; it does not promote a source shape to static, canonical, Render, or
 runtime semantics. `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary`
-executes all 55 FCS manifest entries (3 parse-success, 9 parse-error, and 43 later-stage syntax-acceptance
+executes all 56 FCS manifest entries (3 parse-success, 9 parse-error, and 44 later-stage syntax-acceptance
 entries).
 
 ## Evidence keys
@@ -36,7 +36,7 @@ remain wrapped in the smallest legal document/block fixture.
 | `examples/fcs/templates.fcs` | `compile_time::parses_and_elaborates_the_public_template_fixture` | complete template/collection document |
 | `docs/conformance/fcs5/source/valid/complete-source-grammar.fcs` | `source_ast::complete_source_grammar_fixture_parses_with_all_top_level_kinds` and `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary` | complete Appendix B envelope |
 | `docs/conformance/fcs5/source/valid/appendix-a-minimal-complete.fcs` | `conformance_manifest::appendix_a_fixture_expands_four_notes_at_exact_beats_and_eliminates_authoring_structure` | Appendix A STEP/template/generator example; elaboration expands four notes at beats 0, 1, 2, and 3 and canonical output eliminates authoring structure |
-| all 55 entries in `docs/conformance/fcs5/manifest.toml` | `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary` | 3 parse-success, 9 parse-error, 43 later-stage syntax-acceptance entries; owning canonical/evaluate tests execute the applicable later boundary |
+| all 56 entries in `docs/conformance/fcs5/manifest.toml` | `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary` | 3 parse-success, 9 parse-error, 44 later-stage syntax-acceptance entries; owning canonical/evaluate tests execute the applicable later boundary |
 
 ## Document, format, and lexical envelope
 
@@ -56,7 +56,7 @@ remain wrapped in the smallest legal document/block fixture.
 | `metaBlock`, `artworkBlock`, `syncBlock` | `A::metadata_schema_ast_retains_ordered_declarations_and_spans`, `G` | `C` parse-stage/semantic-invalid split; duplicate and malformed schema cases in `D` |
 | `contributorsBlock`, `contributorDecl` | `A`, `G` | `C` later-stage schema/resource-invalid inputs (`L`) |
 | `creditsBlock`, `creditDecl` | `A`, `G` | `C` later-stage schema-invalid inputs (`L`) |
-| `resourcesBlock`, `resourceDecl`, `resourceKind` | `A::every_core_resource_kind_has_a_typed_source_node`, `G`, `resource_bundle::builds_deterministic_opaque_bundle_without_path_or_content_deduplication`, `conformance_manifest::i5_resource_fixtures_execute_at_the_workspace_bundle_boundary` | `L::unknown-resource`, `L::resource-path-escape`, `L::resource-hash-mismatch`, `L::resource-missing-member`, `resource_bundle::{rejects_missing_directory_and_non_regular_workspace_members,accepts_in_root_symlink_and_rejects_symlink_escape,enforces_public_count_single_and_total_byte_budgets}`; filesystem/hash checks execute only at the explicit canonical bundle boundary, never in the parser |
+| `resourcesBlock`, `resourceDecl`, `resourceKind` | `A::every_core_resource_kind_has_a_typed_source_node`, `G`, `resource_bundle::builds_deterministic_opaque_bundle_without_path_or_content_deduplication`, `conformance_manifest::i5_resource_fixtures_execute_at_the_workspace_bundle_boundary` | `L::unknown-resource`, `L::resource-path-escape`, `L::resource-hash-mismatch`, `L::resource-missing-member`, `resource_bundle::{rejects_missing_directory_and_non_regular_workspace_members,rejects_unavailable_and_non_directory_workspace_roots,accepts_in_root_symlink_and_rejects_symlink_escape,enforces_public_count_single_and_total_byte_budgets}`; filesystem/hash checks execute only at the explicit canonical bundle boundary, never in the parser |
 | `tempoMapBlock`, `tempoPoint`, `bpmLiteral` | `D::source_parser_retains_tempo_maps_for_later_validation`, `G` | `D::rejects_removed_mixed_beat_literal`, `L` for sign/order/profile validity |
 | `schemaBlock`, `schemaField`, `schemaValue` | `A::metadata_schema_ast_retains_ordered_declarations_and_spans`, `G` | `D::extension_payload_duplicate_keys_remain_ordered_and_unbalanced_envelopes_fail`, `L::custom-duplicate-key` |
 | `fieldPath`, `fieldName` | `A`, `E::parser_supports_references_index_postfix_and_keyword_field_names` | `D::additional_bom_and_non_ascii_identifier_spans_are_exact`, malformed field-path cases |
