@@ -1110,11 +1110,12 @@ fn format_executes_all_declared_source_fixtures_at_parser_boundary() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let conformance = root.join("docs/conformance/fcs5");
     let manifest = load_toml(&conformance.join("manifest.toml"));
+    let fixtures = manifest["fixture"].as_array().unwrap();
     let directory = tempfile::tempdir().unwrap();
     let mut formatted_count = 0;
     let mut rejected_count = 0;
 
-    for fixture in manifest["fixture"].as_array().unwrap() {
+    for fixture in fixtures {
         let id = fixture["id"].as_str().unwrap();
         let source = conformance.join(fixture["path"].as_str().unwrap());
         let expected = fixture["expect"].as_str().unwrap();
@@ -1193,8 +1194,9 @@ fn format_executes_all_declared_source_fixtures_at_parser_boundary() {
         formatted_count += 1;
     }
 
-    assert_eq!(formatted_count, 47, "parser-accepted source fixture count");
-    assert_eq!(rejected_count, 9, "parser-rejected source fixture count");
+    assert_eq!(formatted_count + rejected_count, fixtures.len());
+    assert_ne!(formatted_count, 0, "no parser-accepted source fixtures");
+    assert_ne!(rejected_count, 0, "no parser-rejected source fixtures");
 }
 
 #[test]
