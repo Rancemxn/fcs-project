@@ -12,8 +12,8 @@ direct/template、exact Expression DAG、Note policy、disabled sound policy、w
 resource hash mismatch。Root/FCS manifest schema 升为 2：root 使用 `candidate_baseline`，resource
 fixture 可以声明 `workspace_root`，resolver 只能在该目录内读取 opaque member bytes。原 32 项
 grammar baseline 继续作为 Reviewed 范围的历史证据；后续 I3–I5 stage-scoped fixture 持续追加，当前
-manifest 共 55 项。新增的 `source.valid.appendix-a-minimal-complete` 以 canonical stage 覆盖 FCS Appendix A；I5.3 新增 `source.invalid.resource-missing-member`，并把 existing valid resource、
-path escape 与 hash mismatch 向量接到显式 workspace bundle resolver；I5.4 新增 sync preview invalid fixtures 与 shared formula vectors，并执行 existing offset equation。当前 55 项
+manifest 共 56 项。新增的 `source.valid.appendix-a-minimal-complete` 以 canonical stage 覆盖 FCS Appendix A；I5.3 新增 `source.invalid.resource-missing-member`，并把 existing valid resource、
+path escape 与 hash mismatch 向量接到显式 workspace bundle resolver；I5.4 新增 sync preview invalid fixtures 与 shared formula vectors，并执行 existing offset equation。当前 56 项
 candidate 仍随五个 Draft/联合重审版本域审查，不是 Frozen baseline。当前状态和后续 re-freeze gate
 以 `docs/specifications/governance.md`、路线图与
 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md` 为准；后者是联合候选自检，不是独立
@@ -40,10 +40,12 @@ S15 FCBC/Execution ABI closure 把 root `candidate_baseline` 更新为
 
 最小向量有 11 个 header/section/profile mutation，resource 向量有 2 个在重新计算 section CRC 后
 才能到达的 resource hash/coverage mutation。它们仍是规范候选 corpus，不代表 Frozen；当前
-`fcs-fcbc` loader/mutation tests 和 CLI `inspect` product lane 分别提供 domain 与产品入口证据，
-其中 CLI 对三个 golden 分别执行声明的 Core success/rejection contract。该产品 assembly 的同 SHA Full Gate 已通过
+`fcs-fcbc` loader/mutation tests and CLI `inspect` product lane 分别提供 domain 与产品入口证据，
+其中 native mutation coverage proves that a valid unknown optional section is skipped by both framing and Core loaders while known chart data remains unchanged；CLI 对三个 golden 分别执行声明的 Core success/rejection contract。该产品 assembly 的同 SHA Full Gate 已通过
 （run 30729340879，head e0140f7ca15cc21620ef3ad8e44b4ece03a346c2）；独立复审和五域 re-freeze 仍是
 I10 门槛。
+The CLI mutation lane also applies every mutation declared by the three FCBC mutation manifests through
+`inspect --json`; this is product-entry evidence and does not change the FCBC domain corpus or Frozen status.
 
 Conformance runner 必须：
 
