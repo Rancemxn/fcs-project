@@ -444,6 +444,64 @@ fn core_mutations_reject_with_the_content_categories() {
 }
 
 #[test]
+fn unknown_optional_section_is_skipped_by_both_product_loaders() {
+    const UNKNOWN_TYPE: u32 = 21;
+    const UNKNOWN_PAYLOAD: [u8; 4] = [0xde, 0xad, 0xbe, 0xef];
+
+    let base = native_bytes();
+    let original = load_container(&base).expect("pristine native bytes must frame");
+    let table_start = original.header.section_table_offset as usize;
+    let table_end = table_start + original.sections.len() * SECTION_ENTRY_SIZE;
+
+    // Insert one table entry before the body, then repair every shifted section offset.
+    let mut bytes = Vec::with_capacity(base.len() + SECTION_ENTRY_SIZE + UNKNOWN_PAYLOAD.len() + 8);
+    bytes.extend_from_slice(&base[..table_end]);
+    bytes.resize(bytes.len() + SECTION_ENTRY_SIZE, 0);
+    bytes.extend_from_slice(&base[table_end..]);
+    for index in 0..original.sections.len() {
+        let entry = table_start + index * SECTION_ENTRY_SIZE;
+        let offset = u64::from_le_bytes(bytes[entry + 16..entry + 24].try_into().unwrap());
+        bytes[entry + 16..entry + 24]
+            .copy_from_slice(&(offset + SECTION_ENTRY_SIZE as u64).to_le_bytes());
+    }
+
+    let unknown_offset = bytes.len().checked_add(7).unwrap() & !7;
+    bytes.resize(unknown_offset, 0);
+    bytes.extend_from_slice(&UNKNOWN_PAYLOAD);
+    let unknown_entry = table_end;
+    bytes[unknown_entry..unknown_entry + 4].copy_from_slice(&UNKNOWN_TYPE.to_le_bytes());
+    bytes[unknown_entry + 4..unknown_entry + 6].copy_from_slice(&1u16.to_le_bytes());
+    bytes[unknown_entry + 12] = 3;
+    bytes[unknown_entry + 16..unknown_entry + 24]
+        .copy_from_slice(&(unknown_offset as u64).to_le_bytes());
+    bytes[unknown_entry + 24..unknown_entry + 32]
+        .copy_from_slice(&(UNKNOWN_PAYLOAD.len() as u64).to_le_bytes());
+    bytes[unknown_entry + 32..unknown_entry + 36]
+        .copy_from_slice(&section_crc32_iso_hdlc(&UNKNOWN_PAYLOAD).to_le_bytes());
+    bytes[36..40].copy_from_slice(&((original.sections.len() + 1) as u32).to_le_bytes());
+    let file_length = bytes.len() as u64;
+    bytes[48..56].copy_from_slice(&file_length.to_le_bytes());
+
+    let framed = load_container(&bytes).expect("unknown optional section must be skippable");
+    assert_eq!(framed.sections.len(), original.sections.len() + 1);
+    assert_eq!(framed.section_types().last(), Some(&UNKNOWN_TYPE));
+    assert_eq!(
+        framed.section_payload(&bytes, UNKNOWN_TYPE),
+        Some(UNKNOWN_PAYLOAD.as_slice())
+    );
+
+    let original_chart = load_chart(&base).expect("pristine native bytes must load");
+    let chart = load_chart(&bytes).expect("Core loader must skip unknown optional section");
+    assert_eq!(chart.lines, original_chart.lines);
+    assert_eq!(chart.notes, original_chart.notes);
+    assert_eq!(chart.descriptors, original_chart.descriptors);
+    assert_eq!(chart.expressions, original_chart.expressions);
+    assert_eq!(chart.distances, original_chart.distances);
+    assert_eq!(chart.sections.len(), original_chart.sections.len() + 1);
+    assert_eq!(chart.sections.last().unwrap().section_type, UNKNOWN_TYPE);
+}
+
+#[test]
 fn native_resource_data_trailing_byte_rejects() {
     let base = native_bytes();
     let container = load_container(&base).expect("pristine native bytes must frame");
