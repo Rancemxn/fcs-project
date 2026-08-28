@@ -962,10 +962,7 @@ fn simple_ltr_cmap<'a>(
             .get(index)
             .ok_or_else(|| render_error("font resource has a malformed cmap subtable", span))?;
         let candidate = (priority, encoding, offset, index);
-        if selected
-            .as_ref()
-            .map_or(true, |current| candidate < *current)
-        {
+        if selected.as_ref().is_none_or(|current| candidate < *current) {
             selected = Some(candidate);
         }
     }
