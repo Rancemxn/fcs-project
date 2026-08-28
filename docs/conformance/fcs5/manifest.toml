@@ -54,6 +54,14 @@ expected = "expected/compile-time-unselected-range.json"
 clauses = ["6.5", "6.6", "6.8"]
 
 [[fixture]]
+id = "source.valid.line-id-expressions"
+path = "source/valid/line-id-expressions.fcs"
+stage = "elaborate"
+expect = "success"
+expected = "expected/line-id-expressions.json"
+clauses = ["2.9", "5.4", "6.1", "6.3", "6.4", "6.5", "6.6", "6.7", "11.2"]
+
+[[fixture]]
 id = "source.valid.track-boundaries"
 path = "source/valid/track-boundaries.fcs"
 stage = "canonical"
@@ -441,6 +449,22 @@ diagnostic = "compile-time.budget-exceeded"
 limits = { maxGeneratorIterations = 2 }
 trace_contains = ["collection=notes", "index=2", "emit=Note"]
 clauses = ["6.8"]
+
+[[fixture]]
+id = "source.invalid.line-id-expression-duplicate"
+path = "source/invalid/line-id-expression-duplicate.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "name.duplicate"
+clauses = ["5.4", "6.1", "6.3", "11.2"]
+
+[[fixture]]
+id = "source.invalid.line-id-reference-bootstrap"
+path = "source/invalid/line-id-reference-bootstrap.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "name.unknown"
+clauses = ["2.9", "6.1", "6.3", "6.4", "11.2"]
 
 [[fixture]]
 id = "source.invalid.custom-duplicate-key"

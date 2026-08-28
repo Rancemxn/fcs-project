@@ -64,6 +64,10 @@ impl CompileTimeContext {
         }
     }
 
+    pub(super) fn isolated(&self) -> Self {
+        Self::new(self.state.borrow().limits)
+    }
+
     pub(super) fn consume(
         &self,
         limit: &'static str,

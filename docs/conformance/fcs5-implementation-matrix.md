@@ -36,9 +36,14 @@ nonempty binary/semantic/raster/mutation artifact。`image` 与 `serde_json` 在
 semantic evaluator、reference rasterizer 或产品 codec。
 
 FCS authoring/canonical closure 当时新增 7 项 canonical/error fixture，使 manifest 达到 39 entries；
-后续 I3–I5 stage-scoped vectors，以及 I10 Appendix A fixture，已使当前 manifest 达到 56 entries。I5.3 现已执行 explicit-root
+后续 I2–I5 stage-scoped vectors，以及 I10 Appendix A fixture，已使当前 manifest 达到 59 entries。I5.3 现已执行 explicit-root
 workspace resource resolution、opaque bytes/computed SHA-256 和 bundle binding；Note policy、exact DAG
 以及其他已交付边界按下表记录，不能再用历史 I0 状态替代当前 implementation evidence。
+
+I2 的 manifest-backed `source.valid.line-id-expressions` 通过
+`conformance_manifest::i2_public_conformance_fixtures_execute_through_the_elaborator` 绑定 FCS
+§§2.9、5.4、6.1、6.3–6.7 和 11.2；两个 error fixtures 同时固定 expression-backed Line ID 的
+duplicate related-span 与 reference-bootstrap unknown-name 边界。
 
 S15 Conversion closure 又建立 12 个 content-hash-bound semantic profile、7 个 parser dialect、56 个
 mapping rule、37 个 diagnostic/report category、38 个 exact mapping vector、5 个 invalid vector 与

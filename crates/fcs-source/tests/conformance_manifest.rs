@@ -794,7 +794,7 @@ fn typed_manifests_load_with_bound_counts() {
     assert_eq!(render.schema_version, 3);
     assert_eq!(conversion.schema_version, 2);
     assert_eq!(root.suite.len(), 6);
-    assert_eq!(fcs.fixture.len(), 56);
+    assert_eq!(fcs.fixture.len(), 59);
     assert_eq!(fcbc.fixture.len(), 3);
     assert_eq!(render.binary_fixture.len(), 0);
     assert_eq!(render.fixture.len(), 1);
@@ -868,7 +868,7 @@ fn fcs_source_fixtures_execute_at_the_declared_frontend_boundary() {
 
     assert_eq!(parse_success, 3);
     assert_eq!(parse_error, 9);
-    assert_eq!(later_stage, 44);
+    assert_eq!(later_stage, 47);
 }
 
 #[test]
@@ -1081,6 +1081,61 @@ fn i2_public_conformance_fixtures_execute_through_the_elaborator() {
         )
     );
 
+    let line_id_fixture = fixture(&fcs, "source.valid.line-id-expressions");
+    let line_ids = elaborate_fixture(&fcs_base, line_id_fixture)
+        .expect("expression-backed Line ID fixture must elaborate");
+    line_ids
+        .validate_invariants()
+        .expect("Line ID output must satisfy the expanded boundary");
+    let line_id_expected = expected_json(&fcs_base, line_id_fixture);
+    let expected_line_ids = line_id_expected["lineIds"]
+        .as_array()
+        .expect("lineIds must be an array");
+    let actual_line_ids = line_ids
+        .collections()
+        .find(|collection| collection.name() == "judgelines")
+        .expect("Line ID fixture must expand judgelines")
+        .entities()
+        .map(|entity| entity.field("id").expect("Line ID field").value())
+        .collect::<Vec<_>>();
+    assert_eq!(actual_line_ids.len(), expected_line_ids.len());
+    for (actual, expected) in actual_line_ids.iter().zip(expected_line_ids) {
+        assert_eq!(
+            *actual,
+            &TypedValue::String(
+                expected
+                    .as_str()
+                    .expect("expected Line ID must be a string")
+                    .to_owned()
+            )
+        );
+    }
+    let expected_note_lines = line_id_expected["noteLines"]
+        .as_array()
+        .expect("noteLines must be an array");
+    let actual_note_lines = note_entities(&line_ids)
+        .into_iter()
+        .map(|entity| entity.field("line").expect("Note Line field").value())
+        .collect::<Vec<_>>();
+    assert_eq!(actual_note_lines.len(), expected_note_lines.len());
+    for (actual, expected) in actual_note_lines.iter().zip(expected_note_lines) {
+        assert_eq!(
+            *actual,
+            &TypedValue::Line(
+                expected
+                    .as_str()
+                    .expect("expected Note Line must be a string")
+                    .to_owned()
+            )
+        );
+    }
+    assert_eq!(
+        line_id_expected["forbiddenExpandedNodes"],
+        serde_json::json!([
+            "const", "let", "fn", "template", "with", "if", "generate", "emit", "range", "index"
+        ])
+    );
+
     let template_fixture = fixture(&fcs, "source.valid.template-if-with");
     let template = elaborate_fixture(&fcs_base, template_fixture)
         .expect("template-if-with fixture must elaborate");
@@ -1175,6 +1230,8 @@ fn i2_elaborate_error_fixtures_keep_static_diagnostics_and_budget_trace() {
         "source.invalid.template-missing-line",
         "source.invalid.runtime-gameplay",
         "source.invalid.generator-budget",
+        "source.invalid.line-id-expression-duplicate",
+        "source.invalid.line-id-reference-bootstrap",
     ];
 
     for id in ids {
