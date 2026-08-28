@@ -262,6 +262,10 @@ fn line_name_from_field(
     field: &crate::ast::EntityField,
     definitions: Option<&DefinitionsBlock>,
 ) -> Option<(String, SourceSpan)> {
+    // An unvalidated reference cannot create the namespace entry that would validate it.
+    if validate_line_references(&field.value, &BTreeSet::new()).is_err() {
+        return None;
+    }
     let name = match &field.value {
         SourceExpression::Literal {
             literal: SourceLiteral::String(name),
