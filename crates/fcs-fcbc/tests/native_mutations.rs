@@ -26,6 +26,7 @@ const NOTES: u32 = 10;
 const TRACKS: u32 = 11;
 const EXPRESSIONS: u32 = 12;
 const DISTANCES: u32 = 13;
+const EXTENSIONS: u32 = 15;
 const RESOURCE_DATA: u32 = 20;
 
 /// Sections 6/10/11/13 payloads open with a `count` u32 followed by an 8-byte
@@ -237,6 +238,26 @@ fn section_table_mutations_reject_with_the_layout_categories() {
         load_chart(&missing).unwrap_err(),
         "fcbc.missing-required-section"
     );
+}
+
+#[test]
+fn duplicate_known_section_identity_is_rejected_by_both_product_loaders() {
+    let base = native_bytes();
+    let container = load_container(&base).expect("pristine native bytes must frame");
+    let distance_entry = entry_offset(&container, DISTANCES);
+    let extensions_entry = entry_offset(&container, EXTENSIONS);
+    assert!(distance_entry < extensions_entry);
+
+    // Retyping Extensions as a second Distance keeps the table's offsets and
+    // ascending order valid, isolating the duplicate-identity validation.
+    let mut bytes = base;
+    bytes[extensions_entry..extensions_entry + 4].copy_from_slice(&DISTANCES.to_le_bytes());
+
+    assert_eq!(
+        load_container(&bytes).unwrap_err().category(),
+        "fcbc.invalid-record"
+    );
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.invalid-record");
 }
 
 /// Core content corruptions mirroring `nonempty-execution-mutations.toml`
