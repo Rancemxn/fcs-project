@@ -8,14 +8,15 @@ use fcs_model::{
     CanonicalChartError, CanonicalColor, CanonicalCompilation, CanonicalContributor,
     CanonicalCredit, CanonicalCreditRole, CanonicalDescriptorDomain, CanonicalDescriptorKind,
     CanonicalDescriptorRoot, CanonicalDescriptorTable, CanonicalExpressionType,
-    CanonicalExpressionValue, CanonicalGradientSpread, CanonicalGradientStop,
-    CanonicalImageSampling, CanonicalLineGraph, CanonicalMetadata, CanonicalObject,
-    CanonicalObjectEntry, CanonicalPreview, CanonicalProfile, CanonicalProfileFeature,
-    CanonicalPropertyDescriptor, CanonicalRenderAttachment, CanonicalRenderColorSpace,
-    CanonicalRenderComposite, CanonicalRenderGeometry, CanonicalRenderGeometryData,
-    CanonicalRenderLayer, CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec,
-    CanonicalRenderPaint, CanonicalRenderPaintData, CanonicalRenderPass, CanonicalRenderScene,
-    CanonicalRenderSceneSpec, CanonicalRenderStroke, CanonicalRequiredExtension, CanonicalResource,
+    CanonicalExpressionValue, CanonicalGlyphPlacement, CanonicalGlyphRun, CanonicalGradientSpread,
+    CanonicalGradientStop, CanonicalImageSampling, CanonicalLineGraph, CanonicalMetadata,
+    CanonicalObject, CanonicalObjectEntry, CanonicalPreview, CanonicalProfile,
+    CanonicalProfileFeature, CanonicalPropertyDescriptor, CanonicalRenderAttachment,
+    CanonicalRenderColorSpace, CanonicalRenderComposite, CanonicalRenderGeometry,
+    CanonicalRenderGeometryData, CanonicalRenderLayer, CanonicalRenderNode,
+    CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
+    CanonicalRenderPaintData, CanonicalRenderPass, CanonicalRenderScene, CanonicalRenderSceneSpec,
+    CanonicalRenderStroke, CanonicalRequiredExtension, CanonicalResource, CanonicalResourceBundle,
     CanonicalResourceKind, CanonicalSourceVersion, CanonicalStrokeCap, CanonicalStrokeJoin,
     CanonicalSync, CanonicalTextualId, CanonicalValue, CanonicalValueType, CanonicalViewport,
     ChartTimeMap, DeclaredSha256, DistributionMetadata, EntityKind, StableId, StableIdRegistry,
@@ -145,7 +146,16 @@ impl Document {
         source: &str,
         limits: CompileTimeLimits,
     ) -> Result<CanonicalChart, Vec<Diagnostic>> {
-        let mut chart = self.canonical_chart(limits)?;
+        let chart = self.canonical_chart(limits)?;
+        self.lower_source_render(source, chart, None)
+    }
+
+    fn lower_source_render(
+        &self,
+        source: &str,
+        mut chart: CanonicalChart,
+        resource_bundle: Option<&CanonicalResourceBundle>,
+    ) -> Result<CanonicalChart, Vec<Diagnostic>> {
         let Some(crate::ast::TopLevelBlock::Render(block)) =
             self.top_level(TopLevelBlockKind::Render)
         else {
@@ -155,6 +165,7 @@ impl Document {
         let (mut render, render_descriptors) = lower_render_scene(
             &scene,
             chart.metadata().resources(),
+            resource_bundle,
             chart.time_map(),
             self.format.span,
         )?;
@@ -195,8 +206,9 @@ impl Document {
         workspace_root: impl AsRef<std::path::Path>,
         resource_limits: crate::resource::ResourceLimits,
     ) -> Result<CanonicalCompilation, Vec<Diagnostic>> {
-        let chart = self.canonical_chart_with_source(source, limits)?;
+        let chart = self.canonical_chart(limits)?;
         let resources = self.canonical_resource_bundle(workspace_root, resource_limits)?;
+        let chart = self.lower_source_render(source, chart, Some(&resources))?;
         Ok(CanonicalCompilation::new(
             chart,
             resources,
@@ -337,6 +349,51 @@ fn render_value(field: &SchemaField) -> Result<TypedValue, Diagnostic> {
         ));
     };
     crate::elaborator::evaluate_metadata_expression(expression, None)
+}
+
+fn render_font_references(field: &SchemaField) -> Result<Vec<String>, Diagnostic> {
+    let SchemaValue::Expression(SourceExpression::Array { elements, .. }) = &field.value else {
+        return Err(render_error(
+            "fallbackFonts must be a compile-time font reference array",
+            field.span,
+        ));
+    };
+    if elements.is_empty() {
+        return Ok(Vec::new());
+    }
+    let TypedValue::Array { values, .. } = render_value(field)? else {
+        return Err(render_error(
+            "fallbackFonts must be a compile-time font reference array",
+            field.span,
+        ));
+    };
+    values
+        .into_iter()
+        .map(|value| match value {
+            TypedValue::Line(name) => Ok(name),
+            other => Err(render_error(
+                format!(
+                    "fallbackFonts entries must be font references, found {}",
+                    other.ty()
+                ),
+                field.span,
+            )),
+        })
+        .collect()
+}
+
+fn render_empty_array(field: &SchemaField, name: &str) -> Result<(), Diagnostic> {
+    if matches!(
+        &field.value,
+        SchemaValue::Expression(SourceExpression::Array { elements, .. }) if elements.is_empty()
+    ) {
+        Ok(())
+    } else {
+        Err(render_error(
+            format!("{name} must be an explicit empty compile-time array"),
+            field.span,
+        ))
+    }
 }
 
 enum RenderPaintExpression {
@@ -811,8 +868,173 @@ fn render_stable_id(
         .map_err(|error| render_error(error.to_string(), span))
 }
 
+struct RenderFont<'a> {
+    name: String,
+    face: ttf_parser::Face<'a>,
+    cmap: ttf_parser::cmap::Subtable<'a>,
+}
+
+struct ShapedTextRun {
+    font_name: String,
+    run_offset: f64,
+    glyphs: Vec<CanonicalGlyphPlacement>,
+}
+
+fn big_endian_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    let bytes = bytes.get(offset..offset.checked_add(2)?)?;
+    Some(u16::from_be_bytes([bytes[0], bytes[1]]))
+}
+
+fn big_endian_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    let bytes = bytes.get(offset..offset.checked_add(4)?)?;
+    Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn raw_font_table<'a>(face: &ttf_parser::Face<'a>, tag: ttf_parser::Tag) -> Option<&'a [u8]> {
+    let raw = face.raw_face();
+    let record = raw
+        .table_records
+        .into_iter()
+        .find(|record| record.tag == tag)?;
+    let offset = usize::try_from(record.offset).ok()?;
+    let length = usize::try_from(record.length).ok()?;
+    raw.data.get(offset..offset.checked_add(length)?)
+}
+
+fn simple_ltr_cmap<'a>(
+    face: &ttf_parser::Face<'a>,
+    span: SourceSpan,
+) -> Result<ttf_parser::cmap::Subtable<'a>, Diagnostic> {
+    let bytes = raw_font_table(face, ttf_parser::Tag::from_bytes(b"cmap"))
+        .ok_or_else(|| render_error("font resource has no readable cmap table", span))?;
+    if big_endian_u16(bytes, 0) != Some(0) {
+        return Err(render_error(
+            "font resource has an unsupported cmap version",
+            span,
+        ));
+    }
+    let count = usize::from(
+        big_endian_u16(bytes, 2)
+            .ok_or_else(|| render_error("font resource has a malformed cmap table", span))?,
+    );
+    let records_end = 4usize
+        .checked_add(
+            count
+                .checked_mul(8)
+                .ok_or_else(|| render_error("font resource cmap table is too large", span))?,
+        )
+        .ok_or_else(|| render_error("font resource cmap table is too large", span))?;
+    if bytes.get(..records_end).is_none() {
+        return Err(render_error(
+            "font resource has a malformed cmap table",
+            span,
+        ));
+    }
+    let table = ttf_parser::cmap::Table::parse(bytes)
+        .ok_or_else(|| render_error("font resource has a malformed cmap table", span))?;
+    let mut selected = None;
+    for index in 0..count {
+        let record = 4 + index * 8;
+        let platform = big_endian_u16(bytes, record)
+            .ok_or_else(|| render_error("font resource has a malformed cmap table", span))?;
+        let encoding = big_endian_u16(bytes, record + 2)
+            .ok_or_else(|| render_error("font resource has a malformed cmap table", span))?;
+        let offset = big_endian_u32(bytes, record + 4)
+            .ok_or_else(|| render_error("font resource has a malformed cmap table", span))?;
+        let subtable_offset = usize::try_from(offset)
+            .map_err(|_| render_error("font resource cmap offset is too large", span))?;
+        let format = big_endian_u16(bytes, subtable_offset)
+            .ok_or_else(|| render_error("font resource has a malformed cmap table", span))?;
+        let priority = match (platform, format, encoding) {
+            (3, 12, 10) => 0,
+            (3, 4, 1 | 10) => 1,
+            _ => {
+                return Err(render_error(
+                    "font resource cmap must contain only platform 3 format 4/12 tables",
+                    span,
+                ));
+            }
+        };
+        let index = u16::try_from(index)
+            .map_err(|_| render_error("font resource cmap has too many subtables", span))?;
+        table
+            .subtables
+            .get(index)
+            .ok_or_else(|| render_error("font resource has a malformed cmap subtable", span))?;
+        let candidate = (priority, encoding, offset, index);
+        if selected
+            .as_ref()
+            .map_or(true, |current| candidate < *current)
+        {
+            selected = Some(candidate);
+        }
+    }
+    let (_, _, _, index) = selected
+        .ok_or_else(|| render_error("font resource has no simple-ltr compatible cmap", span))?;
+    table
+        .subtables
+        .get(index)
+        .ok_or_else(|| render_error("font resource has a malformed cmap subtable", span))
+}
+
+fn parse_render_font<'a>(
+    name: String,
+    bytes: &'a [u8],
+    span: SourceSpan,
+) -> Result<RenderFont<'a>, Diagnostic> {
+    if bytes.get(..4) != Some(&[0, 0, 1, 0][..]) || ttf_parser::fonts_in_collection(bytes).is_some()
+    {
+        return Err(render_error(
+            "font resource must be a single-face TrueType sfnt",
+            span,
+        ));
+    }
+    let face = ttf_parser::Face::parse(bytes, 0)
+        .map_err(|error| render_error(format!("font resource cannot be parsed: {error}"), span))?;
+    let tables = face.tables();
+    if tables.glyf.is_none()
+        || tables.loca.is_none()
+        || tables.hmtx.is_none()
+        || tables.cmap.is_none()
+        || tables.cff.is_some()
+    {
+        return Err(render_error(
+            "font resource must contain TrueType glyf/loca/hmtx/cmap tables",
+            span,
+        ));
+    }
+    for tag in [
+        b"CFF ", b"CFF2", b"fvar", b"gvar", b"avar", b"HVAR", b"MVAR", b"VVAR", b"COLR", b"CPAL",
+        b"CBDT", b"CBLC", b"EBDT", b"EBLC", b"sbix", b"SVG ",
+    ] {
+        if raw_font_table(&face, ttf_parser::Tag::from_bytes(tag)).is_some() {
+            return Err(render_error(
+                "font resource uses a TrueType feature outside truetype-glyf-1",
+                span,
+            ));
+        }
+    }
+    let cmap = simple_ltr_cmap(&face, span)?;
+    Ok(RenderFont { name, face, cmap })
+}
+
+fn forbidden_text_scalar(scalar: char) -> bool {
+    scalar.is_control()
+        || matches!(
+            scalar,
+            '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
 struct RenderLowerer<'a> {
     resources: &'a BTreeMap<String, CanonicalResource>,
+    resource_bundle: Option<&'a CanonicalResourceBundle>,
     time_map: &'a ChartTimeMap,
     span: SourceSpan,
     descriptors: Vec<CanonicalPropertyDescriptor>,
@@ -823,17 +1045,20 @@ struct RenderLowerer<'a> {
     geometries: Vec<CanonicalRenderGeometry>,
     paints: Vec<CanonicalRenderPaint>,
     strokes: Vec<CanonicalRenderStroke>,
+    glyph_runs: Vec<CanonicalGlyphRun>,
     descriptor_roots: Vec<(String, u64, usize)>,
 }
 
 impl<'a> RenderLowerer<'a> {
     fn new(
         resources: &'a BTreeMap<String, CanonicalResource>,
+        resource_bundle: Option<&'a CanonicalResourceBundle>,
         time_map: &'a ChartTimeMap,
         span: SourceSpan,
     ) -> Self {
         Self {
             resources,
+            resource_bundle,
             time_map,
             span,
             descriptors: Vec::new(),
@@ -844,6 +1069,7 @@ impl<'a> RenderLowerer<'a> {
             geometries: Vec::new(),
             paints: Vec::new(),
             strokes: Vec::new(),
+            glyph_runs: Vec::new(),
             descriptor_roots: Vec::new(),
         }
     }
@@ -875,6 +1101,19 @@ impl<'a> RenderLowerer<'a> {
     fn add_descriptor_root(&mut self, path: &str, owner: u64, descriptor: usize) {
         self.descriptor_roots
             .push((path.to_owned(), owner, descriptor));
+    }
+
+    fn resource_id(&mut self, name: &str, span: SourceSpan) -> Result<StableId, Diagnostic> {
+        if let Some(id) = self.resource_ids.get(name) {
+            return Ok(id.clone());
+        }
+        let id = self.stable_id(EntityKind::Resource, name.to_owned(), span)?;
+        self.resource_ids.insert(name.to_owned(), id.clone());
+        Ok(id)
+    }
+
+    fn add_glyph_run_roots(&mut self, run: &CanonicalGlyphRun, size: usize) {
+        self.add_descriptor_root("render.glyphRun.size", run.id().value(), size);
     }
 
     fn add_node_roots(&mut self, id: &StableId, descriptors: [usize; 6]) {
@@ -971,6 +1210,9 @@ impl<'a> RenderLowerer<'a> {
                         );
                     }
                 }
+            }
+            CanonicalRenderGeometryData::Text { origin, .. } => {
+                self.add_descriptor_root("render.geometry.origin", owner, *origin);
             }
             _ => {}
         }
@@ -1204,6 +1446,213 @@ impl<'a> RenderLowerer<'a> {
         })
     }
 
+    fn text_fonts(
+        &self,
+        names: &[String],
+        span: SourceSpan,
+    ) -> Result<Vec<RenderFont<'_>>, Diagnostic> {
+        let bundle = self.resource_bundle.ok_or_else(|| {
+            render_error("Text lowering requires a resolved resource bundle", span)
+        })?;
+        names
+            .iter()
+            .map(|name| {
+                let resource = self.resources.get(name).ok_or_else(|| {
+                    render_error(format!("Text references unknown resource {name}"), span)
+                })?;
+                if !matches!(resource.kind(), CanonicalResourceKind::Font) {
+                    return Err(render_error(
+                        format!("Text resource {name} is not a font"),
+                        span,
+                    ));
+                }
+                if resource.media_type() != "font/ttf" {
+                    return Err(render_error(
+                        format!("Text font resource {name} is not font/ttf"),
+                        span,
+                    ));
+                }
+                let bundled = bundle.get(name).ok_or_else(|| {
+                    render_error(format!("Text resource {name} has no resolved bytes"), span)
+                })?;
+                parse_render_font(name.clone(), bundled.bytes(), span)
+            })
+            .collect()
+    }
+
+    fn lower_text(
+        &mut self,
+        node: &crate::ast::RenderNodeDeclaration,
+        geometry_id: &StableId,
+    ) -> Result<Vec<usize>, Diagnostic> {
+        let content_field = render_body_field(&node.items, "content")
+            .ok_or_else(|| render_error("Text requires content", node.span))?;
+        let content = render_string(render_value(content_field)?, content_field.span)?;
+        let font_field = render_body_field(&node.items, "font")
+            .ok_or_else(|| render_error("Text requires font", node.span))?;
+        let primary_font = match render_value(font_field)? {
+            TypedValue::Line(name) => name,
+            other => {
+                return Err(render_error(
+                    format!("Text font must be a reference, found {}", other.ty()),
+                    font_field.span,
+                ));
+            }
+        };
+        let fallback_fonts = match render_body_field(&node.items, "fallbackFonts") {
+            Some(field) => render_font_references(field)?,
+            None => Vec::new(),
+        };
+        let face_index = render_body_value_or(&node.items, "faceIndex", 0, |value| {
+            render_int(value, node.span)
+        })?;
+        if face_index != 0 {
+            return Err(render_error(
+                "Text faceIndex is fixed to 0 in simple-ltr-1",
+                render_body_field(&node.items, "faceIndex").map_or(node.span, |field| field.span),
+            ));
+        }
+        for (name, expected) in [
+            ("shapingProfile", "simple-ltr-1"),
+            ("language", "und"),
+            ("script", "Latn"),
+            ("direction", "ltr"),
+        ] {
+            if let Some(field) = render_body_field(&node.items, name) {
+                let value = render_string(render_value(field)?, field.span)?;
+                if value != expected {
+                    return Err(render_error(
+                        format!("Text {name} is fixed to {expected} in simple-ltr-1"),
+                        field.span,
+                    ));
+                }
+            }
+        }
+        if let Some(field) = render_body_field(&node.items, "features") {
+            render_empty_array(field, "Text features")?;
+        }
+        let size_field = render_body_field(&node.items, "size")
+            .ok_or_else(|| render_error("Text requires size", node.span))?;
+        let size = render_length(render_value(size_field)?, size_field.span)?;
+        if size <= 0.0 {
+            return Err(render_error(
+                "Text size must be greater than zero",
+                size_field.span,
+            ));
+        }
+
+        let mut font_names = Vec::with_capacity(1 + fallback_fonts.len());
+        font_names.push(primary_font);
+        font_names.extend(fallback_fonts);
+        let fonts = self.text_fonts(&font_names, font_field.span)?;
+        let mut shaped_runs = Vec::new();
+        let mut current_font = None;
+        let mut run_offset = 0.0;
+        for scalar in content.chars() {
+            if forbidden_text_scalar(scalar) {
+                return Err(render_error(
+                    format!(
+                        "Text content contains forbidden scalar U+{:04X}",
+                        u32::from(scalar)
+                    ),
+                    content_field.span,
+                ));
+            }
+            let mut selected = None;
+            for (index, font) in fonts.iter().enumerate() {
+                let Some(glyph) = font.cmap.glyph_index(u32::from(scalar)) else {
+                    continue;
+                };
+                if glyph.0 == 0 || u32::from(glyph.0) >= u32::from(font.face.number_of_glyphs()) {
+                    return Err(render_error(
+                        format!("font resource {} maps to an invalid glyph", font.name),
+                        content_field.span,
+                    ));
+                }
+                let advance = font.face.glyph_hor_advance(glyph).ok_or_else(|| {
+                    render_error(
+                        format!("font resource {} has no glyph advance", font.name),
+                        content_field.span,
+                    )
+                })?;
+                selected = Some((index, glyph, advance));
+                break;
+            }
+            let Some((font_index, glyph, advance)) = selected else {
+                return Err(render_error(
+                    format!(
+                        "Text content scalar U+{:04X} is missing from all declared fonts",
+                        u32::from(scalar)
+                    ),
+                    content_field.span,
+                ));
+            };
+            if current_font != Some(font_index) {
+                shaped_runs.push(ShapedTextRun {
+                    font_name: fonts[font_index].name.clone(),
+                    run_offset,
+                    glyphs: Vec::new(),
+                });
+                current_font = Some(font_index);
+            }
+            let x_advance = f64::from(advance) / f64::from(fonts[font_index].face.units_per_em());
+            shaped_runs
+                .last_mut()
+                .expect("a new or current Text glyph run")
+                .glyphs
+                .push(CanonicalGlyphPlacement {
+                    glyph_id: u32::from(glyph.0),
+                    x_advance,
+                    y_advance: 0.0,
+                    x_offset: 0.0,
+                    y_offset: 0.0,
+                });
+            run_offset += x_advance;
+            if !run_offset.is_finite() {
+                return Err(render_error(
+                    "Text run offset is not finite",
+                    content_field.span,
+                ));
+            }
+        }
+        if shaped_runs.is_empty() {
+            shaped_runs.push(ShapedTextRun {
+                font_name: fonts[0].name.clone(),
+                run_offset: 0.0,
+                glyphs: Vec::new(),
+            });
+        }
+        drop(fonts);
+
+        let size_descriptor = self.descriptor(TypedValue::Length(size))?;
+        let mut glyph_run_refs = Vec::with_capacity(shaped_runs.len());
+        for (index, run) in shaped_runs.into_iter().enumerate() {
+            let font_id = self.resource_id(&run.font_name, font_field.span)?;
+            let run_id = self.stable_id(
+                EntityKind::RenderGlyphRun,
+                format!(
+                    "owner/{:016x}/field/glyphRunRefs/ordinal/{index}",
+                    geometry_id.value()
+                ),
+                node.span,
+            )?;
+            let glyph_run = CanonicalGlyphRun::new(
+                run_id,
+                font_id,
+                u32::try_from(face_index).expect("faceIndex is zero"),
+                size_descriptor,
+                [run.run_offset, 0.0],
+                run.glyphs,
+            )
+            .map_err(|error| render_error(format!("{error:?}"), node.span))?;
+            let glyph_run_index = self.glyph_runs.len();
+            self.add_glyph_run_roots(&glyph_run, size_descriptor);
+            self.glyph_runs.push(glyph_run);
+            glyph_run_refs.push(glyph_run_index);
+        }
+        Ok(glyph_run_refs)
+    }
+
     fn lower_node(
         &mut self,
         node: &crate::ast::RenderNodeDeclaration,
@@ -1285,12 +1734,22 @@ impl<'a> RenderLowerer<'a> {
             // both, so a Circle stroke is optional and only lowered when it is declared.
             CanonicalRenderNodeKind::Circle
             | CanonicalRenderNodeKind::Polyline
-            | CanonicalRenderNodeKind::Polygon => render_body_field(&node.items, "stroke")
+            | CanonicalRenderNodeKind::Polygon
+            | CanonicalRenderNodeKind::Text => render_body_field(&node.items, "stroke")
                 .is_some()
                 .then(|| self.render_stroke(node_path, node))
                 .transpose()?,
             _ => None,
         };
+        let text_geometry_id = (node.kind == CanonicalRenderNodeKind::Text)
+            .then(|| {
+                self.stable_id(
+                    EntityKind::RenderGeometry,
+                    format!("{node_path}/geometry"),
+                    node.span,
+                )
+            })
+            .transpose()?;
 
         let (geometry_data, paint) = match node.kind {
             CanonicalRenderNodeKind::Group => (None, None),
@@ -1502,6 +1961,17 @@ impl<'a> RenderLowerer<'a> {
                     },
                 )
             }
+            CanonicalRenderNodeKind::Text => {
+                let geometry_id = text_geometry_id
+                    .as_ref()
+                    .expect("Text nodes have a preallocated geometry ID");
+                let glyph_runs = self.lower_text(node, geometry_id)?;
+                let paint = self.add_paint(node_path, node, "fill")?;
+                (
+                    Some(CanonicalRenderGeometryData::Text { glyph_runs, origin }),
+                    Some(paint),
+                )
+            }
             CanonicalRenderNodeKind::Image => {
                 let resource_field = render_body_field(&node.items, "resource")
                     .ok_or_else(|| render_error("Image requires resource", node.span))?;
@@ -1529,17 +1999,7 @@ impl<'a> RenderLowerer<'a> {
                         resource_field.span,
                     ));
                 }
-                let resource_id = if let Some(id) = self.resource_ids.get(&resource_name) {
-                    id.clone()
-                } else {
-                    let id = self.stable_id(
-                        EntityKind::Resource,
-                        resource_name.clone(),
-                        resource_field.span,
-                    )?;
-                    self.resource_ids.insert(resource_name.clone(), id.clone());
-                    id
-                };
+                let resource_id = self.resource_id(&resource_name, resource_field.span)?;
                 let sampling = match render_body_field(&node.items, "sampling") {
                     Some(field) => render_image_sampling(render_value(field)?, field.span)?,
                     None => match resource.metadata().get("sampling") {
@@ -1631,11 +2091,14 @@ impl<'a> RenderLowerer<'a> {
 
         let geometry = geometry_data
             .map(|data| {
-                let id = self.stable_id(
-                    EntityKind::RenderGeometry,
-                    format!("{node_path}/geometry"),
-                    node.span,
-                )?;
+                let id = match text_geometry_id.clone() {
+                    Some(id) => id,
+                    None => self.stable_id(
+                        EntityKind::RenderGeometry,
+                        format!("{node_path}/geometry"),
+                        node.span,
+                    )?,
+                };
                 CanonicalRenderGeometry::new(id, data)
                     .map_err(|error| render_error(format!("{error:?}"), node.span))
             })
@@ -1738,6 +2201,7 @@ impl<'a> RenderLowerer<'a> {
 fn lower_render_scene(
     scene: &crate::ast::RenderScene,
     resources: &BTreeMap<String, CanonicalResource>,
+    resource_bundle: Option<&CanonicalResourceBundle>,
     time_map: &ChartTimeMap,
     span: SourceSpan,
 ) -> Result<(CanonicalRenderScene, CanonicalDescriptorTable), Vec<Diagnostic>> {
@@ -1765,7 +2229,7 @@ fn lower_render_scene(
                 ));
             }
         };
-        let mut lowerer = RenderLowerer::new(resources, time_map, span);
+        let mut lowerer = RenderLowerer::new(resources, resource_bundle, time_map, span);
         let mut layers = Vec::new();
         for (layer_index, layer) in scene.layers.iter().enumerate() {
             let pass = render_body_field(&layer.items, "pass")
@@ -1864,7 +2328,7 @@ fn lower_render_scene(
             paints: lowerer.paints,
             strokes: lowerer.strokes,
             clips: Vec::new(),
-            glyph_runs: Vec::new(),
+            glyph_runs: lowerer.glyph_runs,
         })
         .map_err(|error| render_error(format!("{error:?}"), span))?;
         render
