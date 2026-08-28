@@ -113,6 +113,9 @@ fn later_phase_conformance_sources_are_not_rejected_by_the_parser() {
     let sources = [
         include_str!("../../../docs/conformance/fcs5/source/valid/minimal-chart.fcs"),
         include_str!("../../../docs/conformance/fcs5/source/valid/compile-time-generator.fcs"),
+        include_str!(
+            "../../../docs/conformance/fcs5/source/valid/compile-time-unselected-range.fcs"
+        ),
         include_str!("../../../docs/conformance/fcs5/source/valid/track-boundaries.fcs"),
         include_str!("../../../docs/conformance/fcs5/source/valid/time-scroll-note.fcs"),
         include_str!("../../../docs/conformance/fcs5/source/valid/runtime-choose.fcs"),
