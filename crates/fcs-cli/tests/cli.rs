@@ -1106,6 +1106,98 @@ fn format_uses_the_fixed_text_policy_and_preserves_canonical_chart() {
 }
 
 #[test]
+fn format_executes_all_declared_source_fixtures_at_parser_boundary() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let conformance = root.join("docs/conformance/fcs5");
+    let manifest = load_toml(&conformance.join("manifest.toml"));
+    let directory = tempfile::tempdir().unwrap();
+    let mut formatted_count = 0;
+    let mut rejected_count = 0;
+
+    for fixture in manifest["fixture"].as_array().unwrap() {
+        let id = fixture["id"].as_str().unwrap();
+        let source = conformance.join(fixture["path"].as_str().unwrap());
+        let expected = fixture["expect"].as_str().unwrap();
+        let parser_accepts = match fixture["stage"].as_str() {
+            Some("parse") => expected == "success",
+            Some("elaborate" | "canonical" | "evaluate") => true,
+            other => panic!("{id}: unsupported source fixture stage {other:?}"),
+        };
+        let output = bin().arg("format").arg(&source).output().unwrap();
+
+        if !parser_accepts {
+            let diagnostic = fixture["diagnostic"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{id}: parser error lacks a diagnostic"));
+            assert_eq!(
+                output.status.code(),
+                Some(3),
+                "{id}: expected input-invalid exit, stderr={}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                output.stdout.is_empty(),
+                "{id}: rejected input emitted stdout"
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains(diagnostic),
+                "{id}: expected {diagnostic}, stderr={}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            rejected_count += 1;
+            continue;
+        }
+
+        assert!(
+            output.status.success(),
+            "{id}: format failed, stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "{id}: successful format wrote stderr"
+        );
+        let formatted = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            !formatted.contains('\r'),
+            "{id}: output must use LF endings"
+        );
+        assert!(formatted.ends_with('\n'), "{id}: output lacks final LF");
+        assert!(
+            !formatted.ends_with("\n\n"),
+            "{id}: output has trailing blank lines"
+        );
+        assert!(
+            !formatted
+                .lines()
+                .any(|line| line.ends_with(' ') || line.ends_with('\t')),
+            "{id}: output has trailing horizontal whitespace"
+        );
+        parse_document(&formatted)
+            .into_result()
+            .unwrap_or_else(|errors| panic!("{id}: formatted output does not parse: {errors:?}"));
+
+        let formatted_path = directory.path().join(format!("{id}.fcs"));
+        fs::write(&formatted_path, &formatted).unwrap();
+        let repeated = bin().arg("format").arg(&formatted_path).output().unwrap();
+        assert!(
+            repeated.status.success(),
+            "{id}: repeated format failed, stderr={}",
+            String::from_utf8_lossy(&repeated.stderr)
+        );
+        assert_eq!(
+            repeated.stdout,
+            formatted.as_bytes(),
+            "{id}: product format must be idempotent"
+        );
+        formatted_count += 1;
+    }
+
+    assert_eq!(formatted_count, 46, "parser-accepted source fixture count");
+    assert_eq!(rejected_count, 9, "parser-rejected source fixture count");
+}
+
+#[test]
 fn compile_emits_loadable_fcbc_from_chart_with_line_and_note() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("chart.fcs");
@@ -1565,6 +1657,66 @@ fn inspect_executes_every_fcbc_golden_through_declared_core_contract() {
         "FCBC CLI Core contract mismatches:\n{}",
         mismatches.join("\n")
     );
+}
+
+#[test]
+fn inspect_executes_every_declared_fcbc_mutation() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let conformance = root.join("docs/conformance/fcbc");
+    let manifest = load_toml(&conformance.join("manifest.toml"));
+    let directory = tempfile::tempdir().unwrap();
+    let mut checked = 0;
+
+    for fixture in manifest["fixture"].as_array().unwrap() {
+        let fixture_id = fixture["id"].as_str().unwrap();
+        let mutations = load_toml(&conformance.join(fixture["mutations"].as_str().unwrap()));
+        let base = decode_hex_file(&conformance.join(mutations["base"].as_str().unwrap()));
+
+        for mutation in mutations["mutation"].as_array().unwrap() {
+            let mutation_id = mutation["id"].as_str().unwrap();
+            let mut bytes = base.clone();
+            for patch in mutation["patch"].as_array().unwrap() {
+                let offset = patch["offset"].as_integer().unwrap() as usize;
+                let replacement = decode_hex_string(patch["replace_hex"].as_str().unwrap());
+                let end = offset.checked_add(replacement.len()).unwrap();
+                assert!(
+                    end <= bytes.len(),
+                    "{fixture_id}/{mutation_id}: mutation patch exceeds base"
+                );
+                bytes[offset..end].copy_from_slice(&replacement);
+            }
+
+            let path = directory
+                .path()
+                .join(format!("{fixture_id}-{mutation_id}.hex"));
+            fs::write(&path, lower_hex(&bytes)).unwrap();
+            let output = bin()
+                .arg("inspect")
+                .arg(&path)
+                .arg("--json")
+                .output()
+                .unwrap();
+            let expected = mutation["diagnostic"].as_str().unwrap();
+            assert_eq!(
+                output.status.code(),
+                Some(3),
+                "{fixture_id}/{mutation_id}: expected invalid-input exit, stderr={}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                output.stdout.is_empty(),
+                "{fixture_id}/{mutation_id}: failed inspect must not emit JSON"
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains(expected),
+                "{fixture_id}/{mutation_id}: expected {expected}, stderr={}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            checked += 1;
+        }
+    }
+
+    assert!(checked > 0, "FCBC mutation manifest must not be empty");
 }
 
 #[test]
