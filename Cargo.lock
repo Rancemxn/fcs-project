@@ -376,6 +376,7 @@ dependencies = [
  "fcs-source",
  "image",
  "serde",
+ "serde_json",
  "sha2",
  "toml",
  "ttf-parser",
