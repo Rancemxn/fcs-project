@@ -794,7 +794,7 @@ fn typed_manifests_load_with_bound_counts() {
     assert_eq!(render.schema_version, 3);
     assert_eq!(conversion.schema_version, 2);
     assert_eq!(root.suite.len(), 6);
-    assert_eq!(fcs.fixture.len(), 55);
+    assert_eq!(fcs.fixture.len(), 56);
     assert_eq!(fcbc.fixture.len(), 3);
     assert_eq!(render.binary_fixture.len(), 0);
     assert_eq!(render.fixture.len(), 1);
@@ -1049,6 +1049,37 @@ fn i2_public_conformance_fixtures_execute_through_the_elaborator() {
             &TypedValue::Beat(Beat::new(numerator, denominator).unwrap())
         );
     }
+
+    let unselected_range_fixture = fixture(&fcs, "source.valid.compile-time-unselected-range");
+    let unselected_range = elaborate_fixture(&fcs_base, unselected_range_fixture)
+        .expect("unselected generator range fixture must elaborate");
+    unselected_range
+        .validate_invariants()
+        .expect("unselected range output must satisfy the expanded boundary");
+    let unselected_range_expected = expected_json(&fcs_base, unselected_range_fixture);
+    let unselected_range_entities = note_entities(&unselected_range);
+    assert_eq!(
+        unselected_range_expected["count"].as_u64(),
+        Some(unselected_range_entities.len() as u64)
+    );
+    let expected_time = &unselected_range_expected["times"][0];
+    assert_eq!(
+        unselected_range_entities[0]
+            .field("gameplay.time")
+            .expect("time field")
+            .value(),
+        &TypedValue::Beat(
+            Beat::new(
+                expected_time["beatNumerator"]
+                    .as_i64()
+                    .expect("expected numerator must be an integer"),
+                expected_time["beatDenominator"]
+                    .as_i64()
+                    .expect("expected denominator must be an integer"),
+            )
+            .unwrap()
+        )
+    );
 
     let template_fixture = fixture(&fcs, "source.valid.template-if-with");
     let template = elaborate_fixture(&fcs_base, template_fixture)
