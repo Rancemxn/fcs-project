@@ -257,10 +257,7 @@ fn misordered_section_table_is_rejected_by_both_product_loaders() {
         load_container(&bytes).unwrap_err().category(),
         "fcbc.section-order"
     );
-    assert_eq!(
-        load_chart(&bytes).unwrap_err(),
-        "fcbc.section-order"
-    );
+    assert_eq!(load_chart(&bytes).unwrap_err(), "fcbc.section-order");
 }
 
 /// Core content corruptions mirroring `nonempty-execution-mutations.toml`
