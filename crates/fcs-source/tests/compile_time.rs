@@ -381,6 +381,20 @@ lines { line main {} }"#,
 }
 
 #[test]
+fn definition_line_references_include_constant_backed_judgeline_ids() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  const JUDGE_ID: string = "judge";
+  fn read_id() -> string { return @judge.id; }
+}
+collections { judgelines { Line { id: JUDGE_ID; }; } }"#;
+
+    elaborate_source(source).expect("constant-backed Line IDs should resolve in definitions");
+}
+
+#[test]
 fn pure_functions_route_unavailable_static_entity_field_evaluation() {
     let source = r#"#fcs 5.0.0
 format { profile: chart; }
