@@ -44,6 +44,8 @@ S15 FCBC/Execution ABI closure 把 root `candidate_baseline` 更新为
 其中 CLI 对三个 golden 分别执行声明的 Core success/rejection contract。该产品 assembly 的同 SHA Full Gate 已通过
 （run 30729340879，head e0140f7ca15cc21620ef3ad8e44b4ece03a346c2）；独立复审和五域 re-freeze 仍是
 I10 门槛。
+The CLI mutation lane also applies every mutation declared by the three FCBC mutation manifests through
+`inspect --json`; this is product-entry evidence and does not change the FCBC domain corpus or Frozen status.
 
 Conformance runner 必须：
 
