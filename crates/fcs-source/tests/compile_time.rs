@@ -528,7 +528,7 @@ format { profile: chart; }
 tempoMap { 0beat -> 120bpm; }
 definitions {
   const DIRECT_ID: string = "direct";
-  const TEMPLATE_ID: string = "template";
+  const TEMPLATE_ID: string = "templated";
   const OVERRIDE_ID: string = "override";
   template Line makeJudge() {
     return Line { id: TEMPLATE_ID; };
@@ -542,7 +542,7 @@ collections {
   }
   notes {
     tap { line: @direct; gameplay.time: 1beat; };
-    tap { line: @template; gameplay.time: 2beat; };
+    tap { line: @templated; gameplay.time: 2beat; };
     tap { line: @override; gameplay.time: 3beat; };
   }
 }"#;
@@ -560,7 +560,7 @@ collections {
         ids,
         vec![
             TypedValue::String("direct".into()),
-            TypedValue::String("template".into()),
+            TypedValue::String("templated".into()),
             TypedValue::String("override".into()),
         ]
     );
