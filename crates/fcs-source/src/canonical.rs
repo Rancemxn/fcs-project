@@ -968,7 +968,7 @@ fn parse_render_font<'a>(
     bytes: &'a [u8],
     span: SourceSpan,
 ) -> Result<RenderFont<'a>, Diagnostic> {
-    if bytes.get(..4) != Some(&[0, 0, 1, 0][..]) || ttf_parser::fonts_in_collection(bytes).is_some()
+    if bytes.get(..4) != Some(&[0, 1, 0, 0][..]) || ttf_parser::fonts_in_collection(bytes).is_some()
     {
         return Err(render_error(
             "font resource must be a single-face TrueType sfnt",
