@@ -3,7 +3,7 @@
 This ledger is the I1.8 production-coverage evidence for the active `fcs-source` parser. It records
 parser-boundary evidence only; it does not promote a source shape to static, canonical, Render, or
 runtime semantics. `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary`
-executes all 55 FCS manifest entries (3 parse-success, 9 parse-error, and 43 later-stage syntax-acceptance
+executes all 65 FCS manifest entries (3 parse-success, 9 parse-error, and 53 later-stage syntax-acceptance
 entries).
 
 ## Evidence keys
@@ -36,7 +36,7 @@ remain wrapped in the smallest legal document/block fixture.
 | `examples/fcs/templates.fcs` | `compile_time::parses_and_elaborates_the_public_template_fixture` | complete template/collection document |
 | `docs/conformance/fcs5/source/valid/complete-source-grammar.fcs` | `source_ast::complete_source_grammar_fixture_parses_with_all_top_level_kinds` and `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary` | complete Appendix B envelope |
 | `docs/conformance/fcs5/source/valid/appendix-a-minimal-complete.fcs` | `conformance_manifest::appendix_a_fixture_expands_four_notes_at_exact_beats_and_eliminates_authoring_structure` | Appendix A STEP/template/generator example; elaboration expands four notes at beats 0, 1, 2, and 3 and canonical output eliminates authoring structure |
-| all 55 entries in `docs/conformance/fcs5/manifest.toml` | `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary` | 3 parse-success, 9 parse-error, 43 later-stage syntax-acceptance entries; owning canonical/evaluate tests execute the applicable later boundary |
+| all 65 entries in `docs/conformance/fcs5/manifest.toml` | `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary` | 3 parse-success, 9 parse-error, 53 later-stage syntax-acceptance entries; owning elaborate/canonical/evaluate tests execute the applicable later boundary |
 
 ## Document, format, and lexical envelope
 
@@ -56,7 +56,7 @@ remain wrapped in the smallest legal document/block fixture.
 | `metaBlock`, `artworkBlock`, `syncBlock` | `A::metadata_schema_ast_retains_ordered_declarations_and_spans`, `G` | `C` parse-stage/semantic-invalid split; duplicate and malformed schema cases in `D` |
 | `contributorsBlock`, `contributorDecl` | `A`, `G` | `C` later-stage schema/resource-invalid inputs (`L`) |
 | `creditsBlock`, `creditDecl` | `A`, `G` | `C` later-stage schema-invalid inputs (`L`) |
-| `resourcesBlock`, `resourceDecl`, `resourceKind` | `A::every_core_resource_kind_has_a_typed_source_node`, `G`, `resource_bundle::builds_deterministic_opaque_bundle_without_path_or_content_deduplication`, `conformance_manifest::i5_resource_fixtures_execute_at_the_workspace_bundle_boundary` | `L::unknown-resource`, `L::resource-path-escape`, `L::resource-hash-mismatch`, `L::resource-missing-member`, `resource_bundle::{rejects_missing_directory_and_non_regular_workspace_members,accepts_in_root_symlink_and_rejects_symlink_escape,enforces_public_count_single_and_total_byte_budgets}`; filesystem/hash checks execute only at the explicit canonical bundle boundary, never in the parser |
+| `resourcesBlock`, `resourceDecl`, `resourceKind` | `A::every_core_resource_kind_has_a_typed_source_node`, `G`, `resource_bundle::builds_deterministic_opaque_bundle_without_path_or_content_deduplication`, `conformance_manifest::i5_resource_fixtures_execute_at_the_workspace_bundle_boundary` | `L::unknown-resource`, `L::resource-path-escape`, `L::resource-hash-mismatch`, `L::resource-missing-member`, `metadata_graph::resource_ids_are_unique_at_the_canonical_boundary`, `resource_bundle::{rejects_missing_directory_and_non_regular_workspace_members,rejects_unavailable_and_non_directory_workspace_roots,accepts_in_root_symlink_and_rejects_symlink_escape,enforces_public_count_single_and_total_byte_budgets}`; filesystem/hash checks execute only at the explicit canonical bundle boundary, never in the parser |
 | `tempoMapBlock`, `tempoPoint`, `bpmLiteral` | `D::source_parser_retains_tempo_maps_for_later_validation`, `G` | `D::rejects_removed_mixed_beat_literal`, `L` for sign/order/profile validity |
 | `schemaBlock`, `schemaField`, `schemaValue` | `A::metadata_schema_ast_retains_ordered_declarations_and_spans`, `G` | `D::extension_payload_duplicate_keys_remain_ordered_and_unbalanced_envelopes_fail`, `L::custom-duplicate-key` |
 | `fieldPath`, `fieldName` | `A`, `E::parser_supports_references_index_postfix_and_keyword_field_names` | `D::additional_bom_and_non_ascii_identifier_spans_are_exact`, malformed field-path cases |
@@ -78,20 +78,20 @@ remain wrapped in the smallest legal document/block fixture.
 | Appendix B production(s) | Valid evidence | Invalid or boundary evidence |
 |---|---|---|
 | `linesBlock`, `lineDecl` | `A::track_ast_retains_settings_direct_segments_points_and_spans`, `G` | `L::track-overlap`, `D` malformed declaration/recovery cases |
-| `collectionsBlock`, `collection`, `collectionName` | `A::collection_generators_retain_their_owner_context`, `G` | `C::nested-generator`, `C::misplaced-generator`, `D` |
-| `collectionItem`, `collectionIf` | `A`, `E` | owner-placement and malformed-body cases in `A`/`D` |
+| `collectionsBlock`, `collection`, `collectionName` | `A::collection_generators_retain_their_owner_context`, `C::line-id-expressions`, `G` | `C::nested-generator`, `C::misplaced-generator`, `D` |
+| `collectionItem`, `collectionIf` | `A`, `C::line-id-expressions`, `E` | owner-placement and malformed-body cases in `A`/`D` |
 | `generator`, `rangeType`, `rangeOperator` | `A::track_generators_retain_track_owner_and_schema_cubic_values`, `E` | `C::bare-range`, `L::generator-zero-step`; zero-step is not a parser error |
-| `generatorStatement`, `generatorIf`, `emitStatement` | `E::generator_body_retains_typed_let_and_nested_statement_spans`, `A` | `C::nested-generator`, `C::misplaced-generator`, owner-invalid cases in `A` |
+| `generatorStatement`, `generatorIf`, `emitStatement` | `E::generator_body_retains_typed_let_and_nested_statement_spans`, `C::line-id-expressions`, `A` | `C::nested-generator`, `C::misplaced-generator`, owner-invalid cases in `A` |
 
 ## Entity, Track, and interpolation source shapes
 
 | Appendix B production(s) | Valid evidence | Invalid or boundary evidence |
 |---|---|---|
-| `entityExpression`, `entityPrimary` | `A`, `E`, `G` | `L::runtime-gameplay`, `L::template-missing-line` |
-| `entityConstructor`, `noteVariant` | `A`, `E` | `L::note-policy-disabled-sound`, `L::hold-end` |
+| `entityExpression`, `entityPrimary` | `A`, `C::line-id-expressions`, `E`, `G` | `L::line-id-expression-duplicate`, `L::line-id-reference-bootstrap`, `L::runtime-gameplay`, `L::template-missing-line` |
+| `entityConstructor`, `noteVariant` | `A`, `C::line-id-expressions`, `E` | `L::line-id-expression-duplicate`, `L::note-policy-disabled-sound`, `L::hold-end` |
 | `entityBlock`, `tracksBlock`, `trackDecl` | `A::track_ast_retains_settings_direct_segments_points_and_spans`, `G` | `L::track-overlap`, malformed/unclosed group recovery in `D` |
 | `trackSetting`, `segmentsBlock`, `segmentItem` | `A`, `G` | `D::document_recovery_reports_independent_errors_without_partial_output`, `L::track-overlap` |
-| `segmentIf`, `directSegment`, `directPoint` | `A::track_ast_retains_settings_direct_segments_points_and_spans` | `L::track-overlap`, malformed interval cases in `D` |
+| `segmentIf`, `directSegment`, `directPoint` | `A::track_ast_retains_settings_direct_segments_points_and_spans` | `L::{track-overlap,track-unselected-value}`, malformed interval cases in `D` |
 | `halfOpenInterval` | `A::track_ast_retains_settings_direct_segments_points_and_spans` | `C::bare-range`, ordinary array misuse is rejected by `E`/`D` |
 | `interpolation`, `cubicBezierValue` | `A::track_generators_retain_track_owner_and_schema_cubic_values` | malformed expression/constructor cases in `D`/`E` |
 | `scrollTempoMapBlock`, `scrollTempoPoint` | `A`, `G` | `L` for tempo ordering/profile semantics; `D::source_parser_retains_tempo_maps_for_later_validation` |
@@ -110,7 +110,7 @@ remain wrapped in the smallest legal document/block fixture.
 | Appendix B production(s) | Valid evidence | Invalid or boundary evidence |
 |---|---|---|
 | `expression`, `logicalOr`, `logicalAnd`, `equality`, `ordering` | `E::token_parser_preserves_frozen_precedence_and_spans`, operator tests | `E::token_parser_rejects_reserved_names_and_trailing_input`, malformed expression tests in `D` |
-| `sum`, `product`, `power`, `unary`, `postfix` | `E::parses_every_binary_operator`, `E::parses_unary_operators_before_postfix_and_binary_operators` | `E::power_is_right_associative`, trailing/incomplete expression tests |
+| `sum`, `product`, `power`, `unary`, `postfix` | `E::parses_every_binary_operator`, `E::parses_unary_operators_before_postfix_and_binary_operators` | `E::power_is_right_associative`, `source.invalid.zero-base-negative-power-{operator,signed-operator,builtin,signed-builtin}` (later elaboration), trailing/incomplete expression tests |
 | `primary`, `literal`, `booleanLiteral`, `nullLiteral`, `numberLiteral` | `E::parses_scalar_and_unit_literals`, literal lexer tests | `D::malformed_numeric_candidates_are_one_lexical_error`, non-finite/raw-scalar cases |
 | `unitLiteral`, `unitSuffix` | `E::parses_scalar_and_unit_literals` | `D::invalid_unit_adjacency_is_one_lexical_error` |
 | `vec2Constructor`, `arguments`, `reference` | `E::parses_names_calls_fields_parentheses_and_vec2_construction`, reference/index tests | malformed call/reference/trailing cases in `E`/`D` |

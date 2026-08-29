@@ -1,0 +1,13 @@
+#fcs 5.0.0
+format { profile: fragment; }
+collections {
+    notes {
+        if false {
+            generate i: int in 0..=1 step 1 / 0 {
+                emit tap { gameplay.time: 0beat; };
+            }
+        } else {
+            tap { gameplay.time: 1beat; };
+        }
+    }
+}

@@ -1,0 +1,11 @@
+#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+    template Line rename(id: string) {
+        let local_id: string = id;
+        return Line { id: "base"; } with { id: local_id; };
+    }
+}
+lines { line base {} }
+collections { judgelines { rename(@missing.id); } }

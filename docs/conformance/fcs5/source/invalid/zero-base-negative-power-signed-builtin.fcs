@@ -1,0 +1,3 @@
+#fcs 5.0.0
+format { profile: fragment; }
+definitions { const value: float = pow(-0.0, -1.0); }

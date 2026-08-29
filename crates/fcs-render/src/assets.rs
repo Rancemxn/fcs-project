@@ -263,6 +263,11 @@ fn check_png(bytes: &[u8], color_space: &str, max_chunks: usize) -> Result<(), A
         }
         let kind = &bytes[position + 4..position + 8];
         let data = &bytes[header_end..header_end + length];
+        let expected_crc =
+            fcs_fcbc::section_crc32_iso_hdlc(&bytes[position + 4..header_end + length]);
+        if be_u32(bytes, chunk_end - 4)? != expected_crc {
+            return Err(AssetError::DecodeFailed);
+        }
         if first && (kind != b"IHDR" || length != 13) {
             return Err(AssetError::DecodeFailed);
         }
@@ -325,6 +330,9 @@ fn check_png(bytes: &[u8], color_space: &str, max_chunks: usize) -> Result<(), A
 }
 
 fn validate_ihdr(data: &[u8]) -> Result<(), AssetError> {
+    if data.len() != 13 {
+        return Err(AssetError::DecodeFailed);
+    }
     let bit_depth = *data.get(8).ok_or(AssetError::DecodeFailed)?;
     let color_type = *data.get(9).ok_or(AssetError::DecodeFailed)?;
     let valid = match color_type {
@@ -804,6 +812,9 @@ fn parse_simple_glyph(
     while flags.len() < point_count {
         let flag = *bytes.get(position).ok_or(AssetError::DecodeFailed)?;
         position += 1;
+        if flag & 0xc0 != 0 {
+            return Err(AssetError::DecodeFailed);
+        }
         flags.push(flag);
         if flag & 0x08 != 0 {
             let repeats = usize::from(*bytes.get(position).ok_or(AssetError::DecodeFailed)?);
@@ -885,7 +896,8 @@ fn parse_cmap(bytes: &[u8], limits: &RenderLimits) -> Result<BTreeMap<u32, u16>,
         let encoding = be_u16(bytes, record + 2)?;
         let offset =
             usize::try_from(be_u32(bytes, record + 4)?).map_err(|_| AssetError::DecodeFailed)?;
-        if platform != 3 || !matches!(encoding, 1 | 10) || offset + 2 > bytes.len() {
+        let format_end = offset.checked_add(2).ok_or(AssetError::DecodeFailed)?;
+        if platform != 3 || !matches!(encoding, 1 | 10) || format_end > bytes.len() {
             continue;
         }
         let format = be_u16(bytes, offset)?;
@@ -911,47 +923,92 @@ fn parse_cmap4(
     limits: &RenderLimits,
 ) -> Result<BTreeMap<u32, u16>, AssetError> {
     let length = usize::from(be_u16(bytes, offset + 2)?);
+    let table_end = offset.checked_add(length).ok_or(AssetError::DecodeFailed)?;
     let table = bytes
-        .get(offset..offset + length)
+        .get(offset..table_end)
         .ok_or(AssetError::DecodeFailed)?;
-    let segment_count = usize::from(be_u16(table, 6)?) / 2;
+    let segment_count_x2 = be_u16(table, 6)?;
+    if !segment_count_x2.is_multiple_of(2) {
+        return Err(AssetError::DecodeFailed);
+    }
+    let segment_count = usize::from(segment_count_x2 / 2);
     if segment_count > limits.max_font_cmap_segments {
         return Err(AssetError::LimitExceeded);
     }
-    if segment_count == 0 || 16 + segment_count * 8 > table.len() {
+    let expected_length = 16usize
+        .checked_add(
+            segment_count
+                .checked_mul(8)
+                .ok_or(AssetError::DecodeFailed)?,
+        )
+        .ok_or(AssetError::DecodeFailed)?;
+    if segment_count == 0 || table.len() < expected_length || !table.len().is_multiple_of(2) {
         return Err(AssetError::DecodeFailed);
     }
     let end_codes = 14;
-    let start_codes = end_codes + segment_count * 2 + 2;
+    let reserved_pad = end_codes + segment_count * 2;
+    if be_u16(table, reserved_pad)? != 0 {
+        return Err(AssetError::DecodeFailed);
+    }
+    let start_codes = reserved_pad + 2;
     let deltas = start_codes + segment_count * 2;
     let ranges = deltas + segment_count * 2;
     let mut cmap = BTreeMap::new();
     let mut mapping_count = 0usize;
+    let mut previous_end = None;
+    let mut has_unsupported_range = false;
     for segment in 0..segment_count {
         let end = be_u16(table, end_codes + segment * 2)?;
         let start = be_u16(table, start_codes + segment * 2)?;
         let delta = be_i16(table, deltas + segment * 2)? as i32;
         let range = be_u16(table, ranges + segment * 2)?;
-        if start > end {
+        if start > end || previous_end.is_some_and(|previous| start <= previous) {
             return Err(AssetError::DecodeFailed);
         }
+        if segment + 1 == segment_count && (start != 0xffff || end != 0xffff) {
+            return Err(AssetError::DecodeFailed);
+        }
+        previous_end = Some(end);
         mapping_count = mapping_count
             .checked_add(usize::from(end - start) + 1)
             .filter(|count| *count <= limits.max_font_cmap_mappings)
             .ok_or(AssetError::LimitExceeded)?;
+        if range != 0 {
+            has_unsupported_range = true;
+            let glyph_array_start = ranges
+                .checked_add(segment * 2)
+                .and_then(|offset| offset.checked_add(usize::from(range)))
+                .ok_or(AssetError::DecodeFailed)?;
+            if glyph_array_start < expected_length {
+                return Err(AssetError::DecodeFailed);
+            }
+            let glyph_array_end = glyph_array_start
+                .checked_add(
+                    (usize::from(end - start) + 1)
+                        .checked_mul(2)
+                        .ok_or(AssetError::DecodeFailed)?,
+                )
+                .ok_or(AssetError::DecodeFailed)?;
+            if glyph_array_end > table.len() {
+                return Err(AssetError::DecodeFailed);
+            }
+            continue;
+        }
         for code in start..=end {
             if code == 0xffff {
                 continue;
             }
-            let glyph = if range == 0 {
-                ((i32::from(code) + delta) & 0xffff) as u16
-            } else {
-                return Err(AssetError::CapabilityMissing);
-            };
+            let glyph = ((i32::from(code) + delta) & 0xffff) as u16;
             cmap.insert(u32::from(code), glyph);
         }
     }
-    Ok(cmap)
+    if has_unsupported_range {
+        Err(AssetError::CapabilityMissing)
+    } else if table.len() != expected_length {
+        Err(AssetError::DecodeFailed)
+    } else {
+        Ok(cmap)
+    }
 }
 
 fn table_checksum(tag: &[u8; 4], table: &[u8]) -> u32 {
@@ -1044,4 +1101,364 @@ fn write_be_i16(bytes: &mut [u8], offset: usize, value: i16) {
 
 fn write_be_u32(bytes: &mut [u8], offset: usize, value: u32) {
     bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{ColorType, ImageEncoder, codecs::png::PngEncoder};
+
+    const CHECKED_IN_PNG: &[u8] =
+        include_bytes!("../../../docs/conformance/render/assets/fcs-test-rgba8.png");
+    const CHECKED_IN_WEBP: &[u8] =
+        include_bytes!("../../../docs/conformance/render/assets/fcs-test-lossless.webp");
+    const CHECKED_IN_FONT: &[u8] =
+        include_bytes!("../../../docs/conformance/render/assets/fcs-test-font.ttf");
+
+    fn png_chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut chunk = Vec::with_capacity(data.len() + 12);
+        chunk.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        chunk.extend_from_slice(kind);
+        chunk.extend_from_slice(data);
+        let crc = fcs_fcbc::section_crc32_iso_hdlc(&chunk[4..]);
+        chunk.extend_from_slice(&crc.to_be_bytes());
+        chunk
+    }
+
+    fn png_with_chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let source = CHECKED_IN_PNG;
+        let ihdr_end = 8 + 4 + 4 + 13 + 4;
+        let mut result = source[..ihdr_end].to_vec();
+        result.extend_from_slice(&png_chunk(kind, data));
+        result.extend_from_slice(&source[ihdr_end..]);
+        result
+    }
+
+    fn font_table(font: &[u8], wanted: [u8; 4]) -> (usize, usize, usize) {
+        let count = usize::from(be_u16(font, 4).expect("font table count"));
+        for index in 0..count {
+            let record = 12 + index * 16;
+            let tag: [u8; 4] = font[record..record + 4].try_into().expect("font tag");
+            if tag == wanted {
+                let offset = usize::try_from(be_u32(font, record + 8).expect("font offset"))
+                    .expect("font offset fits");
+                let length = usize::try_from(be_u32(font, record + 12).expect("font length"))
+                    .expect("font length fits");
+                return (record, offset, length);
+            }
+        }
+        panic!("missing font table {:?}", wanted);
+    }
+
+    fn repair_font_global_checksum(font: &mut [u8]) {
+        let (_, head, _) = font_table(font, *b"head");
+        font[head + 8..head + 12].fill(0);
+        let adjustment = FONT_CHECKSUM_MAGIC.wrapping_sub(checksum(font));
+        write_be_u32(font, head + 8, adjustment);
+    }
+
+    fn repair_font_checksums(font: &mut [u8]) {
+        let count = usize::from(be_u16(font, 4).expect("font table count"));
+        let tables: Vec<_> = (0..count)
+            .map(|index| {
+                let record = 12 + index * 16;
+                let tag: [u8; 4] = font[record..record + 4].try_into().expect("font tag");
+                let offset = usize::try_from(be_u32(font, record + 8).expect("font offset"))
+                    .expect("font offset fits");
+                let length = usize::try_from(be_u32(font, record + 12).expect("font length"))
+                    .expect("font length fits");
+                (record, tag, offset, length)
+            })
+            .collect();
+        let (_, head, _) = font_table(font, *b"head");
+        font[head + 8..head + 12].fill(0);
+        for (record, tag, offset, length) in tables {
+            let value = table_checksum(&tag, &font[offset..offset + length]);
+            write_be_u32(font, record + 4, value);
+        }
+        let adjustment = FONT_CHECKSUM_MAGIC.wrapping_sub(checksum(font));
+        write_be_u32(font, head + 8, adjustment);
+    }
+
+    #[test]
+    fn checked_in_images_decode_deterministically_with_metadata_conversion() {
+        assert_eq!(encode_test_png(), CHECKED_IN_PNG);
+        assert_eq!(encode_test_webp(), CHECKED_IN_WEBP);
+
+        let png =
+            decode_image("image/png", "srgb", "straight", CHECKED_IN_PNG).expect("checked-in PNG");
+        assert_eq!((png.width, png.height), (2, 2));
+        assert_eq!(png.rgba8, PNG_PIXELS);
+        assert_eq!(png.linear_premultiplied[0], [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(
+            png,
+            decode_image("image/png", "srgb", "straight", CHECKED_IN_PNG)
+                .expect("repeat checked-in PNG")
+        );
+
+        let webp = decode_image("image/webp", "srgb", "straight", CHECKED_IN_WEBP)
+            .expect("checked-in WebP");
+        assert_eq!((webp.width, webp.height), (2, 2));
+        assert_eq!(webp.rgba8, WEBP_PIXELS);
+        assert_eq!(
+            webp,
+            decode_image("image/webp", "srgb", "straight", CHECKED_IN_WEBP)
+                .expect("repeat checked-in WebP")
+        );
+    }
+
+    #[test]
+    fn image_codec_rejects_malformed_and_unsupported_inputs() {
+        assert_eq!(
+            decode_image("image/jpeg", "srgb", "straight", CHECKED_IN_PNG),
+            Err(AssetError::CapabilityMissing)
+        );
+        assert_eq!(
+            decode_image("image/png", "srgb", "straight", &CHECKED_IN_PNG[..10]),
+            Err(AssetError::DecodeFailed)
+        );
+
+        let mut bad_crc = CHECKED_IN_PNG.to_vec();
+        let last = bad_crc.len() - 1;
+        bad_crc[last] ^= 1;
+        assert_eq!(
+            decode_image("image/png", "srgb", "straight", &bad_crc),
+            Err(AssetError::DecodeFailed)
+        );
+        assert_eq!(
+            decode_image(
+                "image/png",
+                "linear-srgb",
+                "straight",
+                &png_with_chunk(b"sRGB", &[0]),
+            ),
+            Err(AssetError::DecodeFailed)
+        );
+        assert_eq!(
+            decode_image(
+                "image/png",
+                "srgb",
+                "straight",
+                &png_with_chunk(b"acTL", &[0; 8]),
+            ),
+            Err(AssetError::CapabilityMissing)
+        );
+
+        let mut transparent = Vec::new();
+        PngEncoder::new(Cursor::new(&mut transparent))
+            .write_image(&[255, 0, 0, 0], 1, 1, ColorType::Rgba8.into())
+            .expect("transparent PNG");
+        assert_eq!(
+            decode_image("image/png", "srgb", "premultiplied", &transparent),
+            Err(AssetError::DecodeFailed)
+        );
+        assert_eq!(
+            decode_image("image/webp", "srgb", "straight", b"not-webp"),
+            Err(AssetError::DecodeFailed)
+        );
+    }
+
+    #[test]
+    fn image_limits_reject_before_decoded_output_allocation() {
+        let png = CHECKED_IN_PNG;
+        let mut limits = RenderLimits {
+            max_single_resource_bytes: (png.len() - 1) as u64,
+            ..RenderLimits::default()
+        };
+        assert_eq!(
+            decode_image_with_limits("image/png", "srgb", "straight", png, &limits),
+            Err(AssetError::LimitExceeded)
+        );
+
+        limits = RenderLimits {
+            max_image_width: 1,
+            ..RenderLimits::default()
+        };
+        assert_eq!(
+            decode_image_with_limits("image/png", "srgb", "straight", png, &limits),
+            Err(AssetError::LimitExceeded)
+        );
+        limits.max_image_height = 1;
+        assert_eq!(
+            decode_image_with_limits("image/png", "srgb", "straight", png, &limits),
+            Err(AssetError::LimitExceeded)
+        );
+        limits.max_image_decoded_bytes = 1;
+        assert_eq!(
+            decode_image_with_limits("image/png", "srgb", "straight", png, &limits),
+            Err(AssetError::LimitExceeded)
+        );
+        limits.max_image_metadata_chunks = 0;
+        assert_eq!(
+            decode_image_with_limits("image/png", "srgb", "straight", png, &limits),
+            Err(AssetError::LimitExceeded)
+        );
+        assert_eq!(
+            decode_image_with_limits(
+                "image/webp",
+                "srgb",
+                "straight",
+                CHECKED_IN_WEBP,
+                &RenderLimits {
+                    max_image_metadata_chunks: 0,
+                    ..RenderLimits::default()
+                },
+            ),
+            Err(AssetError::LimitExceeded)
+        );
+    }
+
+    #[test]
+    fn checked_in_font_decodes_and_shapes_exactly() {
+        assert_eq!(build_test_font(), CHECKED_IN_FONT);
+        let decoded = decode_font(CHECKED_IN_FONT).expect("checked-in font");
+        assert_eq!(decoded.units_per_em, 1000);
+        assert_eq!(decoded.advances, vec![1000, 1000]);
+        assert_eq!(decoded.left_side_bearings, vec![0, -500]);
+        assert_eq!(decoded.cmap.get(&u32::from('A')), Some(&1));
+        assert!(decoded.glyphs[0].contours.is_empty());
+        assert_eq!(decoded.glyphs[1].contours[0].len(), 4);
+        let shaped = shape_simple_ltr(&decoded, "A").expect("simple-ltr A");
+        assert_eq!(
+            shaped,
+            vec![ShapedGlyph {
+                glyph_id: 1,
+                x_advance: 1.0,
+                y_advance: 0.0,
+                x_offset: 0.0,
+                y_offset: 0.0,
+            }]
+        );
+        assert_eq!(
+            shaped,
+            shape_simple_ltr(&decoded, "A").expect("repeat shaping")
+        );
+    }
+
+    #[test]
+    fn font_codec_rejects_malformed_tables_glyphs_and_cmap() {
+        let font = CHECKED_IN_FONT.to_vec();
+        assert_eq!(decode_font(&font[..11]), Err(AssetError::CapabilityMissing));
+        let mut bad_magic = font.clone();
+        bad_magic[..4].fill(0);
+        assert_eq!(decode_font(&bad_magic), Err(AssetError::CapabilityMissing));
+
+        let mut bad_checksum = font.clone();
+        let last = bad_checksum.len() - 1;
+        bad_checksum[last] ^= 1;
+        assert_eq!(decode_font(&bad_checksum), Err(AssetError::DecodeFailed));
+
+        let (_, glyf, _) = font_table(&font, *b"glyf");
+        let mut bad_table_checksum = font.clone();
+        bad_table_checksum[glyf + 14] ^= 1;
+        repair_font_global_checksum(&mut bad_table_checksum);
+        assert_eq!(
+            decode_font(&bad_table_checksum),
+            Err(AssetError::DecodeFailed)
+        );
+
+        let mut bad_flag = font.clone();
+        bad_flag[glyf + 14] = 0x41;
+        repair_font_checksums(&mut bad_flag);
+        assert_eq!(decode_font(&bad_flag), Err(AssetError::DecodeFailed));
+
+        let mut bad_repeat = font.clone();
+        bad_repeat[glyf + 14] = 0x09;
+        bad_repeat[glyf + 15] = 4;
+        repair_font_checksums(&mut bad_repeat);
+        assert_eq!(decode_font(&bad_repeat), Err(AssetError::DecodeFailed));
+
+        let (_, cmap, _) = font_table(&font, *b"cmap");
+        let mut bad_cmap = font.clone();
+        write_be_u16(&mut bad_cmap, cmap + 12 + 18, 1);
+        repair_font_checksums(&mut bad_cmap);
+        assert_eq!(decode_font(&bad_cmap), Err(AssetError::DecodeFailed));
+
+        let mut bad_loca = font.clone();
+        write_be_u16(&mut bad_loca, font_table(&font, *b"loca").1 + 4, 16);
+        repair_font_checksums(&mut bad_loca);
+        assert_eq!(decode_font(&bad_loca), Err(AssetError::DecodeFailed));
+
+        assert_eq!(
+            shape_simple_ltr(&decode_font(&font).expect("valid font"), "\0"),
+            Err(AssetError::CapabilityMissing)
+        );
+    }
+
+    #[test]
+    fn cmap4_glyph_arrays_are_capability_missing_but_malformed_tables_fail() {
+        let mut supported_shape = cmap_table();
+        write_be_u16(&mut supported_shape, 14, 34);
+        write_be_u16(&mut supported_shape, 40, 4);
+        supported_shape.extend_from_slice(&[0, 0]);
+        assert_eq!(
+            parse_cmap(&supported_shape, &RenderLimits::default()),
+            Err(AssetError::CapabilityMissing)
+        );
+
+        write_be_u16(&mut supported_shape, 40, 6);
+        assert_eq!(
+            parse_cmap(&supported_shape, &RenderLimits::default()),
+            Err(AssetError::DecodeFailed)
+        );
+    }
+
+    #[test]
+    fn font_and_shaping_limits_reject_before_owned_output() {
+        let font_bytes = CHECKED_IN_FONT;
+        let font = decode_font(font_bytes).expect("valid font");
+        let cases = [
+            RenderLimits {
+                max_single_resource_bytes: (font_bytes.len() - 1) as u64,
+                ..RenderLimits::default()
+            },
+            RenderLimits {
+                max_font_tables: 6,
+                ..RenderLimits::default()
+            },
+            RenderLimits {
+                max_font_glyphs: 1,
+                ..RenderLimits::default()
+            },
+            RenderLimits {
+                max_font_contours_per_glyph: 0,
+                ..RenderLimits::default()
+            },
+            RenderLimits {
+                max_font_points_per_glyph: 3,
+                ..RenderLimits::default()
+            },
+            RenderLimits {
+                max_font_glyph_work: 3,
+                ..RenderLimits::default()
+            },
+            RenderLimits {
+                max_font_cmap_segments: 1,
+                ..RenderLimits::default()
+            },
+            RenderLimits {
+                max_font_cmap_mappings: 1,
+                ..RenderLimits::default()
+            },
+        ];
+        for limits in cases {
+            assert_eq!(
+                decode_font_with_limits(font_bytes, &limits),
+                Err(AssetError::LimitExceeded)
+            );
+        }
+
+        assert_eq!(
+            shape_simple_ltr_with_limits(
+                &font,
+                "A",
+                &RenderLimits {
+                    max_shaped_glyphs: 0,
+                    ..RenderLimits::default()
+                },
+            ),
+            Err(AssetError::LimitExceeded)
+        );
+        assert_eq!(shape_simple_ltr(&font, " "), Err(AssetError::DecodeFailed));
+    }
 }

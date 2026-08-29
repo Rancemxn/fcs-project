@@ -794,7 +794,7 @@ fn typed_manifests_load_with_bound_counts() {
     assert_eq!(render.schema_version, 3);
     assert_eq!(conversion.schema_version, 2);
     assert_eq!(root.suite.len(), 6);
-    assert_eq!(fcs.fixture.len(), 55);
+    assert_eq!(fcs.fixture.len(), 65);
     assert_eq!(fcbc.fixture.len(), 3);
     assert_eq!(render.binary_fixture.len(), 0);
     assert_eq!(render.fixture.len(), 1);
@@ -868,7 +868,7 @@ fn fcs_source_fixtures_execute_at_the_declared_frontend_boundary() {
 
     assert_eq!(parse_success, 3);
     assert_eq!(parse_error, 9);
-    assert_eq!(later_stage, 43);
+    assert_eq!(later_stage, 53);
 }
 
 #[test]
@@ -1050,6 +1050,92 @@ fn i2_public_conformance_fixtures_execute_through_the_elaborator() {
         );
     }
 
+    let unselected_range_fixture = fixture(&fcs, "source.valid.compile-time-unselected-range");
+    let unselected_range = elaborate_fixture(&fcs_base, unselected_range_fixture)
+        .expect("unselected generator range fixture must elaborate");
+    unselected_range
+        .validate_invariants()
+        .expect("unselected range output must satisfy the expanded boundary");
+    let unselected_range_expected = expected_json(&fcs_base, unselected_range_fixture);
+    let unselected_range_entities = note_entities(&unselected_range);
+    assert_eq!(
+        unselected_range_expected["count"].as_u64(),
+        Some(unselected_range_entities.len() as u64)
+    );
+    let expected_time = &unselected_range_expected["times"][0];
+    assert_eq!(
+        unselected_range_entities[0]
+            .field("gameplay.time")
+            .expect("time field")
+            .value(),
+        &TypedValue::Beat(
+            Beat::new(
+                expected_time["beatNumerator"]
+                    .as_i64()
+                    .expect("expected numerator must be an integer"),
+                expected_time["beatDenominator"]
+                    .as_i64()
+                    .expect("expected denominator must be an integer"),
+            )
+            .unwrap()
+        )
+    );
+
+    let line_id_fixture = fixture(&fcs, "source.valid.line-id-expressions");
+    let line_ids = elaborate_fixture(&fcs_base, line_id_fixture)
+        .expect("expression-backed Line ID fixture must elaborate");
+    line_ids
+        .validate_invariants()
+        .expect("Line ID output must satisfy the expanded boundary");
+    let line_id_expected = expected_json(&fcs_base, line_id_fixture);
+    let expected_line_ids = line_id_expected["lineIds"]
+        .as_array()
+        .expect("lineIds must be an array");
+    let actual_line_ids = line_ids
+        .collections()
+        .find(|collection| collection.name() == "judgelines")
+        .expect("Line ID fixture must expand judgelines")
+        .entities()
+        .map(|entity| entity.field("id").expect("Line ID field").value())
+        .collect::<Vec<_>>();
+    assert_eq!(actual_line_ids.len(), expected_line_ids.len());
+    for (actual, expected) in actual_line_ids.iter().zip(expected_line_ids) {
+        assert_eq!(
+            *actual,
+            &TypedValue::String(
+                expected
+                    .as_str()
+                    .expect("expected Line ID must be a string")
+                    .to_owned()
+            )
+        );
+    }
+    let expected_note_lines = line_id_expected["noteLines"]
+        .as_array()
+        .expect("noteLines must be an array");
+    let actual_note_lines = note_entities(&line_ids)
+        .into_iter()
+        .map(|entity| entity.field("line").expect("Note Line field").value())
+        .collect::<Vec<_>>();
+    assert_eq!(actual_note_lines.len(), expected_note_lines.len());
+    for (actual, expected) in actual_note_lines.iter().zip(expected_note_lines) {
+        assert_eq!(
+            *actual,
+            &TypedValue::Line(
+                expected
+                    .as_str()
+                    .expect("expected Note Line must be a string")
+                    .to_owned()
+            )
+        );
+    }
+    assert_eq!(
+        line_id_expected["forbiddenExpandedNodes"],
+        serde_json::json!([
+            "const", "let", "fn", "template", "with", "if", "generate", "emit", "range", "index"
+        ])
+    );
+
     let template_fixture = fixture(&fcs, "source.valid.template-if-with");
     let template = elaborate_fixture(&fcs_base, template_fixture)
         .expect("template-if-with fixture must elaborate");
@@ -1140,10 +1226,17 @@ fn i2_elaborate_error_fixtures_keep_static_diagnostics_and_budget_trace() {
     let ids = [
         "source.invalid.unresolved-schema-enum",
         "source.invalid.generator-zero-step",
+        "source.invalid.zero-base-negative-power-operator",
+        "source.invalid.zero-base-negative-power-signed-operator",
+        "source.invalid.zero-base-negative-power-builtin",
+        "source.invalid.zero-base-negative-power-signed-builtin",
         "source.invalid.shadowing",
         "source.invalid.template-missing-line",
+        "source.invalid.track-unselected-value",
         "source.invalid.runtime-gameplay",
         "source.invalid.generator-budget",
+        "source.invalid.line-id-expression-duplicate",
+        "source.invalid.line-id-reference-bootstrap",
     ];
 
     for id in ids {
@@ -1198,6 +1291,17 @@ fn i2_elaborate_error_fixtures_keep_static_diagnostics_and_budget_trace() {
             }
         }
     }
+}
+
+#[test]
+fn i2_zero_base_positive_power_fixture_is_valid() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+    let fixture = fixture(&fcs, "source.valid.zero-base-positive-power");
+    assert_eq!(fixture.stage, FixtureStage::Elaborate);
+    assert_eq!(fixture.expect, FixtureExpectation::Success);
+    elaborate_fixture(&fcs_base, fixture)
+        .unwrap_or_else(|errors| panic!("valid zero-base power fixture failed: {errors:?}"));
 }
 
 #[test]
