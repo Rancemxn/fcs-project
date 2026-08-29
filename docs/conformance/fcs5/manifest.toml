@@ -165,6 +165,13 @@ expected = "expected/int-range-descending.json"
 clauses = ["6.6", "6.7"]
 
 [[fixture]]
+id = "source.valid.zero-base-positive-power"
+path = "source/valid/zero-base-positive-power.fcs"
+stage = "elaborate"
+expect = "success"
+clauses = ["4.2", "4.3"]
+
+[[fixture]]
 id = "source.valid.parent-transform"
 path = "source/valid/parent-transform.fcs"
 stage = "evaluate"
@@ -331,6 +338,38 @@ stage = "elaborate"
 expect = "error"
 diagnostic = "compile-time.zero-step"
 clauses = ["6.6"]
+
+[[fixture]]
+id = "source.invalid.zero-base-negative-power-operator"
+path = "source/invalid/zero-base-negative-power-operator.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "numeric.domain"
+clauses = ["4.2", "4.3", "16"]
+
+[[fixture]]
+id = "source.invalid.zero-base-negative-power-signed-operator"
+path = "source/invalid/zero-base-negative-power-signed-operator.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "numeric.domain"
+clauses = ["4.2", "4.3", "16"]
+
+[[fixture]]
+id = "source.invalid.zero-base-negative-power-builtin"
+path = "source/invalid/zero-base-negative-power-builtin.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "numeric.domain"
+clauses = ["4.2", "4.3", "16"]
+
+[[fixture]]
+id = "source.invalid.zero-base-negative-power-signed-builtin"
+path = "source/invalid/zero-base-negative-power-signed-builtin.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "numeric.domain"
+clauses = ["4.2", "4.3", "16"]
 
 [[fixture]]
 id = "source.invalid.shadowing"

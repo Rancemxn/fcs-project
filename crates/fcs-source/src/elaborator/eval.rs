@@ -1662,7 +1662,7 @@ fn arithmetic(
         }
         (TypedValue::Float(left), TypedValue::Float(right)) => {
             if operator == Op::Power {
-                if left < 0.0 && right.fract() != 0.0 {
+                if float_power_has_invalid_domain(left, right) {
                     return Err(Diagnostic::NumericDomain { span });
                 }
                 return finite(left.powf(right), span).map(TypedValue::Float);
@@ -1921,7 +1921,7 @@ fn evaluate_builtin(
         }
         ("ln", [TypedValue::Float(_)]) => return Err(Diagnostic::NumericDomain { span }),
         ("pow", [TypedValue::Float(base), TypedValue::Float(exponent)])
-            if *base >= 0.0 || exponent.fract() == 0.0 =>
+            if !float_power_has_invalid_domain(*base, *exponent) =>
         {
             TypedValue::Float(finite(base.powf(*exponent), span)?)
         }
@@ -2083,6 +2083,10 @@ fn finite(value: f64, span: SourceSpan) -> Result<f64, Diagnostic> {
         .is_finite()
         .then_some(value)
         .ok_or(Diagnostic::NonFinite { span })
+}
+
+fn float_power_has_invalid_domain(base: f64, exponent: f64) -> bool {
+    (base == 0.0 && exponent < 0.0) || (base < 0.0 && exponent.fract() != 0.0)
 }
 
 fn round_ties_even(value: f64) -> f64 {

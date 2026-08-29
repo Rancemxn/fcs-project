@@ -1104,6 +1104,21 @@ definitions { const value: float = sqrt(-1.0); }"#;
 }
 
 #[test]
+fn zero_base_negative_exponent_is_a_static_domain_error() {
+    for expression in [
+        "0.0 ** -1.0",
+        "-0.0 ** -1.0",
+        "pow(0.0, -1.0)",
+        "pow(-0.0, -1.0)",
+    ] {
+        let source = format!(
+            "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ const value: float = {expression}; }}"
+        );
+        assert_code(elaborate_source(&source), DiagnosticCode::NUMERIC_DOMAIN);
+    }
+}
+
+#[test]
 fn homogeneous_arrays_are_typed_and_indexed_at_compile_time() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }

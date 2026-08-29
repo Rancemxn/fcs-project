@@ -794,7 +794,7 @@ fn typed_manifests_load_with_bound_counts() {
     assert_eq!(render.schema_version, 3);
     assert_eq!(conversion.schema_version, 2);
     assert_eq!(root.suite.len(), 6);
-    assert_eq!(fcs.fixture.len(), 59);
+    assert_eq!(fcs.fixture.len(), 64);
     assert_eq!(fcbc.fixture.len(), 3);
     assert_eq!(render.binary_fixture.len(), 0);
     assert_eq!(render.fixture.len(), 1);
@@ -868,7 +868,7 @@ fn fcs_source_fixtures_execute_at_the_declared_frontend_boundary() {
 
     assert_eq!(parse_success, 3);
     assert_eq!(parse_error, 9);
-    assert_eq!(later_stage, 47);
+    assert_eq!(later_stage, 52);
 }
 
 #[test]
@@ -1226,6 +1226,10 @@ fn i2_elaborate_error_fixtures_keep_static_diagnostics_and_budget_trace() {
     let ids = [
         "source.invalid.unresolved-schema-enum",
         "source.invalid.generator-zero-step",
+        "source.invalid.zero-base-negative-power-operator",
+        "source.invalid.zero-base-negative-power-signed-operator",
+        "source.invalid.zero-base-negative-power-builtin",
+        "source.invalid.zero-base-negative-power-signed-builtin",
         "source.invalid.shadowing",
         "source.invalid.template-missing-line",
         "source.invalid.runtime-gameplay",
@@ -1286,6 +1290,17 @@ fn i2_elaborate_error_fixtures_keep_static_diagnostics_and_budget_trace() {
             }
         }
     }
+}
+
+#[test]
+fn i2_zero_base_positive_power_fixture_is_valid() {
+    let (_, fcs) = load_manifests();
+    let fcs_base = repository_root().join("docs/conformance/fcs5");
+    let fixture = fixture(&fcs, "source.valid.zero-base-positive-power");
+    assert_eq!(fixture.stage, FixtureStage::Elaborate);
+    assert_eq!(fixture.expect, FixtureExpectation::Success);
+    elaborate_fixture(&fcs_base, fixture)
+        .unwrap_or_else(|errors| panic!("valid zero-base power fixture failed: {errors:?}"));
 }
 
 #[test]

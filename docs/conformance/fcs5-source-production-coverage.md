@@ -3,7 +3,7 @@
 This ledger is the I1.8 production-coverage evidence for the active `fcs-source` parser. It records
 parser-boundary evidence only; it does not promote a source shape to static, canonical, Render, or
 runtime semantics. `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary`
-executes all 59 FCS manifest entries (3 parse-success, 9 parse-error, and 47 later-stage syntax-acceptance
+executes all 64 FCS manifest entries (3 parse-success, 9 parse-error, and 52 later-stage syntax-acceptance
 entries).
 
 ## Evidence keys
@@ -36,7 +36,7 @@ remain wrapped in the smallest legal document/block fixture.
 | `examples/fcs/templates.fcs` | `compile_time::parses_and_elaborates_the_public_template_fixture` | complete template/collection document |
 | `docs/conformance/fcs5/source/valid/complete-source-grammar.fcs` | `source_ast::complete_source_grammar_fixture_parses_with_all_top_level_kinds` and `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary` | complete Appendix B envelope |
 | `docs/conformance/fcs5/source/valid/appendix-a-minimal-complete.fcs` | `conformance_manifest::appendix_a_fixture_expands_four_notes_at_exact_beats_and_eliminates_authoring_structure` | Appendix A STEP/template/generator example; elaboration expands four notes at beats 0, 1, 2, and 3 and canonical output eliminates authoring structure |
-| all 59 entries in `docs/conformance/fcs5/manifest.toml` | `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary` | 3 parse-success, 9 parse-error, 47 later-stage syntax-acceptance entries; owning elaborate/canonical/evaluate tests execute the applicable later boundary |
+| all 64 entries in `docs/conformance/fcs5/manifest.toml` | `conformance_manifest::fcs_source_fixtures_execute_at_the_declared_frontend_boundary` | 3 parse-success, 9 parse-error, 52 later-stage syntax-acceptance entries; owning elaborate/canonical/evaluate tests execute the applicable later boundary |
 
 ## Document, format, and lexical envelope
 
@@ -110,7 +110,7 @@ remain wrapped in the smallest legal document/block fixture.
 | Appendix B production(s) | Valid evidence | Invalid or boundary evidence |
 |---|---|---|
 | `expression`, `logicalOr`, `logicalAnd`, `equality`, `ordering` | `E::token_parser_preserves_frozen_precedence_and_spans`, operator tests | `E::token_parser_rejects_reserved_names_and_trailing_input`, malformed expression tests in `D` |
-| `sum`, `product`, `power`, `unary`, `postfix` | `E::parses_every_binary_operator`, `E::parses_unary_operators_before_postfix_and_binary_operators` | `E::power_is_right_associative`, trailing/incomplete expression tests |
+| `sum`, `product`, `power`, `unary`, `postfix` | `E::parses_every_binary_operator`, `E::parses_unary_operators_before_postfix_and_binary_operators` | `E::power_is_right_associative`, `source.invalid.zero-base-negative-power-{operator,signed-operator,builtin,signed-builtin}` (later elaboration), trailing/incomplete expression tests |
 | `primary`, `literal`, `booleanLiteral`, `nullLiteral`, `numberLiteral` | `E::parses_scalar_and_unit_literals`, literal lexer tests | `D::malformed_numeric_candidates_are_one_lexical_error`, non-finite/raw-scalar cases |
 | `unitLiteral`, `unitSuffix` | `E::parses_scalar_and_unit_literals` | `D::invalid_unit_adjacency_is_one_lexical_error` |
 | `vec2Constructor`, `arguments`, `reference` | `E::parses_names_calls_fields_parentheses_and_vec2_construction`, reference/index tests | malformed call/reference/trailing cases in `E`/`D` |
