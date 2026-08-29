@@ -1619,7 +1619,7 @@ impl<'a> RenderLowerer<'a> {
             let Some((font_index, glyph, advance)) = selected else {
                 return Err(render_error(
                     format!(
-                        "Text content scalar U+{:04X} is missing from all declared fonts",
+                        "Text content scalar U+{:04X} has no glyph in any declared font",
                         u32::from(scalar)
                     ),
                     content_field.span,
