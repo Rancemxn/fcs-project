@@ -198,7 +198,7 @@ render profile 1.0.0 {
     std::fs::write(workspace.path().join("assets/primary.ttf"), font).expect("primary font");
     std::fs::write(
         workspace.path().join("assets/fallback.ttf"),
-        font_with_b_mapping(font),
+        font_with_b_mapping(font, -65),
     )
     .expect("fallback font");
     let document = parse_document(source)
@@ -244,6 +244,33 @@ render profile 1.0.0 {
     assert_eq!(fallback.glyphs()[0].y_advance, 0.0);
     assert_eq!(fallback.glyphs()[0].x_offset, 0.0);
     assert_eq!(fallback.glyphs()[0].y_offset, 0.0);
+
+    std::fs::write(
+        workspace.path().join("assets/primary.ttf"),
+        font_with_b_mapping(font, -66),
+    )
+    .expect("primary font with missing sentinel");
+    let missing_source = source.replace("content: \"AB\"", "content: \"B\"");
+    let missing_document = parse_document(&missing_source)
+        .into_result()
+        .expect("missing-sentinel source should parse");
+    let missing = missing_document
+        .canonical_compilation_with_source(
+            &missing_source,
+            CompileTimeLimits::default(),
+            workspace.path(),
+            ResourceLimits::default(),
+        )
+        .expect("glyph zero should continue to the fallback font");
+    let missing_scene = missing.chart().render().expect("missing-sentinel scene");
+    assert_eq!(missing_scene.glyph_runs().len(), 1);
+    assert_eq!(
+        missing_scene.glyph_runs()[0].font().textual().as_str(),
+        "fallback"
+    );
+    std::fs::write(workspace.path().join("assets/primary.ttf"), font)
+        .expect("restore primary font");
+
     assert!(compilation.resources().get("primary").is_some());
     assert!(compilation.resources().get("fallback").is_some());
     let roots = compilation
@@ -322,7 +349,7 @@ render profile 1.0.0 {
     }
 }
 
-fn font_with_b_mapping(font: &[u8]) -> Vec<u8> {
+fn font_with_b_mapping(font: &[u8], id_delta: i16) -> Vec<u8> {
     let mut mapped = font.to_vec();
     let count = usize::from(u16::from_be_bytes([mapped[4], mapped[5]]));
     let mut cmap_record = None;
@@ -353,7 +380,7 @@ fn font_with_b_mapping(font: &[u8]) -> Vec<u8> {
         .expect("cmap offset fits");
     mapped[subtable_offset + 14..subtable_offset + 16].copy_from_slice(&0x0042u16.to_be_bytes());
     mapped[subtable_offset + 20..subtable_offset + 22].copy_from_slice(&0x0042u16.to_be_bytes());
-    mapped[subtable_offset + 24..subtable_offset + 26].copy_from_slice(&(-65i16).to_be_bytes());
+    mapped[subtable_offset + 24..subtable_offset + 26].copy_from_slice(&id_delta.to_be_bytes());
 
     let table_length = usize::try_from(u32::from_be_bytes(
         mapped[cmap_record + 12..cmap_record + 16]

@@ -1601,7 +1601,10 @@ impl<'a> RenderLowerer<'a> {
                 let Some(glyph) = font.cmap.glyph_index(u32::from(scalar)) else {
                     continue;
                 };
-                if glyph.0 == 0 || u32::from(glyph.0) >= u32::from(font.face.number_of_glyphs()) {
+                if glyph.0 == 0 {
+                    continue;
+                }
+                if u32::from(glyph.0) >= u32::from(font.face.number_of_glyphs()) {
                     return Err(render_error(
                         format!("font resource {} maps to an invalid glyph", font.name),
                         content_field.span,
