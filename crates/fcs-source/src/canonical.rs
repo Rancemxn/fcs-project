@@ -359,25 +359,13 @@ fn render_font_references(field: &SchemaField) -> Result<Vec<String>, Diagnostic
             field.span,
         ));
     };
-    if elements.is_empty() {
-        return Ok(Vec::new());
-    }
-    let TypedValue::Array { values, .. } = render_value(field)? else {
-        return Err(render_error(
-            "fallbackFonts must be a compile-time font reference array",
-            field.span,
-        ));
-    };
-    values
-        .into_iter()
-        .map(|value| match value {
-            TypedValue::Line(name) => Ok(name),
-            other => Err(render_error(
-                format!(
-                    "fallbackFonts entries must be font references, found {}",
-                    other.ty()
-                ),
-                field.span,
+    elements
+        .iter()
+        .map(|element| match element {
+            SourceExpression::Reference { name, .. } => Ok(name.clone()),
+            _ => Err(render_error(
+                "fallbackFonts entries must be font references",
+                element.span(),
             )),
         })
         .collect()
