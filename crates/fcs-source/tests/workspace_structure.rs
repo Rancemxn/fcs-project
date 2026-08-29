@@ -72,12 +72,16 @@ fn document_parser_uses_bounded_recovery_and_consumes_trailing_input() {
         .expect("document parser source must be readable");
 
     assert!(
-        parser.contains("skip_then_retry_until"),
+        parser.contains("via_parser"),
         "document parser must use parser-owned Chumsky recovery"
     );
     assert!(
         parser.contains("nested_delimiters"),
-        "document recovery must skip balanced groups before one-token fallback"
+        "document recovery must skip balanced groups before top-level resynchronization"
+    );
+    assert!(
+        parser.contains("is_top_level_keyword_token"),
+        "document recovery must resynchronize at declaration boundaries"
     );
     assert!(
         parser.contains("then_ignore(end())"),
