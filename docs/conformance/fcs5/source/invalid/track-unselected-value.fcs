@@ -1,0 +1,18 @@
+#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        tracks {
+            track invalid -> alpha: float {
+                segments {
+                    if true {
+                        point 0beat: 1.0;
+                    } else {
+                        point 0beat: 1px;
+                    }
+                }
+            }
+        }
+    }
+}

@@ -388,6 +388,14 @@ diagnostic = "schema.missing-required-field"
 clauses = ["6.3", "12.2"]
 
 [[fixture]]
+id = "source.invalid.track-unselected-value"
+path = "source/invalid/track-unselected-value.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "type.mismatch"
+clauses = ["6.5", "9.1"]
+
+[[fixture]]
 id = "source.invalid.hold-end"
 path = "source/invalid/hold-end.fcs"
 stage = "canonical"

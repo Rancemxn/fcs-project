@@ -42,6 +42,14 @@ fn diagnostics(source: &str) -> Vec<fcs_source::Diagnostic> {
         .expect_err("Track lowering should fail")
 }
 
+fn elaboration_diagnostics(source: &str) -> Vec<fcs_source::Diagnostic> {
+    let document = parse_document(source)
+        .into_result()
+        .expect("Track source should parse");
+    elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect_err("Track source should fail elaboration")
+}
+
 #[test]
 fn direct_track_normalizes_defaults_and_half_open_boundary() {
     let tracks = lower(&format!(
@@ -64,6 +72,27 @@ fn generator_and_conditional_track_items_share_the_compile_time_environment() {
         "{HEADER}definitions {{ const ENABLE: bool = true; }} lines {{ line main {{ tracks {{ track fade -> alpha: float {{ segments {{ if ENABLE {{ generate at: beat in 0beat..<2beat step 1beat {{ let value: float = 0.5; emit segment {{ start: at; end: at + 1beat; startValue: value; endValue: value; interpolation: \"step\"; }}; }} }} }} }} }} }} }}"
     ));
     assert_eq!(tracks.tracks()[0].pieces().len(), 2);
+}
+
+#[test]
+fn track_conditionals_check_inactive_direct_values_without_evaluating_or_emitting_them() {
+    let invalid = elaboration_diagnostics(&format!(
+        "{HEADER}lines {{ line main {{ tracks {{ track fade -> alpha: float {{ segments {{ if true {{ point 0beat: 1.0; }} else {{ point 0beat: 1px; }} }} }} }} }} }}"
+    ));
+    assert_eq!(invalid[0].code(), DiagnosticCode::TYPE_MISMATCH);
+
+    let valid = lower(&format!(
+        "{HEADER}lines {{ line main {{ tracks {{ track fade -> alpha: float {{ segments {{ if true {{ point 1s: 1.0; }} else {{ point 0s: 1.0 / 0.0; }} }} }} }} }} }}"
+    ));
+    assert_eq!(valid.tracks()[0].pieces().len(), 1);
+}
+
+#[test]
+fn track_generator_conditionals_check_inactive_emits_without_emitting_them() {
+    let invalid = elaboration_diagnostics(&format!(
+        "{HEADER}lines {{ line main {{ tracks {{ track fade -> alpha: float {{ segments {{ generate at: beat in 0beat..<1beat step 1beat {{ if false {{ emit segment {{ start: 0beat; end: 1beat; startValue: 1px; endValue: 1.0; interpolation: \"linear\"; }}; }} else {{ emit segment {{ start: 0beat; end: 1beat; startValue: 0.0; endValue: 1.0; interpolation: \"linear\"; }}; }} }} }} }} }} }}"
+    ));
+    assert_eq!(invalid[0].code(), DiagnosticCode::TYPE_MISMATCH);
 }
 
 #[test]
