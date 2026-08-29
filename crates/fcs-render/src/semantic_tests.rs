@@ -278,12 +278,18 @@ fn polyline_stroke_joins_caps_and_closure_follow_section_15_2() {
 fn path_fill_rules_cover_implicit_subpath_closures() {
     let outer = PathSubpath {
         points: vec![[-2.0, -2.0], [2.0, -2.0], [2.0, 2.0], [-2.0, 2.0]],
+        segment_lengths: Vec::new(),
+        closed: false,
     };
     let inner_same_direction = PathSubpath {
         points: vec![[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
+        segment_lengths: Vec::new(),
+        closed: false,
     };
     let inner_reverse_direction = PathSubpath {
         points: vec![[-1.0, -1.0], [-1.0, 1.0], [1.0, 1.0], [1.0, -1.0]],
+        segment_lengths: Vec::new(),
+        closed: false,
     };
 
     assert!(path_contains(std::slice::from_ref(&outer), 1, [0.0, 0.0]));
@@ -311,6 +317,116 @@ fn path_fill_rules_cover_implicit_subpath_closures() {
 }
 
 #[test]
+fn path_stroke_preserves_explicit_close_and_shared_dash_rules() {
+    let points = vec![
+        [-1.0, -1.0],
+        [1.0, -1.0],
+        [1.0, -1.0],
+        [1.0, 1.0],
+        [-1.0, 1.0],
+        [-1.0, -1.0],
+    ];
+    let open = LocalShape::Path {
+        subpaths: vec![PathSubpath {
+            points: points.clone(),
+            segment_lengths: vec![2.0, 0.0, 2.0, 2.0, 2.0],
+            closed: false,
+        }],
+        fill_rule: 1,
+    };
+    let closed = LocalShape::Path {
+        subpaths: vec![PathSubpath {
+            points,
+            segment_lengths: vec![2.0, 0.0, 2.0, 2.0, 2.0],
+            closed: true,
+        }],
+        fill_rule: 1,
+    };
+    let mut stroke = StrokeDrawOp {
+        width: 1.0,
+        cap: 1,
+        join: 1,
+        miter_limit: 2.0,
+        dash_offset: 0.0,
+        dash: Vec::new(),
+        fill_rgba: Some([1.0, 1.0, 1.0, 1.0]),
+        linear_gradient: None,
+        radial_gradient: None,
+        image_pattern: None,
+    };
+
+    assert!(!stroke_contains(&open, [-1.2, -1.2], &stroke).unwrap());
+    assert!(stroke_contains(&closed, [-1.2, -1.2], &stroke).unwrap());
+
+    stroke.dash = vec![1.0, 1.0];
+    assert!(stroke_contains(&open, [-0.5, -1.0], &stroke).unwrap());
+    assert!(!stroke_contains(&open, [0.25, -1.0], &stroke).unwrap());
+}
+
+#[test]
+fn path_arc_dash_uses_exact_arclength_instead_of_flattened_chords() {
+    let exact = std::f64::consts::FRAC_PI_2;
+    let curve = PathCurve::Arc {
+        center: [0.0, 0.0],
+        radius: 1.0,
+        start_angle: 0.0,
+        end_angle: exact,
+    };
+    let mut points = vec![curve.point(0.0).unwrap()];
+    let mut segment_lengths = Vec::new();
+    let mut point_count = points.len();
+    flatten_curve(
+        curve,
+        &mut points,
+        &mut segment_lengths,
+        0,
+        super::identity_matrix(),
+        &mut point_count,
+    )
+    .expect("circular Arc flatten");
+
+    let flattened = points
+        .windows(2)
+        .map(|pair| (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]))
+        .sum::<f64>();
+    assert_eq!(
+        segment_lengths.iter().sum::<f64>().to_bits(),
+        exact.to_bits()
+    );
+    assert!(flattened < exact);
+
+    let phase_gap = exact - flattened;
+    points.push([0.0, 2.0]);
+    segment_lengths.push(1.0);
+    let path = LocalShape::Path {
+        subpaths: vec![PathSubpath {
+            points,
+            segment_lengths,
+            closed: false,
+        }],
+        fill_rule: 1,
+    };
+    let stroke = StrokeDrawOp {
+        width: phase_gap / 2.0,
+        cap: 1,
+        join: 1,
+        miter_limit: 2.0,
+        dash_offset: 0.0,
+        dash: vec![exact, 1.0],
+        fill_rgba: Some([1.0, 1.0, 1.0, 1.0]),
+        linear_gradient: None,
+        radial_gradient: None,
+        image_pattern: None,
+    };
+
+    assert!(stroke_contains(&path, [1.0, 0.0], &stroke).unwrap());
+    assert!(
+        !stroke_contains(&path, [0.0, 1.0 + phase_gap / 2.0], &stroke).unwrap(),
+        "the off interval starts at the exact circular Arc boundary"
+    );
+}
+
+#[test]
 fn path_flattening_is_ordered_and_depth_bounded() {
     let curve = PathCurve::Quadratic {
         start: [0.0, 0.0],
@@ -318,10 +434,12 @@ fn path_flattening_is_ordered_and_depth_bounded() {
         end: [1.0, 1.0],
     };
     let mut points = vec![curve.point(0.0).unwrap()];
+    let mut segment_lengths = Vec::new();
     let mut point_count = points.len();
     flatten_curve(
         curve,
         &mut points,
+        &mut segment_lengths,
         0,
         super::identity_matrix(),
         &mut point_count,
@@ -337,10 +455,12 @@ fn path_flattening_is_ordered_and_depth_bounded() {
         end: [1.0, 0.0],
     };
     let mut points = vec![[0.0, 0.0]];
+    let mut segment_lengths = Vec::new();
     let mut point_count = points.len();
     flatten_curve(
         overshoot,
         &mut points,
+        &mut segment_lengths,
         0,
         super::identity_matrix(),
         &mut point_count,
@@ -354,20 +474,24 @@ fn path_flattening_is_ordered_and_depth_bounded() {
         end: [1.0, 0.0],
     };
     let mut local_points = vec![[0.0, 0.0]];
+    let mut local_lengths = Vec::new();
     let mut local_count = local_points.len();
     flatten_curve(
         scaled,
         &mut local_points,
+        &mut local_lengths,
         0,
         super::identity_matrix(),
         &mut local_count,
     )
     .expect("local-space flatten");
     let mut scaled_points = vec![[0.0, 0.0]];
+    let mut scaled_lengths = Vec::new();
     let mut scaled_count = scaled_points.len();
     flatten_curve(
         scaled,
         &mut scaled_points,
+        &mut scaled_lengths,
         0,
         [1.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 1.0],
         &mut scaled_count,
@@ -382,11 +506,13 @@ fn path_flattening_is_ordered_and_depth_bounded() {
         end: [2.0e150, 0.0],
     };
     let mut points = vec![[0.0, 0.0]];
+    let mut segment_lengths = Vec::new();
     let mut point_count = points.len();
     assert_eq!(
         flatten_curve(
             pathological,
             &mut points,
+            &mut segment_lengths,
             0,
             super::identity_matrix(),
             &mut point_count,
@@ -396,10 +522,12 @@ fn path_flattening_is_ordered_and_depth_bounded() {
 
     let mut exhausted = super::PATH_FLATTEN_MAX_POINTS;
     let mut exhausted_points = Vec::new();
+    let mut exhausted_lengths = Vec::new();
     assert_eq!(
         flatten_curve(
             curve,
             &mut exhausted_points,
+            &mut exhausted_lengths,
             0,
             super::identity_matrix(),
             &mut exhausted,

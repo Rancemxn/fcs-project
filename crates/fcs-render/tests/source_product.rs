@@ -1785,6 +1785,20 @@ render profile 1.0.0 {
         panic!("source fixture must provide Circle geometry");
     };
     let mut ids = StableIdRegistry::new();
+    let stroke_paint_id = ids
+        .insert(
+            EntityKind::RenderPaint,
+            CanonicalTextualId::explicit("writer-path-stroke-paint")
+                .expect("Path stroke paint textual ID"),
+        )
+        .expect("Path stroke paint stable ID");
+    let stroke_paint = CanonicalRenderPaint::new(
+        stroke_paint_id,
+        original.paints()[path_node.fill_paint().expect("Path fill paint")]
+            .data()
+            .clone(),
+    )
+    .expect("Path stroke paint");
     let path_id = ids
         .insert(
             EntityKind::RenderPath,
@@ -1819,6 +1833,23 @@ render profile 1.0.0 {
         ],
     )
     .expect("canonical Path");
+    let stroke_id = ids
+        .insert(
+            EntityKind::RenderStroke,
+            CanonicalTextualId::explicit("writer-path-stroke").expect("Path stroke textual ID"),
+        )
+        .expect("Path stroke stable ID");
+    let stroke = CanonicalRenderStroke::new(
+        stroke_id,
+        original.paints().len(),
+        *radius,
+        CanonicalStrokeCap::Round,
+        CanonicalStrokeJoin::Bevel,
+        4.0,
+        *radius,
+        vec![1.0, 1.0],
+    )
+    .expect("canonical Path stroke");
     let node = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
         id: path_node.id().clone(),
         kind: CanonicalRenderNodeKind::Path,
@@ -1838,7 +1869,7 @@ render profile 1.0.0 {
         visibility: path_node.visibility(),
         geometry: Some(path_geometry_index),
         fill_paint: path_node.fill_paint(),
-        stroke: None,
+        stroke: Some(0),
         clip: None,
         composite: path_node.composite(),
     })
@@ -1858,8 +1889,13 @@ render profile 1.0.0 {
         nodes,
         geometries,
         paths: vec![path],
-        paints: original.paints().to_vec(),
-        strokes: original.strokes().to_vec(),
+        paints: original
+            .paints()
+            .iter()
+            .cloned()
+            .chain([stroke_paint])
+            .collect(),
+        strokes: vec![stroke],
         clips: original.clips().to_vec(),
         glyph_runs: original.glyph_runs().to_vec(),
     })
@@ -1902,7 +1938,22 @@ render profile 1.0.0 {
     assert_eq!(render.paths[0].id, scene.paths()[0].id().value());
     assert_eq!(render.paths[0].fill_rule, 1);
     assert_eq!(render.paths[0].commands.len(), 7);
-    assert_eq!(render.paints.len(), 2);
+    assert_eq!(render.paints.len(), 3);
+    assert_eq!(render.nodes[decoded_node_index].stroke_ref, Some(0));
+    assert_eq!(render.strokes.len(), 1);
+    let decoded_stroke = &render.strokes[0];
+    assert_eq!(decoded_stroke.id, scene.strokes()[0].id().value());
+    assert_eq!(
+        render.paints[decoded_stroke.paint_ref as usize].id,
+        scene.paints()[scene.strokes()[0].paint()].id().value()
+    );
+    assert_eq!((decoded_stroke.cap, decoded_stroke.join), (2, 3));
+    assert_eq!(decoded_stroke.miter_limit.to_bits(), 4.0f64.to_bits());
+    assert_eq!(
+        decoded_stroke.width_descriptor,
+        decoded_stroke.dash_offset_descriptor
+    );
+    assert_eq!(decoded_stroke.dash, vec![1.0, 1.0]);
 
     let reference_node = reference
         .nodes
@@ -1929,6 +1980,21 @@ render profile 1.0.0 {
     assert_eq!(reference.paths.len(), 1);
     assert_eq!(reference.paths[0].id, scene.paths()[0].id().value());
     assert_eq!(reference.paths[0].fill_rule, 1);
+    assert_eq!(reference_node.stroke_ref, Some(0));
+    assert_eq!(reference.strokes.len(), 1);
+    let reference_stroke = &reference.strokes[0];
+    assert_eq!(reference_stroke.id, scene.strokes()[0].id().value());
+    assert_eq!(
+        reference.paints[reference_stroke.paint_ref as usize].id,
+        scene.paints()[scene.strokes()[0].paint()].id().value()
+    );
+    assert_eq!((reference_stroke.cap, reference_stroke.join), (2, 3));
+    assert_eq!(reference_stroke.miter_limit.to_bits(), 4.0f64.to_bits());
+    assert_eq!(
+        reference_stroke.width_descriptor,
+        reference_stroke.dash_offset_descriptor
+    );
+    assert_eq!(reference_stroke.dash, vec![1.0, 1.0]);
     use fcbc_render_reference_loader::PathCommand as ReferencePathCommand;
     let [
         ReferencePathCommand::MoveTo(move_to),
@@ -1980,11 +2046,25 @@ render profile 1.0.0 {
         .expect("Path semantic draw op");
     assert!(path_draw.bounds[0] < path_draw.bounds[2]);
     assert!(path_draw.bounds[1] < path_draw.bounds[3]);
-    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Path rasterization");
+    assert!(path_draw.fill_rgba.is_some());
+    assert!(path_draw.stroke.is_some());
+
+    let mut stroke_only = render.clone();
+    for node in &mut stroke_only.nodes {
+        if node.kind == NodeKind::Path {
+            node.fill_paint = None;
+        } else {
+            node.geometry_ref = None;
+            node.fill_paint = None;
+            node.stroke_ref = None;
+        }
+    }
+    let pixels =
+        rasterize_solid_rgba8_at(&stroke_only, 0.0, 4, 4).expect("Path stroke rasterization");
     assert_eq!(pixels.len(), 4 * 4 * 4);
     assert!(
         pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0),
-        "written Path should contribute raster coverage"
+        "written Path stroke should contribute raster coverage without its fill"
     );
 }
 

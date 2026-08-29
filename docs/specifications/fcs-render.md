@@ -410,13 +410,11 @@ constructors. The product implementation currently supports `solid`,
 loader-validated FCBC `ImagePattern` kind 4 records, kind 7 `Line` stroke
 records, and bounded Path/PathRecord records, and the canonical product writer
 covers those same bounded kind 4, kind 7, and Path records, plus a solid or dashed
-stroke on a Circle, Polyline, or Polygon. The bounded source
+stroke on a Circle, Polyline, Polygon, or Path. The bounded source
 Line, Circle, Polyline, and Polygon lowering now cover compile-time strokes; dynamic stroke descriptors,
 source `imagePattern`, and source Path lowering remain separate
-bounded work;
-Path semantic/raster coverage is implemented for the loader-validated fill path;
-Path stroke and broader canonical writer coverage remain open after the bounded
-Line, ImagePattern, and Path writer paths. A dashed stroke on a
+bounded work. Path semantic/raster coverage consumes loader-validated fill and
+stroke records. A dashed stroke on a
 closed parametric geometry follows the subpath start and winding direction this
 section fixes below; Ellipse and RoundedRect strokes remain unimplemented in the
 product writer. The
