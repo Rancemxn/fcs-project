@@ -318,7 +318,15 @@ fn path_flattening_is_ordered_and_depth_bounded() {
         end: [1.0, 1.0],
     };
     let mut points = vec![curve.point(0.0).unwrap()];
-    flatten_curve(curve, &mut points, 0, super::identity_matrix()).expect("quadratic flatten");
+    let mut point_count = points.len();
+    flatten_curve(
+        curve,
+        &mut points,
+        0,
+        super::identity_matrix(),
+        &mut point_count,
+    )
+    .expect("quadratic flatten");
     assert_eq!(points.first(), Some(&[0.0, 0.0]));
     assert_eq!(points.last(), Some(&[1.0, 1.0]));
     assert!(points.windows(2).all(|pair| pair[0][0] <= pair[1][0]));
@@ -329,8 +337,15 @@ fn path_flattening_is_ordered_and_depth_bounded() {
         end: [1.0, 0.0],
     };
     let mut points = vec![[0.0, 0.0]];
-    flatten_curve(overshoot, &mut points, 0, super::identity_matrix())
-        .expect("collinear overshoot flatten");
+    let mut point_count = points.len();
+    flatten_curve(
+        overshoot,
+        &mut points,
+        0,
+        super::identity_matrix(),
+        &mut point_count,
+    )
+    .expect("collinear overshoot flatten");
     assert!(points.iter().any(|point| point[0] > 1.0));
 
     let scaled = PathCurve::Quadratic {
@@ -339,14 +354,23 @@ fn path_flattening_is_ordered_and_depth_bounded() {
         end: [1.0, 0.0],
     };
     let mut local_points = vec![[0.0, 0.0]];
-    flatten_curve(scaled, &mut local_points, 0, super::identity_matrix())
-        .expect("local-space flatten");
+    let mut local_count = local_points.len();
+    flatten_curve(
+        scaled,
+        &mut local_points,
+        0,
+        super::identity_matrix(),
+        &mut local_count,
+    )
+    .expect("local-space flatten");
     let mut scaled_points = vec![[0.0, 0.0]];
+    let mut scaled_count = scaled_points.len();
     flatten_curve(
         scaled,
         &mut scaled_points,
         0,
         [1.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 1.0],
+        &mut scaled_count,
     )
     .expect("world-space flatten");
     assert_eq!(local_points.len(), 2);
@@ -358,8 +382,28 @@ fn path_flattening_is_ordered_and_depth_bounded() {
         end: [2.0e150, 0.0],
     };
     let mut points = vec![[0.0, 0.0]];
+    let mut point_count = points.len();
     assert_eq!(
-        flatten_curve(pathological, &mut points, 0, super::identity_matrix()),
+        flatten_curve(
+            pathological,
+            &mut points,
+            0,
+            super::identity_matrix(),
+            &mut point_count,
+        ),
+        Err("render.limit-exceeded")
+    );
+
+    let mut exhausted = super::PATH_FLATTEN_MAX_POINTS;
+    let mut exhausted_points = Vec::new();
+    assert_eq!(
+        flatten_curve(
+            curve,
+            &mut exhausted_points,
+            0,
+            super::identity_matrix(),
+            &mut exhausted,
+        ),
         Err("render.limit-exceeded")
     );
 }

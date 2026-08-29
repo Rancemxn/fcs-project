@@ -2548,8 +2548,7 @@ fn paint_rgba(
 
 const PATH_FLATTEN_TOLERANCE: f64 = 1.0 / 1024.0;
 const PATH_FLATTEN_MAX_DEPTH: u8 = 32;
-// ponytail: cap adaptive output to bound hostile-but-depth-valid curves; raise only with measured
-// large-path fixtures.
+// ponytail: cap each Path's adaptive output; raise only with measured large-path fixtures.
 const PATH_FLATTEN_MAX_POINTS: usize = 1 << 16;
 
 type Point = [f64; 2];
@@ -2795,20 +2794,22 @@ fn flatten_curve(
     points: &mut Vec<Point>,
     depth: u8,
     world_matrix: [f64; 9],
+    point_count: &mut usize,
 ) -> Result<(), &'static str> {
-    if points.len() >= PATH_FLATTEN_MAX_POINTS {
+    if *point_count >= PATH_FLATTEN_MAX_POINTS {
         return Err("render.limit-exceeded");
     }
     if curve.flat_enough(world_matrix)? {
         points.push(curve.point(1.0)?);
+        *point_count += 1;
         return Ok(());
     }
     if depth >= PATH_FLATTEN_MAX_DEPTH {
         return Err("render.limit-exceeded");
     }
     let (left, right) = curve.split()?;
-    flatten_curve(left, points, depth + 1, world_matrix)?;
-    flatten_curve(right, points, depth + 1, world_matrix)
+    flatten_curve(left, points, depth + 1, world_matrix, point_count)?;
+    flatten_curve(right, points, depth + 1, world_matrix, point_count)
 }
 
 fn evaluate_path(
@@ -2826,6 +2827,7 @@ fn evaluate_path(
     let mut current = [0.0; 2];
     let mut start = [0.0; 2];
     let mut bounds = None;
+    let mut point_count = 0;
     let mut has_drawing = false;
     let mut closed = false;
 
@@ -2843,6 +2845,7 @@ fn evaluate_path(
                     environment,
                 )?;
                 update_bounds(&mut bounds, point);
+                claim_path_point(&mut point_count)?;
                 active = Some(PathSubpath {
                     points: vec![point],
                 });
@@ -2859,7 +2862,7 @@ fn evaluate_path(
                     ValueType::Vec2Length,
                     environment,
                 )?;
-                append_path_point(active.as_mut(), point, &mut bounds)?;
+                append_path_point(active.as_mut(), point, &mut bounds, &mut point_count)?;
                 current = point;
                 has_drawing = true;
                 closed = false;
@@ -2883,6 +2886,7 @@ fn evaluate_path(
                     },
                     &mut bounds,
                     world_matrix,
+                    &mut point_count,
                 )?;
                 current = end;
                 has_drawing = true;
@@ -2915,6 +2919,7 @@ fn evaluate_path(
                     },
                     &mut bounds,
                     world_matrix,
+                    &mut point_count,
                 )?;
                 current = end;
                 has_drawing = true;
@@ -2952,8 +2957,19 @@ fn evaluate_path(
                     start_angle,
                     end_angle,
                 };
-                append_path_point(active.as_mut(), curve.point(0.0)?, &mut bounds)?;
-                append_curve(active.as_mut(), curve, &mut bounds, world_matrix)?;
+                append_path_point(
+                    active.as_mut(),
+                    curve.point(0.0)?,
+                    &mut bounds,
+                    &mut point_count,
+                )?;
+                append_curve(
+                    active.as_mut(),
+                    curve,
+                    &mut bounds,
+                    world_matrix,
+                    &mut point_count,
+                )?;
                 current = curve.point(1.0)?;
                 has_drawing = true;
                 closed = false;
@@ -3001,8 +3017,19 @@ fn evaluate_path(
                     start_angle,
                     end_angle,
                 };
-                append_path_point(active.as_mut(), curve.point(0.0)?, &mut bounds)?;
-                append_curve(active.as_mut(), curve, &mut bounds, world_matrix)?;
+                append_path_point(
+                    active.as_mut(),
+                    curve.point(0.0)?,
+                    &mut bounds,
+                    &mut point_count,
+                )?;
+                append_curve(
+                    active.as_mut(),
+                    curve,
+                    &mut bounds,
+                    world_matrix,
+                    &mut point_count,
+                )?;
                 current = curve.point(1.0)?;
                 has_drawing = true;
                 closed = false;
@@ -3011,7 +3038,7 @@ fn evaluate_path(
                 if !has_drawing || closed {
                     return Err("render.invalid-geometry");
                 }
-                append_path_point(active.as_mut(), start, &mut bounds)?;
+                append_path_point(active.as_mut(), start, &mut bounds, &mut point_count)?;
                 current = start;
                 closed = true;
             }
@@ -3028,10 +3055,11 @@ fn append_curve(
     curve: PathCurve,
     bounds: &mut Option<[f64; 4]>,
     world_matrix: [f64; 9],
+    point_count: &mut usize,
 ) -> Result<(), &'static str> {
     let subpath = active.ok_or("render.invalid-geometry")?;
     let length = subpath.points.len();
-    flatten_curve(curve, &mut subpath.points, 0, world_matrix)?;
+    flatten_curve(curve, &mut subpath.points, 0, world_matrix, point_count)?;
     for point in &subpath.points[length..] {
         update_bounds(bounds, *point);
     }
@@ -3042,11 +3070,21 @@ fn append_path_point(
     active: Option<&mut PathSubpath>,
     point: Point,
     bounds: &mut Option<[f64; 4]>,
+    point_count: &mut usize,
 ) -> Result<(), &'static str> {
     let subpath = active.ok_or("render.invalid-geometry")?;
     let point = finite_point(point)?;
+    claim_path_point(point_count)?;
     subpath.points.push(point);
     update_bounds(bounds, point);
+    Ok(())
+}
+
+fn claim_path_point(point_count: &mut usize) -> Result<(), &'static str> {
+    if *point_count >= PATH_FLATTEN_MAX_POINTS {
+        return Err("render.limit-exceeded");
+    }
+    *point_count += 1;
     Ok(())
 }
 
