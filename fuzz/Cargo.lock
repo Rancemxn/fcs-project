@@ -209,6 +209,7 @@ name = "fcs-render"
 version = "5.0.0"
 dependencies = [
  "fcs-fcbc",
+ "fcs-model",
  "image",
  "sha2",
  "ttf-parser",
