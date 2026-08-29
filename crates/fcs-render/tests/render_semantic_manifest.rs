@@ -121,8 +121,8 @@ fn assert_draw_op_matches(
         "{fixture_id}: semantic world bounds"
     );
     assert_eq!(
-        draw.fill_rgba,
-        Some(expected.fill_linear_rgba),
+        draw.fill_rgba.map(float_bits),
+        Some(float_bits(expected.fill_linear_rgba)),
         "{fixture_id}: fill"
     );
     assert_eq!(
