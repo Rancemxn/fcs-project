@@ -75,11 +75,22 @@ fn generator_and_conditional_track_items_share_the_compile_time_environment() {
 }
 
 #[test]
-fn track_conditionals_check_inactive_direct_values_without_evaluating_or_emitting_them() {
-    let invalid = elaboration_diagnostics(&format!(
-        "{HEADER}lines {{ line main {{ tracks {{ track fade -> alpha: float {{ segments {{ if true {{ point 0beat: 1.0; }} else {{ point 0beat: 1px; }} }} }} }} }} }}"
-    ));
-    assert_eq!(invalid[0].code(), DiagnosticCode::TYPE_MISMATCH);
+fn track_conditionals_check_all_inactive_direct_expressions_without_evaluating_them() {
+    for (inactive, expected) in [
+        ("point 0beat: missing;", "name.unknown"),
+        ("point 0px: 1.0;", "type.invalid-operation"),
+        (
+            "[0px, 1s): 0.0 -> 1.0 using \"linear\";",
+            "type.invalid-operation",
+        ),
+        ("[0s, 1s): 0px -> 1.0 using \"linear\";", "type.mismatch"),
+        ("[0s, 1s): 0.0 -> 1.0 using 1.0;", "type.mismatch"),
+    ] {
+        let invalid = elaboration_diagnostics(&format!(
+            "{HEADER}lines {{ line main {{ tracks {{ track fade -> alpha: float {{ segments {{ if true {{ point 0beat: 1.0; }} else {{ {inactive} }} }} }} }} }} }}"
+        ));
+        assert_eq!(invalid[0].code().as_str(), expected, "{inactive}");
+    }
 
     let valid = lower(&format!(
         "{HEADER}lines {{ line main {{ tracks {{ track fade -> alpha: float {{ segments {{ if true {{ point 1s: 1.0; }} else {{ point 0s: 1.0 / 0.0; }} }} }} }} }} }}"

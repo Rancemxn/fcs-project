@@ -4,13 +4,16 @@ use std::collections::BTreeMap;
 
 use crate::ast::{
     Document, EntityExpression, ExpandedField, ExpandedTrack, ExpandedTrackInterpolation,
-    ExpandedTrackPiece, ExpandedTrackPoint, ExpandedTrackSegment, Generator, GeneratorItem,
-    Interpolation, LineBodyItem, SchemaValue, SourceEntityConstructor, SourceEntityConstructorKind,
-    SourceExpression, SourceSpan, TrackDeclaration, TrackSegmentItem, Type, TypedValue,
+    ExpandedTrackPiece, ExpandedTrackPoint, ExpandedTrackSegment, FunctionDeclaration, Generator,
+    GeneratorItem, Interpolation, LineBodyItem, SchemaValue, SourceEntityConstructor,
+    SourceEntityConstructorKind, SourceExpression, SourceSpan, TrackDeclaration, TrackSegmentItem,
+    Type, TypedValue,
 };
 use crate::schema::ConstructionSchema;
 
-use super::eval::evaluate_with_context_expected;
+use super::entities::{definition_scope, function_map, require_static_type};
+use super::eval::{evaluate_with_context_expected, infer_expression_with_expected};
+use super::scope::{Binding, Scope};
 use super::{CompileTimeContext, ElaboratorError as Diagnostic};
 
 pub(super) fn expand_tracks(
@@ -18,6 +21,7 @@ pub(super) fn expand_tracks(
     schema: &ConstructionSchema,
     context: CompileTimeContext,
 ) -> Result<Vec<ExpandedTrack>, Diagnostic> {
+    validate_tracks(document, schema)?;
     let mut tracks = Vec::new();
     for line in &document.lines {
         for item in &line.items {
@@ -30,6 +34,322 @@ pub(super) fn expand_tracks(
         }
     }
     Ok(tracks)
+}
+
+fn validate_tracks(document: &Document, schema: &ConstructionSchema) -> Result<(), Diagnostic> {
+    let root = definition_scope(document.definitions.as_ref())?;
+    let functions = function_map(document.definitions.as_ref());
+    for line in &document.lines {
+        for item in &line.items {
+            let LineBodyItem::Tracks(block) = item else {
+                continue;
+            };
+            for track in &block.tracks {
+                validate_track_items(&track.segments.items, &root, &functions, schema, track)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_track_items(
+    items: &[TrackSegmentItem],
+    scope: &Scope,
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+    schema: &ConstructionSchema,
+    track: &TrackDeclaration,
+) -> Result<(), Diagnostic> {
+    for item in items {
+        match item {
+            TrackSegmentItem::DirectSegment(segment) => {
+                validate_track_time(&segment.interval.start, scope, functions, schema)?;
+                validate_track_time(&segment.interval.end, scope, functions, schema)?;
+                validate_track_value(
+                    &segment.start_value,
+                    &track.value_type,
+                    scope,
+                    functions,
+                    schema,
+                )?;
+                validate_track_value(
+                    &segment.end_value,
+                    &track.value_type,
+                    scope,
+                    functions,
+                    schema,
+                )?;
+                validate_interpolation(&segment.interpolation, scope, functions, schema)?;
+            }
+            TrackSegmentItem::DirectPoint(point) => {
+                validate_track_time(&point.time, scope, functions, schema)?;
+                validate_track_value(&point.value, &track.value_type, scope, functions, schema)?;
+            }
+            TrackSegmentItem::Conditional {
+                condition,
+                then_items,
+                else_items,
+                ..
+            } => {
+                validate_track_value(condition, &Type::Bool, scope, functions, schema)?;
+                validate_track_items(then_items, &scope.child(), functions, schema, track)?;
+                validate_track_items(else_items, &scope.child(), functions, schema, track)?;
+            }
+            TrackSegmentItem::Generator(generator) => {
+                validate_track_generator(generator, scope, functions, schema, track)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_track_time(
+    expression: &SourceExpression,
+    scope: &Scope,
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+    schema: &ConstructionSchema,
+) -> Result<(), Diagnostic> {
+    let actual = infer_expression_with_expected(expression, scope, functions, schema, None)?;
+    if matches!(actual, Type::Time | Type::Beat) {
+        Ok(())
+    } else {
+        Err(Diagnostic::InvalidOperation {
+            message: "Track time must be beat or time",
+            span: expression.span(),
+        })
+    }
+}
+
+fn validate_track_value(
+    expression: &SourceExpression,
+    expected: &Type,
+    scope: &Scope,
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+    schema: &ConstructionSchema,
+) -> Result<(), Diagnostic> {
+    let actual =
+        infer_expression_with_expected(expression, scope, functions, schema, Some(expected))?;
+    require_static_type(expected, &actual, expression.span())
+}
+
+fn validate_interpolation(
+    interpolation: &Interpolation,
+    scope: &Scope,
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+    schema: &ConstructionSchema,
+) -> Result<(), Diagnostic> {
+    match interpolation {
+        Interpolation::Expression(expression) => {
+            validate_track_value(expression, &Type::String, scope, functions, schema)
+        }
+        Interpolation::CubicBezier { values, .. } => {
+            for value in values {
+                validate_track_value(value, &Type::Float, scope, functions, schema)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_track_generator(
+    generator: &Generator,
+    initial_scope: &Scope,
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+    schema: &ConstructionSchema,
+    track: &TrackDeclaration,
+) -> Result<(), Diagnostic> {
+    if !matches!(generator.variable_type, Type::Int | Type::Beat) {
+        return Err(Diagnostic::InvalidGeneratorRange {
+            span: generator.range.span,
+            message: "generator range values must match an int or beat variable",
+        });
+    }
+    for expression in [
+        &generator.range.start,
+        &generator.range.end,
+        &generator.range.step,
+    ] {
+        let actual =
+            infer_expression_with_expected(expression, initial_scope, functions, schema, None)?;
+        if actual != generator.variable_type {
+            return Err(Diagnostic::InvalidGeneratorRange {
+                span: generator.range.span,
+                message: "generator range values must match an int or beat variable",
+            });
+        }
+    }
+    let mut scope = initial_scope.child();
+    for (name, ty, span) in [
+        ("index".to_owned(), Type::Int, generator.variable_span),
+        (
+            "range".to_owned(),
+            Type::GeneratorRange(Box::new(generator.variable_type.clone())),
+            generator.range.span,
+        ),
+        (
+            generator.variable.clone(),
+            generator.variable_type.clone(),
+            generator.variable_span,
+        ),
+    ] {
+        scope.declare(
+            name,
+            Binding {
+                ty,
+                value: None,
+                span,
+            },
+        )?;
+    }
+    validate_track_generator_items(&generator.body, &scope, functions, schema, track)
+}
+
+fn validate_track_generator_items(
+    items: &[GeneratorItem],
+    initial_scope: &Scope,
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+    schema: &ConstructionSchema,
+    track: &TrackDeclaration,
+) -> Result<(), Diagnostic> {
+    let mut scope = initial_scope.clone();
+    for item in items {
+        match item {
+            GeneratorItem::Let(statement) => {
+                validate_track_value(
+                    &statement.initializer,
+                    &statement.ty,
+                    &scope,
+                    functions,
+                    schema,
+                )?;
+                scope.declare(
+                    statement.name.clone(),
+                    Binding {
+                        ty: statement.ty.clone(),
+                        value: None,
+                        span: statement.name_span,
+                    },
+                )?;
+            }
+            GeneratorItem::Conditional {
+                condition,
+                then_items,
+                else_items,
+                ..
+            } => {
+                validate_track_value(condition, &Type::Bool, &scope, functions, schema)?;
+                validate_track_generator_items(
+                    then_items,
+                    &scope.child(),
+                    functions,
+                    schema,
+                    track,
+                )?;
+                validate_track_generator_items(
+                    else_items,
+                    &scope.child(),
+                    functions,
+                    schema,
+                    track,
+                )?;
+            }
+            GeneratorItem::Emit(expression) => {
+                validate_track_emit(expression, &scope, functions, schema, track)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_track_emit(
+    expression: &EntityExpression,
+    scope: &Scope,
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+    schema: &ConstructionSchema,
+    track: &TrackDeclaration,
+) -> Result<(), Diagnostic> {
+    let EntityExpression::SourceConstructor(constructor) = expression else {
+        return Err(Diagnostic::CollectionTypeMismatch {
+            collection: format!("Track<{}>", track.value_type),
+            expected: Type::TrackSegment(Box::new(track.value_type.clone())),
+            actual: emitted_type(expression),
+            span: expression.span(),
+        });
+    };
+    let mut fields = BTreeMap::new();
+    for field in &constructor.fields {
+        let name = field.path.segments.join(".");
+        if let Some(previous) = fields.insert(name.clone(), field) {
+            return Err(Diagnostic::DuplicateEntityField {
+                field: name,
+                span: field.path.span,
+                previous_span: previous.path.span,
+            });
+        }
+    }
+    match constructor.kind {
+        SourceEntityConstructorKind::Segment => {
+            let entity = Type::TrackSegment(Box::new(track.value_type.clone()));
+            let start = expression_field(&fields, "start", constructor.span, &entity)?;
+            let end = expression_field(&fields, "end", constructor.span, &entity)?;
+            let start_value = expression_field(&fields, "startValue", constructor.span, &entity)?;
+            let end_value = expression_field(&fields, "endValue", constructor.span, &entity)?;
+            let interpolation =
+                fields
+                    .get("interpolation")
+                    .ok_or_else(|| Diagnostic::MissingRequiredField {
+                        entity: entity.clone(),
+                        field: "interpolation".to_owned(),
+                        span: constructor.span,
+                    })?;
+            reject_unknown_fields(
+                &fields,
+                &["start", "end", "startValue", "endValue", "interpolation"],
+                entity,
+            )?;
+            validate_track_time(start, scope, functions, schema)?;
+            validate_track_time(end, scope, functions, schema)?;
+            validate_track_value(start_value, &track.value_type, scope, functions, schema)?;
+            validate_track_value(end_value, &track.value_type, scope, functions, schema)?;
+            validate_schema_interpolation(&interpolation.value, scope, functions, schema)
+        }
+        SourceEntityConstructorKind::Keyframe => {
+            let entity = Type::Keyframe(Box::new(track.value_type.clone()));
+            let time = expression_field(&fields, "time", constructor.span, &entity)?;
+            let value = expression_field(&fields, "value", constructor.span, &entity)?;
+            reject_unknown_fields(&fields, &["time", "value"], entity)?;
+            validate_track_time(time, scope, functions, schema)?;
+            validate_track_value(value, &track.value_type, scope, functions, schema)
+        }
+        SourceEntityConstructorKind::RenderNode => Err(Diagnostic::CollectionTypeMismatch {
+            collection: format!("Track<{}>", track.value_type),
+            expected: Type::TrackSegment(Box::new(track.value_type.clone())),
+            actual: Type::RenderNode,
+            span: constructor.span,
+        }),
+    }
+}
+
+fn validate_schema_interpolation(
+    value: &SchemaValue,
+    scope: &Scope,
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+    schema: &ConstructionSchema,
+) -> Result<(), Diagnostic> {
+    match value {
+        SchemaValue::Expression(expression) => {
+            validate_track_value(expression, &Type::String, scope, functions, schema)
+        }
+        SchemaValue::CubicBezier { values, .. } => {
+            for value in values {
+                validate_track_value(value, &Type::Float, scope, functions, schema)?;
+            }
+            Ok(())
+        }
+        SchemaValue::Interval { span, .. } => Err(Diagnostic::InvalidOperation {
+            message: "Track interpolation cannot be an interval",
+            span: *span,
+        }),
+    }
 }
 
 fn expand_track(
