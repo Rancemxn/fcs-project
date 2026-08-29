@@ -106,12 +106,14 @@ fn declared_render_raster_fixtures_match_product_output() {
             "{id}: raster dimensions must be positive"
         );
         assert_eq!(fixture_string(fixture, "pixel_format", id), "rgba8", "{id}");
-        assert!(
-            matches!(
-                fixture_string(fixture, "color_space", id),
-                "linear-srgb" | "srgb"
-            ),
-            "{id}: unsupported Render output color space"
+        let color_space = match fixture_string(fixture, "color_space", id) {
+            "linear-srgb" => 1,
+            "srgb" => 2,
+            _ => panic!("{id}: unsupported Render output color space"),
+        };
+        assert_eq!(
+            render.viewport_color_space, color_space,
+            "{id}: color space"
         );
 
         let expected_path = render_root.join(fixture_string(fixture, "raster_expected", id));
