@@ -1169,12 +1169,11 @@ fn render_section(
         let (paint, stroke) = match node.kind() {
             fcs_model::CanonicalRenderNodeKind::Rect
             | fcs_model::CanonicalRenderNodeKind::RoundedRect
-            | fcs_model::CanonicalRenderNodeKind::Ellipse
-            | fcs_model::CanonicalRenderNodeKind::Path => {
+            | fcs_model::CanonicalRenderNodeKind::Ellipse => {
                 if node.stroke().is_some() {
                     return Err(FcbcError::new(
                         "fcbc.render-unsupported",
-                        "product Render writer supports strokes only on Line, Circle, Polyline, and Polygon nodes",
+                        "product Render writer supports strokes only on Line, Circle, Polyline, Polygon, and Path nodes",
                     ));
                 }
                 (
@@ -1186,12 +1185,12 @@ fn render_section(
             }
             fcs_model::CanonicalRenderNodeKind::Circle
             | fcs_model::CanonicalRenderNodeKind::Polyline
-            | fcs_model::CanonicalRenderNodeKind::Polygon => {
+            | fcs_model::CanonicalRenderNodeKind::Polygon
+            | fcs_model::CanonicalRenderNodeKind::Path => {
                 // Render section 14.2 lets a fillable geometry carry a fill paint, a stroke, or
                 // both, so one of these is rejected only when it carries neither. Section 15.2
-                // fixes the Circle dash seam at the local `+X` crossing winding clockwise, and
-                // a Polyline or Polygon already has an explicit point order, so a dashed stroke
-                // needs no extra rejection.
+                // fixes the Circle dash seam at the local `+X` crossing winding clockwise, while
+                // Polyline, Polygon, and Path already have explicit segment order.
                 let fill = node.fill_paint();
                 let stroke = node.stroke();
                 if fill.is_none() && stroke.is_none() {

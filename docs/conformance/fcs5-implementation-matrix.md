@@ -251,10 +251,15 @@ terms as #525 gave `circle`, bound by
 Issue #537 adds loader-validated Path fill semantic evaluation and reference raster coverage,
 including all seven existing command forms, fill rules, recursive flattening diagnostics, and
 product semantic/raster evidence in `source_product::canonical_path_writer_reaches_product_render_loader`.
+Issue #613 extends that same canonical Path product path with StrokeRecord writer/loader binding,
+preserves explicit `Close` separately from fill's implicit closure, and reuses the existing
+Polyline/Polygon stroke kernel for width, dash phase, cap, join, zero-length segment, and raster
+coverage. Evidence is bound by `source_product::canonical_path_writer_reaches_product_render_loader`
+and `semantic_tests::path_stroke_preserves_explicit_close_and_shared_dash_rules`.
 Dynamic source Line stroke descriptors,
 Ellipse and RoundedRect strokes, source ImagePattern lowering, source Path lowering,
-Path stroke, broader canonical writer coverage, source Text
-grammar/lowering, Text stroke coverage, and descriptor-driven gradient stroke
+broader canonical writer coverage, source Text grammar/lowering, Text stroke coverage, and
+descriptor-driven gradient stroke
 lowering remain outside these bounded units; no Frozen or final I10 claim changes.
 
 ## Bounded Render Text fill semantic/raster delta

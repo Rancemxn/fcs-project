@@ -125,6 +125,7 @@ type TextContours = Vec<Vec<[f64; 2]>>;
 #[derive(Clone)]
 struct PathSubpath {
     points: Vec<[f64; 2]>,
+    closed: bool,
 }
 
 #[derive(Clone)]
@@ -1162,6 +1163,14 @@ fn stroke_contains(
         LocalShape::Polygon { points, closed } => {
             stroke_polyline_contains(points, *closed, point, stroke)
         }
+        LocalShape::Path { subpaths, .. } => {
+            for subpath in subpaths {
+                if stroke_polyline_contains(&subpath.points, subpath.closed, point, stroke)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
         _ => Err("render.invalid-geometry"),
     }
 }
@@ -1858,7 +1867,11 @@ pub fn rasterize_solid_rgba8_with_limits_at(
         // stroke without a resolvable paint is invalid rather than merely unpainted.
         let stroke_source = if matches!(
             op.kind,
-            NodeKind::Line | NodeKind::Circle | NodeKind::Polyline | NodeKind::Polygon
+            NodeKind::Line
+                | NodeKind::Circle
+                | NodeKind::Polyline
+                | NodeKind::Polygon
+                | NodeKind::Path
         ) {
             match op.stroke.as_ref() {
                 Some(stroke) => Some(
@@ -2829,7 +2842,6 @@ fn evaluate_path(
     let mut bounds = None;
     let mut point_count = 0;
     let mut has_drawing = false;
-    let mut closed = false;
 
     for command in &path.commands {
         match command {
@@ -2848,11 +2860,11 @@ fn evaluate_path(
                 claim_path_point(&mut point_count)?;
                 active = Some(PathSubpath {
                     points: vec![point],
+                    closed: false,
                 });
                 current = point;
                 start = point;
                 has_drawing = false;
-                closed = false;
             }
             PathCommand::LineTo(point) => {
                 let point = query_vec2_in(
@@ -2865,7 +2877,6 @@ fn evaluate_path(
                 append_path_point(active.as_mut(), point, &mut bounds, &mut point_count)?;
                 current = point;
                 has_drawing = true;
-                closed = false;
             }
             PathCommand::QuadraticTo(control, end) => {
                 let control = query_vec2_in(
@@ -2890,7 +2901,6 @@ fn evaluate_path(
                 )?;
                 current = end;
                 has_drawing = true;
-                closed = false;
             }
             PathCommand::CubicTo(control1, control2, end) => {
                 let control1 = query_vec2_in(
@@ -2923,7 +2933,6 @@ fn evaluate_path(
                 )?;
                 current = end;
                 has_drawing = true;
-                closed = false;
             }
             PathCommand::Arc {
                 center,
@@ -2972,7 +2981,6 @@ fn evaluate_path(
                 )?;
                 current = curve.point(1.0)?;
                 has_drawing = true;
-                closed = false;
             }
             PathCommand::EllipseArc {
                 center,
@@ -3032,15 +3040,14 @@ fn evaluate_path(
                 )?;
                 current = curve.point(1.0)?;
                 has_drawing = true;
-                closed = false;
             }
             PathCommand::Close => {
-                if !has_drawing || closed {
+                if !has_drawing || active.as_ref().is_some_and(|subpath| subpath.closed) {
                     return Err("render.invalid-geometry");
                 }
                 append_path_point(active.as_mut(), start, &mut bounds, &mut point_count)?;
+                active.as_mut().ok_or("render.invalid-geometry")?.closed = true;
                 current = start;
-                closed = true;
             }
         }
     }
@@ -3058,6 +3065,7 @@ fn append_curve(
     point_count: &mut usize,
 ) -> Result<(), &'static str> {
     let subpath = active.ok_or("render.invalid-geometry")?;
+    subpath.closed = false;
     let length = subpath.points.len();
     flatten_curve(curve, &mut subpath.points, 0, world_matrix, point_count)?;
     for point in &subpath.points[length..] {
@@ -3073,6 +3081,7 @@ fn append_path_point(
     point_count: &mut usize,
 ) -> Result<(), &'static str> {
     let subpath = active.ok_or("render.invalid-geometry")?;
+    subpath.closed = false;
     let point = finite_point(point)?;
     claim_path_point(point_count)?;
     subpath.points.push(point);

@@ -278,12 +278,15 @@ fn polyline_stroke_joins_caps_and_closure_follow_section_15_2() {
 fn path_fill_rules_cover_implicit_subpath_closures() {
     let outer = PathSubpath {
         points: vec![[-2.0, -2.0], [2.0, -2.0], [2.0, 2.0], [-2.0, 2.0]],
+        closed: false,
     };
     let inner_same_direction = PathSubpath {
         points: vec![[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
+        closed: false,
     };
     let inner_reverse_direction = PathSubpath {
         points: vec![[-1.0, -1.0], [-1.0, 1.0], [1.0, 1.0], [1.0, -1.0]],
+        closed: false,
     };
 
     assert!(path_contains(std::slice::from_ref(&outer), 1, [0.0, 0.0]));
@@ -308,6 +311,51 @@ fn path_fill_rules_cover_implicit_subpath_closures() {
         closed: false,
     };
     assert!(local_shape_contains(&polygon, [0.0, -0.5]));
+}
+
+#[test]
+fn path_stroke_preserves_explicit_close_and_shared_dash_rules() {
+    let points = vec![
+        [-1.0, -1.0],
+        [1.0, -1.0],
+        [1.0, -1.0],
+        [1.0, 1.0],
+        [-1.0, 1.0],
+        [-1.0, -1.0],
+    ];
+    let open = LocalShape::Path {
+        subpaths: vec![PathSubpath {
+            points: points.clone(),
+            closed: false,
+        }],
+        fill_rule: 1,
+    };
+    let closed = LocalShape::Path {
+        subpaths: vec![PathSubpath {
+            points,
+            closed: true,
+        }],
+        fill_rule: 1,
+    };
+    let mut stroke = StrokeDrawOp {
+        width: 1.0,
+        cap: 1,
+        join: 1,
+        miter_limit: 2.0,
+        dash_offset: 0.0,
+        dash: Vec::new(),
+        fill_rgba: Some([1.0, 1.0, 1.0, 1.0]),
+        linear_gradient: None,
+        radial_gradient: None,
+        image_pattern: None,
+    };
+
+    assert!(!stroke_contains(&open, [-1.2, -1.2], &stroke).unwrap());
+    assert!(stroke_contains(&closed, [-1.2, -1.2], &stroke).unwrap());
+
+    stroke.dash = vec![1.0, 1.0];
+    assert!(stroke_contains(&open, [-0.5, -1.0], &stroke).unwrap());
+    assert!(!stroke_contains(&open, [0.5, -1.0], &stroke).unwrap());
 }
 
 #[test]
