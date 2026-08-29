@@ -1974,10 +1974,12 @@ render profile 1.0.0 {
     );
 
     let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Path semantic evaluation");
-    assert!(
-        draw.iter()
-            .any(|operation| operation.kind == NodeKind::Path)
-    );
+    let path_draw = draw
+        .iter()
+        .find(|operation| operation.kind == NodeKind::Path)
+        .expect("Path semantic draw op");
+    assert!(path_draw.bounds[0] < path_draw.bounds[2]);
+    assert!(path_draw.bounds[1] < path_draw.bounds[3]);
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Path rasterization");
     assert_eq!(pixels.len(), 4 * 4 * 4);
     assert!(
