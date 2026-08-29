@@ -181,8 +181,9 @@ dependency is proven and recorded in a new progress message.
 ### I2.10 Public conformance fixture and delivery gate
 
 - Owns: executable S2/S3 evidence for 6.1–6.8 and construction clauses.
-- Execute `compile-time-generator`, `template-if-with`, and `int-range-descending`; assert expected output
-  shape, source order, diagnostics and budget traces. Execute the ten elaborate-error fixtures and ensure
+- Execute `compile-time-generator`, `compile-time-unselected-range`, `line-id-expressions`,
+  `template-if-with`, `int-range-descending`, and `zero-base-positive-power`; assert expected output shape,
+  source order, diagnostics and budget traces. Execute the twelve elaborate-error fixtures and ensure
   parse-stage categories are not used for static errors.
 - Update the I2 implementation matrix and evidence only after all task gates pass; create the next child
   Issue for the earliest I3 baseline only after I2 is independently reviewed and merged.
@@ -190,7 +191,7 @@ dependency is proven and recorded in a new progress message.
 ## I2 delivery checkpoint
 
 The I2.1–I2.9 implementation work units are merged on `main` through PR #65. The I2.10 delivery unit
-executes the four valid public elaboration fixtures and the ten bound elaborate-error/budget fixtures
+executes the six valid public elaboration fixtures and the twelve bound elaborate-error/budget fixtures
 through the public `fcs_source::elaborator::elaborate` API. Its executable evidence must assert the expected
 expanded shape, deterministic source order, exact Beat/Length values, selected template/`with` behavior,
 concrete-output invariants, stable static diagnostic categories, and the shared generator-budget trace.
@@ -225,6 +226,8 @@ bind the I3.1 Canonical IDs frontier after the closure review is merged.
 | Fixture | Stage/expectation | I2 obligation |
 | --- | --- | --- |
 | `source.valid.compile-time-generator` | elaborate success | exact expansion, source order, concrete Note output |
+| `source.valid.compile-time-unselected-range` | elaborate success | statically check both branches but evaluate only the selected generator range |
+| `source.valid.line-id-expressions` | elaborate success | collect statically evaluated Line IDs through lexical template and generator bindings |
 | `source.valid.template-if-with` | elaborate success | typed template, selected branch, immutable `with` |
 | `source.valid.int-range-descending` | elaborate success | exact descending inclusive range and `index` |
 | `source.invalid.unresolved-schema-enum` | elaborate `name.unknown` | do not infer a bare identifier as a schema string |
@@ -233,6 +236,7 @@ bind the I3.1 Canonical IDs frontier after the closure review is merged.
 | `source.invalid.template-missing-line` | elaborate `schema.missing-required-field` | validate required field at template return |
 | `source.invalid.runtime-gameplay` | elaborate `schema.dynamic-field-forbidden` | reject runtime environment in structural field |
 | manifest `source.invalid.generator-budget` | elaborate `compile-time.budget-exceeded` | shared generator counter and ordered trace |
+| `source.invalid.line-id-{expression-duplicate,reference-bootstrap}` | elaborate `name.duplicate` / `name.unknown` | keep statically evaluated Line IDs and their references in one validated namespace |
 | `source.valid.zero-base-positive-power` | elaborate success | accept zero base with a positive exponent |
 | `source.invalid.zero-base-negative-power-{operator,signed-operator,builtin,signed-builtin}` | elaborate `numeric.domain` | reject zero base with a negative exponent in both operator and builtin spellings |
 
