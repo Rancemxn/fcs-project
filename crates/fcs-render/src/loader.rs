@@ -1137,9 +1137,6 @@ fn parse_path(cursor: &mut Cursor<'_>, limits: &RenderLimits) -> Result<PathReco
         return Err(RENDER_DIAGNOSTIC_INVALID_GEOMETRY);
     }
     let count = limited_count(record.u32()?, limits.max_path_commands)?;
-    if count == 0 {
-        return Err("render.invalid-geometry");
-    }
     let mut commands = Vec::with_capacity(count);
     let mut open = false;
     let mut closed = false;
@@ -2367,4 +2364,26 @@ fn u64_at(bytes: &[u8], offset: usize) -> Result<u64, &'static str> {
             .try_into()
             .map_err(|_| "fcbc.invalid-header")?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_path_record_is_valid() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&24u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes.extend_from_slice(&1u64.to_le_bytes());
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+
+        let mut cursor = Cursor::new(&bytes, RENDER_DIAGNOSTIC_INVALID_RECORD);
+        let path = parse_path(&mut cursor, &RenderLimits::default()).expect("empty PathRecord");
+        assert!(path.commands.is_empty());
+        assert_eq!(cursor.finish(), Ok(()));
+    }
 }

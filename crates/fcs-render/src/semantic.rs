@@ -2826,7 +2826,6 @@ fn evaluate_path(
     let mut current = [0.0; 2];
     let mut start = [0.0; 2];
     let mut bounds = None;
-    let mut has_command = false;
     let mut has_drawing = false;
     let mut closed = false;
 
@@ -2849,7 +2848,6 @@ fn evaluate_path(
                 });
                 current = point;
                 start = point;
-                has_command = true;
                 has_drawing = false;
                 closed = false;
             }
@@ -2863,7 +2861,6 @@ fn evaluate_path(
                 )?;
                 append_path_point(active.as_mut(), point, &mut bounds)?;
                 current = point;
-                has_command = true;
                 has_drawing = true;
                 closed = false;
             }
@@ -2888,7 +2885,6 @@ fn evaluate_path(
                     world_matrix,
                 )?;
                 current = end;
-                has_command = true;
                 has_drawing = true;
                 closed = false;
             }
@@ -2921,7 +2917,6 @@ fn evaluate_path(
                     world_matrix,
                 )?;
                 current = end;
-                has_command = true;
                 has_drawing = true;
                 closed = false;
             }
@@ -2960,7 +2955,6 @@ fn evaluate_path(
                 append_path_point(active.as_mut(), curve.point(0.0)?, &mut bounds)?;
                 append_curve(active.as_mut(), curve, &mut bounds, world_matrix)?;
                 current = curve.point(1.0)?;
-                has_command = true;
                 has_drawing = true;
                 closed = false;
             }
@@ -3010,7 +3004,6 @@ fn evaluate_path(
                 append_path_point(active.as_mut(), curve.point(0.0)?, &mut bounds)?;
                 append_curve(active.as_mut(), curve, &mut bounds, world_matrix)?;
                 current = curve.point(1.0)?;
-                has_command = true;
                 has_drawing = true;
                 closed = false;
             }
@@ -3020,13 +3013,9 @@ fn evaluate_path(
                 }
                 append_path_point(active.as_mut(), start, &mut bounds)?;
                 current = start;
-                has_command = true;
                 closed = true;
             }
         }
-    }
-    if !has_command {
-        return Err("render.invalid-geometry");
     }
     if let Some(subpath) = active {
         subpaths.push(subpath);
