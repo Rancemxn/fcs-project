@@ -10,7 +10,7 @@ The current branch starts from the merged I1.9 checkpoint `0681ddd8561ef3072e117
 
 ## Current-state closure handoff
 
-`origin/main` is `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1`, including corrective PRs #92 and #96 and
+The fixed post-I2 corrective handoff snapshot is `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1`, including corrective PRs #92 and #96 and
 PRs #97, #98, and #102 for Issues #84, #87, #88, #91, #93, and #99. Primary Self-Audit and the applicable
 local Rust gates passed for each merge. Independent Audit results are `pass` for the fixed merged SHAs of
 PRs #92, #96, #98, and #102; PR #97 requires re-review after the former #99-blocked result. This asynchronous residual does not block the primary session's handoff to I3.3, but it

@@ -4,11 +4,12 @@
 
 日期：2026-07-19
 
-取代：ADR 0012（公开执行仓库与私有项目门禁）
+取代：`0012-public-runner-private-gates.md`（使用公开执行仓库运行私有项目完整门禁）
 
 ## 1. 背景
 
-`fcs-project` 已转为公开仓库，`Rancemxn/fcs-action` 已删除。ADR 0012 为保护私有源码而引入的跨仓库
+`fcs-project` 已转为公开仓库，`Rancemxn/fcs-action` 已删除。`0012-public-runner-private-gates.md`
+为保护私有源码而引入的跨仓库
 checkout、secret、脱敏 artifact 和实验性 sccache 边界不再解决实际问题，继续保留只会增加门禁维护成本。
 
 完整 Rust、nextest 和 bounded fuzz gate 仍需在 GitHub runner 上执行，以减少本地算力和磁盘占用。

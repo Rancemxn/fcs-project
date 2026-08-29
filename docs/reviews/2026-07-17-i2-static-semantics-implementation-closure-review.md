@@ -8,7 +8,8 @@ evidence. They are not the current merged-SHA claim after the post-closure corre
 
 ## Current-state superseding checkpoint
 
-- Current `origin/main`: `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1` (including the I3.1/I3.2 merges).
+- Fixed post-I2 corrective handoff snapshot: `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1`
+  (the `origin/main` tip when this checkpoint was recorded, including the I3.1/I3.2 merges).
 - Corrective chain bound to the current tree:
   - PR #92 / Issues #84 and #87 → merge `144526f570e426f66b50d406f9df60d811255045`;
   - PR #96 / Issue #88 → merge `669c5f26144a0507cae7f48720942e10938a6aee`;

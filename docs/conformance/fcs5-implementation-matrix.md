@@ -67,12 +67,12 @@ PGR/RPE/PEC importer 的敌意输入面）和 manifest 驱动的 bounded smoke�
 generator parser 边界为 `9d88a6a`，raw lexer prepass 清理为 `475e137`。I0.9 最终结构、
 依赖、质量、归档拓扑和独立复审 gate 已通过。
 
-I2.1–I2.10 的 static-semantics implementation units 和 public elaborator conformance lane 已合并到
-`origin/main` `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1`；I2 closure review 见
+I2.1–I2.10 的 static-semantics implementation units 和 public elaborator conformance lane 已合并；
+固定的 post-I2 corrective handoff 快照为 `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1`。I2 closure review 见
 `docs/reviews/2026-07-17-i2-static-semantics-implementation-closure-review.md`。这些行只提升 I2-owned
 static subset，不能替代 I3+ canonical/runtime/FCBC/Render/Conversion 产品实现。I3.1 的 normative
-contract 已由 FCS §17 与 ADR 0012 闭合；I3.1–I3.4 已合并，当前下一 bounded frontier 是 I3.5 Note
-lowering。
+contract 已由 FCS §17 与 `docs/decisions/0012-canonical-textual-id-encoding.md` 闭合；I3.1–I3.4
+已合并，当前下一 bounded frontier 是 I3.5 Note lowering。
 
 允许的状态只有：`implemented`、`partial`、`not-started` 和 `blocked-by-I<n>`。`implemented`
 表示该行所列能力已有产品实现和实际测试证据；`partial` 必须在“已知偏差”列写明缺失行为，

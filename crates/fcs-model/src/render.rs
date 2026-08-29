@@ -1788,27 +1788,43 @@ pub enum CanonicalRenderError {
     ZeroDashTotal,
 }
 
-/// The stable Render diagnostic categories fixed by `fcs-render.md` section 16.
-///
-/// Implementation must not invent a category: the specification's list is
-/// closed, and a value outside it would silently create normative behavior.
+// Stable Render diagnostic categories fixed by `fcs-render.md` section 16.
+pub const RENDER_DIAGNOSTIC_UNSUPPORTED_PROFILE: &str = "render.unsupported-profile";
+pub const RENDER_DIAGNOSTIC_INVALID_SECTION: &str = "render.invalid-section";
+pub const RENDER_DIAGNOSTIC_INVALID_RECORD: &str = "render.invalid-record";
+pub const RENDER_DIAGNOSTIC_RESOURCE_NOT_FOUND: &str = "render.resource-not-found";
+pub const RENDER_DIAGNOSTIC_RESOURCE_TYPE_MISMATCH: &str = "render.resource-type-mismatch";
+pub const RENDER_DIAGNOSTIC_RESOURCE_DECODE_FAILED: &str = "render.resource-decode-failed";
+pub const RENDER_DIAGNOSTIC_RESOURCE_CAPABILITY_MISSING: &str =
+    "render.resource-capability-missing";
+pub const RENDER_DIAGNOSTIC_INVALID_REFERENCE: &str = "render.invalid-reference";
+pub const RENDER_DIAGNOSTIC_INVALID_GEOMETRY: &str = "render.invalid-geometry";
+pub const RENDER_DIAGNOSTIC_INVALID_PAINT: &str = "render.invalid-paint";
+pub const RENDER_DIAGNOSTIC_INVALID_STROKE: &str = "render.invalid-stroke";
+pub const RENDER_DIAGNOSTIC_INVALID_CLIP: &str = "render.invalid-clip";
+pub const RENDER_DIAGNOSTIC_INVALID_COMPOSITE: &str = "render.invalid-composite";
+pub const RENDER_DIAGNOSTIC_INVALID_GRAPH: &str = "render.invalid-graph";
+pub const RENDER_DIAGNOSTIC_INVALID_DESCRIPTOR: &str = "render.invalid-descriptor";
+pub const RENDER_DIAGNOSTIC_LIMIT_EXCEEDED: &str = "render.limit-exceeded";
+
+/// The closed list of Render diagnostic categories.
 pub const RENDER_DIAGNOSTIC_CATEGORIES: [&str; 16] = [
-    "render.unsupported-profile",
-    "render.invalid-section",
-    "render.invalid-record",
-    "render.resource-not-found",
-    "render.resource-type-mismatch",
-    "render.resource-decode-failed",
-    "render.resource-capability-missing",
-    "render.invalid-reference",
-    "render.invalid-geometry",
-    "render.invalid-paint",
-    "render.invalid-stroke",
-    "render.invalid-clip",
-    "render.invalid-composite",
-    "render.invalid-graph",
-    "render.invalid-descriptor",
-    "render.limit-exceeded",
+    RENDER_DIAGNOSTIC_UNSUPPORTED_PROFILE,
+    RENDER_DIAGNOSTIC_INVALID_SECTION,
+    RENDER_DIAGNOSTIC_INVALID_RECORD,
+    RENDER_DIAGNOSTIC_RESOURCE_NOT_FOUND,
+    RENDER_DIAGNOSTIC_RESOURCE_TYPE_MISMATCH,
+    RENDER_DIAGNOSTIC_RESOURCE_DECODE_FAILED,
+    RENDER_DIAGNOSTIC_RESOURCE_CAPABILITY_MISSING,
+    RENDER_DIAGNOSTIC_INVALID_REFERENCE,
+    RENDER_DIAGNOSTIC_INVALID_GEOMETRY,
+    RENDER_DIAGNOSTIC_INVALID_PAINT,
+    RENDER_DIAGNOSTIC_INVALID_STROKE,
+    RENDER_DIAGNOSTIC_INVALID_CLIP,
+    RENDER_DIAGNOSTIC_INVALID_COMPOSITE,
+    RENDER_DIAGNOSTIC_INVALID_GRAPH,
+    RENDER_DIAGNOSTIC_INVALID_DESCRIPTOR,
+    RENDER_DIAGNOSTIC_LIMIT_EXCEEDED,
 ];
 
 impl CanonicalRenderError {
@@ -1820,7 +1836,7 @@ impl CanonicalRenderError {
     pub const fn code(self) -> &'static str {
         match self {
             // Row 3: viewport width/height/colorSpace belong to the section header.
-            Self::InvalidViewport => "render.invalid-section",
+            Self::InvalidViewport => RENDER_DIAGNOSTIC_INVALID_SECTION,
             // Row 5: duplicate or zero ID, Layer pass and root range, Node
             // active interval, parent, layer and order, cycles, orphan
             // ownership and cross-owner sharing.
@@ -1833,7 +1849,7 @@ impl CanonicalRenderError {
             | Self::LayerRootHasParent
             | Self::UnlistedLayerRoot
             | Self::SharedRecord
-            | Self::UnreachableRecord => "render.invalid-graph",
+            | Self::UnreachableRecord => RENDER_DIAGNOSTIC_INVALID_GRAPH,
             // Row 6: table reference bounds, nullability and kind
             // incompatibility, and attachment target/kind.
             Self::UnresolvedReference
@@ -1842,7 +1858,7 @@ impl CanonicalRenderError {
             | Self::GroupCarriesPaint
             | Self::ClipGroupWithoutClip
             | Self::DrawableWithoutGeometry
-            | Self::FollowHiddenWithoutNoteAttachment => "render.invalid-reference",
+            | Self::FollowHiddenWithoutNoteAttachment => RENDER_DIAGNOSTIC_INVALID_REFERENCE,
             // Row 7: Node/Geometry kind, path state and compile-time geometry
             // ranges. Glyph run problems are geometry too once the font
             // decoded, and must not fall back to a resource category.
@@ -1851,18 +1867,22 @@ impl CanonicalRenderError {
             | Self::EmptyGlyphRunList
             | Self::NonFiniteGlyphMetric
             | Self::EmptyPath
-            | Self::PathWithoutInitialMoveTo => "render.invalid-geometry",
+            | Self::PathWithoutInitialMoveTo => RENDER_DIAGNOSTIC_INVALID_GEOMETRY,
             // Row 8 and row 9.
-            Self::InvalidGradientStop | Self::UnorderedGradientStops => "render.invalid-paint",
+            Self::InvalidGradientStop | Self::UnorderedGradientStops => {
+                RENDER_DIAGNOSTIC_INVALID_PAINT
+            }
             Self::InvalidMiterLimit
             | Self::OddDashArray
             | Self::InvalidDashElement
-            | Self::ZeroDashTotal => "render.invalid-stroke",
+            | Self::ZeroDashTotal => RENDER_DIAGNOSTIC_INVALID_STROKE,
             // Row 11: composite enum and isolate applicability.
-            Self::NonIsolatedGroupComposite => "render.invalid-composite",
+            Self::NonIsolatedGroupComposite => RENDER_DIAGNOSTIC_INVALID_COMPOSITE,
             // Row 10: clip fill rule, the geometry kinds a clip may use, and
             // Path fill-rule consistency.
-            Self::ClipGeometryKindNotAllowed | Self::ClipFillRuleMismatch => "render.invalid-clip",
+            Self::ClipGeometryKindNotAllowed | Self::ClipFillRuleMismatch => {
+                RENDER_DIAGNOSTIC_INVALID_CLIP
+            }
         }
     }
 

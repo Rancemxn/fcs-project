@@ -30,6 +30,9 @@ Accepted ADR 与现行规范发生实质冲突时，必须重开受影响的规�
 或 `Partially superseded`。勘误或治理补充可以追加 dated amendment，但不得静默改写旧决定的
 历史背景。
 
+ADR 索引见 `docs/decisions/README.md`。引用 ADR 时必须给出文件名或完整标题，不能只写编号；
+这对重复使用的编号尤其必要，现有 `0012` 不能通过裸 `ADR 0012` 引用。
+
 ## 2. 当前候选版本
 
 | 规范 | 候选版本 | 状态 |

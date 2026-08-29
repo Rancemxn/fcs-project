@@ -720,8 +720,8 @@ git diff --check
   `return` 与 nested generator；zero-step 语法保留给 I2，elaborator 在 I1 不展开并返回稳定
   `implementation.feature-unavailable`，且不产生部分输出；
 - I2.1–I2.10 已完成并合并；I2.10 的三份 valid fixture、六份 elaborate-error/budget fixture、矩阵
-  更新和完整 Rust delivery gate 已记录。后续 corrective chain 为 PR #92/#96/#97/#98/#102，当前
-  `origin/main` 为 `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1`；主自审和适用 Rust gate 均通过。
+  更新和完整 Rust delivery gate 已记录。后续 corrective chain 为 PR #92/#96/#97/#98/#102；固定的
+  post-I2 corrective handoff 快照为 `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1`。主自审和适用 Rust gate 均通过。
   独立 merged-SHA Audit 已对 #92、#96、#98、#102 给出 `pass`，#97 需在 #99 修复后重审。因而 I2
   closure 的实现交付已修正但 stage claim 保持 provisional；五个规范域仍为 Draft。
 - I3.1–I6.7 的实现单元和后续 I7–I10 partial product units 已经合并，但 I10 RC 尚未完成。当前
