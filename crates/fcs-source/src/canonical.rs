@@ -2001,10 +2001,15 @@ impl<'a> RenderLowerer<'a> {
                     .as_ref()
                     .expect("Text nodes have a preallocated geometry ID");
                 let glyph_runs = self.lower_text(node, geometry_id)?;
-                let paint = self.add_paint(node_path, node, "fill")?;
+                let paint = if stroke.is_some() && render_body_field(&node.items, "fill").is_none()
+                {
+                    None
+                } else {
+                    Some(self.add_paint(node_path, node, "fill")?)
+                };
                 (
                     Some(CanonicalRenderGeometryData::Text { glyph_runs, origin }),
-                    Some(paint),
+                    paint,
                 )
             }
             CanonicalRenderNodeKind::Image => {

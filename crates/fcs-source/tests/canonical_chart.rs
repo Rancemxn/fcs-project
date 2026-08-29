@@ -271,6 +271,34 @@ render profile 1.0.0 {
     std::fs::write(workspace.path().join("assets/primary.ttf"), font)
         .expect("restore primary font");
 
+    let stroke_source = source.replace(
+        "fill: solid(#FFFFFFFF);",
+        r#"stroke: solid(#FFFFFFFF);
+                width: 1px;
+                cap: "butt";
+                join: "miter";
+                miterLimit: 1.0;
+                dash: [1px, 1px,];
+                dashOffset: 0px;"#,
+    );
+    let stroke_document = parse_document(&stroke_source)
+        .into_result()
+        .expect("stroke-only Text source should parse");
+    let stroke_compilation = stroke_document
+        .canonical_compilation_with_source(
+            &stroke_source,
+            CompileTimeLimits::default(),
+            workspace.path(),
+            ResourceLimits::default(),
+        )
+        .expect("stroke-only Text should compile");
+    let stroke_scene = stroke_compilation
+        .chart()
+        .render()
+        .expect("stroke-only Text scene");
+    assert_eq!(stroke_scene.nodes()[0].fill_paint(), None);
+    assert_eq!(stroke_scene.nodes()[0].stroke(), Some(0));
+
     assert!(compilation.resources().get("primary").is_some());
     assert!(compilation.resources().get("fallback").is_some());
     let roots = compilation
