@@ -135,6 +135,7 @@ fn later_phase_conformance_sources_are_not_rejected_by_the_parser() {
         include_str!("../../../docs/conformance/fcs5/source/invalid/generator-zero-step.fcs"),
         include_str!("../../../docs/conformance/fcs5/source/invalid/shadowing.fcs"),
         include_str!("../../../docs/conformance/fcs5/source/invalid/template-missing-line.fcs"),
+        include_str!("../../../docs/conformance/fcs5/source/invalid/track-unselected-value.fcs"),
         include_str!("../../../docs/conformance/fcs5/source/invalid/hold-end.fcs"),
         include_str!("../../../docs/conformance/fcs5/source/invalid/track-overlap.fcs"),
         include_str!("../../../docs/conformance/fcs5/source/invalid/parent-cycle.fcs"),

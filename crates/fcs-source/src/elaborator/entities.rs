@@ -612,7 +612,7 @@ fn function_body_is_reference_free(
     })
 }
 
-fn function_map(
+pub(super) fn function_map(
     block: Option<&DefinitionsBlock>,
 ) -> BTreeMap<String, &crate::ast::FunctionDeclaration> {
     block
@@ -625,7 +625,7 @@ fn function_map(
         .collect()
 }
 
-fn definition_scope(block: Option<&DefinitionsBlock>) -> Result<Scope, Diagnostic> {
+pub(super) fn definition_scope(block: Option<&DefinitionsBlock>) -> Result<Scope, Diagnostic> {
     let mut root = Scope::root_with_builtins()?;
     let Some(block) = block else {
         return Ok(root);
@@ -1237,7 +1237,11 @@ impl<'a> StaticEntityValidator<'a> {
     }
 }
 
-fn require_static_type(expected: &Type, actual: &Type, span: SourceSpan) -> Result<(), Diagnostic> {
+pub(super) fn require_static_type(
+    expected: &Type,
+    actual: &Type,
+    span: SourceSpan,
+) -> Result<(), Diagnostic> {
     if expected == actual {
         Ok(())
     } else {

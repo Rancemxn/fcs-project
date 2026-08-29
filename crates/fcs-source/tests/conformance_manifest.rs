@@ -794,7 +794,7 @@ fn typed_manifests_load_with_bound_counts() {
     assert_eq!(render.schema_version, 3);
     assert_eq!(conversion.schema_version, 2);
     assert_eq!(root.suite.len(), 6);
-    assert_eq!(fcs.fixture.len(), 64);
+    assert_eq!(fcs.fixture.len(), 65);
     assert_eq!(fcbc.fixture.len(), 3);
     assert_eq!(render.binary_fixture.len(), 0);
     assert_eq!(render.fixture.len(), 1);
@@ -868,7 +868,7 @@ fn fcs_source_fixtures_execute_at_the_declared_frontend_boundary() {
 
     assert_eq!(parse_success, 3);
     assert_eq!(parse_error, 9);
-    assert_eq!(later_stage, 52);
+    assert_eq!(later_stage, 53);
 }
 
 #[test]
@@ -1232,6 +1232,7 @@ fn i2_elaborate_error_fixtures_keep_static_diagnostics_and_budget_trace() {
         "source.invalid.zero-base-negative-power-signed-builtin",
         "source.invalid.shadowing",
         "source.invalid.template-missing-line",
+        "source.invalid.track-unselected-value",
         "source.invalid.runtime-gameplay",
         "source.invalid.generator-budget",
         "source.invalid.line-id-expression-duplicate",
