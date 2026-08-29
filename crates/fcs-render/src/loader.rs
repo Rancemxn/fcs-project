@@ -7,6 +7,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use fcs_fcbc::{DecodedChart, DescriptorKind, ExpressionNode, PropertyDescriptor, ValueType};
+use fcs_model::{
+    RENDER_DIAGNOSTIC_INVALID_CLIP, RENDER_DIAGNOSTIC_INVALID_COMPOSITE,
+    RENDER_DIAGNOSTIC_INVALID_DESCRIPTOR, RENDER_DIAGNOSTIC_INVALID_GEOMETRY,
+    RENDER_DIAGNOSTIC_INVALID_GRAPH, RENDER_DIAGNOSTIC_INVALID_PAINT,
+    RENDER_DIAGNOSTIC_INVALID_RECORD, RENDER_DIAGNOSTIC_INVALID_REFERENCE,
+    RENDER_DIAGNOSTIC_INVALID_SECTION, RENDER_DIAGNOSTIC_INVALID_STROKE,
+    RENDER_DIAGNOSTIC_LIMIT_EXCEEDED, RENDER_DIAGNOSTIC_RESOURCE_CAPABILITY_MISSING,
+    RENDER_DIAGNOSTIC_RESOURCE_DECODE_FAILED, RENDER_DIAGNOSTIC_RESOURCE_NOT_FOUND,
+    RENDER_DIAGNOSTIC_RESOURCE_TYPE_MISMATCH, RENDER_DIAGNOSTIC_UNSUPPORTED_PROFILE,
+};
 
 use crate::{
     RenderLimits,
@@ -78,7 +88,7 @@ impl NodeKind {
             10 => Ok(Self::Path),
             11 => Ok(Self::Image),
             12 => Ok(Self::Text),
-            _ => Err("render.invalid-geometry"),
+            _ => Err(RENDER_DIAGNOSTIC_INVALID_GEOMETRY),
         }
     }
 
@@ -517,12 +527,12 @@ fn parse_resources(
         )?;
         record.finish()?;
         if data_length > limits.max_single_resource_bytes {
-            return Err("render.limit-exceeded");
+            return Err(RENDER_DIAGNOSTIC_LIMIT_EXCEEDED);
         }
         total_resource_bytes = total_resource_bytes
             .checked_add(data_length)
             .filter(|total| *total <= limits.max_total_resource_bytes)
-            .ok_or("render.limit-exceeded")?;
+            .ok_or(RENDER_DIAGNOSTIC_LIMIT_EXCEEDED)?;
         let start = usize::try_from(data_offset).map_err(|_| "fcbc.resource-out-of-bounds")?;
         let length = usize::try_from(data_length).map_err(|_| "fcbc.resource-out-of-bounds")?;
         let end = start
@@ -561,7 +571,7 @@ fn parse_value(
     depth: usize,
 ) -> Result<ParsedValue, &'static str> {
     if depth > max_depth {
-        return Err("render.limit-exceeded");
+        return Err(RENDER_DIAGNOSTIC_LIMIT_EXCEEDED);
     }
     let tag = cursor.u8()?;
     if cursor.u8()? != 0 || cursor.u16()? != 0 {
@@ -728,22 +738,26 @@ fn parse_render_section(
     limits: &RenderLimits,
 ) -> Result<DecodedRenderChart, &'static str> {
     if bytes.len() < 8 {
-        return Err("render.invalid-section");
+        return Err(RENDER_DIAGNOSTIC_INVALID_SECTION);
     }
-    let declared = usize::try_from(u32_at(bytes, 0).map_err(|_| "render.invalid-section")?)
-        .map_err(|_| "render.invalid-section")?;
+    let declared =
+        usize::try_from(u32_at(bytes, 0).map_err(|_| RENDER_DIAGNOSTIC_INVALID_SECTION)?)
+            .map_err(|_| RENDER_DIAGNOSTIC_INVALID_SECTION)?;
     if declared != bytes.len() || !declared.is_multiple_of(4) {
-        return Err("render.invalid-section");
+        return Err(RENDER_DIAGNOSTIC_INVALID_SECTION);
     }
-    let mut outer = Cursor::new(bytes, "render.invalid-record");
+    let mut outer = Cursor::new(bytes, RENDER_DIAGNOSTIC_INVALID_RECORD);
     if outer.u32()? as usize != bytes.len() || outer.u16()? != 1 || outer.u16()? != 0 {
-        return Err("render.invalid-record");
+        return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
     }
-    let mut cursor = Cursor::new(outer.take(bytes.len() - 8)?, "render.invalid-record");
+    let mut cursor = Cursor::new(
+        outer.take(bytes.len() - 8)?,
+        RENDER_DIAGNOSTIC_INVALID_RECORD,
+    );
     let profile = (cursor.u16()?, cursor.u16()?, cursor.u16()?);
     let flags = cursor.u16()?;
     if profile != (1, 0, 0) || flags != 0 {
-        return Err("render.unsupported-profile");
+        return Err(RENDER_DIAGNOSTIC_UNSUPPORTED_PROFILE);
     }
     let viewport_width = cursor.f64()?;
     let viewport_height = cursor.f64()?;
@@ -753,7 +767,7 @@ fn parse_render_section(
         || viewport_height <= 0.0
         || !matches!(viewport_color_space, 1 | 2)
     {
-        return Err("render.invalid-section");
+        return Err(RENDER_DIAGNOSTIC_INVALID_SECTION);
     }
     let layer_count = limited_count(cursor.u32()?, limits.max_layers)?;
     let node_count = limited_count(cursor.u32()?, limits.max_nodes)?;
@@ -819,16 +833,16 @@ fn parse_render_section(
 }
 
 fn parse_layer(cursor: &mut Cursor<'_>) -> Result<LayerRecord, &'static str> {
-    let mut record = take_record(cursor, "render.invalid-record")?;
+    let mut record = take_record(cursor, RENDER_DIAGNOSTIC_INVALID_RECORD)?;
     if record.bytes.len() + 8 != 36 {
-        return Err("render.invalid-record");
+        return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
     }
     let layer = LayerRecord {
         id: record.u64()?,
         pass: record.u16()?,
         z_order: {
             if record.u16()? != 0 {
-                return Err("render.invalid-record");
+                return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
             }
             record.i32()?
         },
@@ -845,7 +859,7 @@ fn parse_node(
     string_count: usize,
     limits: &RenderLimits,
 ) -> Result<NodeRecord, &'static str> {
-    let mut record = take_record(cursor, "render.invalid-record")?;
+    let mut record = take_record(cursor, RENDER_DIAGNOSTIC_INVALID_RECORD)?;
     let id = record.u64()?;
     let kind = NodeKind::from_u16(record.u16()?)?;
     let flags = record.u16()?;
@@ -855,7 +869,7 @@ fn parse_node(
     let z_order = record.i32()?;
     let attachment_kind = record.u16()?;
     if record.u16()? != 0 {
-        return Err("render.invalid-record");
+        return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
     }
     let attachment_id = record.u64()?;
     let active_start = record.f64()?;
@@ -898,7 +912,7 @@ fn parse_node(
             ParsedValue::Object(_)
         )
     {
-        return Err("render.invalid-record");
+        return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
     }
     record.finish()?;
     Ok(node)
@@ -909,11 +923,11 @@ fn parse_geometry(
     strings: &[String],
     limits: &RenderLimits,
 ) -> Result<GeometryRecord, &'static str> {
-    let mut record = take_record(cursor, "render.invalid-record")?;
+    let mut record = take_record(cursor, RENDER_DIAGNOSTIC_INVALID_RECORD)?;
     let id = record.u64()?;
     let kind = NodeKind::from_u16(record.u16()?)?;
     if !kind.is_drawable() || record.u16()? != 0 {
-        return Err("render.invalid-geometry");
+        return Err(RENDER_DIAGNOSTIC_INVALID_GEOMETRY);
     }
     let max_value_items = if matches!(kind, NodeKind::Polyline | NodeKind::Polygon) {
         limits.max_descriptor_values.min(limits.max_points)
@@ -988,13 +1002,13 @@ fn geometry_data(
             let points = expect_u32_array_limited(value(0), limits.max_points)?;
             (points.len() >= 2)
                 .then_some(GeometryData::Polyline { points })
-                .ok_or("render.invalid-geometry")
+                .ok_or(RENDER_DIAGNOSTIC_INVALID_GEOMETRY)
         }
         NodeKind::Polygon if names == ["pointDescriptors"] => {
             let points = expect_u32_array_limited(value(0), limits.max_points)?;
             (points.len() >= 3)
                 .then_some(GeometryData::Polygon { points })
-                .ok_or("render.invalid-geometry")
+                .ok_or(RENDER_DIAGNOSTIC_INVALID_GEOMETRY)
         }
         NodeKind::Path if names == ["pathRef"] => Ok(GeometryData::Path {
             path_ref: expect_u32(value(0))?,
@@ -1026,14 +1040,14 @@ fn geometry_data(
         NodeKind::Text if names == ["glyphRunRefs", "originDescriptor"] => {
             let glyph_runs = expect_u32_array(value(0))?;
             if glyph_runs.is_empty() {
-                return Err("render.invalid-geometry");
+                return Err(RENDER_DIAGNOSTIC_INVALID_GEOMETRY);
             }
             Ok(GeometryData::Text {
                 glyph_runs,
                 origin: expect_u32(value(1))?,
             })
         }
-        _ => Err("render.invalid-geometry"),
+        _ => Err(RENDER_DIAGNOSTIC_INVALID_GEOMETRY),
     }
 }
 
@@ -1042,7 +1056,7 @@ fn named_object(
     strings: &[String],
 ) -> Result<Vec<(String, ParsedValue)>, &'static str> {
     let ParsedValue::Object(fields) = value else {
-        return Err("render.invalid-geometry");
+        return Err(RENDER_DIAGNOSTIC_INVALID_GEOMETRY);
     };
     fields
         .into_iter()
@@ -1060,23 +1074,23 @@ fn named_object(
 
 fn expect_u32(value: &ParsedValue) -> Result<u32, &'static str> {
     let ParsedValue::Int(value) = value else {
-        return Err("render.invalid-geometry");
+        return Err(RENDER_DIAGNOSTIC_INVALID_GEOMETRY);
     };
-    u32::try_from(*value).map_err(|_| "render.invalid-geometry")
+    u32::try_from(*value).map_err(|_| RENDER_DIAGNOSTIC_INVALID_GEOMETRY)
 }
 
 fn expect_resource(value: &ParsedValue) -> Result<u64, &'static str> {
     let ParsedValue::Resource(value) = value else {
-        return Err("render.invalid-geometry");
+        return Err(RENDER_DIAGNOSTIC_INVALID_GEOMETRY);
     };
     (*value != 0)
         .then_some(*value)
-        .ok_or("render.invalid-geometry")
+        .ok_or(RENDER_DIAGNOSTIC_INVALID_GEOMETRY)
 }
 
 fn expect_u32_array(value: &ParsedValue) -> Result<Vec<u32>, &'static str> {
     let ParsedValue::Array(2, values) = value else {
-        return Err("render.invalid-geometry");
+        return Err(RENDER_DIAGNOSTIC_INVALID_GEOMETRY);
     };
     values.iter().map(expect_u32).collect()
 }
@@ -1086,10 +1100,10 @@ fn expect_u32_array_limited(
     max_items: usize,
 ) -> Result<Vec<u32>, &'static str> {
     let ParsedValue::Array(2, values) = value else {
-        return Err("render.invalid-geometry");
+        return Err(RENDER_DIAGNOSTIC_INVALID_GEOMETRY);
     };
     if values.len() > max_items {
-        return Err("render.limit-exceeded");
+        return Err(RENDER_DIAGNOSTIC_LIMIT_EXCEEDED);
     }
     values.iter().map(expect_u32).collect()
 }
@@ -1097,29 +1111,30 @@ fn expect_u32_array_limited(
 fn expect_array4(value: &ParsedValue) -> Result<[u32; 4], &'static str> {
     expect_u32_array(value)?
         .try_into()
-        .map_err(|_| "render.invalid-geometry")
+        .map_err(|_| RENDER_DIAGNOSTIC_INVALID_GEOMETRY)
 }
 
 fn expect_enum(
     value: &ParsedValue,
     range: std::ops::RangeInclusive<u16>,
 ) -> Result<u16, &'static str> {
-    let value = u16::try_from(expect_u32(value)?).map_err(|_| "render.invalid-geometry")?;
+    let value =
+        u16::try_from(expect_u32(value)?).map_err(|_| RENDER_DIAGNOSTIC_INVALID_GEOMETRY)?;
     range
         .contains(&value)
         .then_some(value)
-        .ok_or("render.invalid-geometry")
+        .ok_or(RENDER_DIAGNOSTIC_INVALID_GEOMETRY)
 }
 
 fn parse_path(cursor: &mut Cursor<'_>, limits: &RenderLimits) -> Result<PathRecord, &'static str> {
-    let mut record = take_record(cursor, "render.invalid-record")?;
+    let mut record = take_record(cursor, RENDER_DIAGNOSTIC_INVALID_RECORD)?;
     let id = record.u64()?;
     if record.u16()? != 0 {
-        return Err("render.invalid-record");
+        return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
     }
     let fill_rule = record.u16()?;
     if !matches!(fill_rule, 1 | 2) {
-        return Err("render.invalid-geometry");
+        return Err(RENDER_DIAGNOSTIC_INVALID_GEOMETRY);
     }
     let count = limited_count(record.u32()?, limits.max_path_commands)?;
     if count == 0 {
@@ -1141,7 +1156,7 @@ fn parse_path(cursor: &mut Cursor<'_>, limits: &RenderLimits) -> Result<PathReco
                 return Err("render.invalid-geometry");
             }
             PathCommand::Close => closed = true,
-            _ if !open => return Err("render.invalid-geometry"),
+            _ if !open => return Err(RENDER_DIAGNOSTIC_INVALID_GEOMETRY),
             _ => {
                 closed = false;
                 has_drawing = true;
@@ -1158,10 +1173,10 @@ fn parse_path(cursor: &mut Cursor<'_>, limits: &RenderLimits) -> Result<PathReco
 }
 
 fn parse_path_command(cursor: &mut Cursor<'_>) -> Result<PathCommand, &'static str> {
-    let mut record = take_record(cursor, "render.invalid-record")?;
+    let mut record = take_record(cursor, RENDER_DIAGNOSTIC_INVALID_RECORD)?;
     let kind = record.u16()?;
     if record.u16()? != 0 {
-        return Err("render.invalid-record");
+        return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
     }
     let command = match kind {
         1 => PathCommand::MoveTo(record.u32()?),
@@ -1177,7 +1192,7 @@ fn parse_path_command(cursor: &mut Cursor<'_>) -> Result<PathCommand, &'static s
                 direction: record.u16()?,
             };
             if record.u16()? != 0 {
-                return Err("render.invalid-record");
+                return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
             }
             command
         }
@@ -1192,16 +1207,16 @@ fn parse_path_command(cursor: &mut Cursor<'_>) -> Result<PathCommand, &'static s
                 direction: record.u16()?,
             };
             if record.u16()? != 0 {
-                return Err("render.invalid-record");
+                return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
             }
             command
         }
         7 => PathCommand::Close,
-        _ => return Err("render.invalid-geometry"),
+        _ => return Err(RENDER_DIAGNOSTIC_INVALID_GEOMETRY),
     };
     if matches!(command, PathCommand::Arc { direction, .. } | PathCommand::EllipseArc { direction, .. } if !matches!(direction, 1 | 2))
     {
-        return Err("render.invalid-geometry");
+        return Err(RENDER_DIAGNOSTIC_INVALID_GEOMETRY);
     }
     record.finish()?;
     Ok(command)
@@ -1211,11 +1226,11 @@ fn parse_paint(
     cursor: &mut Cursor<'_>,
     limits: &RenderLimits,
 ) -> Result<PaintRecord, &'static str> {
-    let mut record = take_record(cursor, "render.invalid-record")?;
+    let mut record = take_record(cursor, RENDER_DIAGNOSTIC_INVALID_RECORD)?;
     let id = record.u64()?;
     let kind = record.u16()?;
     if record.u16()? != 0 {
-        return Err("render.invalid-record");
+        return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
     }
     let data = match kind {
         1 => PaintData::Solid {
@@ -1244,7 +1259,7 @@ fn parse_paint(
             let repeat = record.u16()?;
             let sampling = record.u16()?;
             if !(1..=4).contains(&repeat) || !(1..=2).contains(&sampling) {
-                return Err("render.invalid-paint");
+                return Err(RENDER_DIAGNOSTIC_INVALID_PAINT);
             }
             PaintData::ImagePattern {
                 resource_id,
@@ -1256,7 +1271,7 @@ fn parse_paint(
                 sampling,
             }
         }
-        _ => return Err("render.invalid-paint"),
+        _ => return Err(RENDER_DIAGNOSTIC_INVALID_PAINT),
     };
     record.finish()?;
     Ok(PaintRecord { id, data })
@@ -1265,10 +1280,10 @@ fn parse_paint(
 fn parse_spread(record: &mut Cursor<'_>) -> Result<u16, &'static str> {
     let spread = record.u16()?;
     if record.u16()? != 0 {
-        return Err("render.invalid-record");
+        return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
     }
     if !(1..=3).contains(&spread) {
-        return Err("render.invalid-paint");
+        return Err(RENDER_DIAGNOSTIC_INVALID_PAINT);
     }
     Ok(spread)
 }
@@ -1279,18 +1294,18 @@ fn parse_stops(
 ) -> Result<Vec<GradientStop>, &'static str> {
     let count = limited_count(record.u32()?, max_stops)?;
     if count < 2 {
-        return Err("render.invalid-paint");
+        return Err(RENDER_DIAGNOSTIC_INVALID_PAINT);
     }
     let mut stops = Vec::with_capacity(count);
     let mut prior = None;
     for _ in 0..count {
-        let offset = record.semantic_f64("render.invalid-paint")?;
+        let offset = record.semantic_f64(RENDER_DIAGNOSTIC_INVALID_PAINT)?;
         let color_descriptor = record.u32()?;
         if record.u32()? != 0 {
-            return Err("render.invalid-record");
+            return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
         }
         if !(0.0..=1.0).contains(&offset) || prior.is_some_and(|value| value > offset) {
-            return Err("render.invalid-paint");
+            return Err(RENDER_DIAGNOSTIC_INVALID_PAINT);
         }
         prior = Some(offset);
         stops.push(GradientStop {
@@ -1305,16 +1320,16 @@ fn parse_stroke(
     cursor: &mut Cursor<'_>,
     limits: &RenderLimits,
 ) -> Result<StrokeRecord, &'static str> {
-    let mut record = take_record(cursor, "render.invalid-record")?;
+    let mut record = take_record(cursor, RENDER_DIAGNOSTIC_INVALID_RECORD)?;
     let id = record.u64()?;
     if record.u16()? != 0 || record.u16()? != 0 {
-        return Err("render.invalid-record");
+        return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
     }
     let paint_ref = record.u32()?;
     let width_descriptor = record.u32()?;
     let cap = record.u16()?;
     let join = record.u16()?;
-    let miter_limit = record.semantic_f64("render.invalid-stroke")?;
+    let miter_limit = record.semantic_f64(RENDER_DIAGNOSTIC_INVALID_STROKE)?;
     let dash_offset_descriptor = record.u32()?;
     let count = limited_count(record.u32()?, limits.max_stroke_dashes)?;
     if !(1..=3).contains(&cap)
@@ -1322,18 +1337,18 @@ fn parse_stroke(
         || miter_limit < 1.0
         || (!count.is_multiple_of(2) && count != 0)
     {
-        return Err("render.invalid-stroke");
+        return Err(RENDER_DIAGNOSTIC_INVALID_STROKE);
     }
     let mut dash = Vec::with_capacity(count);
     for _ in 0..count {
-        let value = record.semantic_f64("render.invalid-stroke")?;
+        let value = record.semantic_f64(RENDER_DIAGNOSTIC_INVALID_STROKE)?;
         if value < 0.0 {
-            return Err("render.invalid-stroke");
+            return Err(RENDER_DIAGNOSTIC_INVALID_STROKE);
         }
         dash.push(value);
     }
     if !dash.is_empty() && dash.iter().sum::<f64>() <= 0.0 {
-        return Err("render.invalid-stroke");
+        return Err(RENDER_DIAGNOSTIC_INVALID_STROKE);
     }
     record.finish()?;
     Ok(StrokeRecord {
@@ -1349,18 +1364,18 @@ fn parse_stroke(
 }
 
 fn parse_clip(cursor: &mut Cursor<'_>) -> Result<ClipRecord, &'static str> {
-    let mut record = take_record(cursor, "render.invalid-record")?;
+    let mut record = take_record(cursor, RENDER_DIAGNOSTIC_INVALID_RECORD)?;
     if record.bytes.len() + 8 != 24 {
-        return Err("render.invalid-record");
+        return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
     }
     let id = record.u64()?;
     if record.u16()? != 0 {
-        return Err("render.invalid-record");
+        return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
     }
     let fill_rule = record.u16()?;
     let geometry_ref = record.u32()?;
     if !matches!(fill_rule, 1 | 2) {
-        return Err("render.invalid-clip");
+        return Err(RENDER_DIAGNOSTIC_INVALID_CLIP);
     }
     record.finish()?;
     Ok(ClipRecord {
@@ -1374,24 +1389,24 @@ fn parse_glyph_run(
     cursor: &mut Cursor<'_>,
     limits: &RenderLimits,
 ) -> Result<GlyphRunRecord, &'static str> {
-    let mut record = take_record(cursor, "render.invalid-record")?;
+    let mut record = take_record(cursor, RENDER_DIAGNOSTIC_INVALID_RECORD)?;
     let id = record.u64()?;
     let font_resource_id = record.u64()?;
     let face_index = record.u32()?;
     if record.u16()? != 0 || record.u16()? != 1 {
-        return Err("render.invalid-record");
+        return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
     }
     let size_descriptor = record.u32()?;
     let run_offset = [record.f64()?, record.f64()?];
     let count = limited_count(record.u32()?, limits.max_glyphs_per_run)?;
     if record.u32()? != 0 {
-        return Err("render.invalid-record");
+        return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
     }
     let mut glyphs = Vec::with_capacity(count);
     for _ in 0..count {
         let glyph_id = record.u32()?;
         if record.u32()? != 0 {
-            return Err("render.invalid-record");
+            return Err(RENDER_DIAGNOSTIC_INVALID_RECORD);
         }
         glyphs.push(GlyphPlacement {
             glyph_id,
@@ -1443,7 +1458,7 @@ fn validate_ids_and_table_order(chart: &DecodedRenderChart) -> Result<(), &'stat
         .chain(chart.glyph_runs.iter().map(|record| record.id))
     {
         if id == 0 || !ids.insert(id) {
-            return Err("render.invalid-graph");
+            return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
         }
     }
     if chart.layers.windows(2).any(|pair| {
@@ -1463,7 +1478,7 @@ fn validate_ids_and_table_order(chart: &DecodedRenderChart) -> Result<(), &'stat
         .iter()
         .any(|layer| !(1..=6).contains(&layer.pass))
     {
-        return Err("render.invalid-graph");
+        return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
     }
     for ids in [
         chart
@@ -1478,7 +1493,7 @@ fn validate_ids_and_table_order(chart: &DecodedRenderChart) -> Result<(), &'stat
         chart.glyph_runs.iter().map(|record| record.id).collect(),
     ] {
         if ids.windows(2).any(|pair| pair[0] >= pair[1]) {
-            return Err("render.invalid-graph");
+            return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
         }
     }
     Ok(())
@@ -1494,26 +1509,26 @@ fn validate_node_graph(
         .try_fold(0usize, |total, layer| {
             total.checked_add(layer.root_count as usize)
         })
-        .ok_or("render.limit-exceeded")?;
+        .ok_or(RENDER_DIAGNOSTIC_LIMIT_EXCEEDED)?;
     if root_total > chart.nodes.len() {
-        return Err("render.invalid-graph");
+        return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
     }
     let mut expected_first = 0usize;
     for (layer_index, layer) in chart.layers.iter().enumerate() {
         if layer.root_count == 0 {
             if layer.first_root != NULL_INDEX {
-                return Err("render.invalid-graph");
+                return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
             }
             continue;
         }
         if layer.first_root as usize != expected_first {
-            return Err("render.invalid-graph");
+            return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
         }
         let end = expected_first
             .checked_add(layer.root_count as usize)
-            .ok_or("render.limit-exceeded")?;
+            .ok_or(RENDER_DIAGNOSTIC_LIMIT_EXCEEDED)?;
         if end > root_total {
-            return Err("render.invalid-graph");
+            return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
         }
         let roots = &chart.nodes[expected_first..end];
         if roots
@@ -1523,7 +1538,7 @@ fn validate_node_graph(
                 .windows(2)
                 .any(|pair| sibling_key(&pair[0]) >= sibling_key(&pair[1]))
         {
-            return Err("render.invalid-graph");
+            return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
         }
         expected_first = end;
     }
@@ -1532,52 +1547,52 @@ fn validate_node_graph(
             .iter()
             .any(|node| node.parent.is_some())
     {
-        return Err("render.invalid-graph");
+        return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
     }
     for (index, node) in chart.nodes.iter().enumerate() {
         if node.id == 0
             || node.layer_index as usize >= chart.layers.len()
             || node.flags & !0b1111 != 0
         {
-            return Err("render.invalid-graph");
+            return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
         }
         if !(1..=5).contains(&node.composite) {
-            return Err("render.invalid-composite");
+            return Err(RENDER_DIAGNOSTIC_INVALID_COMPOSITE);
         }
         if node.flags & 1 != 0 && node.active_start.to_bits() != 0 {
-            return Err("render.invalid-graph");
+            return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
         }
         if node.flags & 2 != 0 && node.active_end.to_bits() != 0 {
-            return Err("render.invalid-graph");
+            return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
         }
         if node.flags & 1 == 0 && node.flags & 2 == 0 && node.active_start > node.active_end {
-            return Err("render.invalid-graph");
+            return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
         }
         validate_attachment(node, &chart.core)?;
         match node.parent {
-            None if index >= root_total => return Err("render.invalid-graph"),
+            None if index >= root_total => return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH),
             Some(parent) => {
                 let parent_index = parent as usize;
                 if parent_index >= index {
-                    return Err("render.invalid-graph");
+                    return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
                 }
                 let parent_node = &chart.nodes[parent_index];
                 if parent_node.layer_index != node.layer_index
                     || parent_node.attachment != node.attachment
                 {
-                    return Err("render.invalid-graph");
+                    return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
                 }
             }
             None => {}
         }
         if node.isolated() && !matches!(node.kind, NodeKind::Group | NodeKind::ClipGroup) {
-            return Err("render.invalid-composite");
+            return Err(RENDER_DIAGNOSTIC_INVALID_COMPOSITE);
         }
         if matches!(node.kind, NodeKind::Group | NodeKind::ClipGroup)
             && !node.isolated()
             && node.composite != 1
         {
-            return Err("render.invalid-composite");
+            return Err(RENDER_DIAGNOSTIC_INVALID_COMPOSITE);
         }
     }
     validate_node_depths(chart, limits)?;
@@ -1596,7 +1611,7 @@ fn validate_node_graph(
             .enumerate()
             .any(|(index, value)| *value != index as u32)
     }) {
-        return Err("render.invalid-graph");
+        return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
     }
 
     let mut previous: Option<OrderedNodeKey> = None;
@@ -1604,7 +1619,7 @@ fn validate_node_graph(
         let node = &chart.nodes[index];
         let key = (node.layer_index, ancestry_key(chart, index)?);
         if previous.as_ref().is_some_and(|prior| prior >= &key) {
-            return Err("render.invalid-graph");
+            return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
         }
         previous = Some(key);
     }
@@ -1618,7 +1633,9 @@ fn validate_node_depths(
     let mut depths = Vec::with_capacity(chart.nodes.len());
     for node in &chart.nodes {
         let (mut group_depth, mut clip_depth) = match node.parent {
-            Some(parent) => *depths.get(parent as usize).ok_or("render.invalid-graph")?,
+            Some(parent) => *depths
+                .get(parent as usize)
+                .ok_or(RENDER_DIAGNOSTIC_INVALID_GRAPH)?,
             None => (0usize, 0usize),
         };
         match node.kind {
@@ -1627,7 +1644,7 @@ fn validate_node_depths(
             _ => {}
         }
         if group_depth > limits.max_group_depth || clip_depth > limits.max_clip_depth {
-            return Err("render.limit-exceeded");
+            return Err(RENDER_DIAGNOSTIC_LIMIT_EXCEEDED);
         }
         depths.push((group_depth, clip_depth));
     }
@@ -1646,14 +1663,17 @@ fn ancestry_key(
 ) -> Result<Vec<(i32, u32, u64)>, &'static str> {
     let mut reverse = Vec::new();
     loop {
-        let node = chart.nodes.get(index).ok_or("render.invalid-graph")?;
+        let node = chart
+            .nodes
+            .get(index)
+            .ok_or(RENDER_DIAGNOSTIC_INVALID_GRAPH)?;
         reverse.push(sibling_key(node));
         match node.parent {
             Some(parent) => index = parent as usize,
             None => break,
         }
         if reverse.len() > chart.nodes.len() {
-            return Err("render.invalid-graph");
+            return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
         }
     }
     reverse.reverse();
@@ -1662,7 +1682,7 @@ fn ancestry_key(
 
 fn validate_attachment(node: &NodeRecord, core: &DecodedChart) -> Result<(), &'static str> {
     if node.flags & (1 << 3) != 0 && node.attachment.kind != 4 {
-        return Err("render.invalid-reference");
+        return Err(RENDER_DIAGNOSTIC_INVALID_REFERENCE);
     }
     match node.attachment.kind {
         1 | 2 if node.attachment.id == 0 => Ok(()),
@@ -1676,7 +1696,7 @@ fn validate_attachment(node: &NodeRecord, core: &DecodedChart) -> Result<(), &'s
         {
             Ok(())
         }
-        _ => Err("render.invalid-reference"),
+        _ => Err(RENDER_DIAGNOSTIC_INVALID_REFERENCE),
     }
 }
 
@@ -1696,10 +1716,12 @@ fn validate_ownership(chart: &DecodedRenderChart) -> Result<Ownership, &'static 
     let mut clip_owner = vec![None; chart.clips.len()];
     for (node_index, node) in chart.nodes.iter().enumerate() {
         if node.kind.is_drawable() {
-            let geometry = node.geometry_ref.ok_or("render.invalid-reference")?;
+            let geometry = node
+                .geometry_ref
+                .ok_or(RENDER_DIAGNOSTIC_INVALID_REFERENCE)?;
             claim(&mut geometry_owner, geometry, node_index)?;
         } else if node.geometry_ref.is_some() {
-            return Err("render.invalid-reference");
+            return Err(RENDER_DIAGNOSTIC_INVALID_REFERENCE);
         }
         if let Some(paint) = node.fill_paint {
             claim(&mut paint_owner, paint, node_index)?;
@@ -1716,40 +1738,40 @@ fn validate_ownership(chart: &DecodedRenderChart) -> Result<Ownership, &'static 
                     || node.stroke_ref.is_some()
                     || node.clip_ref.is_some() =>
             {
-                return Err("render.invalid-reference");
+                return Err(RENDER_DIAGNOSTIC_INVALID_REFERENCE);
             }
             NodeKind::ClipGroup
                 if node.fill_paint.is_some()
                     || node.stroke_ref.is_some()
                     || node.clip_ref.is_none() =>
             {
-                return Err("render.invalid-reference");
+                return Err(RENDER_DIAGNOSTIC_INVALID_REFERENCE);
             }
             NodeKind::Image if node.fill_paint.is_some() || node.stroke_ref.is_some() => {
-                return Err("render.invalid-reference");
+                return Err(RENDER_DIAGNOSTIC_INVALID_REFERENCE);
             }
             NodeKind::Line if node.fill_paint.is_some() || node.stroke_ref.is_none() => {
-                return Err("render.invalid-reference");
+                return Err(RENDER_DIAGNOSTIC_INVALID_REFERENCE);
             }
             kind if kind.is_drawable()
                 && !matches!(kind, NodeKind::Image | NodeKind::Line)
                 && node.fill_paint.is_none()
                 && node.stroke_ref.is_none() =>
             {
-                return Err("render.invalid-reference");
+                return Err(RENDER_DIAGNOSTIC_INVALID_REFERENCE);
             }
             _ => {}
         }
     }
     let mut stroke_node = Vec::with_capacity(chart.strokes.len());
     for (index, stroke) in chart.strokes.iter().enumerate() {
-        let node = stroke_owner[index].ok_or("render.invalid-graph")?;
+        let node = stroke_owner[index].ok_or(RENDER_DIAGNOSTIC_INVALID_GRAPH)?;
         claim(&mut paint_owner, stroke.paint_ref, node)?;
         stroke_node.push(node);
     }
     let mut clip_node = Vec::with_capacity(chart.clips.len());
     for (index, clip) in chart.clips.iter().enumerate() {
-        let node = clip_owner[index].ok_or("render.invalid-graph")?;
+        let node = clip_owner[index].ok_or(RENDER_DIAGNOSTIC_INVALID_GRAPH)?;
         claim(&mut geometry_owner, clip.geometry_ref, node)?;
         clip_node.push(node);
     }
@@ -1758,7 +1780,7 @@ fn validate_ownership(chart: &DecodedRenderChart) -> Result<Ownership, &'static 
         || stroke_owner.iter().any(Option::is_none)
         || clip_owner.iter().any(Option::is_none)
     {
-        return Err("render.invalid-graph");
+        return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
     }
     let geometry_node: Vec<_> = geometry_owner.into_iter().map(Option::unwrap).collect();
     let paint_node: Vec<_> = paint_owner.into_iter().map(Option::unwrap).collect();
@@ -1782,10 +1804,10 @@ fn validate_ownership(chart: &DecodedRenderChart) -> Result<Ownership, &'static 
                     | NodeKind::Path
             )
         {
-            return Err("render.invalid-clip");
+            return Err(RENDER_DIAGNOSTIC_INVALID_CLIP);
         }
         if !is_clip_geometry && chart.nodes[owner_node].kind != geometry.kind {
-            return Err("render.invalid-reference");
+            return Err(RENDER_DIAGNOSTIC_INVALID_REFERENCE);
         }
         match &geometry.data {
             GeometryData::Path { path_ref } => claim(&mut path_owner, *path_ref, owner_node)?,
@@ -1798,25 +1820,25 @@ fn validate_ownership(chart: &DecodedRenderChart) -> Result<Ownership, &'static 
         }
     }
     if path_owner.iter().any(Option::is_none) || glyph_owner.iter().any(Option::is_none) {
-        return Err("render.invalid-graph");
+        return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
     }
     for (clip_index, clip) in chart.clips.iter().enumerate() {
         let geometry = chart
             .geometries
             .get(clip.geometry_ref as usize)
-            .ok_or("render.invalid-reference")?;
+            .ok_or(RENDER_DIAGNOSTIC_INVALID_REFERENCE)?;
         if let GeometryData::Path { path_ref } = geometry.data
             && chart
                 .paths
                 .get(path_ref as usize)
-                .ok_or("render.invalid-reference")?
+                .ok_or(RENDER_DIAGNOSTIC_INVALID_REFERENCE)?
                 .fill_rule
                 != clip.fill_rule
         {
-            return Err("render.invalid-clip");
+            return Err(RENDER_DIAGNOSTIC_INVALID_CLIP);
         }
         if chart.nodes[clip_node[clip_index]].clip_ref != Some(clip_index as u32) {
-            return Err("render.invalid-graph");
+            return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
         }
     }
     Ok(Ownership {
@@ -1832,9 +1854,9 @@ fn validate_ownership(chart: &DecodedRenderChart) -> Result<Ownership, &'static 
 fn claim(owners: &mut [Option<usize>], reference: u32, owner: usize) -> Result<(), &'static str> {
     let slot = owners
         .get_mut(reference as usize)
-        .ok_or("render.invalid-reference")?;
+        .ok_or(RENDER_DIAGNOSTIC_INVALID_REFERENCE)?;
     if slot.replace(owner).is_some() {
-        return Err("render.invalid-graph");
+        return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
     }
     Ok(())
 }
@@ -1885,7 +1907,10 @@ fn validate_descriptor_roots(
     }
     // Reading the field proves clip ownership contributes the same descriptor environment.
     for node in &owners.clip_node {
-        let _ = chart.nodes.get(*node).ok_or("render.invalid-graph")?;
+        let _ = chart
+            .nodes
+            .get(*node)
+            .ok_or(RENDER_DIAGNOSTIC_INVALID_GRAPH)?;
     }
     Ok(())
 }
@@ -2079,14 +2104,14 @@ fn check_descriptor(
         &chart.core.descriptors,
         &chart.core.expressions,
     )
-    .map_err(|_| "render.invalid-descriptor")?;
+    .map_err(|_| RENDER_DIAGNOSTIC_INVALID_DESCRIPTOR)?;
     let descriptor = chart
         .core
         .descriptors
         .get(reference as usize)
-        .ok_or("render.invalid-descriptor")?;
+        .ok_or(RENDER_DIAGNOSTIC_INVALID_DESCRIPTOR)?;
     if descriptor.property_type != expected || !descriptor.domain.covers(owner.active_domain()) {
-        return Err("render.invalid-descriptor");
+        return Err(RENDER_DIAGNOSTIC_INVALID_DESCRIPTOR);
     }
     let dependencies = descriptor_environment(
         reference,
@@ -2095,10 +2120,10 @@ fn check_descriptor(
         0,
     )?;
     if dependencies.0 && owner.attachment.kind != 4 {
-        return Err("render.invalid-descriptor");
+        return Err(RENDER_DIAGNOSTIC_INVALID_DESCRIPTOR);
     }
     if dependencies.1 && !matches!(owner.attachment.kind, 3 | 4) {
-        return Err("render.invalid-descriptor");
+        return Err(RENDER_DIAGNOSTIC_INVALID_DESCRIPTOR);
     }
     Ok(())
 }
@@ -2110,11 +2135,11 @@ fn descriptor_environment(
     depth: usize,
 ) -> Result<(bool, bool), &'static str> {
     if depth > descriptors.len() + expressions.len() {
-        return Err("render.invalid-descriptor");
+        return Err(RENDER_DIAGNOSTIC_INVALID_DESCRIPTOR);
     }
     let descriptor = descriptors
         .get(index as usize)
-        .ok_or("render.invalid-descriptor")?;
+        .ok_or(RENDER_DIAGNOSTIC_INVALID_DESCRIPTOR)?;
     match &descriptor.kind {
         DescriptorKind::Constant(_) | DescriptorKind::SegmentTrack(_) => Ok((false, false)),
         DescriptorKind::Piecewise(pieces) => {
@@ -2141,11 +2166,11 @@ fn expression_environment(
     depth: usize,
 ) -> Result<(bool, bool), &'static str> {
     if depth > expressions.len() {
-        return Err("render.invalid-descriptor");
+        return Err(RENDER_DIAGNOSTIC_INVALID_DESCRIPTOR);
     }
     let node = expressions
         .get(index as usize)
-        .ok_or("render.invalid-descriptor")?;
+        .ok_or(RENDER_DIAGNOSTIC_INVALID_DESCRIPTOR)?;
     let mut result = (node.opcode == 5, node.opcode == 4);
     for operand in &node.operands[..node.arity as usize] {
         let dependency = expression_environment(*operand, expressions, depth + 1)?;
@@ -2176,9 +2201,9 @@ fn validate_and_decode_resources(
             .resources
             .iter()
             .find(|resource| resource.id == id)
-            .ok_or("render.resource-not-found")?;
+            .ok_or(RENDER_DIAGNOSTIC_RESOURCE_NOT_FOUND)?;
         if !matches!(resource.kind, 2 | 4) {
-            return Err("render.resource-type-mismatch");
+            return Err(RENDER_DIAGNOSTIC_RESOURCE_TYPE_MISMATCH);
         }
         let metadata = image_metadata(resource, &chart.core.strings)?;
         let decoded = decode_image_with_limits(
@@ -2201,12 +2226,12 @@ fn validate_and_decode_resources(
             .resources
             .iter()
             .find(|resource| resource.id == id)
-            .ok_or("render.resource-not-found")?;
+            .ok_or(RENDER_DIAGNOSTIC_RESOURCE_NOT_FOUND)?;
         if resource.kind != 3 {
-            return Err("render.resource-type-mismatch");
+            return Err(RENDER_DIAGNOSTIC_RESOURCE_TYPE_MISMATCH);
         }
         if resource.media_type != "font/ttf" {
-            return Err("render.resource-capability-missing");
+            return Err(RENDER_DIAGNOSTIC_RESOURCE_CAPABILITY_MISSING);
         }
         validate_font_metadata(resource, &chart.core.strings)?;
         let font = decode_font_with_limits(&resource.data, limits).map_err(asset_error)?;
@@ -2216,14 +2241,14 @@ fn validate_and_decode_resources(
         let font = chart
             .decoded_fonts
             .get(&run.font_resource_id)
-            .ok_or("render.resource-not-found")?;
+            .ok_or(RENDER_DIAGNOSTIC_RESOURCE_NOT_FOUND)?;
         if run.face_index != 0
             || run
                 .glyphs
                 .iter()
                 .any(|glyph| glyph.glyph_id == 0 || glyph.glyph_id as usize >= font.glyphs.len())
         {
-            return Err("render.invalid-geometry");
+            return Err(RENDER_DIAGNOSTIC_INVALID_GEOMETRY);
         }
     }
     Ok(())
@@ -2239,7 +2264,7 @@ fn image_metadata(
         || fields[1].0 != "alpha"
         || fields[2].0 != "sampling"
     {
-        return Err("render.resource-decode-failed");
+        return Err(RENDER_DIAGNOSTIC_RESOURCE_DECODE_FAILED);
     }
     let values = fields
         .into_iter()
@@ -2249,10 +2274,10 @@ fn image_metadata(
         || !matches!(values[1].as_str(), "straight" | "premultiplied")
         || !matches!(values[2].as_str(), "nearest" | "linear")
     {
-        return Err("render.resource-decode-failed");
+        return Err(RENDER_DIAGNOSTIC_RESOURCE_DECODE_FAILED);
     }
     if resource.media_type == "image/webp" && (values[0] != "srgb" || values[1] != "straight") {
-        return Err("render.resource-decode-failed");
+        return Err(RENDER_DIAGNOSTIC_RESOURCE_DECODE_FAILED);
     }
     Ok((values[0].clone(), values[1].clone(), values[2].clone()))
 }
@@ -2267,13 +2292,13 @@ fn validate_font_metadata(
         || fields[1].0 != "shapingProfile"
         || fields[2].0 != "faceCount"
     {
-        return Err("render.resource-decode-failed");
+        return Err(RENDER_DIAGNOSTIC_RESOURCE_DECODE_FAILED);
     }
     if expect_metadata_string(fields[0].1, strings)? != "truetype-glyf-1"
         || expect_metadata_string(fields[1].1, strings)? != "simple-ltr-1"
         || !matches!(fields[2].1, ParsedValue::Int(1))
     {
-        return Err("render.resource-decode-failed");
+        return Err(RENDER_DIAGNOSTIC_RESOURCE_DECODE_FAILED);
     }
     Ok(())
 }
@@ -2283,7 +2308,7 @@ fn metadata_fields<'a>(
     strings: &[String],
 ) -> Result<Vec<(String, &'a ParsedValue)>, &'static str> {
     let ParsedValue::Object(fields) = value else {
-        return Err("render.resource-decode-failed");
+        return Err(RENDER_DIAGNOSTIC_RESOURCE_DECODE_FAILED);
     };
     fields
         .iter()
@@ -2291,7 +2316,7 @@ fn metadata_fields<'a>(
             Ok((
                 strings
                     .get(*key as usize)
-                    .ok_or("render.resource-decode-failed")?
+                    .ok_or(RENDER_DIAGNOSTIC_RESOURCE_DECODE_FAILED)?
                     .clone(),
                 value,
             ))
@@ -2301,19 +2326,19 @@ fn metadata_fields<'a>(
 
 fn expect_metadata_string(value: &ParsedValue, strings: &[String]) -> Result<String, &'static str> {
     let ParsedValue::String(reference) = value else {
-        return Err("render.resource-decode-failed");
+        return Err(RENDER_DIAGNOSTIC_RESOURCE_DECODE_FAILED);
     };
     strings
         .get(*reference as usize)
         .cloned()
-        .ok_or("render.resource-decode-failed")
+        .ok_or(RENDER_DIAGNOSTIC_RESOURCE_DECODE_FAILED)
 }
 
 fn asset_error(error: AssetError) -> &'static str {
     match error {
-        AssetError::CapabilityMissing => "render.resource-capability-missing",
-        AssetError::DecodeFailed => "render.resource-decode-failed",
-        AssetError::LimitExceeded => "render.limit-exceeded",
+        AssetError::CapabilityMissing => RENDER_DIAGNOSTIC_RESOURCE_CAPABILITY_MISSING,
+        AssetError::DecodeFailed => RENDER_DIAGNOSTIC_RESOURCE_DECODE_FAILED,
+        AssetError::LimitExceeded => RENDER_DIAGNOSTIC_LIMIT_EXCEEDED,
     }
 }
 
@@ -2321,7 +2346,7 @@ fn limited_count(value: u32, maximum: usize) -> Result<usize, &'static str> {
     let value = value as usize;
     (value <= maximum)
         .then_some(value)
-        .ok_or("render.limit-exceeded")
+        .ok_or(RENDER_DIAGNOSTIC_LIMIT_EXCEEDED)
 }
 
 fn u32_at(bytes: &[u8], offset: usize) -> Result<u32, &'static str> {

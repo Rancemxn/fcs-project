@@ -46,6 +46,22 @@ expected = "expected/compile-time-generator.json"
 clauses = ["6.1", "6.3", "6.6", "6.7", "6.8"]
 
 [[fixture]]
+id = "source.valid.compile-time-unselected-range"
+path = "source/valid/compile-time-unselected-range.fcs"
+stage = "elaborate"
+expect = "success"
+expected = "expected/compile-time-unselected-range.json"
+clauses = ["6.5", "6.6", "6.8"]
+
+[[fixture]]
+id = "source.valid.line-id-expressions"
+path = "source/valid/line-id-expressions.fcs"
+stage = "elaborate"
+expect = "success"
+expected = "expected/line-id-expressions.json"
+clauses = ["2.9", "5.4", "6.1", "6.3", "6.4", "6.5", "6.6", "6.7", "11.2"]
+
+[[fixture]]
 id = "source.valid.track-boundaries"
 path = "source/valid/track-boundaries.fcs"
 stage = "canonical"
@@ -147,6 +163,13 @@ stage = "elaborate"
 expect = "success"
 expected = "expected/int-range-descending.json"
 clauses = ["6.6", "6.7"]
+
+[[fixture]]
+id = "source.valid.zero-base-positive-power"
+path = "source/valid/zero-base-positive-power.fcs"
+stage = "elaborate"
+expect = "success"
+clauses = ["4.2", "4.3"]
 
 [[fixture]]
 id = "source.valid.parent-transform"
@@ -317,6 +340,38 @@ diagnostic = "compile-time.zero-step"
 clauses = ["6.6"]
 
 [[fixture]]
+id = "source.invalid.zero-base-negative-power-operator"
+path = "source/invalid/zero-base-negative-power-operator.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "numeric.domain"
+clauses = ["4.2", "4.3", "16"]
+
+[[fixture]]
+id = "source.invalid.zero-base-negative-power-signed-operator"
+path = "source/invalid/zero-base-negative-power-signed-operator.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "numeric.domain"
+clauses = ["4.2", "4.3", "16"]
+
+[[fixture]]
+id = "source.invalid.zero-base-negative-power-builtin"
+path = "source/invalid/zero-base-negative-power-builtin.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "numeric.domain"
+clauses = ["4.2", "4.3", "16"]
+
+[[fixture]]
+id = "source.invalid.zero-base-negative-power-signed-builtin"
+path = "source/invalid/zero-base-negative-power-signed-builtin.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "numeric.domain"
+clauses = ["4.2", "4.3", "16"]
+
+[[fixture]]
 id = "source.invalid.shadowing"
 path = "source/invalid/shadowing.fcs"
 stage = "elaborate"
@@ -331,6 +386,14 @@ stage = "elaborate"
 expect = "error"
 diagnostic = "schema.missing-required-field"
 clauses = ["6.3", "12.2"]
+
+[[fixture]]
+id = "source.invalid.track-unselected-value"
+path = "source/invalid/track-unselected-value.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "type.mismatch"
+clauses = ["6.5", "9.1"]
 
 [[fixture]]
 id = "source.invalid.hold-end"
@@ -433,6 +496,22 @@ diagnostic = "compile-time.budget-exceeded"
 limits = { maxGeneratorIterations = 2 }
 trace_contains = ["collection=notes", "index=2", "emit=Note"]
 clauses = ["6.8"]
+
+[[fixture]]
+id = "source.invalid.line-id-expression-duplicate"
+path = "source/invalid/line-id-expression-duplicate.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "name.duplicate"
+clauses = ["5.4", "6.1", "6.3", "11.2"]
+
+[[fixture]]
+id = "source.invalid.line-id-reference-bootstrap"
+path = "source/invalid/line-id-reference-bootstrap.fcs"
+stage = "elaborate"
+expect = "error"
+diagnostic = "name.unknown"
+clauses = ["2.9", "6.1", "6.3", "6.4", "11.2"]
 
 [[fixture]]
 id = "source.invalid.custom-duplicate-key"
