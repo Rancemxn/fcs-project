@@ -3453,11 +3453,6 @@ fn geometry_evaluation(
                 }),
             )
         }
-        _ => (
-            [0.0, 0.0, chart.viewport_width, chart.viewport_height],
-            None,
-            None,
-        ),
     };
     Ok(GeometryEvaluation {
         world_bounds: transformed_bounds(world_matrix, local_bounds)?,
