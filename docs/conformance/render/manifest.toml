@@ -12,7 +12,7 @@ semantic_expected = "solid-rect-4x4.semantic.json"
 raster_expected = "solid-rect-4x4.rgba8.hex"
 width = 4
 height = 4
-color_space = "srgb"
+color_space = "linear-srgb"
 pixel_format = "rgba8"
 clauses = ["2", "3", "5", "6", "8", "9", "15"]
 
