@@ -101,7 +101,7 @@ document-level recovery depends on is preserved verbatim, and
 A document whose **only** imbalance is an unclosed brace still reaches the per-token retry loop.
 A `Weekly fuzz` dispatch on `b518eab`, run 32552513637, succeeded on all ten targets, so 30
 minutes of coverage-guided search per parser target did not reach that class. That is negative
-evidence, not a bound. Issue #520 was closed on it rather than left open as a hypothesis: if a
+evidence, not a bound. Issue #520 remains open while this brace-only residual is unbounded: if a
 future weekly run goes red, triage whether the input is brace-only, and if it is, choose between
 resynchronizing recovery on top-level boundaries without disturbing `misplaced_item_parser`,
 `unknown_item_parser`, or `trailing_item_parser`, and publishing a parse-work limit, which would
