@@ -355,7 +355,7 @@ fn path_stroke_preserves_explicit_close_and_shared_dash_rules() {
 
     stroke.dash = vec![1.0, 1.0];
     assert!(stroke_contains(&open, [-0.5, -1.0], &stroke).unwrap());
-    assert!(!stroke_contains(&open, [0.5, -1.0], &stroke).unwrap());
+    assert!(!stroke_contains(&open, [0.25, -1.0], &stroke).unwrap());
 }
 
 #[test]
