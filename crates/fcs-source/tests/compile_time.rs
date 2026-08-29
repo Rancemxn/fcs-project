@@ -2308,14 +2308,14 @@ definitions {
 }
 
 #[test]
-fn direct_metadata_evaluation_rejects_function_cycles_before_recursion() {
+fn direct_metadata_evaluation_preflights_unused_function_cycles() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }
 definitions {
   fn first() -> string { return second(); }
   fn second() -> string { return first(); }
 }
-meta { title: first(); }"#;
+meta { title: "literal"; }"#;
     let document = parse_document(source).into_result().unwrap();
     let diagnostics = document
         .canonical_metadata()
