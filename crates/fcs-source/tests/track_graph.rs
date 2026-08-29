@@ -83,6 +83,7 @@ fn track_conditionals_check_all_inactive_direct_expressions_without_evaluating_t
             "[0px, 1s): 0.0 -> 1.0 using \"linear\";",
             "type.invalid-operation",
         ),
+        ("[0beat, 1s): 0.0 -> 1.0 using \"linear\";", "type.mismatch"),
         ("[0s, 1s): 0px -> 1.0 using \"linear\";", "type.mismatch"),
         ("[0s, 1s): 0.0 -> 1.0 using 1.0;", "type.mismatch"),
     ] {

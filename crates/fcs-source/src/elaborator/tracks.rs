@@ -62,8 +62,13 @@ fn validate_track_items(
     for item in items {
         match item {
             TrackSegmentItem::DirectSegment(segment) => {
-                validate_track_time(&segment.interval.start, scope, functions, schema)?;
-                validate_track_time(&segment.interval.end, scope, functions, schema)?;
+                validate_track_interval(
+                    &segment.interval.start,
+                    &segment.interval.end,
+                    scope,
+                    functions,
+                    schema,
+                )?;
                 validate_track_value(
                     &segment.start_value,
                     &track.value_type,
@@ -102,15 +107,27 @@ fn validate_track_items(
     Ok(())
 }
 
+fn validate_track_interval(
+    start: &SourceExpression,
+    end: &SourceExpression,
+    scope: &Scope,
+    functions: &BTreeMap<String, &FunctionDeclaration>,
+    schema: &ConstructionSchema,
+) -> Result<(), Diagnostic> {
+    let start_type = validate_track_time(start, scope, functions, schema)?;
+    let end_type = validate_track_time(end, scope, functions, schema)?;
+    require_static_type(&start_type, &end_type, end.span())
+}
+
 fn validate_track_time(
     expression: &SourceExpression,
     scope: &Scope,
     functions: &BTreeMap<String, &FunctionDeclaration>,
     schema: &ConstructionSchema,
-) -> Result<(), Diagnostic> {
+) -> Result<Type, Diagnostic> {
     let actual = infer_expression_with_expected(expression, scope, functions, schema, None)?;
     if matches!(actual, Type::Time | Type::Beat) {
-        Ok(())
+        Ok(actual)
     } else {
         Err(Diagnostic::InvalidOperation {
             message: "Track time must be beat or time",
@@ -306,8 +323,7 @@ fn validate_track_emit(
                 &["start", "end", "startValue", "endValue", "interpolation"],
                 entity,
             )?;
-            validate_track_time(start, scope, functions, schema)?;
-            validate_track_time(end, scope, functions, schema)?;
+            validate_track_interval(start, end, scope, functions, schema)?;
             validate_track_value(start_value, &track.value_type, scope, functions, schema)?;
             validate_track_value(end_value, &track.value_type, scope, functions, schema)?;
             validate_schema_interpolation(&interpolation.value, scope, functions, schema)
