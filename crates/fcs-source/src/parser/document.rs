@@ -291,9 +291,9 @@ fn document_parser<'tokens, I>()
 where
     I: chumsky::input::ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
 {
-    // Recovery skips a complete balanced group whenever possible, then retries the owning
-    // declaration parser at the next token boundary. The one-token fallback guarantees progress
-    // for truncated groups without introducing a second source scanner.
+    // Recovery skips a complete balanced group whenever possible, then resynchronizes at the
+    // next top-level declaration. A failed group probe falls back to one run of non-top-level
+    // tokens, so nested opening braces are not each rescanned to EOF.
     let balanced_group = nested_delimiters(
         left_brace(),
         right_brace(),
@@ -303,8 +303,21 @@ where
         ],
         |_| (),
     );
-    let recovery_skip = balanced_group.or(any().ignored());
-    let item = top_level_item_parser().recover_with(skip_then_retry_until(recovery_skip, end()));
+    let non_top_level_tokens = any()
+        .filter(|token| !is_top_level_keyword_token(token))
+        .ignored()
+        .repeated()
+        .at_least(1)
+        .ignored();
+    let recovery_tail = balanced_group.or(non_top_level_tokens).repeated().ignored();
+    let recovery = any()
+        .filter(is_top_level_keyword_token)
+        .map_with(|_, extra| DocumentItem::Unknown {
+            kind: UnknownKind::Unknown,
+            span: source_span(extra.span()),
+        })
+        .then_ignore(recovery_tail);
+    let item = top_level_item_parser().recover_with(via_parser(recovery));
     header_parser()
         .then(item.repeated().collect::<Vec<_>>())
         .map(|(source_version, items)| ParsedDocument {

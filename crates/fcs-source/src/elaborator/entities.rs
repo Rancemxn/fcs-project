@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ast::{
     CollectionBlock, CollectionItem, Definition, DefinitionsBlock, Document, EntityConstructor,
-    EntityExpression, ExpandedCollection, ExpandedEntity, ExpandedField, Generator, GeneratorItem,
-    GeneratorOwner, SourceExpression, SourceLiteral, SourceSpan, TemplateDeclaration,
-    TemplateStatement, Type, TypedValue, WithExpression,
+    EntityExpression, ExpandedCollection, ExpandedEntity, ExpandedField, FunctionStatement,
+    Generator, GeneratorItem, GeneratorOwner, SourceExpression, SourceLiteral, SourceSpan,
+    TemplateDeclaration, TemplateStatement, Type, TypedValue, WithExpression,
 };
 use crate::diagnostic::{ExpansionTraceFrame, ExpansionTraceKind};
 use crate::expression::lower_runtime_expression_with_resolver;
@@ -25,7 +25,8 @@ pub(super) fn validate_static_entities_with_context(
     let templates = template_map(document.definitions.as_ref());
     let functions = function_map(document.definitions.as_ref());
     let root = definition_scope(document.definitions.as_ref())?;
-    let line_names = collect_line_names(document)?;
+    let line_names = collect_line_names(document, schema, context)?;
+    validate_definition_line_references(document.definitions.as_ref(), &line_names)?;
     let validator = StaticEntityValidator {
         document,
         schema,
@@ -39,216 +40,579 @@ pub(super) fn validate_static_entities_with_context(
     validator.validate_collections()
 }
 
-fn collect_line_names(document: &Document) -> Result<BTreeSet<String>, Diagnostic> {
-    let templates = template_map(document.definitions.as_ref());
-    let mut names = BTreeMap::new();
+fn collect_line_names(
+    document: &Document,
+    schema: &ConstructionSchema,
+    context: &CompileTimeContext,
+) -> Result<BTreeSet<String>, Diagnostic> {
+    let mut collector = LineNameCollector {
+        document,
+        schema,
+        templates: template_map(document.definitions.as_ref()),
+        context: context.isolated(),
+        names: BTreeMap::new(),
+    };
     for line in &document.lines {
-        insert_line_name(&mut names, line.name.clone(), line.name_span)?;
+        collector.insert(line.name.clone(), line.name_span)?;
     }
     for collection in &document.collections {
         if collection.collection_name != "judgelines" {
             continue;
         }
-        collect_line_names_from_items(&collection.items, &mut names, &templates)?;
+        collector.collect_items(&collection.items)?;
     }
-    Ok(names.keys().cloned().collect())
+    Ok(collector.names.into_keys().collect())
 }
 
-fn collect_line_names_from_items(
-    items: &[CollectionItem],
-    names: &mut BTreeMap<String, SourceSpan>,
-    templates: &BTreeMap<String, &TemplateDeclaration>,
-) -> Result<(), Diagnostic> {
-    for item in items {
-        match item {
-            CollectionItem::Constructor(constructor) => {
-                collect_line_name_from_constructor(constructor, names)?;
-            }
-            CollectionItem::Expression(expression) => {
-                collect_line_name_from_expression(expression, names, templates)?;
-            }
-            CollectionItem::Conditional {
-                then_items,
-                else_items,
-                ..
-            } => {
-                collect_line_names_from_items(then_items, names, templates)?;
-                collect_line_names_from_items(else_items, names, templates)?;
-            }
-            CollectionItem::Generator(generator) => {
-                collect_line_names_from_generator_items(&generator.body, names, templates)?;
+struct LineNameCollector<'a> {
+    document: &'a Document,
+    schema: &'a ConstructionSchema,
+    templates: BTreeMap<String, &'a TemplateDeclaration>,
+    context: CompileTimeContext,
+    names: BTreeMap<String, SourceSpan>,
+}
+
+impl LineNameCollector<'_> {
+    fn collect_items(&mut self, items: &[CollectionItem]) -> Result<(), Diagnostic> {
+        for item in items {
+            match item {
+                CollectionItem::Constructor(constructor) => {
+                    self.collect_constructor(constructor, &BTreeMap::new(), &BTreeMap::new())?;
+                }
+                CollectionItem::Expression(expression) => {
+                    self.collect_expression(expression, &BTreeMap::new(), &BTreeMap::new())?;
+                }
+                CollectionItem::Conditional {
+                    then_items,
+                    else_items,
+                    ..
+                } => {
+                    self.collect_items(then_items)?;
+                    self.collect_items(else_items)?;
+                }
+                CollectionItem::Generator(generator) => self.collect_generator(generator)?,
             }
         }
+        Ok(())
     }
-    Ok(())
-}
 
-fn collect_line_names_from_generator_items(
-    items: &[GeneratorItem],
-    names: &mut BTreeMap<String, SourceSpan>,
-    templates: &BTreeMap<String, &TemplateDeclaration>,
-) -> Result<(), Diagnostic> {
-    for item in items {
-        match item {
-            GeneratorItem::Emit(expression) => {
-                collect_line_name_from_expression(expression, names, templates)?;
+    fn collect_generator(&mut self, generator: &Generator) -> Result<(), Diagnostic> {
+        let definitions = self.document.definitions.as_ref();
+        let reference_free = [
+            &generator.range.start,
+            &generator.range.end,
+            &generator.range.step,
+        ]
+        .into_iter()
+        .all(|expression| {
+            line_name_dependencies_are_reference_free(
+                expression,
+                definitions,
+                &BTreeMap::new(),
+                &mut BTreeSet::new(),
+            )
+        });
+        let range = super::generator::evaluate_range_with_context(
+            self.document,
+            generator,
+            self.schema,
+            &self.context.isolated(),
+        )
+        .ok();
+        let mut collected_iteration = false;
+        if let Some(range) = range {
+            for index in 0..range.count() {
+                if self
+                    .context
+                    .consume("max_generator_iterations", generator.range.span)
+                    .is_err()
+                {
+                    break;
+                }
+                collected_iteration = true;
+                let Ok(value) = range.value_at(index) else {
+                    break;
+                };
+                let mut bindings = BTreeMap::from([
+                    (generator.variable.clone(), value),
+                    ("index".to_owned(), TypedValue::Int(index)),
+                    ("range".to_owned(), range.frame_value()),
+                ]);
+                let mut reference_free_bindings = BTreeMap::from([
+                    (generator.variable.clone(), reference_free),
+                    ("index".to_owned(), reference_free),
+                    ("range".to_owned(), reference_free),
+                ]);
+                self.collect_generator_items(
+                    &generator.body,
+                    &mut bindings,
+                    &mut reference_free_bindings,
+                )?;
             }
-            GeneratorItem::Conditional {
-                then_items,
-                else_items,
-                ..
-            } => {
-                collect_line_names_from_generator_items(then_items, names, templates)?;
-                collect_line_names_from_generator_items(else_items, names, templates)?;
-            }
-            GeneratorItem::Let(_) => {}
         }
+        if !collected_iteration {
+            self.collect_generator_items(
+                &generator.body,
+                &mut BTreeMap::new(),
+                &mut BTreeMap::new(),
+            )?;
+        }
+        Ok(())
     }
-    Ok(())
-}
 
-fn collect_line_name_from_expression(
-    expression: &EntityExpression,
-    names: &mut BTreeMap<String, SourceSpan>,
-    templates: &BTreeMap<String, &TemplateDeclaration>,
-) -> Result<(), Diagnostic> {
-    collect_line_name_from_expression_visiting(expression, names, templates, &mut BTreeSet::new())
-}
-
-fn collect_line_names_from_template_body(
-    statements: &[TemplateStatement],
-    names: &mut BTreeMap<String, SourceSpan>,
-    templates: &BTreeMap<String, &TemplateDeclaration>,
-    visiting: &mut BTreeSet<String>,
-) -> Result<(), Diagnostic> {
-    for statement in statements {
-        match statement {
-            TemplateStatement::Let(_) => {}
-            TemplateStatement::If(statement) => {
-                collect_line_names_from_template_body(
-                    &statement.then_branch,
-                    names,
-                    templates,
-                    visiting,
-                )?;
-                collect_line_names_from_template_body(
-                    &statement.else_branch,
-                    names,
-                    templates,
-                    visiting,
-                )?;
+    fn collect_generator_items(
+        &mut self,
+        items: &[GeneratorItem],
+        bindings: &mut BTreeMap<String, TypedValue>,
+        reference_free_bindings: &mut BTreeMap<String, bool>,
+    ) -> Result<(), Diagnostic> {
+        for item in items {
+            match item {
+                GeneratorItem::Let(statement) => {
+                    let reference_free = line_name_dependencies_are_reference_free(
+                        &statement.initializer,
+                        self.document.definitions.as_ref(),
+                        reference_free_bindings,
+                        &mut BTreeSet::new(),
+                    );
+                    if let Ok(value) = evaluate_with_context_expected(
+                        &statement.initializer,
+                        self.document.definitions.as_ref(),
+                        bindings,
+                        self.schema,
+                        &self.context.isolated(),
+                        Some(&statement.ty),
+                    ) {
+                        bindings.insert(statement.name.clone(), value);
+                        reference_free_bindings.insert(statement.name.clone(), reference_free);
+                    }
+                }
+                GeneratorItem::Conditional {
+                    then_items,
+                    else_items,
+                    ..
+                } => {
+                    self.collect_generator_items(
+                        then_items,
+                        &mut bindings.clone(),
+                        &mut reference_free_bindings.clone(),
+                    )?;
+                    self.collect_generator_items(
+                        else_items,
+                        &mut bindings.clone(),
+                        &mut reference_free_bindings.clone(),
+                    )?;
+                }
+                GeneratorItem::Emit(expression) => {
+                    self.collect_expression(expression, bindings, reference_free_bindings)?;
+                }
             }
-            TemplateStatement::Return(statement) => {
-                collect_line_name_from_expression_visiting(
+        }
+        Ok(())
+    }
+
+    fn collect_expression(
+        &mut self,
+        expression: &EntityExpression,
+        bindings: &BTreeMap<String, TypedValue>,
+        reference_free_bindings: &BTreeMap<String, bool>,
+    ) -> Result<(), Diagnostic> {
+        self.collect_expression_visiting(
+            expression,
+            bindings,
+            reference_free_bindings,
+            &mut BTreeSet::new(),
+        )
+    }
+
+    fn collect_template_body(
+        &mut self,
+        statements: &[TemplateStatement],
+        bindings: &mut BTreeMap<String, TypedValue>,
+        reference_free_bindings: &mut BTreeMap<String, bool>,
+        visiting: &mut BTreeSet<String>,
+    ) -> Result<(), Diagnostic> {
+        for statement in statements {
+            match statement {
+                TemplateStatement::Let(statement) => {
+                    let reference_free = line_name_dependencies_are_reference_free(
+                        &statement.initializer,
+                        self.document.definitions.as_ref(),
+                        reference_free_bindings,
+                        &mut BTreeSet::new(),
+                    );
+                    if let Ok(value) = evaluate_with_context_expected(
+                        &statement.initializer,
+                        self.document.definitions.as_ref(),
+                        bindings,
+                        self.schema,
+                        &self.context.isolated(),
+                        Some(&statement.ty),
+                    ) {
+                        bindings.insert(statement.name.clone(), value);
+                        reference_free_bindings.insert(statement.name.clone(), reference_free);
+                    }
+                }
+                TemplateStatement::If(statement) => {
+                    self.collect_template_body(
+                        &statement.then_branch,
+                        &mut bindings.clone(),
+                        &mut reference_free_bindings.clone(),
+                        visiting,
+                    )?;
+                    self.collect_template_body(
+                        &statement.else_branch,
+                        &mut bindings.clone(),
+                        &mut reference_free_bindings.clone(),
+                        visiting,
+                    )?;
+                }
+                TemplateStatement::Return(statement) => self.collect_expression_visiting(
                     &statement.value,
-                    names,
-                    templates,
+                    bindings,
+                    reference_free_bindings,
                     visiting,
-                )?;
+                )?,
             }
         }
+        Ok(())
     }
-    Ok(())
-}
 
-fn collect_line_name_from_expression_visiting(
-    expression: &EntityExpression,
-    names: &mut BTreeMap<String, SourceSpan>,
-    templates: &BTreeMap<String, &TemplateDeclaration>,
-    visiting: &mut BTreeSet<String>,
-) -> Result<(), Diagnostic> {
-    match expression {
-        EntityExpression::Constructor(constructor) => {
-            collect_line_name_from_constructor(constructor, names)
-        }
-        EntityExpression::With(with_expression) => {
-            if let Some((name, span)) = with_expression
-                .fields
-                .iter()
-                .find(|field| field.path.segments.as_slice() == ["id"])
-                .and_then(line_name_from_field)
-            {
-                insert_line_name(names, name, span)
-            } else {
-                collect_line_name_from_expression_visiting(
+    fn collect_expression_visiting(
+        &mut self,
+        expression: &EntityExpression,
+        bindings: &BTreeMap<String, TypedValue>,
+        reference_free_bindings: &BTreeMap<String, bool>,
+        visiting: &mut BTreeSet<String>,
+    ) -> Result<(), Diagnostic> {
+        match expression {
+            EntityExpression::Constructor(constructor) => {
+                self.collect_constructor(constructor, bindings, reference_free_bindings)
+            }
+            EntityExpression::With(with_expression) => {
+                if let Some(field) = with_expression
+                    .fields
+                    .iter()
+                    .find(|field| field.path.segments.as_slice() == ["id"])
+                {
+                    if let Some((name, span)) =
+                        self.line_name_from_field(field, bindings, reference_free_bindings)
+                    {
+                        self.insert(name, span)?;
+                    }
+                    return Ok(());
+                }
+                self.collect_expression_visiting(
                     &with_expression.base,
-                    names,
-                    templates,
+                    bindings,
+                    reference_free_bindings,
                     visiting,
                 )
             }
-        }
-        EntityExpression::Source(SourceExpression::Call { callee, .. }) => {
-            let SourceExpression::Name { name, .. } = callee.as_ref() else {
-                return Ok(());
-            };
-            if !visiting.insert(name.clone()) {
-                return Ok(());
-            }
-            let result = (|| {
-                let Some(template) = templates.get(name) else {
+            EntityExpression::Source(SourceExpression::Call {
+                callee, arguments, ..
+            }) => {
+                let SourceExpression::Name { name, .. } = callee.as_ref() else {
                     return Ok(());
                 };
-                if template.return_type != Type::Line {
+                if !visiting.insert(name.clone()) {
                     return Ok(());
                 }
-                collect_line_names_from_template_body(&template.body, names, templates, visiting)
-            })();
-            visiting.remove(name);
-            result
+                let result = (|| {
+                    let Some(template) = self.templates.get(name).copied() else {
+                        return Ok(());
+                    };
+                    if template.return_type != Type::Line {
+                        return Ok(());
+                    }
+                    let mut local_bindings = bindings.clone();
+                    let mut local_reference_free_bindings = reference_free_bindings.clone();
+                    for (argument, parameter) in arguments.iter().zip(&template.parameters) {
+                        let reference_free = line_name_dependencies_are_reference_free(
+                            argument,
+                            self.document.definitions.as_ref(),
+                            reference_free_bindings,
+                            &mut BTreeSet::new(),
+                        );
+                        if let Ok(value) = evaluate_with_context_expected(
+                            argument,
+                            self.document.definitions.as_ref(),
+                            bindings,
+                            self.schema,
+                            &self.context.isolated(),
+                            Some(&parameter.ty),
+                        ) {
+                            local_bindings.insert(parameter.name.clone(), value);
+                            local_reference_free_bindings
+                                .insert(parameter.name.clone(), reference_free);
+                        }
+                    }
+                    self.collect_template_body(
+                        &template.body,
+                        &mut local_bindings,
+                        &mut local_reference_free_bindings,
+                        visiting,
+                    )
+                })();
+                visiting.remove(name);
+                result
+            }
+            EntityExpression::SourceConstructor(_) | EntityExpression::Source(_) => Ok(()),
         }
-        EntityExpression::SourceConstructor(_) | EntityExpression::Source(_) => Ok(()),
+    }
+
+    fn collect_constructor(
+        &mut self,
+        constructor: &EntityConstructor,
+        bindings: &BTreeMap<String, TypedValue>,
+        reference_free_bindings: &BTreeMap<String, bool>,
+    ) -> Result<(), Diagnostic> {
+        if constructor.entity_type != Type::Line {
+            return Ok(());
+        }
+        let Some((name, span)) = constructor
+            .fields
+            .iter()
+            .find(|field| field.path.segments.as_slice() == ["id"])
+            .and_then(|field| self.line_name_from_field(field, bindings, reference_free_bindings))
+        else {
+            return Ok(());
+        };
+        self.insert(name, span)
+    }
+
+    fn line_name_from_field(
+        &self,
+        field: &crate::ast::EntityField,
+        bindings: &BTreeMap<String, TypedValue>,
+        reference_free_bindings: &BTreeMap<String, bool>,
+    ) -> Option<(String, SourceSpan)> {
+        if !line_name_dependencies_are_reference_free(
+            &field.value,
+            self.document.definitions.as_ref(),
+            reference_free_bindings,
+            &mut BTreeSet::new(),
+        ) {
+            return None;
+        }
+        let name = match &field.value {
+            SourceExpression::Literal {
+                literal: SourceLiteral::String(name),
+                ..
+            } => name.clone(),
+            _ => match evaluate_with_context_expected(
+                &field.value,
+                self.document.definitions.as_ref(),
+                bindings,
+                self.schema,
+                &self.context.isolated(),
+                Some(&Type::String),
+            )
+            .ok()?
+            {
+                TypedValue::String(name) => name,
+                _ => return None,
+            },
+        };
+        Some((name, field.path.span))
+    }
+
+    fn insert(&mut self, name: String, span: SourceSpan) -> Result<(), Diagnostic> {
+        if let Some(previous_span) = self.names.insert(name.clone(), span) {
+            return Err(Diagnostic::DuplicateLineId {
+                name,
+                span,
+                previous_span,
+            });
+        }
+        Ok(())
     }
 }
 
-fn collect_line_name_from_constructor(
-    constructor: &EntityConstructor,
-    names: &mut BTreeMap<String, SourceSpan>,
-) -> Result<(), Diagnostic> {
-    let Some((name, span)) = line_name_from_constructor(constructor) else {
-        return Ok(());
-    };
-    insert_line_name(names, name, span)
+fn line_name_dependencies_are_reference_free(
+    expression: &SourceExpression,
+    definitions: Option<&DefinitionsBlock>,
+    reference_free_bindings: &BTreeMap<String, bool>,
+    visiting: &mut BTreeSet<String>,
+) -> bool {
+    match expression {
+        SourceExpression::Reference { .. } => false,
+        SourceExpression::Name { name, .. } => reference_free_bindings
+            .get(name)
+            .copied()
+            .unwrap_or_else(|| definition_is_reference_free(name, false, definitions, visiting)),
+        SourceExpression::Call {
+            callee, arguments, ..
+        } => {
+            arguments.iter().all(|argument| {
+                line_name_dependencies_are_reference_free(
+                    argument,
+                    definitions,
+                    reference_free_bindings,
+                    visiting,
+                )
+            }) && match callee.as_ref() {
+                SourceExpression::Name { name, .. } => {
+                    definition_is_reference_free(name, true, definitions, visiting)
+                }
+                callee => line_name_dependencies_are_reference_free(
+                    callee,
+                    definitions,
+                    reference_free_bindings,
+                    visiting,
+                ),
+            }
+        }
+        SourceExpression::Unary { operand, .. }
+        | SourceExpression::FieldAccess { base: operand, .. } => {
+            line_name_dependencies_are_reference_free(
+                operand,
+                definitions,
+                reference_free_bindings,
+                visiting,
+            )
+        }
+        SourceExpression::Binary { left, right, .. }
+        | SourceExpression::Vec2 {
+            x: left, y: right, ..
+        } => {
+            line_name_dependencies_are_reference_free(
+                left,
+                definitions,
+                reference_free_bindings,
+                visiting,
+            ) && line_name_dependencies_are_reference_free(
+                right,
+                definitions,
+                reference_free_bindings,
+                visiting,
+            )
+        }
+        SourceExpression::Array { elements, .. } => elements.iter().all(|element| {
+            line_name_dependencies_are_reference_free(
+                element,
+                definitions,
+                reference_free_bindings,
+                visiting,
+            )
+        }),
+        SourceExpression::Object { entries, .. } => entries.iter().all(|entry| {
+            line_name_dependencies_are_reference_free(
+                &entry.value,
+                definitions,
+                reference_free_bindings,
+                visiting,
+            )
+        }),
+        SourceExpression::Index { base, index, .. } => {
+            line_name_dependencies_are_reference_free(
+                base,
+                definitions,
+                reference_free_bindings,
+                visiting,
+            ) && line_name_dependencies_are_reference_free(
+                index,
+                definitions,
+                reference_free_bindings,
+                visiting,
+            )
+        }
+        SourceExpression::Choose {
+            arms, else_value, ..
+        } => {
+            arms.iter().all(|arm| {
+                line_name_dependencies_are_reference_free(
+                    &arm.condition,
+                    definitions,
+                    reference_free_bindings,
+                    visiting,
+                ) && line_name_dependencies_are_reference_free(
+                    &arm.value,
+                    definitions,
+                    reference_free_bindings,
+                    visiting,
+                )
+            }) && line_name_dependencies_are_reference_free(
+                else_value,
+                definitions,
+                reference_free_bindings,
+                visiting,
+            )
+        }
+        SourceExpression::Literal { .. } => true,
+    }
 }
 
-fn line_name_from_constructor(constructor: &EntityConstructor) -> Option<(String, SourceSpan)> {
-    (constructor.entity_type == Type::Line)
-        .then(|| {
-            constructor
-                .fields
-                .iter()
-                .find(|field| field.path.segments.as_slice() == ["id"])
-                .and_then(line_name_from_field)
+fn definition_is_reference_free(
+    name: &str,
+    function: bool,
+    definitions: Option<&DefinitionsBlock>,
+    visiting: &mut BTreeSet<String>,
+) -> bool {
+    let Some(definition) = definitions.and_then(|definitions| {
+        definitions.declarations.iter().find(|definition| {
+            matches!(
+                (function, definition),
+                (false, Definition::Const(constant)) if constant.name == name
+            ) || matches!(
+                (function, definition),
+                (true, Definition::Function(declaration)) if declaration.name == name
+            )
         })
-        .flatten()
-}
-
-fn line_name_from_field(field: &crate::ast::EntityField) -> Option<(String, SourceSpan)> {
-    match &field.value {
-        SourceExpression::Literal {
-            literal: SourceLiteral::String(name),
-            ..
-        } => Some((name.clone(), field.path.span)),
-        _ => None,
+    }) else {
+        return true;
+    };
+    if !visiting.insert(name.to_owned()) {
+        return true;
     }
+    let result = match definition {
+        Definition::Const(constant) => line_name_dependencies_are_reference_free(
+            &constant.initializer,
+            definitions,
+            &BTreeMap::new(),
+            visiting,
+        ),
+        Definition::Function(function) => {
+            function_body_is_reference_free(&function.body, definitions, visiting)
+        }
+        Definition::Template(_) => true,
+    };
+    visiting.remove(name);
+    result
 }
 
-fn insert_line_name(
-    names: &mut BTreeMap<String, SourceSpan>,
-    name: String,
-    span: SourceSpan,
-) -> Result<(), Diagnostic> {
-    if let Some(previous_span) = names.insert(name.clone(), span) {
-        return Err(Diagnostic::DuplicateLineId {
-            name,
-            span,
-            previous_span,
-        });
-    }
-    Ok(())
+fn function_body_is_reference_free(
+    statements: &[FunctionStatement],
+    definitions: Option<&DefinitionsBlock>,
+    visiting: &mut BTreeSet<String>,
+) -> bool {
+    let bindings = BTreeMap::new();
+    statements.iter().all(|statement| match statement {
+        FunctionStatement::Let(statement) => line_name_dependencies_are_reference_free(
+            &statement.initializer,
+            definitions,
+            &bindings,
+            visiting,
+        ),
+        FunctionStatement::Return(statement) => line_name_dependencies_are_reference_free(
+            &statement.value,
+            definitions,
+            &bindings,
+            visiting,
+        ),
+        FunctionStatement::If(statement) => {
+            line_name_dependencies_are_reference_free(
+                &statement.condition,
+                definitions,
+                &bindings,
+                visiting,
+            ) && function_body_is_reference_free(&statement.then_branch, definitions, visiting)
+                && function_body_is_reference_free(&statement.else_branch, definitions, visiting)
+        }
+    })
 }
 
-fn function_map(
+pub(super) fn function_map(
     block: Option<&DefinitionsBlock>,
 ) -> BTreeMap<String, &crate::ast::FunctionDeclaration> {
     block
@@ -261,7 +625,7 @@ fn function_map(
         .collect()
 }
 
-fn definition_scope(block: Option<&DefinitionsBlock>) -> Result<Scope, Diagnostic> {
+pub(super) fn definition_scope(block: Option<&DefinitionsBlock>) -> Result<Scope, Diagnostic> {
     let mut root = Scope::root_with_builtins()?;
     let Some(block) = block else {
         return Ok(root);
@@ -499,12 +863,7 @@ impl<'a> StaticEntityValidator<'a> {
             None,
             Some(generator.range.span),
         ));
-        let range_result = super::generator::evaluate_range_with_context(
-            self.document,
-            generator,
-            self.schema,
-            &self.context,
-        );
+        let range_result = self.validate_generator_range_types(generator);
         self.context.pop_trace();
         self.context.pop_trace();
         if has_owner_frame {
@@ -537,6 +896,29 @@ impl<'a> StaticEntityValidator<'a> {
             },
         )?;
         self.validate_generator_items(&generator.body, &scope, expected_type, schema)
+    }
+
+    fn validate_generator_range_types(&self, generator: &Generator) -> Result<(), Diagnostic> {
+        if !matches!(generator.variable_type, Type::Int | Type::Beat) {
+            return Err(Diagnostic::InvalidGeneratorRange {
+                span: generator.range.span,
+                message: "generator range values must match an int or beat variable",
+            });
+        }
+        for expression in [
+            &generator.range.start,
+            &generator.range.end,
+            &generator.range.step,
+        ] {
+            let actual = self.validate_expression(expression, &self.root)?;
+            if actual != generator.variable_type {
+                return Err(Diagnostic::InvalidGeneratorRange {
+                    span: generator.range.span,
+                    message: "generator range values must match an int or beat variable",
+                });
+            }
+        }
+        Ok(())
     }
 
     fn validate_generator_items(
@@ -855,7 +1237,11 @@ impl<'a> StaticEntityValidator<'a> {
     }
 }
 
-fn require_static_type(expected: &Type, actual: &Type, span: SourceSpan) -> Result<(), Diagnostic> {
+pub(super) fn require_static_type(
+    expected: &Type,
+    actual: &Type,
+    span: SourceSpan,
+) -> Result<(), Diagnostic> {
     if expected == actual {
         Ok(())
     } else {
@@ -865,6 +1251,49 @@ fn require_static_type(expected: &Type, actual: &Type, span: SourceSpan) -> Resu
             span,
         })
     }
+}
+
+fn validate_definition_line_references(
+    definitions: Option<&DefinitionsBlock>,
+    line_names: &BTreeSet<String>,
+) -> Result<(), Diagnostic> {
+    let Some(definitions) = definitions else {
+        return Ok(());
+    };
+    for definition in &definitions.declarations {
+        match definition {
+            Definition::Const(declaration) => {
+                validate_line_references(&declaration.initializer, line_names)?;
+            }
+            Definition::Function(declaration) => {
+                validate_function_line_references(&declaration.body, line_names)?;
+            }
+            Definition::Template(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_function_line_references(
+    statements: &[FunctionStatement],
+    line_names: &BTreeSet<String>,
+) -> Result<(), Diagnostic> {
+    for statement in statements {
+        match statement {
+            FunctionStatement::Let(statement) => {
+                validate_line_references(&statement.initializer, line_names)?;
+            }
+            FunctionStatement::Return(statement) => {
+                validate_line_references(&statement.value, line_names)?;
+            }
+            FunctionStatement::If(statement) => {
+                validate_line_references(&statement.condition, line_names)?;
+                validate_function_line_references(&statement.then_branch, line_names)?;
+                validate_function_line_references(&statement.else_branch, line_names)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_line_references(

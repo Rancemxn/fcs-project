@@ -452,6 +452,34 @@ ImagePattern 的 `transform` 不是宿主 matrix blob，而是固定四字段
 Node transform 相同；这些字段可以是 exact descriptor。`repeat` 是 compile-time enum
 `"none" | "x" | "y" | "both"`，默认 `"both"`；`sampling` 与 Image 使用同一 enum和像素约定。
 
+Render source 里 `imagePattern` 只接一个 resource 参数，transform 四字段、`repeat` 与 `sampling`
+是 owning drawable node body 的兄弟 field，与 Stroke 在 source 中的摊平方式相同。固定拼写是：
+
+```fcs
+fill: imagePattern(@resourceName);
+patternPosition: vec2(0px, 0px);  // 默认同 Node position
+patternOrigin: vec2(0px, 0px);    // 默认同 Node origin
+patternRotation: 0deg;            // 默认同 Node rotation
+patternScale: vec2(1.0, 1.0);      // 默认同 Node scale
+patternRepeat: "none";            // 默认 "both"
+patternSampling: "linear";        // 显式 override；省略则读取 resource metadata
+```
+
+`pattern*` 是 source node 的一组 shared configuration：每个 field 在该 node body 中最多出现一次，
+不能放进 `imagePattern` 参数、Paint 表达式或 Stroke 对象，也不能用第二组带 fill/stroke 前缀的
+字段表达另一套配置。只有当 node 的 `fill` 或 `stroke` 至少一个是 `ImagePattern` 时才允许这些
+字段；没有 ImagePattern 的 node 使用它们是 `render.invalid-paint`。只有一个 ImagePattern 时，
+这组配置复制到该 paint；两个都为 ImagePattern 时，完全相同的 resolved pattern configuration
+分别复制到两个独立 Paint record，而每个 record 的 resource identity 仍只来自各自的
+`imagePattern(@id)`。source 不表达两套不同的 `pattern*` 配置。
+
+六个 field 都可省略。`patternPosition`、`patternOrigin`、`patternRotation` 和 `patternScale` 分别
+缺省为 Node 的对应 transform field，`patternRepeat` 缺省为 `"both"`。显式
+`patternSampling` 是对每个 ImagePattern paint 的同一个 compile-time override；缺省时必须对每个
+`imagePattern(@id)` 独立读取该 resource canonical metadata 的 `sampling`。resource metadata 缺失、
+重复、类型错误或 sampling enum 非法，使用现有稳定的 `render.resource-decode-failed`，不得猜测、
+回退或共享另一个 resource 的 sampling。
+
 ### 8.2 Stroke
 
 ```text
@@ -464,11 +492,12 @@ dashOffset: length
 ```
 
 Stroke 必须显式绑定一个 Paint。`width` 和 `dashOffset` 可以是 exact descriptor；`cap`、`join`、
-`miterLimit` 与 dash element 必须 compile-time 确定。Dash 总长度必须大于 0；奇数长度数组在
-canonical lowering 时复制一次成为偶数，因此 RenderSection 只保存偶数 count。Width=0 表示不
-绘制 stroke，不表示 device hairline。Dash phase 先以总长度做
-`offset - floor(offset / total) * total` 归一化到 `[0,total)`；零长度 dash element 合法，但整个数组
-不能全零。负 width、dash element、非有限值或 miterLimit<1 拒绝。
+`miterLimit` 与 dash element 必须 compile-time 确定。空 dash array 直接表示完整的 solid stroke；它
+不是 dash sequence，不做 total/phase normalization，也不做 dash-element traversal。非空 dash array
+的总长度必须大于 0；奇数长度数组在 canonical lowering 时复制一次成为偶数，因此 RenderSection
+只保存偶数 count。Width=0 表示不绘制 stroke，不表示 device hairline。只有非空 dash array 才把
+phase 以总长度做 `offset - floor(offset / total) * total` 归一化到 `[0,total)`；零长度 dash element
+合法，但整个非空数组不能全零。负 width、dash element、非有限值或 miterLimit<1 拒绝。
 
 ---
 
@@ -1247,12 +1276,25 @@ stroke 保持 open；Polygon fill/stroke 都 closed。Path 的每个 open subpat
 距离不超过 `1/1024` logical px，最大 depth 32，left half先于right half。超过 depth仍不满足是
 `render.limit-exceeded`，不能放宽 tolerance。
 
+上一段的 flatten 规则适用于每一个参数化几何的 coverage，不只是 Path，因此 Ellipse 和 RoundedRect
+的 corner arc 使用同一 sagitta 界、同一 depth 上限、同一 left-before-right 细分顺序。Dash 的弧长
+只有一个规范来源：本规范为某个 geometry/segment 给出 exact closed-form arclength 时，必须使用该
+exact arclength 决定 dash；不得用 flatten 结果替代。当前 exact clauses 包括直线 segment、Circle
+以及 circular `Arc`；Arc 的 §7 conceptual connector line 仍按直线 exact length 加入，圆弧部分按
+`abs(sweep) · radius`（整圆为 `2π · radius`）计算。其他
+parametric curve（包括 Ellipse、EllipseArc 和 RoundedRect 的 corner ellipse）必须用上一段的
+`1/1024` logical px sagitta bound、depth 32、left-before-right flatten 计算 dash arclength；超过
+depth 仍不满足是 `render.limit-exceeded`。实现不能在 exact 与 flatten 之间任选，也不能以“差异低于
+sample grid”为由把两者都声明 conforming。
+
 Stroke 是路径中心线以 `width/2` 扩张的闭集。Butt cap 在 endpoint 截断；square 沿切线再扩
 `width/2`；round 加半圆。Bevel 连接两个外侧 offset endpoint；round 使用以 vertex为中心的扇形；
-miter 使用两条外侧 offset line交点，miter length/halfWidth 大于 miterLimit 时退化 bevel。Dash 从每个
-subpath起点重新开始，按第 8.2 节归一化 phase、沿 flatten 后弧长交替 on/off；Close 的 closing
-segment参与 dash。第 7 章的零长度 segment 不产生 sample coverage、cap、join 或 tangent，也不推进
-dash phase；join/cap 使用最近的非零 on-segment。Sample 恰在 stroke boundary 上算 inside。
+miter 使用两条外侧 offset line交点，miter length/halfWidth 大于 miterLimit 时退化 bevel。非空 dash
+从每个 subpath 起点重新开始，按第 8.2 节归一化 phase，沿上述唯一的 arclength 规则交替 on/off；
+Close 的 closing segment 参与 dash。空 dash 是每个 subpath 的单一连续 on 区间，不产生 dash phase
+或 dash-generated endpoint；open/closed subpath 的 cap、join 仍完全按几何的 open/closed 规则处理。
+第 7 章的零长度 segment 不产生 sample coverage、cap、join 或 tangent，也不推进非空 dash phase；
+join/cap 使用最近的非零 on-segment。Sample 恰在 stroke boundary 上算 inside。
 
 Circle、Ellipse 和 RoundedRect 是闭合 parametric geometry。它们的 stroke 只有一个 subpath，
 该 subpath 的起点和绕行方向固定为：

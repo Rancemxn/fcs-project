@@ -10,9 +10,10 @@ mod fcbc_render_reference_assets;
 #[allow(dead_code)]
 mod fcbc_render_reference_loader;
 
-use fcs_fcbc::write_from_compilation;
+use fcs_fcbc::{write_from_compilation, write_nonempty_execution};
 use fcs_model::{
-    CanonicalArcDirection, CanonicalCompilation, CanonicalExpressionType, CanonicalImageRepeat,
+    CanonicalArcDirection, CanonicalCompilation, CanonicalDescriptorKind,
+    CanonicalExpressionEnvironment, CanonicalExpressionType, CanonicalImageRepeat,
     CanonicalImageSampling, CanonicalPathCommand, CanonicalPatternTransform,
     CanonicalRenderFillRule, CanonicalRenderGeometry, CanonicalRenderGeometryData,
     CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
@@ -25,8 +26,8 @@ use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
 
 use fcs_render::{
-    GeometryData, NodeKind, PaintData, evaluate_semantic_draw_list_at, load_render,
-    rasterize_solid_rgba8_at,
+    GeometryData, NodeKind, PaintData, RenderAssets, encode_test_png, encode_test_webp,
+    evaluate_semantic_draw_list_at, load_render, rasterize_solid_rgba8_at, write_nonempty_render,
 };
 
 fn u32_at(bytes: &[u8], offset: usize) -> u32 {
@@ -236,6 +237,108 @@ fn solid_rect_source_reaches_product_render_loader() {
         section[node + 88..node + 92].copy_from_slice(&u32::MAX.to_le_bytes());
     });
     assert_eq!(load_render(&malformed), Err("render.invalid-reference"));
+}
+
+#[test]
+fn source_dynamic_opacity_reaches_product_semantic_and_raster() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 4px; height: 4px; }
+    layer main {
+        pass: "overlay";
+        space: "screen";
+        children {
+            rect full {
+                origin: vec2(-2px, -2px);
+                size: vec2(4px, 4px);
+                opacity: choose {
+                    when s < 1s => 1.0;
+                    else => 0.0;
+                };
+                fill: solid(#FF0000FF);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("dynamic Render source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| panic!("dynamic Render lowering failed: {diagnostics:?}"));
+    let descriptors = compilation.chart().descriptors().expect("descriptor table");
+    let opacity_root = descriptors
+        .roots()
+        .iter()
+        .find(|root| root.target_path() == "render.node.opacity")
+        .expect("opacity root");
+    assert!(matches!(
+        descriptors.descriptors()[opacity_root.descriptor()].kind(),
+        CanonicalDescriptorKind::Expression(expression)
+            if expression
+                .required_environment()
+                .contains(&CanonicalExpressionEnvironment::S)
+    ));
+
+    let bytes = write_from_compilation(&compilation).expect("dynamic Render FCBC writing");
+    let render = load_render(&bytes).expect("dynamic Render product loader");
+    let opaque = evaluate_semantic_draw_list_at(&render, 0.0).expect("opaque semantic query");
+    let transparent = evaluate_semantic_draw_list_at(&render, 1.0).expect("transparent query");
+    assert_eq!(
+        opaque,
+        evaluate_semantic_draw_list_at(&render, 0.0).expect("repeat query")
+    );
+    assert_eq!(opaque.len(), 1);
+    assert_eq!(opaque[0].opacity.to_bits(), 1.0f64.to_bits());
+    assert_eq!(transparent.len(), 1);
+    assert_eq!(transparent[0].opacity.to_bits(), 0.0f64.to_bits());
+
+    let opaque_pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("opaque raster");
+    let repeat_pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("repeat raster");
+    let transparent_pixels =
+        rasterize_solid_rgba8_at(&render, 1.0, 4, 4).expect("transparent raster");
+    assert_eq!(opaque_pixels, repeat_pixels);
+    assert!(
+        opaque_pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel[3] != 0)
+    );
+    assert!(
+        transparent_pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| pixel == &[0; 4])
+    );
+
+    let invalid = source.replace("else => 0.0;", "else => 2.0;");
+    let document = parse_document(&invalid)
+        .into_result()
+        .expect("invalid dynamic Render source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            &invalid,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .expect("invalid dynamic descriptor remains representable");
+    let bytes = write_from_compilation(&compilation).expect("invalid dynamic FCBC writing");
+    let render = load_render(&bytes).expect("invalid dynamic Render product loader");
+    assert_eq!(
+        evaluate_semantic_draw_list_at(&render, 1.0),
+        Err("render.invalid-composite")
+    );
 }
 
 #[test]
@@ -1881,4 +1984,46 @@ render profile 1.0.0 {
         pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0),
         "written Path should contribute raster coverage"
     );
+}
+
+#[test]
+fn checked_in_text_fixture_reaches_product_raster() {
+    let core = write_nonempty_execution();
+    let png = encode_test_png();
+    let webp = encode_test_webp();
+    let font = include_bytes!("../../../docs/conformance/render/assets/fcs-test-font.ttf");
+    let mut render = load_render(&write_nonempty_render(
+        &core,
+        RenderAssets {
+            png: &png,
+            webp: &webp,
+            font,
+            malformed: b"not-an-image",
+        },
+    ))
+    .expect("checked-in Text fixture");
+
+    for node in &mut render.nodes {
+        if node.kind != NodeKind::Text {
+            node.geometry_ref = None;
+            node.fill_paint = None;
+            node.stroke_ref = None;
+            node.clip_ref = None;
+        }
+    }
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Text semantic evaluation");
+    let text = draw
+        .iter()
+        .find(|operation| operation.kind == NodeKind::Text)
+        .expect("Text draw op");
+    assert_eq!(
+        draw,
+        evaluate_semantic_draw_list_at(&render, 0.0).expect("repeat Text query")
+    );
+    assert_eq!(text.fill_rgba, Some([1.0, 1.0, 1.0, 1.0]));
+    assert!(text.bounds[2] > text.bounds[0]);
+    assert!(text.bounds[3] > text.bounds[1]);
+
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Text rasterization");
+    assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
 }

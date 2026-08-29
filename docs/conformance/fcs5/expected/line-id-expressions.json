@@ -1,0 +1,7 @@
+{
+  "lineIds": ["direct", "templated", "branch", "generated"],
+  "noteLines": ["direct", "templated", "branch", "generated"],
+  "forbiddenExpandedNodes": [
+    "const", "let", "fn", "template", "with", "if", "generate", "emit", "range", "index"
+  ]
+}

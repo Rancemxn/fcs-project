@@ -230,8 +230,8 @@ fn check_generator_items(items: &[GeneratorItem], initial_scope: &Scope) -> Resu
 }
 
 fn check_line_generators(document: &Document, root: &Scope) -> Result<(), Diagnostic> {
-    // Track field expressions remain runtime/canonical inputs. Only generator-owned
-    // ranges, bindings, and structural conditions belong to this name pass.
+    // The Track expander performs full static inference before evaluating any branch.
+    // This pass only preflights generator scopes and structural-condition names.
     for line in &document.lines {
         for item in &line.items {
             let LineBodyItem::Tracks(tracks) = item else {

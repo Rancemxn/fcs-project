@@ -2,8 +2,10 @@ use fcs_model::{
     CanonicalImageSampling, CanonicalProfile, CanonicalProfileFeature, CanonicalRenderGeometryData,
     CanonicalRenderNodeKind, CanonicalValue, EntityKind,
 };
+use fcs_source::ResourceLimits;
 use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
+use tempfile::tempdir;
 
 fn canonical(source: &str) -> fcs_model::CanonicalChart {
     parse_document(source)
@@ -157,6 +159,280 @@ render profile 1.0.0 {
         root.target_path() == "render.geometry.source.height"
             && root.owner() == scene.geometries()[0].id().value()
     }));
+}
+
+#[test]
+fn canonical_source_text_shapes_against_the_resolved_font_bundle() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+resources {
+    font primary {
+        source: "assets/primary.ttf";
+        mediaType: "font/ttf";
+    }
+    font fallback {
+        source: "assets/fallback.ttf";
+        mediaType: "font/ttf";
+    }
+}
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 32px; height: 16px; }
+    layer main {
+        pass: "overlay";
+        children {
+            text label {
+                content: "AB";
+                font: @primary;
+                fallbackFonts: [@fallback,];
+                size: 12px;
+                fill: solid(#FFFFFFFF);
+            }
+        }
+    }
+}
+"#;
+    let workspace = tempdir().expect("temporary workspace");
+    std::fs::create_dir(workspace.path().join("assets")).expect("asset directory");
+    let font = include_bytes!("../../../docs/conformance/render/assets/fcs-test-font.ttf");
+    std::fs::write(workspace.path().join("assets/primary.ttf"), font).expect("primary font");
+    std::fs::write(
+        workspace.path().join("assets/fallback.ttf"),
+        font_with_b_mapping(font, -65),
+    )
+    .expect("fallback font");
+    let document = parse_document(source)
+        .into_result()
+        .expect("source should parse");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            workspace.path(),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| panic!("Text compilation failed: {diagnostics:?}"));
+    let scene = compilation
+        .chart()
+        .render()
+        .expect("canonical Render scene");
+    let CanonicalRenderGeometryData::Text {
+        glyph_runs,
+        origin: _,
+    } = scene.geometries()[0].data()
+    else {
+        panic!("expected canonical Text geometry");
+    };
+    assert_eq!(glyph_runs, &vec![0, 1]);
+    assert_eq!(scene.glyph_runs().len(), 2);
+    let primary = &scene.glyph_runs()[0];
+    assert_eq!(primary.font().textual().as_str(), "primary");
+    assert_eq!(primary.face_index(), 0);
+    assert_eq!(primary.run_offset(), [0.0, 0.0]);
+    assert_eq!(primary.glyphs().len(), 1);
+    assert_eq!(primary.glyphs()[0].glyph_id, 1);
+    assert_eq!(primary.glyphs()[0].x_advance, 1.0);
+    assert_eq!(primary.glyphs()[0].y_advance, 0.0);
+    assert_eq!(primary.glyphs()[0].x_offset, 0.0);
+    assert_eq!(primary.glyphs()[0].y_offset, 0.0);
+    let fallback = &scene.glyph_runs()[1];
+    assert_eq!(fallback.font().textual().as_str(), "fallback");
+    assert_eq!(fallback.run_offset(), [1.0, 0.0]);
+    assert_eq!(fallback.glyphs().len(), 1);
+    assert_eq!(fallback.glyphs()[0].glyph_id, 1);
+    assert_eq!(fallback.glyphs()[0].x_advance, 1.0);
+    assert_eq!(fallback.glyphs()[0].y_advance, 0.0);
+    assert_eq!(fallback.glyphs()[0].x_offset, 0.0);
+    assert_eq!(fallback.glyphs()[0].y_offset, 0.0);
+
+    std::fs::write(
+        workspace.path().join("assets/primary.ttf"),
+        font_with_b_mapping(font, -66),
+    )
+    .expect("primary font with missing sentinel");
+    let missing_source = source.replace("content: \"AB\"", "content: \"B\"");
+    let missing_document = parse_document(&missing_source)
+        .into_result()
+        .expect("missing-sentinel source should parse");
+    let missing = missing_document
+        .canonical_compilation_with_source(
+            &missing_source,
+            CompileTimeLimits::default(),
+            workspace.path(),
+            ResourceLimits::default(),
+        )
+        .expect("glyph zero should continue to the fallback font");
+    let missing_scene = missing.chart().render().expect("missing-sentinel scene");
+    assert_eq!(missing_scene.glyph_runs().len(), 1);
+    assert_eq!(
+        missing_scene.glyph_runs()[0].font().textual().as_str(),
+        "fallback"
+    );
+    std::fs::write(workspace.path().join("assets/primary.ttf"), font)
+        .expect("restore primary font");
+
+    let stroke_source = source.replace(
+        "fill: solid(#FFFFFFFF);",
+        r#"stroke: solid(#FFFFFFFF);
+                width: 1px;
+                cap: "butt";
+                join: "miter";
+                miterLimit: 1.0;
+                dash: [1px, 1px,];
+                dashOffset: 0px;"#,
+    );
+    let stroke_document = parse_document(&stroke_source)
+        .into_result()
+        .expect("stroke-only Text source should parse");
+    let stroke_compilation = stroke_document
+        .canonical_compilation_with_source(
+            &stroke_source,
+            CompileTimeLimits::default(),
+            workspace.path(),
+            ResourceLimits::default(),
+        )
+        .expect("stroke-only Text should compile");
+    let stroke_scene = stroke_compilation
+        .chart()
+        .render()
+        .expect("stroke-only Text scene");
+    assert_eq!(stroke_scene.nodes()[0].fill_paint(), None);
+    assert_eq!(stroke_scene.nodes()[0].stroke(), Some(0));
+
+    assert!(compilation.resources().get("primary").is_some());
+    assert!(compilation.resources().get("fallback").is_some());
+    let roots = compilation
+        .chart()
+        .descriptors()
+        .expect("Render descriptors")
+        .roots();
+    assert!(roots.iter().any(|root| {
+        root.target_path() == "render.geometry.origin"
+            && root.owner() == scene.geometries()[0].id().value()
+    }));
+    assert!(roots.iter().any(|root| {
+        root.target_path() == "render.glyphRun.size"
+            && root.owner() == scene.glyph_runs()[0].id().value()
+    }));
+    assert!(roots.iter().any(|root| {
+        root.target_path() == "render.glyphRun.size"
+            && root.owner() == scene.glyph_runs()[1].id().value()
+    }));
+
+    let empty_source = source.replace("content: \"AB\"", "content: \"\"");
+    let empty_document = parse_document(&empty_source)
+        .into_result()
+        .expect("empty Text source should parse");
+    let empty = empty_document
+        .canonical_compilation_with_source(
+            &empty_source,
+            CompileTimeLimits::default(),
+            workspace.path(),
+            ResourceLimits::default(),
+        )
+        .expect("empty Text content should compile");
+    let empty_scene = empty.chart().render().expect("empty Render scene");
+    assert_eq!(empty_scene.glyph_runs().len(), 1);
+    assert!(empty_scene.glyph_runs()[0].glyphs().is_empty());
+
+    let chart_only = document
+        .canonical_chart_with_source(source, CompileTimeLimits::default())
+        .expect_err("Text chart lowering must not read workspace bytes");
+    assert!(chart_only[0].message().contains("resolved resource bundle"));
+
+    for (invalid_source, expected_message) in [
+        (
+            source.replace("content: \"AB\"", "content: \"C\""),
+            "no glyph",
+        ),
+        (
+            source.replace("content: \"AB\"", "content: \"\\u{0001}\""),
+            "forbidden",
+        ),
+        (
+            source.replace(
+                "fallbackFonts: [@fallback,];",
+                "fallbackFonts: [@fallback,];\n                language: \"ar\";",
+            ),
+            "language",
+        ),
+    ] {
+        let invalid_document = parse_document(&invalid_source)
+            .into_result()
+            .expect("invalid Text boundary source should parse");
+        let diagnostics = invalid_document
+            .canonical_compilation_with_source(
+                &invalid_source,
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .expect_err("invalid Text boundary should fail");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message().contains(expected_message)),
+            "expected {expected_message:?}, got {diagnostics:?}"
+        );
+    }
+}
+
+fn font_with_b_mapping(font: &[u8], id_delta: i16) -> Vec<u8> {
+    let mut mapped = font.to_vec();
+    let count = usize::from(u16::from_be_bytes([mapped[4], mapped[5]]));
+    let mut cmap_record = None;
+    let mut head_offset = None;
+    for index in 0..count {
+        let record = 12 + index * 16;
+        let tag = &mapped[record..record + 4];
+        let offset = usize::try_from(u32::from_be_bytes(
+            mapped[record + 8..record + 12]
+                .try_into()
+                .expect("font offset"),
+        ))
+        .expect("font offset fits");
+        if tag == b"cmap" {
+            cmap_record = Some((record, offset));
+        }
+        if tag == b"head" {
+            head_offset = Some(offset);
+        }
+    }
+    let (cmap_record, cmap_offset) = cmap_record.expect("cmap record");
+    let subtable_offset = cmap_offset
+        + usize::try_from(u32::from_be_bytes(
+            mapped[cmap_offset + 8..cmap_offset + 12]
+                .try_into()
+                .expect("cmap offset"),
+        ))
+        .expect("cmap offset fits");
+    mapped[subtable_offset + 14..subtable_offset + 16].copy_from_slice(&0x0042u16.to_be_bytes());
+    mapped[subtable_offset + 20..subtable_offset + 22].copy_from_slice(&0x0042u16.to_be_bytes());
+    mapped[subtable_offset + 24..subtable_offset + 26].copy_from_slice(&id_delta.to_be_bytes());
+
+    let table_length = usize::try_from(u32::from_be_bytes(
+        mapped[cmap_record + 12..cmap_record + 16]
+            .try_into()
+            .expect("cmap length"),
+    ))
+    .expect("cmap length fits");
+    let checksum = |bytes: &[u8]| {
+        bytes
+            .chunks(4)
+            .map(|chunk| {
+                let mut word = [0; 4];
+                word[..chunk.len()].copy_from_slice(chunk);
+                u32::from_be_bytes(word)
+            })
+            .fold(0, u32::wrapping_add)
+    };
+    let cmap_checksum = checksum(&mapped[cmap_offset..cmap_offset + table_length]);
+    mapped[cmap_record + 4..cmap_record + 8].copy_from_slice(&cmap_checksum.to_be_bytes());
+    let head_offset = head_offset.expect("head record");
+    mapped[head_offset + 8..head_offset + 12].fill(0);
+    let adjustment = 0xb1b0_afba_u32.wrapping_sub(checksum(&mapped));
+    mapped[head_offset + 8..head_offset + 12].copy_from_slice(&adjustment.to_be_bytes());
+    mapped
 }
 
 #[test]

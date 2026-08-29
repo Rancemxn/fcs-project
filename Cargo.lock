@@ -409,6 +409,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "toml",
+ "ttf-parser",
 ]
 
 [[package]]
