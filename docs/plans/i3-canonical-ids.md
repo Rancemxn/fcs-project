@@ -1,6 +1,7 @@
 # I3.1 Canonical IDs
 
-Status: implementation work unit; the normative contract is FCS §17 and ADR 0012.
+Status: implementation work unit; the normative contract is FCS §17 and
+`docs/decisions/0012-canonical-textual-id-encoding.md`.
 
 ## Objective
 
@@ -21,7 +22,8 @@ lowering, runtime descriptors, FCBC, Render, Conversion, CLI, and snapshot seria
 - FCS §17, §§11.2/11.5, §§12.1/12.2/12.5;
 - FCBC §6.2;
 - ADR 0010 stage-scoped Reviewed Implementation Baseline;
-- ADR 0012 and the I3.1 fixture vectors under `docs/conformance/fcs5/`.
+- `docs/decisions/0012-canonical-textual-id-encoding.md` and the I3.1 fixture vectors under
+  `docs/conformance/fcs5/`.
 
 The path uses source identifier spellings, zero-based decimal order, and final expanded-output order. The
 implementation must not use filesystem paths, hash-map traversal, comments, trivia, or authoring-local names.
