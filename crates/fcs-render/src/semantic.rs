@@ -2634,15 +2634,18 @@ impl PathCurve {
         finite_point(point)
     }
 
-    fn flat_enough(self) -> Result<bool, &'static str> {
-        let start = self.point(0.0)?;
-        let end = self.point(1.0)?;
+    fn flat_enough(self, world_matrix: [f64; 9]) -> Result<bool, &'static str> {
+        let start = transform_point(world_matrix, self.point(0.0)?)?;
+        let end = transform_point(world_matrix, self.point(1.0)?)?;
         let flatness = match self {
-            Self::Quadratic { control, .. } => distance_to_chord(control, start, end)?,
+            Self::Quadratic { control, .. } => {
+                distance_to_chord(transform_point(world_matrix, control)?, start, end)?
+            }
             Self::Cubic {
                 control1, control2, ..
-            } => distance_to_chord(control1, start, end)?
-                .max(distance_to_chord(control2, start, end)?),
+            } => distance_to_chord(transform_point(world_matrix, control1)?, start, end)?.max(
+                distance_to_chord(transform_point(world_matrix, control2)?, start, end)?,
+            ),
             Self::Arc {
                 radius,
                 start_angle,
@@ -2655,7 +2658,7 @@ impl PathCurve {
                 } else if sweep > std::f64::consts::PI {
                     return Ok(false);
                 } else {
-                    radius * (1.0 - (sweep / 2.0).cos())
+                    distance_to_chord(transform_point(world_matrix, self.point(0.5)?)?, start, end)?
                 }
             }
             Self::EllipseArc {
@@ -2671,7 +2674,7 @@ impl PathCurve {
                 } else if sweep > std::f64::consts::PI {
                     return Ok(false);
                 } else {
-                    radius_x.max(radius_y) * (1.0 - (sweep / 2.0).cos())
+                    distance_to_chord(transform_point(world_matrix, self.point(0.5)?)?, start, end)?
                 }
             }
         };
@@ -2787,11 +2790,16 @@ impl PathCurve {
     }
 }
 
-fn flatten_curve(curve: PathCurve, points: &mut Vec<Point>, depth: u8) -> Result<(), &'static str> {
+fn flatten_curve(
+    curve: PathCurve,
+    points: &mut Vec<Point>,
+    depth: u8,
+    world_matrix: [f64; 9],
+) -> Result<(), &'static str> {
     if points.len() >= PATH_FLATTEN_MAX_POINTS {
         return Err("render.limit-exceeded");
     }
-    if curve.flat_enough()? {
+    if curve.flat_enough(world_matrix)? {
         points.push(curve.point(1.0)?);
         return Ok(());
     }
@@ -2799,8 +2807,8 @@ fn flatten_curve(curve: PathCurve, points: &mut Vec<Point>, depth: u8) -> Result
         return Err("render.limit-exceeded");
     }
     let (left, right) = curve.split()?;
-    flatten_curve(left, points, depth + 1)?;
-    flatten_curve(right, points, depth + 1)
+    flatten_curve(left, points, depth + 1, world_matrix)?;
+    flatten_curve(right, points, depth + 1, world_matrix)
 }
 
 fn evaluate_path(
@@ -2808,6 +2816,7 @@ fn evaluate_path(
     path: &PathRecord,
     chart_time: f64,
     environment: EvaluationEnvironment,
+    world_matrix: [f64; 9],
 ) -> Result<(Vec<PathSubpath>, [f64; 4]), &'static str> {
     if !matches!(path.fill_rule, 1 | 2) {
         return Err("render.invalid-geometry");
@@ -2876,6 +2885,7 @@ fn evaluate_path(
                         end,
                     },
                     &mut bounds,
+                    world_matrix,
                 )?;
                 current = end;
                 has_command = true;
@@ -2908,6 +2918,7 @@ fn evaluate_path(
                         end,
                     },
                     &mut bounds,
+                    world_matrix,
                 )?;
                 current = end;
                 has_command = true;
@@ -2947,7 +2958,7 @@ fn evaluate_path(
                     end_angle,
                 };
                 append_path_point(active.as_mut(), curve.point(0.0)?, &mut bounds)?;
-                append_curve(active.as_mut(), curve, &mut bounds)?;
+                append_curve(active.as_mut(), curve, &mut bounds, world_matrix)?;
                 current = curve.point(1.0)?;
                 has_command = true;
                 has_drawing = true;
@@ -2997,7 +3008,7 @@ fn evaluate_path(
                     end_angle,
                 };
                 append_path_point(active.as_mut(), curve.point(0.0)?, &mut bounds)?;
-                append_curve(active.as_mut(), curve, &mut bounds)?;
+                append_curve(active.as_mut(), curve, &mut bounds, world_matrix)?;
                 current = curve.point(1.0)?;
                 has_command = true;
                 has_drawing = true;
@@ -3027,10 +3038,11 @@ fn append_curve(
     active: Option<&mut PathSubpath>,
     curve: PathCurve,
     bounds: &mut Option<[f64; 4]>,
+    world_matrix: [f64; 9],
 ) -> Result<(), &'static str> {
     let subpath = active.ok_or("render.invalid-geometry")?;
     let length = subpath.points.len();
-    flatten_curve(curve, &mut subpath.points, 0)?;
+    flatten_curve(curve, &mut subpath.points, 0, world_matrix)?;
     for point in &subpath.points[length..] {
         update_bounds(bounds, *point);
     }
@@ -3384,7 +3396,8 @@ fn geometry_evaluation(
                 .paths
                 .get(*path_ref as usize)
                 .ok_or("render.invalid-reference")?;
-            let (subpaths, bounds) = evaluate_path(chart, path, chart_time, environment)?;
+            let (subpaths, bounds) =
+                evaluate_path(chart, path, chart_time, environment, world_matrix)?;
             (
                 bounds,
                 Some(LocalShape::Path {
