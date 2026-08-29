@@ -159,6 +159,7 @@ enum LocalShape {
     Path {
         subpaths: Vec<PathSubpath>,
         fill_rule: u16,
+    },
     Text {
         contours: Vec<Vec<[f64; 2]>>,
     },
@@ -3392,6 +3393,7 @@ fn geometry_evaluation(
                 }),
                 None,
             )
+        }
         GeometryData::Text { glyph_runs, origin } => {
             let (bounds, contours) =
                 evaluate_text(chart, glyph_runs, *origin, chart_time, environment)?;
