@@ -1,7 +1,8 @@
 use fcs_model::{
     CanonicalCreditRole, CanonicalStandardCreditRole, CanonicalValue, CanonicalValueType,
 };
-use fcs_source::diagnostic::DiagnosticCode;
+use fcs_source::ast::SourceSpan;
+use fcs_source::diagnostic::{DiagnosticCode, DiagnosticStage};
 use fcs_source::parser::parse_document;
 
 fn canonical(source: &str) -> fcs_model::CanonicalMetadata {
@@ -44,6 +45,44 @@ fn lowers_the_metadata_fixture_without_retaining_workspace_source_paths() {
     assert_eq!(metadata.sync().unwrap().audio_offset().seconds(), 0.1);
     assert_eq!(metadata.sync().unwrap().audio_time(1.0).unwrap(), 1.1);
     assert_eq!(metadata.sync().unwrap().chart_time(1.1).unwrap(), 1.0);
+}
+
+#[test]
+fn resource_ids_are_unique_at_the_canonical_boundary() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+resources {
+    binary shared { source: "one.bin"; mediaType: "application/octet-stream"; }
+    image shared { source: "two.png"; mediaType: "image/png"; }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("duplicate resource declarations are syntactically valid");
+    let diagnostics = document
+        .canonical_metadata()
+        .expect_err("resource IDs must be unique in canonical metadata");
+
+    assert_eq!(diagnostics.len(), 1);
+    let duplicate = &diagnostics[0];
+    assert_eq!(duplicate.code(), DiagnosticCode::NAME_DUPLICATE);
+    assert_eq!(duplicate.stage(), DiagnosticStage::Canonical);
+    assert!(duplicate.message().contains("resource ID shared"));
+    let first_name = source.find("binary shared").expect("first resource") + "binary ".len();
+    let second_name = source.rfind("image shared").expect("second resource") + "image ".len();
+    assert_eq!(
+        duplicate.primary_span(),
+        SourceSpan::new(second_name, second_name + "shared".len())
+    );
+    assert_eq!(duplicate.labels().len(), 1);
+    assert_eq!(
+        duplicate.labels()[0].span(),
+        SourceSpan::new(first_name, first_name + "shared".len())
+    );
+    assert_eq!(
+        duplicate.labels()[0].message(),
+        "first resource declaration"
+    );
 }
 
 #[test]

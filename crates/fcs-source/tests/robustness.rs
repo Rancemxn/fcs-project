@@ -661,3 +661,48 @@ fn an_unfinished_block_still_reaches_document_level_recovery() {
     );
     assert_spans_are_bounded(&output, source.as_bytes(), true);
 }
+
+fn brace_only_recovery_document(repeats: usize) -> String {
+    let mut source =
+        String::from("#fcs 5.0.0\nformat { profile: chart; }\ncollections {\n    notes {\n");
+    for index in 0..repeats {
+        source.push_str(&format!("        tap {{ gameplay.time: {index}beat;\n"));
+    }
+    source.push_str("meta { title: \"valid sibling\"; }\ntempoMap { 0beat -> ; }\n");
+    source
+}
+
+#[test]
+fn brace_only_recovery_is_bounded_and_deterministic() {
+    // This fixed brace-only shape leaves the lexer exemption active while making every
+    // token after the first failure part of an unfinished nested body. The generous bound
+    // guards the old per-token retry path; it is not a performance benchmark.
+    let source = brace_only_recovery_document(128);
+    let started = std::time::Instant::now();
+    let first = parse_document(&source);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "brace-only recovery must not retry per token: {elapsed:?}"
+    );
+    let second = parse_document(&source);
+
+    assert_eq!(first, second, "recovery must be deterministic");
+    assert!(
+        first.output().is_none(),
+        "invalid input must not expose output"
+    );
+    assert_eq!(
+        first.diagnostics().len(),
+        2,
+        "recovery must retain later top-level diagnostics: {:?}",
+        first.diagnostics()
+    );
+    assert!(
+        first
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.code() == DiagnosticCode::SYNTAX_INVALID_TOKEN)
+    );
+    assert_spans_are_bounded(&first, source.as_bytes(), true);
+}

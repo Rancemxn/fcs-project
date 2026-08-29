@@ -1,0 +1,38 @@
+#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+    const DIRECT_ID: string = "direct";
+    fn generatedId(value: int) -> string {
+        if value == 0 { return "generated"; } else { return "unexpected"; }
+    }
+    template Line makeJudge(id: string) {
+        let local_id: string = id;
+        return Line { id: "base"; } with { id: local_id; };
+    }
+}
+collections {
+    judgelines {
+        Line { id: DIRECT_ID; };
+        makeJudge("templated");
+        if true {
+            Line { id: "branch"; };
+        } else {
+            Line { id: "unused-branch"; };
+        }
+        generate i: int in 0..=0 step 1 {
+            let local_id: string = generatedId(i + index + range.start);
+            if true {
+                emit Line { id: local_id; };
+            } else {
+                emit Line { id: "unused-generator"; };
+            }
+        }
+    }
+    notes {
+        tap { line: @direct; gameplay.time: 1beat; };
+        tap { line: @templated; gameplay.time: 2beat; };
+        tap { line: @branch; gameplay.time: 3beat; };
+        tap { line: @generated; gameplay.time: 4beat; };
+    }
+}
