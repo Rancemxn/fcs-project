@@ -125,6 +125,7 @@ type TextContours = Vec<Vec<[f64; 2]>>;
 #[derive(Clone)]
 struct PathSubpath {
     points: Vec<[f64; 2]>,
+    segment_lengths: Vec<f64>,
     closed: bool,
 }
 
@@ -1161,11 +1162,17 @@ fn stroke_contains(
             stroke_circle_contains(*center, *radius, point, stroke)
         }
         LocalShape::Polygon { points, closed } => {
-            stroke_polyline_contains(points, *closed, point, stroke)
+            stroke_polyline_contains(points, *closed, None, point, stroke)
         }
         LocalShape::Path { subpaths, .. } => {
             for subpath in subpaths {
-                if stroke_polyline_contains(&subpath.points, subpath.closed, point, stroke)? {
+                if stroke_polyline_contains(
+                    &subpath.points,
+                    subpath.closed,
+                    Some(&subpath.segment_lengths),
+                    point,
+                    stroke,
+                )? {
                     return Ok(true);
                 }
             }
@@ -1186,17 +1193,26 @@ fn stroke_contains(
 fn stroke_polyline_contains(
     points: &[[f64; 2]],
     closed: bool,
+    segment_lengths: Option<&[f64]>,
     point: [f64; 2],
     stroke: &StrokeDrawOp,
 ) -> Result<bool, &'static str> {
     if points.len() < 2 || points.iter().flatten().any(|value| !value.is_finite()) {
         return Err("render.invalid-geometry");
     }
+    if segment_lengths.is_some_and(|lengths| {
+        lengths.len() != points.len() - 1
+            || lengths
+                .iter()
+                .any(|length| !length.is_finite() || *length < 0.0)
+    }) {
+        return Err("render.invalid-geometry");
+    }
     let half_width = stroke.width / 2.0;
     let mut segments = Vec::with_capacity(points.len());
     let mut total = 0.0;
-    let wrap = usize::from(closed);
-    for index in 0..points.len().saturating_sub(1) + wrap {
+    let segment_wrap = usize::from(closed && segment_lengths.is_none());
+    for index in 0..points.len().saturating_sub(1) + segment_wrap {
         let start = points[index];
         let end = points[(index + 1) % points.len()];
         let direction = [end[0] - start[0], end[1] - start[1]];
@@ -1204,7 +1220,8 @@ fn stroke_polyline_contains(
         if !length.is_finite() {
             return Err("render.invalid-geometry");
         }
-        if length == 0.0 {
+        let metric_length = segment_lengths.map_or(length, |lengths| lengths[index]);
+        if length == 0.0 || metric_length == 0.0 {
             continue;
         }
         segments.push(PolylineSegment {
@@ -1212,8 +1229,9 @@ fn stroke_polyline_contains(
             direction: [direction[0] / length, direction[1] / length],
             offset: total,
             length,
+            metric_length,
         });
-        total += length;
+        total += metric_length;
     }
     if segments.is_empty() || !total.is_finite() {
         return Ok(false);
@@ -1232,8 +1250,11 @@ fn stroke_polyline_contains(
             if across.abs() > half_width {
                 continue;
             }
-            let low = (dash_start - segment.offset).max(0.0);
-            let high = (dash_end - segment.offset).min(segment.length);
+            let low =
+                (dash_start - segment.offset).max(0.0) / segment.metric_length * segment.length;
+            let high = (dash_end - segment.offset).min(segment.metric_length)
+                / segment.metric_length
+                * segment.length;
             if low <= high && along >= low && along <= high {
                 return Ok(true);
             }
@@ -1244,11 +1265,14 @@ fn stroke_polyline_contains(
         for (arc, forward) in [(*dash_start, false), (*dash_end, true)] {
             let segment = segments
                 .iter()
-                .find(|segment| arc <= segment.offset + segment.length)
+                .find(|segment| arc <= segment.offset + segment.metric_length)
                 .unwrap_or(&segments[segments.len() - 1]);
+            let along = (arc - segment.offset).clamp(0.0, segment.metric_length)
+                / segment.metric_length
+                * segment.length;
             let base = [
-                segment.start[0] + segment.direction[0] * (arc - segment.offset),
-                segment.start[1] + segment.direction[1] * (arc - segment.offset),
+                segment.start[0] + segment.direction[0] * along,
+                segment.start[1] + segment.direction[1] * along,
             ];
             let sign = if forward { 1.0 } else { -1.0 };
             let tangent = [sign * segment.direction[0], sign * segment.direction[1]];
@@ -1258,10 +1282,11 @@ fn stroke_polyline_contains(
         }
     }
 
-    for index in 0..segments.len().saturating_sub(1) + wrap {
+    let join_wrap = usize::from(closed);
+    for index in 0..segments.len().saturating_sub(1) + join_wrap {
         let incoming = &segments[index];
         let outgoing = &segments[(index + 1) % segments.len()];
-        let arc = incoming.offset + incoming.length;
+        let arc = incoming.offset + incoming.metric_length;
         let joined = whole_path_on
             || dash_intervals
                 .iter()
@@ -1281,6 +1306,7 @@ struct PolylineSegment {
     direction: [f64; 2],
     offset: f64,
     length: f64,
+    metric_length: f64,
 }
 
 /// Render section 15.2: butt truncates at the endpoint, square extends `width/2` along the
@@ -2697,6 +2723,27 @@ impl PathCurve {
         }
     }
 
+    fn stroke_length(self) -> Result<f64, &'static str> {
+        let length = match self {
+            Self::Arc {
+                radius,
+                start_angle,
+                end_angle,
+                ..
+            } => (end_angle - start_angle).abs() * radius,
+            _ => {
+                let start = self.point(0.0)?;
+                let end = self.point(1.0)?;
+                (end[0] - start[0]).hypot(end[1] - start[1])
+            }
+        };
+        if length.is_finite() && length >= 0.0 {
+            Ok(length)
+        } else {
+            Err("render.invalid-geometry")
+        }
+    }
+
     fn split(self) -> Result<(Self, Self), &'static str> {
         let halves = match self {
             Self::Quadratic {
@@ -2805,6 +2852,7 @@ impl PathCurve {
 fn flatten_curve(
     curve: PathCurve,
     points: &mut Vec<Point>,
+    segment_lengths: &mut Vec<f64>,
     depth: u8,
     world_matrix: [f64; 9],
     point_count: &mut usize,
@@ -2813,7 +2861,10 @@ fn flatten_curve(
         return Err("render.limit-exceeded");
     }
     if curve.flat_enough(world_matrix)? {
-        points.push(curve.point(1.0)?);
+        let point = curve.point(1.0)?;
+        let segment_length = curve.stroke_length()?;
+        points.push(point);
+        segment_lengths.push(segment_length);
         *point_count += 1;
         return Ok(());
     }
@@ -2821,8 +2872,22 @@ fn flatten_curve(
         return Err("render.limit-exceeded");
     }
     let (left, right) = curve.split()?;
-    flatten_curve(left, points, depth + 1, world_matrix, point_count)?;
-    flatten_curve(right, points, depth + 1, world_matrix, point_count)
+    flatten_curve(
+        left,
+        points,
+        segment_lengths,
+        depth + 1,
+        world_matrix,
+        point_count,
+    )?;
+    flatten_curve(
+        right,
+        points,
+        segment_lengths,
+        depth + 1,
+        world_matrix,
+        point_count,
+    )
 }
 
 fn evaluate_path(
@@ -2860,6 +2925,7 @@ fn evaluate_path(
                 claim_path_point(&mut point_count)?;
                 active = Some(PathSubpath {
                     points: vec![point],
+                    segment_lengths: Vec::new(),
                     closed: false,
                 });
                 current = point;
@@ -3067,7 +3133,14 @@ fn append_curve(
     let subpath = active.ok_or("render.invalid-geometry")?;
     subpath.closed = false;
     let length = subpath.points.len();
-    flatten_curve(curve, &mut subpath.points, 0, world_matrix, point_count)?;
+    flatten_curve(
+        curve,
+        &mut subpath.points,
+        &mut subpath.segment_lengths,
+        0,
+        world_matrix,
+        point_count,
+    )?;
     for point in &subpath.points[length..] {
         update_bounds(bounds, *point);
     }
@@ -3083,8 +3156,14 @@ fn append_path_point(
     let subpath = active.ok_or("render.invalid-geometry")?;
     subpath.closed = false;
     let point = finite_point(point)?;
+    let start = *subpath.points.last().ok_or("render.invalid-geometry")?;
+    let segment_length = (point[0] - start[0]).hypot(point[1] - start[1]);
+    if !segment_length.is_finite() {
+        return Err("render.invalid-geometry");
+    }
     claim_path_point(point_count)?;
     subpath.points.push(point);
+    subpath.segment_lengths.push(segment_length);
     update_bounds(bounds, point);
     Ok(())
 }
