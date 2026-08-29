@@ -101,7 +101,7 @@ fn track_conditionals_check_all_inactive_direct_expressions_without_evaluating_t
 #[test]
 fn track_generator_conditionals_check_inactive_emits_without_emitting_them() {
     let invalid = elaboration_diagnostics(&format!(
-        "{HEADER}lines {{ line main {{ tracks {{ track fade -> alpha: float {{ segments {{ generate at: beat in 0beat..<1beat step 1beat {{ if false {{ emit segment {{ start: 0beat; end: 1beat; startValue: 1px; endValue: 1.0; interpolation: \"linear\"; }}; }} else {{ emit segment {{ start: 0beat; end: 1beat; startValue: 0.0; endValue: 1.0; interpolation: \"linear\"; }}; }} }} }} }} }} }}"
+        "{HEADER}lines {{ line main {{ tracks {{ track fade -> alpha: float {{ segments {{ generate at: beat in 0beat..<1beat step 1beat {{ if false {{ emit segment {{ start: 0beat; end: 1beat; startValue: 1px; endValue: 1.0; interpolation: \"linear\"; }}; }} else {{ emit segment {{ start: 0beat; end: 1beat; startValue: 0.0; endValue: 1.0; interpolation: \"linear\"; }}; }} }} }} }} }} }} }}"
     ));
     assert_eq!(invalid[0].code(), DiagnosticCode::TYPE_MISMATCH);
 }
