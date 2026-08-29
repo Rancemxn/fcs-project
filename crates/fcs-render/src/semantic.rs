@@ -3629,7 +3629,7 @@ fn glyph_contour(
     } else if points[last].1 {
         (0, points[last].0)
     } else {
-        (0, midpoint(points[last].0, points[0].0))
+        (0, midpoint(points[last].0, points[0].0)?)
     };
     let mut output = vec![start];
     let mut current = start;
@@ -3644,7 +3644,7 @@ fn glyph_contour(
             }
             current = point;
         } else if let Some(control) = pending_control.replace(point) {
-            let implied = midpoint(control, point);
+            let implied = midpoint(control, point)?;
             append_quadratic(&mut output, current, control, implied, 0)?;
             current = implied;
         }
@@ -3675,18 +3675,11 @@ fn append_quadratic(
     if depth >= GLYPH_MAX_FLATTEN_DEPTH {
         return Err("render.limit-exceeded");
     }
-    let first = midpoint(start, control);
-    let second = midpoint(control, end);
-    let middle = midpoint(first, second);
+    let first = midpoint(start, control)?;
+    let second = midpoint(control, end)?;
+    let middle = midpoint(first, second)?;
     append_quadratic(points, start, first, middle, depth + 1)?;
     append_quadratic(points, middle, second, end, depth + 1)
-}
-
-fn midpoint(first: [f64; 2], second: [f64; 2]) -> [f64; 2] {
-    [
-        first[0] / 2.0 + second[0] / 2.0,
-        first[1] / 2.0 + second[1] / 2.0,
-    ]
 }
 
 fn distance_to_segment(point: [f64; 2], start: [f64; 2], end: [f64; 2]) -> f64 {
