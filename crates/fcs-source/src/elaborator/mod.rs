@@ -289,6 +289,12 @@ pub fn elaborate(
     elaborate_inner(document, schema, limits).map_err(|error| vec![error.into_diagnostic()])
 }
 
+pub(crate) fn preflight_definition_cycles(
+    definitions: &crate::ast::DefinitionsBlock,
+) -> Result<(), Diagnostic> {
+    cycle::reject_cycles(definitions).map_err(ElaboratorError::into_diagnostic)
+}
+
 /// Evaluates one metadata expression in the same pure compile-time environment
 /// used by source definitions. Container expressions and metadata references are
 /// handled by the canonical adapter; this helper supplies scalar arithmetic and
@@ -297,6 +303,9 @@ pub(crate) fn evaluate_metadata_expression(
     expression: &crate::ast::SourceExpression,
     definitions: Option<&crate::ast::DefinitionsBlock>,
 ) -> Result<crate::ast::TypedValue, Diagnostic> {
+    if let Some(definitions) = definitions {
+        preflight_definition_cycles(definitions)?;
+    }
     let context = CompileTimeContext::new(CompileTimeLimits::default());
     eval::evaluate_with_context(
         expression,

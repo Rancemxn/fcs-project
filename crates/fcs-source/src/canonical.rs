@@ -2208,6 +2208,10 @@ fn lower_document_with_sources_and_limits(
     document: &Document,
     limits: CustomValueLimits,
 ) -> Result<LoweredDocument, Vec<Diagnostic>> {
+    if let Some(definitions) = document.definitions.as_ref() {
+        crate::elaborator::preflight_definition_cycles(definitions)
+            .map_err(|diagnostic| vec![diagnostic])?;
+    }
     let contributor_names = contributor_names(document.contributors.as_ref());
     let resource_kinds = resource_kinds(document.resources.as_ref());
     let mut diagnostics = Vec::new();
