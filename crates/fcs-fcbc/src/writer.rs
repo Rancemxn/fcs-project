@@ -1480,12 +1480,6 @@ fn render_section(
                     strings,
                 )
             }
-            _ => {
-                return Err(FcbcError::new(
-                    "fcbc.render-unsupported",
-                    "Render geometry is not supported by the product writer",
-                ));
-            }
         };
         let mut record_payload = Vec::new();
         put_u64(&mut record_payload, geometry.id().value());
