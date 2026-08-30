@@ -592,10 +592,10 @@ fn render_gradient_spread(
     }
 }
 
-fn render_paint_expression(
-    field: &SchemaField,
+fn render_paint_expression<'a>(
+    field: &'a SchemaField,
     definitions: Option<&DefinitionsBlock>,
-) -> Result<RenderPaintExpression<'_>, Diagnostic> {
+) -> Result<RenderPaintExpression<'a>, Diagnostic> {
     let SchemaValue::Expression(expression) = &field.value else {
         return Err(render_error(
             "Render paint must be an expression",
@@ -3191,12 +3191,6 @@ impl<'a> RenderLowerer<'a> {
                     }),
                     None,
                 )
-            }
-            other => {
-                return Err(render_error(
-                    format!("product Render lowering does not support {:?} nodes", other),
-                    node.span,
-                ));
             }
         };
 

@@ -1326,7 +1326,7 @@ fn stroke_polyline_contains(
             offset: total,
             length,
             metric_length,
-            join_after: joins_after.map_or(true, |joins| joins[index]),
+            join_after: joins_after.is_none_or(|joins| joins[index]),
         });
         total += metric_length;
     }
