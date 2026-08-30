@@ -2189,6 +2189,7 @@ mod tests {
             Err(CanonicalRenderError::GroupCarriesPaint)
         );
         let clipped = CanonicalRenderNodeSpec {
+            geometry: None,
             clip: Some(0),
             ..spec
         };
@@ -2939,7 +2940,7 @@ mod tests {
                 kind: CanonicalRenderNodeKind::Rect,
                 parent: Some(0),
                 layer: 0,
-                document_order: 1,
+                document_order: 0,
                 z_order: 0,
                 attachment: CanonicalRenderAttachment::Screen,
                 active: CanonicalActiveInterval::unbounded(),
