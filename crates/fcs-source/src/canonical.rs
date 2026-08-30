@@ -2895,13 +2895,19 @@ impl<'a> RenderLowerer<'a> {
             Some(field) => self.dynamic_opacity_descriptor(field)?,
             None => self.descriptor(TypedValue::Float(1.0))?,
         };
-        let visibility = self.descriptor(TypedValue::Bool(render_body_value_or(
-            &node.items,
-            "visibility",
-            true,
-            self.definitions,
-            |value| render_bool(value, node.span),
-        )?))?;
+        let visibility = match render_body_field(&node.items, "visibility") {
+            Some(field) => {
+                let SchemaValue::Expression(expression) = &field.value else {
+                    return Err(render_error(
+                        "Render visibility must be an expression",
+                        field.span,
+                    ));
+                };
+                self.expression_descriptor(expression, CanonicalExpressionType::Bool)?
+                    .0
+            }
+            None => self.descriptor(TypedValue::Bool(true))?,
+        };
         let z_order = render_body_value_or(&node.items, "zOrder", 0, self.definitions, |value| {
             render_int(value, node.span)
         })?;
