@@ -172,7 +172,6 @@ impl Document {
             chart.lines(),
             chart.notes(),
             self.definitions.as_ref(),
-            self.format.span,
         )?;
         let (descriptors, mapping) =
             merge_render_descriptors(chart.descriptors(), &render_descriptors, self.format.span)?;
@@ -468,9 +467,7 @@ fn render_empty_array(
     if matches!(
         &field.value,
         SchemaValue::Expression(SourceExpression::Array { elements, .. }) if elements.is_empty()
-    ) {
-        Ok(())
-    } else if matches!(
+    ) || matches!(
         render_value(field, definitions)?,
         TypedValue::Array { values, .. } if values.is_empty()
     ) {
@@ -2167,7 +2164,7 @@ impl<'a> RenderLowerer<'a> {
                     let (end_angle, end_value) = self.path_angle_descriptor(end_angle)?;
                     let direction = self.path_direction(direction)?;
                     validate_source_arc(
-                        radius_value.into_iter(),
+                        radius_value,
                         start_value,
                         end_value,
                         direction,
@@ -2491,10 +2488,10 @@ impl<'a> RenderLowerer<'a> {
         kind: CanonicalRenderNodeKind,
         geometry_id: &StableId,
         scope: Option<&str>,
-        origin: Option<usize>,
-        rotation: Option<usize>,
+        geometry_transform: (Option<usize>, Option<usize>),
         path_fill_rule: Option<CanonicalRenderFillRule>,
     ) -> Result<CanonicalRenderGeometryData, Diagnostic> {
+        let (origin, rotation) = geometry_transform;
         let zero_length_vec = || {
             TypedValue::vec2(TypedValue::Length(0.0), TypedValue::Length(0.0))
                 .expect("homogeneous length vector")
@@ -2787,8 +2784,7 @@ impl<'a> RenderLowerer<'a> {
                 kind,
                 &geometry_id,
                 Some("clip"),
-                origin,
-                rotation,
+                (origin, rotation),
                 (kind == CanonicalRenderNodeKind::Path).then_some(fill_rule),
             )?,
         )
@@ -2865,7 +2861,7 @@ impl<'a> RenderLowerer<'a> {
             "origin",
             zero_length_vec(),
             self.definitions,
-            |value| Ok::<_, Diagnostic>(value),
+            Ok::<_, Diagnostic>,
         )?;
         let origin = self.descriptor(origin_value)?;
         let rotation = self.descriptor(TypedValue::Angle(render_body_value_or(
@@ -2965,8 +2961,7 @@ impl<'a> RenderLowerer<'a> {
                     kind,
                     geometry_id,
                     None,
-                    Some(origin),
-                    Some(rotation),
+                    (Some(origin), Some(rotation)),
                     None,
                 )?;
                 let paint = if stroke.is_some() && render_body_field(&node.items, "fill").is_none()
@@ -3060,8 +3055,7 @@ impl<'a> RenderLowerer<'a> {
                     kind,
                     geometry_id,
                     None,
-                    Some(origin),
-                    Some(rotation),
+                    (Some(origin), Some(rotation)),
                     fill_rule,
                 )?;
                 let paint = if stroke.is_some() && render_body_field(&node.items, "fill").is_none()
@@ -3310,8 +3304,8 @@ fn lower_render_scene(
     lines: &CanonicalLineGraph,
     notes: &CanonicalNoteSet,
     definitions: Option<&DefinitionsBlock>,
-    span: SourceSpan,
 ) -> Result<(CanonicalRenderScene, CanonicalDescriptorTable), Vec<Diagnostic>> {
+    let span = scene.span;
     let result = (|| {
         let viewport_width = render_field(&scene.viewport.fields, "width")
             .ok_or_else(|| render_error("Render viewport requires width", scene.viewport.span))
