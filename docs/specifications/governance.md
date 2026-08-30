@@ -110,6 +110,22 @@ unpublished-candidate policy. FCS Core, FCBC 2.0.0, Execution ABI 1.0.0, and Con
 version change from this Render-only seam. Exact-head Full Gate, final semantic/raster conformance,
 joint review, and I10 re-freeze remain open.
 
+### 2.0.6 Render fallback-font reference-list clarification (2026-08-30)
+
+Render Profile 1.0 required ordered `fallbackFonts: array<font reference>`, while FCS Core section 3.1
+forbids entity/reference values as elements of the general `array<T>` value type. Treating the field as a
+normal Core array therefore made the required Render spelling impossible to elaborate.
+
+`fcs-render.md` section 11 now fixes `fallbackFonts` as a Render-schema-owned static reference list whose
+source must be an explicit array literal of direct `@fontIdentifier` elements. It does not create or widen
+Core `array<T>`, so constants, functions, template bindings, and general entity arrays remain forbidden.
+The existing embedded-resource identity, ordered fallback lookup, shaping, and GlyphRun semantics are
+unchanged.
+
+The affected candidate file is `fcs-render.md`; Render Profile 1.0.0 remains **Draft**. Activation requires
+the existing source-to-canonical shaping regression, exact-head Full Gate, final joint review, and I10
+re-freeze. The other four version domains gain no version change from this Render-source clarification.
+
 ### 2.0.5 Source Clip spelling amendment (2026-08-30)
 
 Render Profile 1.0 already required every `ClipGroup` to own one ClipRecord and constrained Clip geometry,

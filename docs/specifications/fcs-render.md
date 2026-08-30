@@ -682,6 +682,12 @@ direction: "ltr"                                    fixed
 features: compile-time empty array                   fixed
 ```
 
+`fallbackFonts` 是 Render schema 拥有的静态 reference list，不构造 FCS Core `array<T>` value：其
+source spelling 必须是显式 array literal，且每个 element 必须直接写成 `@fontIdentifier`。它不能由
+const、function、template binding 或普通 `array<Line>` 替换；空 list 的唯一显式 spelling 是 `[]`。
+这保持 `fcs.md` 第 3.1 节“entity/reference 不能成为 Core array element”的约束，同时固定 fallback
+identity 与查找顺序。
+
 其他 language/script/direction、normalization、bidi、GSUB/GPOS、kerning 或 feature set 需要显式
 required shaping extension；Core loader 不能按宿主 shaper 的默认值接受。`simple-ltr-1` 不做 Unicode
 normalization，按 UTF-8 解码后的 Unicode scalar source order逐个处理；除普通 space U+0020 外，C0/C1

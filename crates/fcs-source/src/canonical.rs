@@ -427,33 +427,20 @@ fn render_value(
     crate::elaborator::evaluate_metadata_expression(expression, definitions)
 }
 
-fn render_font_references(
-    field: &SchemaField,
-    definitions: Option<&DefinitionsBlock>,
-) -> Result<Vec<String>, Diagnostic> {
-    let SchemaValue::Expression(_) = &field.value else {
+fn render_font_references(field: &SchemaField) -> Result<Vec<String>, Diagnostic> {
+    let SchemaValue::Expression(SourceExpression::Array { elements, .. }) = &field.value else {
         return Err(render_error(
-            "fallbackFonts must be a compile-time font reference array",
+            "fallbackFonts must be an explicit compile-time font reference array",
             field.span,
         ));
     };
-    let value = render_value(field, definitions)?;
-    let TypedValue::Array { values, .. } = value else {
-        return Err(render_error(
-            "fallbackFonts must be a compile-time font reference array",
-            field.span,
-        ));
-    };
-    values
-        .into_iter()
-        .map(|value| match value {
-            TypedValue::Line(name) => Ok(name),
-            other => Err(render_error(
-                format!(
-                    "fallbackFonts entries must be font references, found {}",
-                    other.ty()
-                ),
-                field.span,
+    elements
+        .iter()
+        .map(|element| match element {
+            SourceExpression::Reference { name, .. } => Ok(name.clone()),
+            _ => Err(render_error(
+                "fallbackFonts entries must be font references",
+                element.span(),
             )),
         })
         .collect()
@@ -2326,7 +2313,7 @@ impl<'a> RenderLowerer<'a> {
             }
         };
         let fallback_fonts = match render_body_field(&node.items, "fallbackFonts") {
-            Some(field) => render_font_references(field, self.definitions)?,
+            Some(field) => render_font_references(field)?,
             None => Vec::new(),
         };
         let face_index =
