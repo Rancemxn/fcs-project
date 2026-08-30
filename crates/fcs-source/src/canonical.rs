@@ -1004,16 +1004,6 @@ fn render_active_interval(
         .map_err(|error| render_error(format!("{error:?}"), field.span))
 }
 
-fn render_angle(value: TypedValue, span: SourceSpan) -> Result<f64, Diagnostic> {
-    match value {
-        TypedValue::Angle(value) if value.is_finite() => Ok(value),
-        other => Err(render_error(
-            format!("expected finite angle, found {}", other.ty()),
-            span,
-        )),
-    }
-}
-
 fn validate_source_arc(
     radii: impl IntoIterator<Item = f64>,
     start_angle: Option<f64>,
