@@ -114,7 +114,7 @@ pub fn decode_image(
     let image = reader.decode().map_err(|_| AssetError::DecodeFailed)?;
     let rgba = image.to_rgba8();
     let mut linear_premultiplied = Vec::with_capacity(rgba.len() / 4);
-    for pixel in rgba.as_raw().chunks_exact(4) {
+    for pixel in rgba.as_raw().as_chunks::<4>().0 {
         let encoded_alpha = f64::from(pixel[3]) / 255.0;
         let encoded = [
             f64::from(pixel[0]) / 255.0,

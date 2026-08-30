@@ -599,3 +599,110 @@ proptest! {
         }
     }
 }
+
+/// A document shaped like the inputs that time out the `document_bytes` and `document_utf8`
+/// fuzz targets: a valid header, repeatedly spliced truncated block bodies that leave
+/// brackets open, and a tail that leaves braces open so the *innermost* unclosed delimiter
+/// is a brace while unclosed brackets remain deeper in the stack. That ordering is what let
+/// the old innermost-only delimiter check exempt the whole document.
+fn unbalanced_bracket_and_brace_document(repeats: usize) -> String {
+    let mut source = String::from("#fcs 5.0.0\nformat { profile: chart; }\n");
+    for index in 0..repeats {
+        source.push_str(&format!(
+            "collections {{\n    notes {{\n    [[[[[[    styledTap({index}beat, @main, true) with {{\n   }}\n"
+        ));
+    }
+    source.push_str(
+        "definitions {\n    template Note tap {\n        if ghost {\n            return tap {\n",
+    );
+    source
+}
+
+#[test]
+fn unclosed_brackets_are_reported_even_when_a_brace_is_innermost() {
+    let source = unbalanced_bracket_and_brace_document(40);
+    // The recovering document parser retries the whole top-level alternation once per
+    // skipped token, so letting this shape reach it costs superlinear time. The lexer
+    // delimiter gate must reject it first. This bound is three orders of magnitude above
+    // the rejected path and is a guard against that superlinear route, not a performance
+    // budget.
+    let started = std::time::Instant::now();
+    let output = parse_document(&source);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "rejecting an unbalanced document must not take {elapsed:?}"
+    );
+
+    assert!(output.output().is_none());
+    let codes: Vec<_> = output
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| diagnostic.code())
+        .collect();
+    assert_eq!(codes, vec![DiagnosticCode::SYNTAX_INVALID_TOKEN]);
+    assert_eq!(
+        output.diagnostics()[0].stage(),
+        DiagnosticStage::Parse,
+        "an unbalanced delimiter is a parse-stage diagnostic"
+    );
+    assert_spans_are_bounded(&output, source.as_bytes(), true);
+}
+
+#[test]
+fn an_unfinished_block_still_reaches_document_level_recovery() {
+    // Only-unclosed-brace documents keep their existing behaviour: the delimiter gate
+    // exempts them so the parser can still report later top-level items.
+    let source = "#fcs 5.0.0\nformat { profile: chart;\nlines { line main {} }\n";
+    let output = parse_document(source);
+    assert!(
+        !output.diagnostics().is_empty(),
+        "an unfinished block must still be rejected"
+    );
+    assert_spans_are_bounded(&output, source.as_bytes(), true);
+}
+
+fn brace_only_recovery_document(repeats: usize) -> String {
+    let mut source =
+        String::from("#fcs 5.0.0\nformat { profile: chart; }\ncollections {\n    notes {\n");
+    for index in 0..repeats {
+        source.push_str(&format!("        tap {{ gameplay.time: {index}beat;\n"));
+    }
+    source.push_str("meta { title: \"valid sibling\"; }\ntempoMap { 0beat -> ; }\n");
+    source
+}
+
+#[test]
+fn brace_only_recovery_is_bounded_and_deterministic() {
+    // This fixed brace-only shape leaves the lexer exemption active while making every
+    // token after the first failure part of an unfinished nested body. The generous bound
+    // guards the old per-token retry path; it is not a performance benchmark.
+    let source = brace_only_recovery_document(128);
+    let started = std::time::Instant::now();
+    let first = parse_document(&source);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "brace-only recovery must not retry per token: {elapsed:?}"
+    );
+    let second = parse_document(&source);
+
+    assert_eq!(first, second, "recovery must be deterministic");
+    assert!(
+        first.output().is_none(),
+        "invalid input must not expose output"
+    );
+    assert_eq!(
+        first.diagnostics().len(),
+        2,
+        "recovery must retain later top-level diagnostics: {:?}",
+        first.diagnostics()
+    );
+    assert!(
+        first
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.code() == DiagnosticCode::SYNTAX_INVALID_TOKEN)
+    );
+    assert_spans_are_bounded(&first, source.as_bytes(), true);
+}

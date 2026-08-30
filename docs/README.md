@@ -14,7 +14,7 @@
 | `plans/` | 总路线图与阶段实施计划 |
 | `reviews/` | 固定范围、hash、复现命令和独立复审证据 |
 | `agents/` | 领域阅读、GitHub Issue/PR 和 triage 规则 |
-| `loops/` | 主实现 loop 与独立审查 loop 契约 |
+| `loops/` | 当前 session-pool delivery loop；旧 loop 路径仅作 superseded pointer |
 | `community/` | PGR、RPE、PEC 等外部格式证据综合 |
 | `scratch/` | 历史临时记录；不作为当前 request surface 或状态来源 |
 
@@ -25,5 +25,6 @@
 
 修改任何领域文件前先阅读根 `AGENTS.md`、本目录中对应入口、相关 ADR、计划、fixture 和复审资料。
 
-本次目录重构只调整文件路径；规范、fixture、golden、manifest 内容及既有 hash 不变。历史 review/plan 中的
-路径文字同步到当前 `docs/` 布局，但不改变其原有结论或审计事实。
+本次文档入口包含 `docs/loops/fcs5-session-pool-delivery.md` 和 ADR 0014 定义的 session-pool
+交付契约；旧 `loop.md`、`review-loop.md` 路径仅保留 pointer，不再是 active workflow。规范、fixture、
+golden、manifest 内容及既有 hash 不因该协作模型变化。

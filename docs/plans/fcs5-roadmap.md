@@ -730,8 +730,8 @@ git diff --check
   `return` 与 nested generator；zero-step 语法保留给 I2，elaborator 在 I1 不展开并返回稳定
   `implementation.feature-unavailable`，且不产生部分输出；
 - I2.1–I2.10 已完成并合并；I2.10 的三份 valid fixture、六份 elaborate-error/budget fixture、矩阵
-  更新和完整 Rust delivery gate 已记录。后续 corrective chain 为 PR #92/#96/#97/#98/#102，当前
-  `origin/main` 为 `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1`；主自审和适用 Rust gate 均通过。
+  更新和完整 Rust delivery gate 已记录。后续 corrective chain 为 PR #92/#96/#97/#98/#102；固定的
+  post-I2 corrective handoff 快照为 `f15a6595ebdf8c01dfe77424cbceda1a9f018fe1`。主自审和适用 Rust gate 均通过。
   独立 merged-SHA Audit 已对 #92、#96、#98、#102 给出 `pass`，#97 需在 #99 修复后重审。因而 I2
   closure 的实现交付已修正但 stage claim 保持 provisional；五个规范域仍为 Draft。
 - I3.1–I6.7 的实现单元和后续 I7–I10 partial product units 已经合并，但 I10 RC 尚未完成。当前
@@ -799,6 +799,14 @@ git diff --check
   repeat-axis, and decoded nearest/linear sampling evidence, plus the #501 existing-FCBC kind 7 Line stroke ->
   loader -> semantic/raster path with query-time width, caps, dash phase, and coverage evidence, and #503 canonical
   Line geometry/StrokeRecord -> product FCBC writer -> Render loader round-trip evidence, plus #506 canonical
-  ImagePattern paint -> product FCBC writer -> Render loader -> semantic/raster round-trip evidence;
-  source Line stroke lowering, source ImagePattern lowering, broader canonical writer coverage, Polyline/Path/Text geometry,
-  broader resource semantics, isolated compositing, and semantic/raster conformance remain open under #295.
+  ImagePattern paint -> product FCBC writer -> Render loader -> semantic/raster round-trip evidence, and #509 canonical
+  Path geometry/PathRecord -> product FCBC writer -> Render loader command-topology evidence, #613 canonical Path
+  StrokeRecord -> writer/loader -> explicit-close/dash/cap/join semantic and raster evidence, and #517 canonical
+  Circle solid stroke -> product FCBC writer -> Render loader -> semantic/annulus raster evidence with fill-and-stroke
+  draw order, and #522 the section 15.2 closed parametric dash seam plus the dashed Circle stroke it determines,
+  and #525 source `circle` stroke lowering with an optional fill, and #529 Polyline and Polygon
+  strokes with section 15.2 joins, caps, closure and exact dash arc length, and #531 source
+  `polyline` and `polygon` stroke lowering with an optional fill;
+  dynamic source Line stroke descriptors, Ellipse and RoundedRect strokes,
+  source ImagePattern lowering, source Path lowering, broader canonical writer coverage, Text geometry,
+  broader resource semantics, isolated compositing, and semantic/raster conformance remain open under #296/#9.

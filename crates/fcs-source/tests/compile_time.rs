@@ -346,6 +346,59 @@ collections { notes { selected(@main); } }"#;
 }
 
 #[test]
+fn definition_line_references_use_the_document_namespace() {
+    let valid = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  const main_id: string = @main.id;
+  fn read_id() -> string { return @main.id; }
+}
+lines { line main {} }"#;
+    elaborate_source(valid).expect("declared definition Line references should elaborate");
+
+    for source in [
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const missing_line: Line = @missing; }
+lines { line main {} }"#,
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  fn hidden(flag: bool) -> string {
+    if flag { return @missing.id; } else { return @main.id; }
+  }
+}
+lines { line main {} }"#,
+        r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions { const generated_id: string = @missing.id; }
+collections { judgelines { Line { id: generated_id; }; } }"#,
+    ] {
+        let errors = elaborate_source(source).expect_err("unknown definition Line reference");
+        assert_eq!(errors[0].code(), DiagnosticCode::NAME_UNKNOWN);
+        let start = source.find("@missing").expect("missing Line reference");
+        assert_eq!(
+            errors[0].primary_span(),
+            SourceSpan::new(start, start + "@missing".len())
+        );
+    }
+}
+
+#[test]
+fn definition_line_references_include_constant_backed_judgeline_ids() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  const JUDGE_ID: string = "judge";
+  fn read_id() -> string { return @judge.id; }
+}
+collections { judgelines { Line { id: JUDGE_ID; }; } }"#;
+
+    elaborate_source(source).expect("constant-backed Line IDs should resolve in definitions");
+}
+
+#[test]
 fn pure_functions_route_unavailable_static_entity_field_evaluation() {
     let source = r#"#fcs 5.0.0
 format { profile: chart; }
@@ -453,6 +506,25 @@ collections {
 }
 
 #[test]
+fn unselected_collection_generator_range_is_not_evaluated() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+collections {
+  notes {
+    if false {
+      generate i: int in 0..=1 step 1 / 0 {
+        emit tap { gameplay.time: 0beat; };
+      }
+    } else {
+      tap { gameplay.time: 1beat; };
+    }
+  }
+}"#;
+
+    elaborate_source(source).expect("unselected generator range must not be evaluated");
+}
+
+#[test]
 fn template_unselected_branch_is_schema_checked_before_instantiation() {
     let source = r#"#fcs 5.0.0
 format { profile: chart; }
@@ -519,6 +591,116 @@ collections {
 }"#;
 
     elaborate_source(source).expect("judgeline collection IDs should share the Line namespace");
+}
+
+#[test]
+fn statically_evaluated_judgeline_ids_join_the_line_namespace() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  const DIRECT_ID: string = "direct";
+  const OVERRIDE_ID: string = "override";
+  fn generatedId(value: int) -> string {
+    if value == 0 { return "generated"; } else { return "unexpected"; }
+  }
+  template Line makeJudge(id: string) {
+    let local_id: string = id;
+    return Line { id: "base"; } with { id: local_id; };
+  }
+}
+collections {
+  judgelines {
+    Line { id: DIRECT_ID; };
+    makeJudge("templated");
+    makeJudge("ignored") with { id: OVERRIDE_ID; };
+    if true {
+      Line { id: "branch"; };
+    } else {
+      Line { id: "unused-branch"; };
+    }
+    generate i: int in 0..=0 step 1 {
+      let local_id: string = generatedId(i + index + range.start);
+      if true {
+        emit Line { id: local_id; };
+      } else {
+        emit Line { id: "unused-generator"; };
+      }
+    }
+  }
+  notes {
+    tap { line: @direct; gameplay.time: 1beat; };
+    tap { line: @templated; gameplay.time: 2beat; };
+    tap { line: @override; gameplay.time: 3beat; };
+    tap { line: @branch; gameplay.time: 4beat; };
+    tap { line: @generated; gameplay.time: 5beat; };
+  }
+}"#;
+    let document = parse_document(source).into_result().unwrap();
+    let expanded = elaborate(&document, phase2_schema(), CompileTimeLimits::default())
+        .expect("static Line IDs should be visible to document references");
+    let ids = expanded
+        .collections()
+        .find(|collection| collection.name() == "judgelines")
+        .expect("judgelines")
+        .entities()
+        .map(|entity| entity.field("id").expect("Line ID").value().clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        vec![
+            TypedValue::String("direct".into()),
+            TypedValue::String("templated".into()),
+            TypedValue::String("override".into()),
+            TypedValue::String("branch".into()),
+            TypedValue::String("generated".into()),
+        ]
+    );
+
+    let duplicate_source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions { const ID: string = "judge"; }
+lines { line judge {} }
+collections { judgelines { Line { id: ID; }; } }"#;
+    let duplicate_document = parse_document(duplicate_source).into_result().unwrap();
+    let errors = elaborate(
+        &duplicate_document,
+        phase2_schema(),
+        CompileTimeLimits::default(),
+    )
+    .expect_err("static Line IDs must participate in duplicate checks");
+    assert_eq!(errors[0].code(), DiagnosticCode::NAME_DUPLICATE);
+    assert_eq!(errors[0].labels().len(), 1);
+    assert_eq!(errors[0].labels()[0].message(), "previous Line ID");
+    let id_path = duplicate_source.find("id: ID").expect("Line ID field");
+    assert_eq!(
+        errors[0].primary_span(),
+        SourceSpan::new(id_path, id_path + "id".len())
+    );
+}
+
+#[test]
+fn reference_backed_template_ids_cannot_bootstrap_or_fall_back_to_their_base() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+  template Line rename(id: string) {
+    let local_id: string = id;
+    return Line { id: "base"; } with { id: local_id; };
+  }
+}
+lines { line base {} }
+collections { judgelines { rename(@missing.id); } }"#;
+
+    let errors = elaborate_source(source).expect_err("unknown Line references cannot create IDs");
+    assert_eq!(errors[0].code(), DiagnosticCode::NAME_UNKNOWN);
+    let start = source.find("@missing").expect("missing Line reference");
+    assert_eq!(
+        errors[0].primary_span(),
+        SourceSpan::new(start, start + "@missing".len())
+    );
 }
 
 #[test]
@@ -922,6 +1104,21 @@ definitions { const value: float = sqrt(-1.0); }"#;
 }
 
 #[test]
+fn zero_base_negative_exponent_is_a_static_domain_error() {
+    for expression in [
+        "0.0 ** -1.0",
+        "-0.0 ** -1.0",
+        "pow(0.0, -1.0)",
+        "pow(-0.0, -1.0)",
+    ] {
+        let source = format!(
+            "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ const value: float = {expression}; }}"
+        );
+        assert_code(elaborate_source(&source), DiagnosticCode::NUMERIC_DOMAIN);
+    }
+}
+
+#[test]
 fn homogeneous_arrays_are_typed_and_indexed_at_compile_time() {
     let source = r#"#fcs 5.0.0
 format { profile: fragment; }
@@ -1245,6 +1442,28 @@ definitions { const value: float = sin(1); }"#;
         elaborate_source(argument_type),
         DiagnosticCode::TYPE_MISMATCH,
     );
+}
+
+#[test]
+fn polymorphic_builtin_arity_diagnostics_use_the_complete_call_span() {
+    for expression in [
+        "abs()",
+        "min(1.0)",
+        "max(1.0, 2.0, 3.0)",
+        "clamp(1.0, 2.0, 3.0, 4.0)",
+    ] {
+        let source = format!(
+            "#fcs 5.0.0\nformat {{ profile: fragment; }}\ndefinitions {{ const value: float = {expression}; }}"
+        );
+        let errors = elaborate_source(&source).expect_err("wrong polymorphic builtin arity");
+        let start = source.find(expression).expect("builtin call");
+        assert_eq!(errors[0].code(), DiagnosticCode::TYPE_MISMATCH);
+        assert_eq!(
+            errors[0].primary_span(),
+            SourceSpan::new(start, start + expression.len()),
+            "{expression}"
+        );
+    }
 }
 
 #[test]
@@ -2304,6 +2523,31 @@ definitions {
             .map(|frame| frame.subject().unwrap())
             .collect::<Vec<_>>(),
         ["seed", "bridge", "seed"]
+    );
+}
+
+#[test]
+fn direct_metadata_evaluation_preflights_unused_function_cycles() {
+    let source = r#"#fcs 5.0.0
+format { profile: fragment; }
+definitions {
+  fn first() -> string { return second(); }
+  fn second() -> string { return first(); }
+}
+meta { title: "literal"; }"#;
+    let document = parse_document(source).into_result().unwrap();
+    let diagnostics = document
+        .canonical_metadata()
+        .expect_err("direct metadata evaluation must reject recursive functions");
+
+    assert_eq!(diagnostics[0].code(), DiagnosticCode::NAME_CYCLE);
+    assert_eq!(
+        diagnostics[0]
+            .expansion_trace()
+            .iter()
+            .map(|frame| frame.subject().unwrap())
+            .collect::<Vec<_>>(),
+        ["first", "second", "first"]
     );
 }
 

@@ -4,20 +4,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use fcs_model::{
-    AudioOffset, Beat as CanonicalBeat, CanonicalActiveInterval, CanonicalArcDirection,
-    CanonicalArtwork, CanonicalChart, CanonicalChartError, CanonicalColor, CanonicalCompilation,
-    CanonicalContributor, CanonicalCredit, CanonicalCreditRole, CanonicalDescriptorDomain,
-    CanonicalDescriptorKind, CanonicalDescriptorRoot, CanonicalDescriptorTable,
-    CanonicalExpressionDag, CanonicalExpressionType, CanonicalExpressionValue,
-    CanonicalGradientSpread, CanonicalGradientStop, CanonicalImageRepeat, CanonicalImageSampling,
-    CanonicalLineGraph, CanonicalMetadata, CanonicalObject, CanonicalObjectEntry,
-    CanonicalPathCommand, CanonicalPatternTransform, CanonicalPreview, CanonicalProfile,
+    AudioOffset, Beat as CanonicalBeat, CanonicalActiveInterval, CanonicalArtwork, CanonicalChart,
+    CanonicalChartError, CanonicalColor, CanonicalCompilation, CanonicalContributor,
+    CanonicalCredit, CanonicalCreditRole, CanonicalDescriptorDomain, CanonicalDescriptorKind,
+    CanonicalDescriptorRoot, CanonicalDescriptorTable, CanonicalExpressionType,
+    CanonicalExpressionValue, CanonicalGlyphPlacement, CanonicalGlyphRun, CanonicalGradientSpread,
+    CanonicalGradientStop, CanonicalImageSampling, CanonicalLineGraph, CanonicalMetadata,
+    CanonicalObject, CanonicalObjectEntry, CanonicalPreview, CanonicalProfile,
     CanonicalProfileFeature, CanonicalPropertyDescriptor, CanonicalRenderAttachment,
-    CanonicalRenderColorSpace, CanonicalRenderComposite, CanonicalRenderFillRule,
-    CanonicalRenderGeometry, CanonicalRenderGeometryData, CanonicalRenderLayer,
-    CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
-    CanonicalRenderPaintData, CanonicalRenderPass, CanonicalRenderPath, CanonicalRenderScene,
-    CanonicalRenderSceneSpec, CanonicalRenderStroke, CanonicalRequiredExtension, CanonicalResource,
+    CanonicalRenderColorSpace, CanonicalRenderComposite, CanonicalRenderGeometry,
+    CanonicalRenderGeometryData, CanonicalRenderLayer, CanonicalRenderNode,
+    CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
+    CanonicalRenderPaintData, CanonicalRenderPass, CanonicalRenderScene, CanonicalRenderSceneSpec,
+    CanonicalRenderStroke, CanonicalRequiredExtension, CanonicalResource, CanonicalResourceBundle,
     CanonicalResourceKind, CanonicalSourceVersion, CanonicalStrokeCap, CanonicalStrokeJoin,
     CanonicalSync, CanonicalTextualId, CanonicalValue, CanonicalValueType, CanonicalViewport,
     ChartTimeMap, DeclaredSha256, DistributionMetadata, EntityKind, StableId, StableIdRegistry,
@@ -25,8 +24,8 @@ use fcs_model::{
 
 use crate::ast::{
     Definition, DefinitionsBlock, Document, DocumentProfile, ExtensionRequirement, FieldPath,
-    MetaBlock, OrderedObject, ProfileFeature, RenderBodyItem, RenderItem, RenderNodeDeclaration,
-    ResourceKind, SchemaField, SchemaValue, SourceExpression, SourceLiteral, SourceSpan, SyncBlock,
+    MetaBlock, OrderedObject, ProfileFeature, RenderBodyItem, RenderItem, ResourceKind,
+    SchemaField, SchemaValue, SourceExpression, SourceLiteral, SourceSpan, SyncBlock,
     TopLevelBlockKind, TypedValue,
 };
 use crate::custom::CustomValueLimits;
@@ -147,7 +146,16 @@ impl Document {
         source: &str,
         limits: CompileTimeLimits,
     ) -> Result<CanonicalChart, Vec<Diagnostic>> {
-        let mut chart = self.canonical_chart(limits)?;
+        let chart = self.canonical_chart(limits)?;
+        self.lower_source_render(source, chart, None)
+    }
+
+    fn lower_source_render(
+        &self,
+        source: &str,
+        mut chart: CanonicalChart,
+        resource_bundle: Option<&CanonicalResourceBundle>,
+    ) -> Result<CanonicalChart, Vec<Diagnostic>> {
         let Some(crate::ast::TopLevelBlock::Render(block)) =
             self.top_level(TopLevelBlockKind::Render)
         else {
@@ -157,6 +165,7 @@ impl Document {
         let (mut render, render_descriptors) = lower_render_scene(
             &scene,
             chart.metadata().resources(),
+            resource_bundle,
             chart.time_map(),
             self.definitions.as_ref(),
             self.format.span,
@@ -198,8 +207,9 @@ impl Document {
         workspace_root: impl AsRef<std::path::Path>,
         resource_limits: crate::resource::ResourceLimits,
     ) -> Result<CanonicalCompilation, Vec<Diagnostic>> {
-        let chart = self.canonical_chart_with_source(source, limits)?;
+        let chart = self.canonical_chart(limits)?;
         let resources = self.canonical_resource_bundle(workspace_root, resource_limits)?;
+        let chart = self.lower_source_render(source, chart, Some(&resources))?;
         Ok(CanonicalCompilation::new(
             chart,
             resources,
@@ -345,6 +355,39 @@ fn render_value(
     crate::elaborator::evaluate_metadata_expression(expression, definitions)
 }
 
+fn render_font_references(field: &SchemaField) -> Result<Vec<String>, Diagnostic> {
+    let SchemaValue::Expression(SourceExpression::Array { elements, .. }) = &field.value else {
+        return Err(render_error(
+            "fallbackFonts must be a compile-time font reference array",
+            field.span,
+        ));
+    };
+    elements
+        .iter()
+        .map(|element| match element {
+            SourceExpression::Reference { name, .. } => Ok(name.clone()),
+            _ => Err(render_error(
+                "fallbackFonts entries must be font references",
+                element.span(),
+            )),
+        })
+        .collect()
+}
+
+fn render_empty_array(field: &SchemaField, name: &str) -> Result<(), Diagnostic> {
+    if matches!(
+        &field.value,
+        SchemaValue::Expression(SourceExpression::Array { elements, .. }) if elements.is_empty()
+    ) {
+        Ok(())
+    } else {
+        Err(render_error(
+            format!("{name} must be an explicit empty compile-time array"),
+            field.span,
+        ))
+    }
+}
+
 enum RenderPaintExpression {
     Solid(SourceExpression),
     LinearGradient {
@@ -367,6 +410,17 @@ enum RenderPaintExpression {
         repeat: CanonicalImageRepeat,
         sampling: CanonicalImageSampling,
     },
+}
+
+struct RenderStrokeSpec {
+    id: StableId,
+    paint: CanonicalRenderPaint,
+    width: usize,
+    cap: CanonicalStrokeCap,
+    join: CanonicalStrokeJoin,
+    miter_limit: f64,
+    dash_offset: usize,
+    dash: Vec<f64>,
 }
 
 struct RenderStrokeSpec {
@@ -554,7 +608,7 @@ fn render_paint_expression(
         });
     }
     Err(render_error(
-        "Render paint must use solid(color), linearGradient(start, end, stops, spread), radialGradient(startCenter, startRadius, endCenter, endRadius, stops, spread), or imagePattern(resource, transform, repeat, sampling)",
+        "Render paint must use solid(color), linearGradient(start, end, stops, spread), or radialGradient(startCenter, startRadius, endCenter, endRadius, stops, spread)",
         field.span,
     ))
 }
@@ -663,36 +717,42 @@ fn render_stroke_join(
     }
 }
 
-fn render_fill_rule(
-    value: TypedValue,
-    span: SourceSpan,
-) -> Result<CanonicalRenderFillRule, Diagnostic> {
-    match render_string(value, span)?.as_str() {
-        "nonzero" => Ok(CanonicalRenderFillRule::NonZero),
-        "evenodd" => Ok(CanonicalRenderFillRule::EvenOdd),
-        value => Err(render_error(
-            format!("unsupported Render fillRule {value}"),
-            span,
-        )),
+fn render_dash(field: &SchemaField) -> Result<Vec<f64>, Diagnostic> {
+    if matches!(
+        &field.value,
+        SchemaValue::Expression(SourceExpression::Array { elements, .. }) if elements.is_empty()
+    ) {
+        return Ok(Vec::new());
     }
-}
 
-fn render_arc_direction(
-    value: TypedValue,
-    span: SourceSpan,
-) -> Result<CanonicalArcDirection, Diagnostic> {
-    match render_string(value, span)?.as_str() {
-        "clockwise" => Ok(CanonicalArcDirection::Clockwise),
-        "counterClockwise" => Ok(CanonicalArcDirection::CounterClockwise),
-        value => Err(render_error(
-            format!("unsupported Render arc direction {value}"),
-            span,
-        )),
-    }
-}
-
-fn render_dash(value: TypedValue, span: SourceSpan) -> Result<Vec<f64>, Diagnostic> {
+    let value = render_value(field)?;
     let TypedValue::Array { values, .. } = value else {
+        return Err(render_error(
+            "Render dash must be an array of lengths",
+            field.span,
+        ));
+    };
+    let mut dash = Vec::with_capacity(values.len());
+    for value in values {
+        let value = render_length(value, field.span)?;
+        if value < 0.0 {
+            return Err(render_error(
+                "Render dash elements must be non-negative",
+                field.span,
+            ));
+        }
+        dash.push(value);
+    }
+    if dash.len() % 2 == 1 {
+        let length = dash.len();
+        dash.extend_from_within(..length);
+    }
+    Ok(dash)
+}
+
+fn render_radius(value: TypedValue, span: SourceSpan) -> Result<f64, Diagnostic> {
+    let value = render_length(value, span)?;
+    if value < 0.0 {
         return Err(render_error(
             "Render dash must be an array of lengths",
             span,
@@ -901,13 +961,174 @@ fn render_stable_id(
         .map_err(|error| render_error(error.to_string(), span))
 }
 
+struct RenderFont<'a> {
+    name: String,
+    face: ttf_parser::Face<'a>,
+    cmap: ttf_parser::cmap::Subtable<'a>,
+}
+
+struct ShapedTextRun {
+    font_name: String,
+    run_offset: f64,
+    glyphs: Vec<CanonicalGlyphPlacement>,
+}
+
+fn big_endian_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    let bytes = bytes.get(offset..offset.checked_add(2)?)?;
+    Some(u16::from_be_bytes([bytes[0], bytes[1]]))
+}
+
+fn big_endian_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    let bytes = bytes.get(offset..offset.checked_add(4)?)?;
+    Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn raw_font_table<'a>(face: &ttf_parser::Face<'a>, tag: ttf_parser::Tag) -> Option<&'a [u8]> {
+    let raw = face.raw_face();
+    let record = raw
+        .table_records
+        .into_iter()
+        .find(|record| record.tag == tag)?;
+    let offset = usize::try_from(record.offset).ok()?;
+    let length = usize::try_from(record.length).ok()?;
+    raw.data.get(offset..offset.checked_add(length)?)
+}
+
+fn simple_ltr_cmap<'a>(
+    face: &ttf_parser::Face<'a>,
+    span: SourceSpan,
+) -> Result<ttf_parser::cmap::Subtable<'a>, Diagnostic> {
+    let bytes = raw_font_table(face, ttf_parser::Tag::from_bytes(b"cmap"))
+        .ok_or_else(|| render_error("font resource has no readable cmap table", span))?;
+    if big_endian_u16(bytes, 0) != Some(0) {
+        return Err(render_error(
+            "font resource has an unsupported cmap version",
+            span,
+        ));
+    }
+    let count = usize::from(
+        big_endian_u16(bytes, 2)
+            .ok_or_else(|| render_error("font resource has a malformed cmap table", span))?,
+    );
+    let records_end = 4usize
+        .checked_add(
+            count
+                .checked_mul(8)
+                .ok_or_else(|| render_error("font resource cmap table is too large", span))?,
+        )
+        .ok_or_else(|| render_error("font resource cmap table is too large", span))?;
+    if bytes.get(..records_end).is_none() {
+        return Err(render_error(
+            "font resource has a malformed cmap table",
+            span,
+        ));
+    }
+    let table = ttf_parser::cmap::Table::parse(bytes)
+        .ok_or_else(|| render_error("font resource has a malformed cmap table", span))?;
+    let mut selected = None;
+    for index in 0..count {
+        let record = 4 + index * 8;
+        let platform = big_endian_u16(bytes, record)
+            .ok_or_else(|| render_error("font resource has a malformed cmap table", span))?;
+        let encoding = big_endian_u16(bytes, record + 2)
+            .ok_or_else(|| render_error("font resource has a malformed cmap table", span))?;
+        let offset = big_endian_u32(bytes, record + 4)
+            .ok_or_else(|| render_error("font resource has a malformed cmap table", span))?;
+        let subtable_offset = usize::try_from(offset)
+            .map_err(|_| render_error("font resource cmap offset is too large", span))?;
+        let format = big_endian_u16(bytes, subtable_offset)
+            .ok_or_else(|| render_error("font resource has a malformed cmap table", span))?;
+        let priority = match (platform, format, encoding) {
+            (3, 12, 10) => 0,
+            (3, 4, 1 | 10) => 1,
+            _ => {
+                return Err(render_error(
+                    "font resource cmap must contain only platform 3 format 4/12 tables",
+                    span,
+                ));
+            }
+        };
+        let index = u16::try_from(index)
+            .map_err(|_| render_error("font resource cmap has too many subtables", span))?;
+        table
+            .subtables
+            .get(index)
+            .ok_or_else(|| render_error("font resource has a malformed cmap subtable", span))?;
+        let candidate = (priority, encoding, offset, index);
+        if selected.as_ref().is_none_or(|current| candidate < *current) {
+            selected = Some(candidate);
+        }
+    }
+    let (_, _, _, index) = selected
+        .ok_or_else(|| render_error("font resource has no simple-ltr compatible cmap", span))?;
+    table
+        .subtables
+        .get(index)
+        .ok_or_else(|| render_error("font resource has a malformed cmap subtable", span))
+}
+
+fn parse_render_font<'a>(
+    name: String,
+    bytes: &'a [u8],
+    span: SourceSpan,
+) -> Result<RenderFont<'a>, Diagnostic> {
+    if bytes.get(..4) != Some(&[0, 1, 0, 0][..]) || ttf_parser::fonts_in_collection(bytes).is_some()
+    {
+        return Err(render_error(
+            "font resource must be a single-face TrueType sfnt",
+            span,
+        ));
+    }
+    let face = ttf_parser::Face::parse(bytes, 0)
+        .map_err(|error| render_error(format!("font resource cannot be parsed: {error}"), span))?;
+    let tables = face.tables();
+    if tables.glyf.is_none()
+        || raw_font_table(&face, ttf_parser::Tag::from_bytes(b"loca")).is_none()
+        || tables.hmtx.is_none()
+        || tables.cmap.is_none()
+        || tables.cff.is_some()
+    {
+        return Err(render_error(
+            "font resource must contain TrueType glyf/loca/hmtx/cmap tables",
+            span,
+        ));
+    }
+    for tag in [
+        b"CFF ", b"CFF2", b"fvar", b"gvar", b"avar", b"HVAR", b"MVAR", b"VVAR", b"COLR", b"CPAL",
+        b"CBDT", b"CBLC", b"EBDT", b"EBLC", b"sbix", b"SVG ",
+    ] {
+        if raw_font_table(&face, ttf_parser::Tag::from_bytes(tag)).is_some() {
+            return Err(render_error(
+                "font resource uses a TrueType feature outside truetype-glyf-1",
+                span,
+            ));
+        }
+    }
+    let cmap = simple_ltr_cmap(&face, span)?;
+    Ok(RenderFont { name, face, cmap })
+}
+
+fn forbidden_text_scalar(scalar: char) -> bool {
+    scalar.is_control()
+        || matches!(
+            scalar,
+            '\u{061c}'
+                | '\u{200e}'
+                | '\u{200f}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
 struct RenderLowerer<'a> {
     resources: &'a BTreeMap<String, CanonicalResource>,
+    resource_bundle: Option<&'a CanonicalResourceBundle>,
     time_map: &'a ChartTimeMap,
     definitions: Option<&'a DefinitionsBlock>,
     span: SourceSpan,
     descriptors: Vec<CanonicalPropertyDescriptor>,
-    descriptor_specs: Vec<CanonicalPropertyDescriptor>,
     registry: StableIdRegistry,
     resource_ids: BTreeMap<String, StableId>,
     nodes: Vec<CanonicalRenderNode>,
@@ -915,23 +1136,25 @@ struct RenderLowerer<'a> {
     paths: Vec<CanonicalRenderPath>,
     paints: Vec<CanonicalRenderPaint>,
     strokes: Vec<CanonicalRenderStroke>,
+    glyph_runs: Vec<CanonicalGlyphRun>,
     descriptor_roots: Vec<(String, u64, usize)>,
 }
 
 impl<'a> RenderLowerer<'a> {
     fn new(
         resources: &'a BTreeMap<String, CanonicalResource>,
+        resource_bundle: Option<&'a CanonicalResourceBundle>,
         time_map: &'a ChartTimeMap,
         definitions: Option<&'a DefinitionsBlock>,
         span: SourceSpan,
     ) -> Self {
         Self {
             resources,
+            resource_bundle,
             time_map,
             definitions,
             span,
             descriptors: Vec::new(),
-            descriptor_specs: Vec::new(),
             registry: StableIdRegistry::new(),
             resource_ids: BTreeMap::new(),
             nodes: Vec::new(),
@@ -939,6 +1162,7 @@ impl<'a> RenderLowerer<'a> {
             paths: Vec::new(),
             paints: Vec::new(),
             strokes: Vec::new(),
+            glyph_runs: Vec::new(),
             descriptor_roots: Vec::new(),
         }
     }
@@ -1057,9 +1281,67 @@ impl<'a> RenderLowerer<'a> {
 
     fn push_descriptor(&mut self, descriptor: CanonicalPropertyDescriptor) -> usize {
         let index = self.descriptors.len();
-        self.descriptors.push(descriptor.clone());
-        self.descriptor_specs.push(descriptor);
-        index
+        self.descriptors.push(
+            CanonicalPropertyDescriptor::new(
+                ty.clone(),
+                CanonicalDescriptorDomain::new(None, None, false).expect("unbounded domain"),
+                CanonicalDescriptorKind::Constant(canonical.clone()),
+            )
+            .map_err(|error| render_error(error.to_string(), self.span))?,
+        );
+        Ok(index)
+    }
+
+    fn dynamic_opacity_descriptor(&mut self, field: &SchemaField) -> Result<usize, Diagnostic> {
+        let SchemaValue::Expression(expression) = &field.value else {
+            return Err(render_error(
+                "Render field must be a compile-time expression",
+                field.span,
+            ));
+        };
+        let evaluation =
+            crate::elaborator::evaluate_metadata_expression(expression, self.definitions);
+        match evaluation {
+            Ok(value) => {
+                let opacity = render_float(value, field.span)?;
+                if !(0.0..=1.0).contains(&opacity) {
+                    return Err(render_error(
+                        "Render opacity must be within [0, 1]",
+                        field.span,
+                    ));
+                }
+                self.descriptor(TypedValue::Float(opacity))
+            }
+            Err(error) => {
+                let definitions = self.definitions;
+                let dag = crate::expression::lower_runtime_expression_with_resolver(
+                    expression,
+                    |candidate| {
+                        crate::elaborator::evaluate_metadata_expression(candidate, definitions).ok()
+                    },
+                )?;
+                if dag.required_environment().is_empty() {
+                    return Err(error);
+                }
+                if dag.result_type() != &CanonicalExpressionType::Float {
+                    return Err(render_error(
+                        "Render opacity expression must return a float",
+                        field.span,
+                    ));
+                }
+                let index = self.descriptors.len();
+                self.descriptors.push(
+                    CanonicalPropertyDescriptor::new(
+                        CanonicalExpressionType::Float,
+                        CanonicalDescriptorDomain::new(None, None, false)
+                            .expect("unbounded domain"),
+                        CanonicalDescriptorKind::Expression(dag),
+                    )
+                    .map_err(|descriptor| render_error(descriptor.to_string(), field.span))?,
+                );
+                Ok(index)
+            }
+        }
     }
 
     fn stable_id(
@@ -1074,6 +1356,19 @@ impl<'a> RenderLowerer<'a> {
     fn add_descriptor_root(&mut self, path: &str, owner: u64, descriptor: usize) {
         self.descriptor_roots
             .push((path.to_owned(), owner, descriptor));
+    }
+
+    fn resource_id(&mut self, name: &str, span: SourceSpan) -> Result<StableId, Diagnostic> {
+        if let Some(id) = self.resource_ids.get(name) {
+            return Ok(id.clone());
+        }
+        let id = self.stable_id(EntityKind::Resource, name.to_owned(), span)?;
+        self.resource_ids.insert(name.to_owned(), id.clone());
+        Ok(id)
+    }
+
+    fn add_glyph_run_roots(&mut self, run: &CanonicalGlyphRun, size: usize) {
+        self.add_descriptor_root("render.glyphRun.size", run.id().value(), size);
     }
 
     fn add_node_roots(&mut self, id: &StableId, descriptors: [usize; 6]) {
@@ -1170,6 +1465,9 @@ impl<'a> RenderLowerer<'a> {
                         );
                     }
                 }
+            }
+            CanonicalRenderGeometryData::Text { origin, .. } => {
+                self.add_descriptor_root("render.geometry.origin", owner, *origin);
             }
             _ => {}
         }
@@ -1556,12 +1854,7 @@ impl<'a> RenderLowerer<'a> {
                 }));
                 roots
             }
-            CanonicalRenderPaintData::ImagePattern { transform, .. } => vec![
-                ("render.paint.position".to_owned(), transform.position),
-                ("render.paint.origin".to_owned(), transform.origin),
-                ("render.paint.rotation".to_owned(), transform.rotation),
-                ("render.paint.scale".to_owned(), transform.scale),
-            ],
+            _ => Vec::new(),
         };
         for (path, descriptor) in roots {
             self.add_descriptor_root(&path, owner, descriptor);
@@ -1579,31 +1872,18 @@ impl<'a> RenderLowerer<'a> {
 }
 
 impl<'a> RenderLowerer<'a> {
-    fn render_stroke_spec(
+    fn render_stroke(
         &mut self,
         node_path: &str,
         node: &crate::ast::RenderNodeDeclaration,
-    ) -> Result<Option<RenderStrokeSpec>, Diagnostic> {
-        let Some(stroke_field) = render_body_field(&node.items, "stroke") else {
-            return Ok(None);
-        };
-        let paint = self.add_paint_field(node_path, node, "stroke")?;
+    ) -> Result<RenderStrokeSpec, Diagnostic> {
+        let stroke_field = render_body_field(&node.items, "stroke")
+            .ok_or_else(|| render_error("drawable Render node requires stroke", node.span))?;
+        let paint = self.add_paint(node_path, node, "stroke")?;
         let width_field = render_body_field(&node.items, "width")
             .ok_or_else(|| render_error("Render stroke requires width", node.span))?;
-        let SchemaValue::Expression(width_expression) = &width_field.value else {
-            return Err(render_error(
-                "Render stroke width must be an expression",
-                width_field.span,
-            ));
-        };
-        let (width, width_value) = self.descriptor_expression_value(
-            width_expression,
-            CanonicalExpressionType::Length,
-            width_field.span,
-        )?;
-        if let Some(width_value) = width_value
-            && render_length(width_value, width_field.span)? < 0.0
-        {
+        let width = render_length(render_value(width_field)?, width_field.span)?;
+        if width < 0.0 {
             return Err(render_error(
                 "Render stroke width must be non-negative",
                 width_field.span,
@@ -1619,368 +1899,238 @@ impl<'a> RenderLowerer<'a> {
             .ok_or_else(|| render_error("Render stroke requires dash", node.span))?;
         let dash_offset_field = render_body_field(&node.items, "dashOffset")
             .ok_or_else(|| render_error("Render stroke requires dashOffset", node.span))?;
-        let miter_limit = render_float(
-            render_value(miter_field, self.definitions)?,
-            miter_field.span,
-        )?;
+        let miter_limit = render_float(render_value(miter_field)?, miter_field.span)?;
         if miter_limit < 1.0 {
             return Err(render_error(
                 "Render stroke miterLimit must be at least 1",
                 miter_field.span,
             ));
         }
-        let SchemaValue::Expression(dash_offset_expression) = &dash_offset_field.value else {
-            return Err(render_error(
-                "Render stroke dashOffset must be an expression",
-                dash_offset_field.span,
-            ));
-        };
-        let (dash_offset, _) = self.descriptor_expression_value(
-            dash_offset_expression,
-            CanonicalExpressionType::Length,
-            dash_offset_field.span,
-        )?;
-        Ok(Some(RenderStrokeSpec {
+        let dash_offset = render_length(render_value(dash_offset_field)?, dash_offset_field.span)?;
+        Ok(RenderStrokeSpec {
             id: self.stable_id(
                 EntityKind::RenderStroke,
                 format!("{node_path}/stroke"),
                 stroke_field.span,
             )?,
             paint,
-            width,
-            cap: render_stroke_cap(render_value(cap_field, self.definitions)?, cap_field.span)?,
-            join: render_stroke_join(render_value(join_field, self.definitions)?, join_field.span)?,
+            width: self.descriptor(TypedValue::Length(width))?,
+            cap: render_stroke_cap(render_value(cap_field)?, cap_field.span)?,
+            join: render_stroke_join(render_value(join_field)?, join_field.span)?,
             miter_limit,
-            dash_offset,
-            dash: render_dash(render_value(dash_field, self.definitions)?, dash_field.span)?,
-        }))
+            dash_offset: self.descriptor(TypedValue::Length(dash_offset))?,
+            dash: render_dash(dash_field)?,
+        })
     }
 
-    fn render_optional_paint(
-        &mut self,
-        node_path: &str,
-        node: &crate::ast::RenderNodeDeclaration,
-        field_name: &str,
-    ) -> Result<Option<CanonicalRenderPaint>, Diagnostic> {
-        render_body_field(&node.items, field_name)
-            .map(|_| self.add_paint_field(node_path, node, field_name))
-            .transpose()
-    }
-
-    fn render_point_descriptors(
-        &mut self,
-        field: &SchemaField,
-        minimum: usize,
-        kind: &str,
-    ) -> Result<Vec<usize>, Diagnostic> {
-        let SchemaValue::Expression(expression) = &field.value else {
-            return Err(render_error(
-                format!("{kind} points must be an array of vec2<length>"),
-                field.span,
-            ));
-        };
-        if contains_render_runtime_expression(expression) {
-            let SourceExpression::Array { elements, .. } = expression else {
-                return Err(render_error(
-                    format!("{kind} points must have compile-time array topology"),
-                    field.span,
-                ));
-            };
-            if elements.len() < minimum {
-                return Err(render_error(
-                    format!("{kind} requires at least {minimum} points"),
-                    field.span,
-                ));
-            }
-            return elements
-                .iter()
-                .map(|element| {
-                    self.descriptor_expression_value(
-                        element,
-                        CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Length)),
-                        element.span(),
-                    )
-                    .map(|(descriptor, _)| descriptor)
-                })
-                .collect();
-        }
-        let TypedValue::Array { values, .. } = render_value(field, self.definitions)? else {
-            return Err(render_error(
-                format!("{kind} points must be an array of vec2<length>"),
-                field.span,
-            ));
-        };
-        if values.len() < minimum {
-            return Err(render_error(
-                format!("{kind} requires at least {minimum} points"),
-                field.span,
-            ));
-        }
-        values
-            .into_iter()
-            .map(|value| {
-                let [x, y] = render_vec2_length(value, field.span)?;
-                self.descriptor(
-                    TypedValue::vec2(TypedValue::Length(x), TypedValue::Length(y))
-                        .expect("homogeneous length vector"),
-                )
+    fn text_fonts(
+        &self,
+        names: &[String],
+        span: SourceSpan,
+    ) -> Result<Vec<RenderFont<'_>>, Diagnostic> {
+        let bundle = self.resource_bundle.ok_or_else(|| {
+            render_error("Text lowering requires a resolved resource bundle", span)
+        })?;
+        names
+            .iter()
+            .map(|name| {
+                let resource = self.resources.get(name).ok_or_else(|| {
+                    render_error(format!("Text references unknown resource {name}"), span)
+                })?;
+                if !matches!(resource.kind(), CanonicalResourceKind::Font) {
+                    return Err(render_error(
+                        format!("Text resource {name} is not a font"),
+                        span,
+                    ));
+                }
+                if resource.media_type() != "font/ttf" {
+                    return Err(render_error(
+                        format!("Text font resource {name} is not font/ttf"),
+                        span,
+                    ));
+                }
+                let bundled = bundle.get(name).ok_or_else(|| {
+                    render_error(format!("Text resource {name} has no resolved bytes"), span)
+                })?;
+                parse_render_font(name.clone(), bundled.bytes(), span)
             })
             .collect()
     }
 
-    fn render_path_commands(
+    fn lower_text(
         &mut self,
-        field: &SchemaField,
-    ) -> Result<Vec<CanonicalPathCommand>, Diagnostic> {
-        let SchemaValue::Expression(SourceExpression::Array { elements, .. }) = &field.value else {
-            return Err(render_error(
-                "Path commands must be a compile-time array",
-                field.span,
-            ));
-        };
-        if elements.is_empty() {
-            return Err(render_error(
-                "Path requires at least one command",
-                field.span,
-            ));
-        }
-        elements
-            .iter()
-            .map(|expression| self.render_path_command(expression))
-            .collect()
-    }
-
-    fn render_path_command(
-        &mut self,
-        expression: &SourceExpression,
-    ) -> Result<CanonicalPathCommand, Diagnostic> {
-        let SourceExpression::Call {
-            callee,
-            arguments,
-            span,
-        } = expression
-        else {
-            return Err(render_error(
-                "Path command must be a constructor call",
-                expression.span(),
-            ));
-        };
-        let SourceExpression::Name { name, .. } = callee.as_ref() else {
-            return Err(render_error(
-                "Path command name must be a plain identifier",
-                *span,
-            ));
-        };
-        let arity = |expected: usize| {
-            if arguments.len() == expected {
-                Ok(())
-            } else {
-                Err(render_error(
-                    format!("Path command {name} requires {expected} arguments"),
-                    *span,
-                ))
-            }
-        };
-        let point = |lowerer: &mut Self, expression: &SourceExpression| {
-            lowerer
-                .descriptor_expression_value(
-                    expression,
-                    CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Length)),
-                    expression.span(),
-                )
-                .map(|(descriptor, _)| descriptor)
-        };
-        match name.as_str() {
-            "moveTo" => {
-                arity(1)?;
-                Ok(CanonicalPathCommand::MoveTo(point(self, &arguments[0])?))
-            }
-            "lineTo" => {
-                arity(1)?;
-                Ok(CanonicalPathCommand::LineTo(point(self, &arguments[0])?))
-            }
-            "quadraticTo" => {
-                arity(2)?;
-                Ok(CanonicalPathCommand::QuadraticTo(
-                    point(self, &arguments[0])?,
-                    point(self, &arguments[1])?,
-                ))
-            }
-            "cubicTo" => {
-                arity(3)?;
-                Ok(CanonicalPathCommand::CubicTo(
-                    point(self, &arguments[0])?,
-                    point(self, &arguments[1])?,
-                    point(self, &arguments[2])?,
-                ))
-            }
-            "arc" => {
-                arity(5)?;
-                let center = point(self, &arguments[0])?;
-                let (radius, radius_value) = self.descriptor_expression_value(
-                    &arguments[1],
-                    CanonicalExpressionType::Length,
-                    arguments[1].span(),
-                )?;
-                if radius_value
-                    .is_some_and(|value| matches!(value, TypedValue::Length(value) if value < 0.0))
-                {
-                    return Err(render_error(
-                        "Path arc radius must be non-negative",
-                        arguments[1].span(),
-                    ));
-                }
-                let start_angle = self
-                    .descriptor_expression_value(
-                        &arguments[2],
-                        CanonicalExpressionType::Angle,
-                        arguments[2].span(),
-                    )?
-                    .0;
-                let end_angle = self
-                    .descriptor_expression_value(
-                        &arguments[3],
-                        CanonicalExpressionType::Angle,
-                        arguments[3].span(),
-                    )?
-                    .0;
-                let direction = render_arc_direction(
-                    crate::elaborator::evaluate_metadata_expression(
-                        &arguments[4],
-                        self.definitions,
-                    )?,
-                    arguments[4].span(),
-                )?;
-                Ok(CanonicalPathCommand::Arc {
-                    center,
-                    radius,
-                    start_angle,
-                    end_angle,
-                    direction,
-                })
-            }
-            "ellipseArc" => {
-                arity(7)?;
-                let center = point(self, &arguments[0])?;
-                let (radius_x, radius_x_value) = self.descriptor_expression_value(
-                    &arguments[1],
-                    CanonicalExpressionType::Length,
-                    arguments[1].span(),
-                )?;
-                let (radius_y, radius_y_value) = self.descriptor_expression_value(
-                    &arguments[2],
-                    CanonicalExpressionType::Length,
-                    arguments[2].span(),
-                )?;
-                if radius_x_value
-                    .is_some_and(|value| matches!(value, TypedValue::Length(value) if value < 0.0))
-                    || radius_y_value.is_some_and(
-                        |value| matches!(value, TypedValue::Length(value) if value < 0.0),
-                    )
-                {
-                    return Err(render_error(
-                        "Path ellipseArc radii must be non-negative",
-                        expression.span(),
-                    ));
-                }
-                let rotation = self
-                    .descriptor_expression_value(
-                        &arguments[3],
-                        CanonicalExpressionType::Angle,
-                        arguments[3].span(),
-                    )?
-                    .0;
-                let start_angle = self
-                    .descriptor_expression_value(
-                        &arguments[4],
-                        CanonicalExpressionType::Angle,
-                        arguments[4].span(),
-                    )?
-                    .0;
-                let end_angle = self
-                    .descriptor_expression_value(
-                        &arguments[5],
-                        CanonicalExpressionType::Angle,
-                        arguments[5].span(),
-                    )?
-                    .0;
-                let direction = render_arc_direction(
-                    crate::elaborator::evaluate_metadata_expression(
-                        &arguments[6],
-                        self.definitions,
-                    )?,
-                    arguments[6].span(),
-                )?;
-                Ok(CanonicalPathCommand::EllipseArc {
-                    center,
-                    radius_x,
-                    radius_y,
-                    rotation,
-                    start_angle,
-                    end_angle,
-                    direction,
-                })
-            }
-            "close" => {
-                arity(0)?;
-                Ok(CanonicalPathCommand::Close)
-            }
-            _ => Err(render_error(
-                format!("unsupported Path command {name}"),
-                *span,
-            )),
-        }
-    }
-
-    fn render_vec2_component_descriptors(
-        &mut self,
-        field: &SchemaField,
-        element: CanonicalExpressionType,
-        label: &str,
-    ) -> Result<([usize; 2], Option<[f64; 2]>), Diagnostic> {
-        let SchemaValue::Expression(expression) = &field.value else {
-            return Err(render_error(
-                format!("{label} must be a vec2 expression"),
-                field.span,
-            ));
-        };
-        if contains_render_runtime_expression(expression) {
-            let SourceExpression::Vec2 { x, y, .. } = expression else {
+        node: &crate::ast::RenderNodeDeclaration,
+        geometry_id: &StableId,
+    ) -> Result<Vec<usize>, Diagnostic> {
+        let content_field = render_body_field(&node.items, "content")
+            .ok_or_else(|| render_error("Text requires content", node.span))?;
+        let content = render_string(render_value(content_field)?, content_field.span)?;
+        let font_field = render_body_field(&node.items, "font")
+            .ok_or_else(|| render_error("Text requires font", node.span))?;
+        let primary_font = match render_value(font_field)? {
+            TypedValue::Line(name) => name,
+            other => {
                 return Err(render_error(
-                    format!("{label} must use compile-time vec2 topology"),
-                    field.span,
+                    format!("Text font must be a reference, found {}", other.ty()),
+                    font_field.span,
+                ));
+            }
+        };
+        let fallback_fonts = match render_body_field(&node.items, "fallbackFonts") {
+            Some(field) => render_font_references(field)?,
+            None => Vec::new(),
+        };
+        let face_index = render_body_value_or(&node.items, "faceIndex", 0, |value| {
+            render_int(value, node.span)
+        })?;
+        if face_index != 0 {
+            return Err(render_error(
+                "Text faceIndex is fixed to 0 in simple-ltr-1",
+                render_body_field(&node.items, "faceIndex").map_or(node.span, |field| field.span),
+            ));
+        }
+        for (name, expected) in [
+            ("shapingProfile", "simple-ltr-1"),
+            ("language", "und"),
+            ("script", "Latn"),
+            ("direction", "ltr"),
+        ] {
+            if let Some(field) = render_body_field(&node.items, name) {
+                let value = render_string(render_value(field)?, field.span)?;
+                if value != expected {
+                    return Err(render_error(
+                        format!("Text {name} is fixed to {expected} in simple-ltr-1"),
+                        field.span,
+                    ));
+                }
+            }
+        }
+        if let Some(field) = render_body_field(&node.items, "features") {
+            render_empty_array(field, "Text features")?;
+        }
+        let size_field = render_body_field(&node.items, "size")
+            .ok_or_else(|| render_error("Text requires size", node.span))?;
+        let size = render_length(render_value(size_field)?, size_field.span)?;
+        if size <= 0.0 {
+            return Err(render_error(
+                "Text size must be greater than zero",
+                size_field.span,
+            ));
+        }
+
+        let mut font_names = Vec::with_capacity(1 + fallback_fonts.len());
+        font_names.push(primary_font);
+        font_names.extend(fallback_fonts);
+        let fonts = self.text_fonts(&font_names, font_field.span)?;
+        let mut shaped_runs = Vec::new();
+        let mut current_font = None;
+        let mut run_offset = 0.0;
+        for scalar in content.chars() {
+            if forbidden_text_scalar(scalar) {
+                return Err(render_error(
+                    format!(
+                        "Text content contains forbidden scalar U+{:04X}",
+                        u32::from(scalar)
+                    ),
+                    content_field.span,
+                ));
+            }
+            let mut selected = None;
+            for (index, font) in fonts.iter().enumerate() {
+                let Some(glyph) = font.cmap.glyph_index(u32::from(scalar)) else {
+                    continue;
+                };
+                if glyph.0 == 0 {
+                    continue;
+                }
+                if u32::from(glyph.0) >= u32::from(font.face.number_of_glyphs()) {
+                    return Err(render_error(
+                        format!("font resource {} maps to an invalid glyph", font.name),
+                        content_field.span,
+                    ));
+                }
+                let advance = font.face.glyph_hor_advance(glyph).ok_or_else(|| {
+                    render_error(
+                        format!("font resource {} has no glyph advance", font.name),
+                        content_field.span,
+                    )
+                })?;
+                selected = Some((index, glyph, advance));
+                break;
+            }
+            let Some((font_index, glyph, advance)) = selected else {
+                return Err(render_error(
+                    format!(
+                        "Text content scalar U+{:04X} has no glyph in any declared font",
+                        u32::from(scalar)
+                    ),
+                    content_field.span,
                 ));
             };
-            let x_descriptor = self
-                .descriptor_expression_value(x, element.clone(), x.span())?
-                .0;
-            let y_descriptor = self.descriptor_expression_value(y, element, y.span())?.0;
-            return Ok(([x_descriptor, y_descriptor], None));
-        }
-        let value = render_value(field, self.definitions)?;
-        let TypedValue::Vec2(x, y) = value else {
-            return Err(render_error(
-                format!("{label} must be a vec2 expression"),
-                field.span,
-            ));
-        };
-        let values = match element {
-            CanonicalExpressionType::Length => [
-                render_length(*x.clone(), field.span)?,
-                render_length(*y.clone(), field.span)?,
-            ],
-            CanonicalExpressionType::Float => [
-                render_float(*x.clone(), field.span)?,
-                render_float(*y.clone(), field.span)?,
-            ],
-            _ => {
+            if current_font != Some(font_index) {
+                shaped_runs.push(ShapedTextRun {
+                    font_name: fonts[font_index].name.clone(),
+                    run_offset,
+                    glyphs: Vec::new(),
+                });
+                current_font = Some(font_index);
+            }
+            let x_advance = f64::from(advance) / f64::from(fonts[font_index].face.units_per_em());
+            shaped_runs
+                .last_mut()
+                .expect("a new or current Text glyph run")
+                .glyphs
+                .push(CanonicalGlyphPlacement {
+                    glyph_id: u32::from(glyph.0),
+                    x_advance,
+                    y_advance: 0.0,
+                    x_offset: 0.0,
+                    y_offset: 0.0,
+                });
+            run_offset += x_advance;
+            if !run_offset.is_finite() {
                 return Err(render_error(
-                    format!("{label} has an unsupported component type"),
-                    field.span,
+                    "Text run offset is not finite",
+                    content_field.span,
                 ));
             }
-        };
-        Ok(([self.descriptor(*x)?, self.descriptor(*y)?], Some(values)))
+        }
+        if shaped_runs.is_empty() {
+            shaped_runs.push(ShapedTextRun {
+                font_name: fonts[0].name.clone(),
+                run_offset: 0.0,
+                glyphs: Vec::new(),
+            });
+        }
+        drop(fonts);
+
+        let size_descriptor = self.descriptor(TypedValue::Length(size))?;
+        let mut glyph_run_refs = Vec::with_capacity(shaped_runs.len());
+        for (index, run) in shaped_runs.into_iter().enumerate() {
+            let font_id = self.resource_id(&run.font_name, font_field.span)?;
+            let run_id = self.stable_id(
+                EntityKind::RenderGlyphRun,
+                format!(
+                    "owner/{:016x}/field/glyphRunRefs/ordinal/{index}",
+                    geometry_id.value()
+                ),
+                node.span,
+            )?;
+            let glyph_run = CanonicalGlyphRun::new(
+                run_id,
+                font_id,
+                u32::try_from(face_index).expect("faceIndex is zero"),
+                size_descriptor,
+                [run.run_offset, 0.0],
+                run.glyphs,
+            )
+            .map_err(|error| render_error(format!("{error:?}"), node.span))?;
+            let glyph_run_index = self.glyph_runs.len();
+            self.add_glyph_run_roots(&glyph_run, size_descriptor);
+            self.glyph_runs.push(glyph_run);
+            glyph_run_refs.push(glyph_run_index);
+        }
+        Ok(glyph_run_refs)
     }
 
     fn lower_node(
@@ -2024,36 +2174,13 @@ impl<'a> RenderLowerer<'a> {
             &node.items,
             "scale",
             one_float_vec(),
-            CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Float)),
-        )?;
+            Ok::<_, Diagnostic>,
+        )?)?;
         let opacity = match render_body_field(&node.items, "opacity") {
-            Some(field) => match &field.value {
-                SchemaValue::Expression(expression)
-                    if contains_render_runtime_expression(expression) =>
-                {
-                    self.descriptor_field(field, CanonicalExpressionType::Float)?
-                }
-                SchemaValue::Expression(_) => {
-                    let opacity_value =
-                        render_float(render_value(field, self.definitions)?, field.span)?;
-                    if !(0.0..=1.0).contains(&opacity_value) {
-                        return Err(render_error(
-                            "Render opacity must be within [0, 1]",
-                            field.span,
-                        ));
-                    }
-                    self.descriptor(TypedValue::Float(opacity_value))?
-                }
-                _ => {
-                    return Err(render_error(
-                        "Render opacity must be an expression",
-                        field.span,
-                    ));
-                }
-            },
+            Some(field) => self.dynamic_opacity_descriptor(field)?,
             None => self.descriptor(TypedValue::Float(1.0))?,
         };
-        let visibility = self.descriptor_body_or(
+        let visibility = self.descriptor(TypedValue::Bool(render_body_value_or(
             &node.items,
             "visibility",
             TypedValue::Bool(true),
@@ -2080,7 +2207,29 @@ impl<'a> RenderLowerer<'a> {
             self.definitions,
             |value| render_composite(value, node.span),
         )?;
-        let active = render_active_interval(&node.items, self.time_map, self.definitions)?;
+        let active = render_active_interval(&node.items, self.time_map)?;
+        let stroke = match node.kind {
+            CanonicalRenderNodeKind::Line => Some(self.render_stroke(node_path, node)?),
+            // Render section 14.2 lets a fillable geometry carry a fill paint, a stroke, or
+            // both, so a Circle stroke is optional and only lowered when it is declared.
+            CanonicalRenderNodeKind::Circle
+            | CanonicalRenderNodeKind::Polyline
+            | CanonicalRenderNodeKind::Polygon
+            | CanonicalRenderNodeKind::Text => render_body_field(&node.items, "stroke")
+                .is_some()
+                .then(|| self.render_stroke(node_path, node))
+                .transpose()?,
+            _ => None,
+        };
+        let text_geometry_id = (node.kind == CanonicalRenderNodeKind::Text)
+            .then(|| {
+                self.stable_id(
+                    EntityKind::RenderGeometry,
+                    format!("{node_path}/geometry"),
+                    node.span,
+                )
+            })
+            .transpose()?;
 
         let (geometry_data, paint, stroke) = match node.kind {
             CanonicalRenderNodeKind::Group => (None, None, None),
@@ -2107,9 +2256,17 @@ impl<'a> RenderLowerer<'a> {
                     return Err(render_error("Rect requires fill or stroke", node.span));
                 }
                 (
-                    Some(CanonicalRenderGeometryData::Rect { origin, size }),
-                    paint,
-                    stroke,
+                    Some(CanonicalRenderGeometryData::Rect {
+                        origin,
+                        size: self.descriptor(
+                            TypedValue::vec2(
+                                TypedValue::Length(size[0]),
+                                TypedValue::Length(size[1]),
+                            )
+                            .expect("homogeneous length vector"),
+                        )?,
+                    }),
+                    Some(self.add_paint(node_path, node, "fill")?),
                 )
             }
             CanonicalRenderNodeKind::RoundedRect => {
@@ -2155,8 +2312,7 @@ impl<'a> RenderLowerer<'a> {
                         size,
                         radii: [radius; 4],
                     }),
-                    paint,
-                    stroke,
+                    Some(self.add_paint(node_path, node, "fill")?),
                 )
             }
             CanonicalRenderNodeKind::Circle => {
@@ -2185,9 +2341,17 @@ impl<'a> RenderLowerer<'a> {
                     return Err(render_error("Circle requires fill or stroke", node.span));
                 }
                 (
-                    Some(CanonicalRenderGeometryData::Circle { center, radius }),
-                    paint,
-                    stroke,
+                    Some(CanonicalRenderGeometryData::Circle {
+                        center,
+                        radius: self.descriptor(TypedValue::Length(radius))?,
+                    }),
+                    // Render section 14.2 requires at least one of the two, so a declared
+                    // stroke is what makes `fill` optional here.
+                    if stroke.is_some() && render_body_field(&node.items, "fill").is_none() {
+                        None
+                    } else {
+                        Some(self.add_paint(node_path, node, "fill")?)
+                    },
                 )
             }
             CanonicalRenderNodeKind::Ellipse => {
@@ -2231,30 +2395,37 @@ impl<'a> RenderLowerer<'a> {
                         radius_y,
                         rotation,
                     }),
-                    paint,
-                    stroke,
+                    Some(self.add_paint(node_path, node, "fill")?),
                 )
             }
             CanonicalRenderNodeKind::Line => {
+                if render_body_field(&node.items, "fill").is_some() {
+                    return Err(render_error("Line must not declare fill", node.span));
+                }
                 let start_field = render_body_field(&node.items, "start")
                     .ok_or_else(|| render_error("Line requires start", node.span))?;
                 let end_field = render_body_field(&node.items, "end")
                     .ok_or_else(|| render_error("Line requires end", node.span))?;
-                let start = self.descriptor_field(
-                    start_field,
-                    CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Length)),
-                )?;
-                let end = self.descriptor_field(
-                    end_field,
-                    CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Length)),
-                )?;
-                let stroke = self
-                    .render_stroke_spec(node_path, node)?
-                    .ok_or_else(|| render_error("Line requires stroke", node.span))?;
+                let start = render_vec2_length(render_value(start_field)?, start_field.span)?;
+                let end = render_vec2_length(render_value(end_field)?, end_field.span)?;
                 (
-                    Some(CanonicalRenderGeometryData::Line { start, end }),
+                    Some(CanonicalRenderGeometryData::Line {
+                        start: self.descriptor(
+                            TypedValue::vec2(
+                                TypedValue::Length(start[0]),
+                                TypedValue::Length(start[1]),
+                            )
+                            .expect("homogeneous length vector"),
+                        )?,
+                        end: self.descriptor(
+                            TypedValue::vec2(
+                                TypedValue::Length(end[0]),
+                                TypedValue::Length(end[1]),
+                            )
+                            .expect("homogeneous length vector"),
+                        )?,
+                    }),
                     None,
-                    Some(stroke),
                 )
             }
             CanonicalRenderNodeKind::Polyline => {
@@ -2268,8 +2439,13 @@ impl<'a> RenderLowerer<'a> {
                 }
                 (
                     Some(CanonicalRenderGeometryData::Polyline { points }),
-                    paint,
-                    stroke,
+                    // Render section 14.2 requires at least one of the two, so a declared
+                    // stroke is what makes `fill` optional here.
+                    if stroke.is_some() && render_body_field(&node.items, "fill").is_none() {
+                        None
+                    } else {
+                        Some(self.add_paint(node_path, node, "fill")?)
+                    },
                 )
             }
             CanonicalRenderNodeKind::Polygon => {
@@ -2283,39 +2459,29 @@ impl<'a> RenderLowerer<'a> {
                 }
                 (
                     Some(CanonicalRenderGeometryData::Polygon { points }),
-                    paint,
-                    stroke,
+                    // Render section 14.2 requires at least one of the two, so a declared
+                    // stroke is what makes `fill` optional here.
+                    if stroke.is_some() && render_body_field(&node.items, "fill").is_none() {
+                        None
+                    } else {
+                        Some(self.add_paint(node_path, node, "fill")?)
+                    },
                 )
             }
-            CanonicalRenderNodeKind::Path => {
-                let commands_field = render_body_field(&node.items, "commands")
-                    .ok_or_else(|| render_error("Path requires commands", node.span))?;
-                let commands = self.render_path_commands(commands_field)?;
-                let fill_rule_field = render_body_field(&node.items, "fillRule")
-                    .ok_or_else(|| render_error("Path requires fillRule", node.span))?;
-                let fill_rule = render_fill_rule(
-                    render_value(fill_rule_field, self.definitions)?,
-                    fill_rule_field.span,
-                )?;
-                let path_id = self.stable_id(
-                    EntityKind::RenderPath,
-                    format!("{node_path}/path"),
-                    commands_field.span,
-                )?;
-                let path = CanonicalRenderPath::new(path_id, fill_rule, commands)
-                    .map_err(|error| render_error(format!("{error:?}"), node.span))?;
-                self.add_path_roots(&path);
-                let path_index = self.paths.len();
-                self.paths.push(path);
-                let paint = self.render_optional_paint(node_path, node, "fill")?;
-                let stroke = self.render_stroke_spec(node_path, node)?;
-                if paint.is_none() && stroke.is_none() {
-                    return Err(render_error("Path requires fill or stroke", node.span));
-                }
+            CanonicalRenderNodeKind::Text => {
+                let geometry_id = text_geometry_id
+                    .as_ref()
+                    .expect("Text nodes have a preallocated geometry ID");
+                let glyph_runs = self.lower_text(node, geometry_id)?;
+                let paint = if stroke.is_some() && render_body_field(&node.items, "fill").is_none()
+                {
+                    None
+                } else {
+                    Some(self.add_paint(node_path, node, "fill")?)
+                };
                 (
-                    Some(CanonicalRenderGeometryData::Path { path: path_index }),
+                    Some(CanonicalRenderGeometryData::Text { glyph_runs, origin }),
                     paint,
-                    stroke,
                 )
             }
             CanonicalRenderNodeKind::Image => {
@@ -2330,15 +2496,22 @@ impl<'a> RenderLowerer<'a> {
                         ));
                     }
                 };
-                let resource_id = self.resource_id(
-                    TypedValue::Line(resource_name.clone()),
-                    resource_field.span,
-                    "Image",
-                )?;
-                let resource = self
-                    .resources
-                    .get(&resource_name)
-                    .expect("validated Image resource");
+                let resource = self.resources.get(&resource_name).ok_or_else(|| {
+                    render_error(
+                        format!("Image references unknown resource {resource_name}"),
+                        resource_field.span,
+                    )
+                })?;
+                if !matches!(
+                    resource.kind(),
+                    CanonicalResourceKind::Image | CanonicalResourceKind::Texture
+                ) {
+                    return Err(render_error(
+                        format!("Image resource {resource_name} is not image/texture"),
+                        resource_field.span,
+                    ));
+                }
+                let resource_id = self.resource_id(&resource_name, resource_field.span)?;
                 let sampling = match render_body_field(&node.items, "sampling") {
                     Some(field) => {
                         render_image_sampling(render_value(field, self.definitions)?, field.span)?
@@ -2448,11 +2621,14 @@ impl<'a> RenderLowerer<'a> {
 
         let geometry = geometry_data
             .map(|data| {
-                let id = self.stable_id(
-                    EntityKind::RenderGeometry,
-                    format!("{node_path}/geometry"),
-                    node.span,
-                )?;
+                let id = match text_geometry_id.clone() {
+                    Some(id) => id,
+                    None => self.stable_id(
+                        EntityKind::RenderGeometry,
+                        format!("{node_path}/geometry"),
+                        node.span,
+                    )?,
+                };
                 CanonicalRenderGeometry::new(id, data)
                     .map_err(|error| render_error(format!("{error:?}"), node.span))
             })
@@ -2522,8 +2698,8 @@ impl<'a> RenderLowerer<'a> {
             self.add_paint_roots(paint_index);
         }
         if let Some(stroke_index) = stroke_index {
-            let paint_index = self.strokes[stroke_index].paint();
-            self.add_paint_roots(paint_index);
+            let stroke_paint = self.strokes[stroke_index].paint();
+            self.add_paint_roots(stroke_paint);
             self.add_stroke_roots(stroke_index);
         }
 
@@ -2552,6 +2728,7 @@ impl<'a> RenderLowerer<'a> {
 fn lower_render_scene(
     scene: &crate::ast::RenderScene,
     resources: &BTreeMap<String, CanonicalResource>,
+    resource_bundle: Option<&CanonicalResourceBundle>,
     time_map: &ChartTimeMap,
     definitions: Option<&DefinitionsBlock>,
     span: SourceSpan,
@@ -2581,8 +2758,8 @@ fn lower_render_scene(
                 ));
             }
         };
-        validate_render_fields(scene.viewport.fields.iter(), RenderBodyOwner::Viewport)?;
-        let mut lowerer = RenderLowerer::new(resources, time_map, definitions, span);
+        let mut lowerer =
+            RenderLowerer::new(resources, resource_bundle, time_map, definitions, span);
         let mut layers = Vec::new();
         for (layer_index, layer) in scene.layers.iter().enumerate() {
             validate_render_body(&layer.items, definitions, RenderBodyOwner::Layer)?;
@@ -2653,16 +2830,16 @@ fn lower_render_scene(
                     .map_err(|error| render_error(format!("{error:?}"), span))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let descriptor_specs = lowerer.descriptor_specs;
+        let local_descriptors = lowerer.descriptors.clone();
         let table = CanonicalDescriptorTable::new(lowerer.descriptors, descriptor_roots)
             .map_err(|error| render_error(format!("{error:?}"), span))?;
-        let mapping = descriptor_specs
+        let mapping = local_descriptors
             .iter()
-            .map(|expected| {
+            .map(|descriptor| {
                 table
                     .descriptors()
                     .iter()
-                    .position(|candidate| candidate == expected)
+                    .position(|candidate| candidate == descriptor)
                     .ok_or_else(|| render_error("descriptor interning lost a Render value", span))
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -2676,7 +2853,7 @@ fn lower_render_scene(
             paints: lowerer.paints,
             strokes: lowerer.strokes,
             clips: Vec::new(),
-            glyph_runs: Vec::new(),
+            glyph_runs: lowerer.glyph_runs,
         })
         .map_err(|error| render_error(format!("{error:?}"), span))?;
         render
@@ -3237,6 +3414,10 @@ fn lower_document_with_sources_and_limits(
     document: &Document,
     limits: CustomValueLimits,
 ) -> Result<LoweredDocument, Vec<Diagnostic>> {
+    if let Some(definitions) = document.definitions.as_ref() {
+        crate::elaborator::preflight_definition_cycles(definitions)
+            .map_err(|diagnostic| vec![diagnostic])?;
+    }
     let contributor_names = contributor_names(document.contributors.as_ref());
     let resource_kinds = resource_kinds(document.resources.as_ref());
     let mut diagnostics = Vec::new();

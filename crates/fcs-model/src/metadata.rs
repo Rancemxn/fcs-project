@@ -497,7 +497,7 @@ impl DeclaredSha256 {
             return None;
         }
         let mut bytes = [0; 32];
-        for (index, pair) in hex.as_bytes().chunks_exact(2).enumerate() {
+        for (index, pair) in hex.as_bytes().as_chunks::<2>().0.iter().enumerate() {
             if pair.iter().any(u8::is_ascii_uppercase) {
                 return None;
             }

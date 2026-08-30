@@ -276,6 +276,16 @@ mod tests {
         for node in &mut render.nodes {
             node.attachment = Attachment { kind: 1, id: 0 };
         }
+        let size = add_descriptor_constant(
+            render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 1.0,
+            },
+        );
+        for run in &mut render.glyph_runs {
+            run.size_descriptor = size;
+        }
     }
 
     fn isolate_solid_shape(render: &mut DecodedRenderChart, kind: NodeKind) {
@@ -1122,7 +1132,9 @@ mod tests {
 
         let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("ImagePattern raster");
         let mut colors = pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|rgba| rgba[3] > 0)
             .map(|rgba| [rgba[0], rgba[1], rgba[2]]);
         let first = colors.next().expect("ImagePattern coverage");
@@ -1249,8 +1261,8 @@ mod tests {
         assert_eq!(stroke.dash, vec![0.5, 0.5]);
 
         let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Line raster");
-        assert!(pixels.chunks_exact(4).any(|rgba| rgba[3] > 0));
-        assert!(pixels.chunks_exact(4).any(|rgba| rgba[3] == 0));
+        assert!(pixels.as_chunks::<4>().0.iter().any(|rgba| rgba[3] > 0));
+        assert!(pixels.as_chunks::<4>().0.iter().any(|rgba| rgba[3] == 0));
     }
 
     #[test]
@@ -1339,6 +1351,16 @@ mod tests {
                 kind: 3,
                 id: line_id,
             };
+        }
+        let text_size = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 1.0,
+            },
+        );
+        for run in &mut render.glyph_runs {
+            run.size_descriptor = text_size;
         }
         let line_rect = evaluate_semantic_draw_list_at(&render, 0.0)
             .expect("Line attachment query")
@@ -1453,6 +1475,31 @@ mod tests {
             evaluate_semantic_draw_list_at(&render, 0.0)
                 .expect_err("opacity descriptor execution failure"),
             "render.invalid-descriptor"
+        );
+    }
+
+    #[test]
+    fn text_evaluation_keeps_font_and_glyph_diagnostics_stable() {
+        let mut render = load_render(&render_fixture()).expect("render load");
+        let text_geometry = render
+            .geometries
+            .iter()
+            .find_map(|geometry| match &geometry.data {
+                GeometryData::Text { glyph_runs, .. } => glyph_runs.first().copied(),
+                _ => None,
+            })
+            .expect("fixture Text geometry");
+        render.glyph_runs[text_geometry as usize].font_resource_id = 0;
+        assert_eq!(
+            evaluate_semantic_draw_list_at(&render, 0.0).expect_err("missing font"),
+            "render.resource-not-found"
+        );
+
+        let mut render = load_render(&render_fixture()).expect("render reload");
+        render.glyph_runs[text_geometry as usize].glyphs[0].glyph_id = u32::MAX;
+        assert_eq!(
+            evaluate_semantic_draw_list_at(&render, 0.0).expect_err("invalid glyph"),
+            "render.invalid-geometry"
         );
     }
 
@@ -1715,7 +1762,12 @@ mod tests {
             assert_eq!(draw[0].kind, kind);
 
             let pixels = rasterize_solid_rgba8(&render, 4, 4).expect("shape raster");
-            let alpha: Vec<_> = pixels.chunks_exact(4).map(|pixel| pixel[3]).collect();
+            let alpha: Vec<_> = pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|pixel| pixel[3])
+                .collect();
             assert!(alpha.iter().any(|value| *value > 0));
             assert!(alpha.iter().any(|value| *value < 255));
         }

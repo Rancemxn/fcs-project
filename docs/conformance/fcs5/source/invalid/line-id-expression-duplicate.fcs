@@ -1,0 +1,11 @@
+#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+    template Line makeJudge(id: string) {
+        let local_id: string = id;
+        return Line { id: local_id; };
+    }
+}
+lines { line duplicate {} }
+collections { judgelines { makeJudge("duplicate"); } }

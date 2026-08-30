@@ -926,8 +926,10 @@ fn path_record(id: u64) -> Vec<u8> {
         path_command(2, &[2], None),
         path_command(3, &[2, 2], None),
         path_command(4, &[2, 2, 2], None),
-        path_command(5, &[2, 10, 3, 3], Some(1)),
-        path_command(6, &[2, 10, 10, 3, 3, 3], Some(1)),
+        // Use the fixed zero-length descriptor for arc radii: descriptor 10 is a dynamic note
+        // position and becomes negative at the attachment-gate query time.
+        path_command(5, &[2, 13, 3, 3], Some(1)),
+        path_command(6, &[2, 13, 13, 3, 3, 3], Some(1)),
         path_command(7, &[], None),
     ];
     let mut payload = Vec::new();
