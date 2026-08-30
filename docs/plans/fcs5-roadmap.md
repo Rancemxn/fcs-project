@@ -828,8 +828,11 @@ git diff --check
   Geometry ownership chain, with a Rect source-to-FCBC-to-loader-to-semantic/raster fixture and
   stable invalid-kind/fill-rule evidence; source Text fallback lists stay Render-owned direct
   reference lists without widening Core arrays, and node visibility now preserves exact runtime Bool
-  descriptors. This combined delta passed exact-head Full Gate run `33321167413` (`push`) on head
-  `3e14bcae5a51b3df66fda6b739bbeb4c29cbbe29`, including all 922 nextest cases and the ten bounded
+  descriptors. Node position/origin/rotation/scale, all non-Path Geometry and Clip numeric fields,
+  Image destination/source rectangles, and Text origin/size now also retain exact descriptors through
+  canonical ownership, FCBC, semantic queries, and raster output. This combined delta passed
+  exact-head Full Gate run `33323697402` (`push`) on head
+  `48c252b36b5d04fb2cee17ca3067a15f999e4885`, including all 925 nextest cases and the ten bounded
   fuzz targets. Broader canonical writer coverage, resource semantics, complete semantic/raster
   conformance, final cross-domain audit, joint review, and five-domain re-freeze remain open under
   #296/#9.
