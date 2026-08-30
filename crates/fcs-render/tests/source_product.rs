@@ -14,7 +14,7 @@ use fcs_fcbc::write_from_compilation;
 use fcs_model::{
     CanonicalArcDirection, CanonicalCompilation, CanonicalDescriptorKind,
     CanonicalExpressionEnvironment, CanonicalExpressionType, CanonicalGlyphRun,
-    CanonicalPathCommand, CanonicalRenderAttachment, CanonicalRenderFillRule,
+    CanonicalPathCommand, CanonicalRenderAttachment, CanonicalRenderError, CanonicalRenderFillRule,
     CanonicalRenderGeometry, CanonicalRenderGeometryData, CanonicalRenderNode,
     CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint, CanonicalRenderPath,
     CanonicalRenderScene, CanonicalRenderSceneSpec, CanonicalRenderStroke, CanonicalStrokeCap,
@@ -747,7 +747,7 @@ fn canonical_circle_without_fill_or_stroke_is_rejected() {
         .render()
         .expect("canonical Circle scene");
     let node = &scene.nodes()[0];
-    let bare = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+    let error = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
         id: node.id().clone(),
         kind: CanonicalRenderNodeKind::Circle,
         parent: node.parent(),
@@ -770,27 +770,8 @@ fn canonical_circle_without_fill_or_stroke_is_rejected() {
         clip: None,
         composite: node.composite(),
     })
-    .expect("bare canonical Circle node");
-    let bare_scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
-        viewport: scene.viewport(),
-        layers: scene.layers().to_vec(),
-        nodes: vec![bare],
-        geometries: scene.geometries().to_vec(),
-        paths: Vec::new(),
-        paints: Vec::new(),
-        strokes: Vec::new(),
-        clips: Vec::new(),
-        glyph_runs: Vec::new(),
-    })
-    .expect("bare canonical Circle scene");
-    let bare_compilation = CanonicalCompilation::new(
-        compilation.chart().clone().with_render(bare_scene),
-        compilation.resources().clone(),
-        compilation.distribution().clone(),
-    );
-    let error = write_from_compilation(&bare_compilation)
-        .expect_err("a Circle with neither fill nor stroke must be rejected");
-    assert_eq!(error.category(), "fcbc.dangling-reference");
+    .expect_err("a Circle with neither fill nor stroke must be rejected");
+    assert_eq!(error, CanonicalRenderError::DrawableWithoutPaint);
 }
 
 #[test]
