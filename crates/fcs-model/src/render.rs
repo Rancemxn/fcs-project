@@ -6,7 +6,7 @@
 //! facts (forest shape, reference targets, compile-time topology) are validated
 //! once here so downstream stages can assume them.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{EntityKind, StableId};
 
@@ -370,7 +370,7 @@ impl CanonicalActiveInterval {
     }
 
     pub fn bounded(start: f64, end: f64) -> Result<Self, CanonicalRenderError> {
-        if !start.is_finite() || !end.is_finite() || start >= end {
+        if !start.is_finite() || !end.is_finite() || start > end {
             return Err(CanonicalRenderError::InvalidActiveInterval);
         }
         Ok(Self {
@@ -891,18 +891,23 @@ impl CanonicalRenderPath {
         }
         let mut open = false;
         let mut closed = false;
+        let mut has_drawing = false;
         for command in &commands {
             match command {
                 CanonicalPathCommand::MoveTo(_) => {
                     open = true;
                     closed = false;
+                    has_drawing = false;
                 }
-                CanonicalPathCommand::Close if !open || closed => {
+                CanonicalPathCommand::Close if !open || closed || !has_drawing => {
                     return Err(CanonicalRenderError::InvalidPathState);
                 }
                 CanonicalPathCommand::Close => closed = true,
                 _ if !open => return Err(CanonicalRenderError::PathWithoutInitialMoveTo),
-                _ => closed = false,
+                _ => {
+                    closed = false;
+                    has_drawing = true;
+                }
             }
         }
         Ok(Self {
@@ -1330,6 +1335,9 @@ impl CanonicalRenderScene {
     fn validate_layers(&self) -> Result<(), CanonicalRenderError> {
         let mut roots = Owners::new(self.nodes.len());
         for (index, layer) in self.layers.iter().enumerate() {
+            if layer.document_order() != index as u32 {
+                return Err(CanonicalRenderError::InvalidDocumentOrder);
+            }
             for root in layer.roots() {
                 roots.claim(*root)?;
                 let node = self
@@ -1348,6 +1356,7 @@ impl CanonicalRenderScene {
     }
 
     fn validate_nodes(&self) -> Result<(), CanonicalRenderError> {
+        let mut sibling_orders = BTreeMap::<(usize, Option<usize>), Vec<u32>>::new();
         for (index, node) in self.nodes.iter().enumerate() {
             if self.layers.get(node.layer()).is_none() {
                 return Err(CanonicalRenderError::UnresolvedReference);
@@ -1400,6 +1409,20 @@ impl CanonicalRenderScene {
                 && self.clips.get(clip).is_none()
             {
                 return Err(CanonicalRenderError::UnresolvedReference);
+            }
+            sibling_orders
+                .entry((node.layer(), node.parent()))
+                .or_default()
+                .push(node.document_order());
+        }
+        for orders in sibling_orders.values_mut() {
+            orders.sort_unstable();
+            if orders
+                .iter()
+                .enumerate()
+                .any(|(index, order)| *order != index as u32)
+            {
+                return Err(CanonicalRenderError::InvalidDocumentOrder);
             }
         }
         Ok(())
@@ -1783,6 +1806,7 @@ impl Owners {
 pub enum CanonicalRenderError {
     InvalidViewport,
     InvalidActiveInterval,
+    InvalidDocumentOrder,
     WrongNamespace,
     ZeroStableId,
     DuplicateStableId,
@@ -1875,6 +1899,7 @@ impl CanonicalRenderError {
             // active interval, parent, layer and order, cycles, orphan
             // ownership and cross-owner sharing.
             Self::InvalidActiveInterval
+            | Self::InvalidDocumentOrder
             | Self::WrongNamespace
             | Self::ZeroStableId
             | Self::DuplicateStableId
@@ -1893,6 +1918,9 @@ impl CanonicalRenderError {
             | Self::GroupCarriesClip
             | Self::ClipGroupWithoutClip
             | Self::DrawableWithoutGeometry
+            | Self::DrawableWithoutPaint
+            | Self::ImageCarriesPaint
+            | Self::LinePaintBinding
             | Self::FollowHiddenWithoutNoteAttachment => RENDER_DIAGNOSTIC_INVALID_REFERENCE,
             // Row 7: Node/Geometry kind, path state and compile-time geometry
             // ranges. Glyph run problems are geometry too once the font
@@ -1902,7 +1930,8 @@ impl CanonicalRenderError {
             | Self::EmptyGlyphRunList
             | Self::NonFiniteGlyphMetric
             | Self::EmptyPath
-            | Self::PathWithoutInitialMoveTo => RENDER_DIAGNOSTIC_INVALID_GEOMETRY,
+            | Self::PathWithoutInitialMoveTo
+            | Self::InvalidPathState => RENDER_DIAGNOSTIC_INVALID_GEOMETRY,
             // Row 8 and row 9.
             Self::InvalidGradientStop | Self::UnorderedGradientStops => {
                 RENDER_DIAGNOSTIC_INVALID_PAINT
@@ -1912,7 +1941,9 @@ impl CanonicalRenderError {
             | Self::InvalidDashElement
             | Self::ZeroDashTotal => RENDER_DIAGNOSTIC_INVALID_STROKE,
             // Row 11: composite enum and isolate applicability.
-            Self::NonIsolatedGroupComposite => RENDER_DIAGNOSTIC_INVALID_COMPOSITE,
+            Self::IsolatedDrawable | Self::NonIsolatedGroupComposite => {
+                RENDER_DIAGNOSTIC_INVALID_COMPOSITE
+            }
             // Row 10: clip fill rule, the geometry kinds a clip may use, and
             // Path fill-rule consistency.
             Self::ClipGeometryKindNotAllowed | Self::ClipFillRuleMismatch => {
@@ -1929,7 +1960,8 @@ impl CanonicalRenderError {
     const fn next_variant(self) -> Option<Self> {
         Some(match self {
             Self::InvalidViewport => Self::InvalidActiveInterval,
-            Self::InvalidActiveInterval => Self::WrongNamespace,
+            Self::InvalidActiveInterval => Self::InvalidDocumentOrder,
+            Self::InvalidDocumentOrder => Self::WrongNamespace,
             Self::WrongNamespace => Self::ZeroStableId,
             Self::ZeroStableId => Self::DuplicateStableId,
             Self::DuplicateStableId => Self::UnresolvedReference,
@@ -2105,8 +2137,12 @@ mod tests {
         assert!(interval.contains(1.999));
         assert!(!interval.contains(2.0));
         assert!(CanonicalActiveInterval::unbounded().contains(f64::MIN));
+        let empty = CanonicalActiveInterval::bounded(2.0, 2.0).expect("empty interval");
+        assert!(!empty.contains(1.999));
+        assert!(!empty.contains(2.0));
+        assert!(!empty.contains(2.001));
         assert_eq!(
-            CanonicalActiveInterval::bounded(2.0, 2.0),
+            CanonicalActiveInterval::bounded(2.0, 1.0),
             Err(CanonicalRenderError::InvalidActiveInterval)
         );
     }
@@ -2536,9 +2572,38 @@ mod tests {
             ),
             Err(CanonicalRenderError::EmptyPath)
         );
-        assert!(
+        assert_eq!(
             CanonicalRenderPath::new(
                 path_id.clone(),
+                CanonicalRenderFillRule::NonZero,
+                vec![CanonicalPathCommand::MoveTo(0), CanonicalPathCommand::Close],
+            ),
+            Err(CanonicalRenderError::InvalidPathState)
+        );
+        assert_eq!(
+            CanonicalRenderPath::new(
+                path_id.clone(),
+                CanonicalRenderFillRule::NonZero,
+                vec![
+                    CanonicalPathCommand::MoveTo(0),
+                    CanonicalPathCommand::LineTo(1),
+                    CanonicalPathCommand::Close,
+                    CanonicalPathCommand::Close,
+                ],
+            ),
+            Err(CanonicalRenderError::InvalidPathState)
+        );
+        assert_eq!(
+            CanonicalRenderPath::new(
+                path_id.clone(),
+                CanonicalRenderFillRule::NonZero,
+                vec![CanonicalPathCommand::Close],
+            ),
+            Err(CanonicalRenderError::InvalidPathState)
+        );
+        assert!(
+            CanonicalRenderPath::new(
+                path_id,
                 CanonicalRenderFillRule::EvenOdd,
                 vec![
                     CanonicalPathCommand::MoveTo(0),
@@ -2547,29 +2612,6 @@ mod tests {
                 ],
             )
             .is_ok()
-        );
-        assert_eq!(
-            CanonicalRenderPath::new(
-                path_id.clone(),
-                CanonicalRenderFillRule::NonZero,
-                vec![
-                    CanonicalPathCommand::MoveTo(0),
-                    CanonicalPathCommand::Close,
-                    CanonicalPathCommand::Close
-                ],
-            ),
-            Err(CanonicalRenderError::InvalidPathState)
-        );
-        assert_eq!(
-            CanonicalRenderPath::new(
-                path_id,
-                CanonicalRenderFillRule::NonZero,
-                vec![
-                    CanonicalPathCommand::LineTo(0),
-                    CanonicalPathCommand::MoveTo(1)
-                ],
-            ),
-            Err(CanonicalRenderError::PathWithoutInitialMoveTo)
         );
     }
 
@@ -2828,6 +2870,34 @@ mod tests {
     }
 
     #[test]
+    fn document_order_is_dense_within_each_expanded_collection() {
+        let mut fixture = Fixture::new();
+        let mut spec = fixture.solid_rect();
+        spec.layers.push(
+            CanonicalRenderLayer::new(
+                fixture.id(EntityKind::RenderLayer, "layer/second"),
+                CanonicalRenderPass::Overlay,
+                0,
+                2,
+                Vec::new(),
+            )
+            .expect("layer"),
+        );
+        assert_eq!(
+            CanonicalRenderScene::new(spec).expect_err("layer order gap"),
+            CanonicalRenderError::InvalidDocumentOrder
+        );
+
+        let mut fixture = Fixture::new();
+        let mut spec = fixture.solid_rect();
+        spec.nodes[0].document_order = 1;
+        assert_eq!(
+            CanonicalRenderScene::new(spec).expect_err("root order gap"),
+            CanonicalRenderError::InvalidDocumentOrder
+        );
+    }
+
+    #[test]
     fn every_auxiliary_record_needs_exactly_one_owner() {
         let mut fixture = Fixture::new();
         let mut spec = fixture.solid_rect();
@@ -3023,7 +3093,7 @@ mod tests {
         // without an arm. This count catches the remaining hole: a chain that
         // skips a variant whose arm exists but that nothing points at. A stale
         // number fails loudly here rather than silently shrinking coverage.
-        assert_eq!(all.len(), 39, "variant walk skips a variant");
+        assert_eq!(all.len(), 40, "variant walk skips a variant");
         assert_eq!(
             all.iter().collect::<BTreeSet<_>>().len(),
             all.len(),
@@ -3050,6 +3120,7 @@ mod tests {
             CanonicalRenderError::DuplicateStableId,
             CanonicalRenderError::ParentNotBeforeChild,
             CanonicalRenderError::InvalidActiveInterval,
+            CanonicalRenderError::InvalidDocumentOrder,
             CanonicalRenderError::SharedRecord,
             CanonicalRenderError::UnreachableRecord,
         ] {
@@ -3059,6 +3130,9 @@ mod tests {
         for error in [
             CanonicalRenderError::UnresolvedReference,
             CanonicalRenderError::GroupCarriesGeometry,
+            CanonicalRenderError::DrawableWithoutPaint,
+            CanonicalRenderError::ImageCarriesPaint,
+            CanonicalRenderError::LinePaintBinding,
             CanonicalRenderError::ClipGroupWithoutClip,
             CanonicalRenderError::AttachmentOverrideBelowRoot,
         ] {
@@ -3080,6 +3154,18 @@ mod tests {
         assert_eq!(
             CanonicalRenderError::ClipGeometryKindNotAllowed.code(),
             "render.invalid-clip"
+        );
+        assert_eq!(
+            CanonicalRenderError::InvalidPathState.code(),
+            "render.invalid-geometry"
+        );
+        assert_eq!(
+            CanonicalRenderError::GroupCarriesClip.code(),
+            "render.invalid-reference"
+        );
+        assert_eq!(
+            CanonicalRenderError::IsolatedDrawable.code(),
+            "render.invalid-composite"
         );
     }
 }

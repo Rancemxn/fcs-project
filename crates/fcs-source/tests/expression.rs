@@ -65,7 +65,7 @@ fn power_is_right_associative() {
 
 #[test]
 fn token_parser_rejects_reserved_names_and_trailing_input() {
-    for source in ["vec2", "a b", "a +"] {
+    for source in ["vec2", "line", "a b", "a +"] {
         let diagnostics = parse_expression(source).into_result().expect_err(source);
         assert_eq!(diagnostics[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
     }

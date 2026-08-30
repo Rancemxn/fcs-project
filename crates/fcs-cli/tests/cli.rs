@@ -1755,61 +1755,64 @@ fn render_manifest_source_and_product_paths_are_exercised() {
         }
     }
 
-    let fixture = &manifest["fixture"].as_array().unwrap()[0];
-    let source = render.join(fixture["source"].as_str().unwrap());
-    let expected: serde_json::Value =
-        fs::read_to_string(render.join(fixture["semantic_expected"].as_str().unwrap()))
-            .unwrap()
-            .parse()
-            .unwrap();
-    let expected_draw_ops = expected["drawOrder"].as_array().unwrap().len() as u64;
     let directory = tempfile::tempdir().unwrap();
-    let output_path = directory.path().join("render.fcbc");
-    let compile = bin()
-        .arg("compile")
-        .arg(&source)
-        .arg("--output")
-        .arg(&output_path)
-        .output()
-        .unwrap();
-    assert!(
-        compile.status.success(),
-        "render fixture: stderr={}",
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let inspect = bin()
-        .arg("inspect")
-        .arg(&output_path)
-        .arg("--render")
-        .arg("--json")
-        .output()
-        .unwrap();
-    assert!(
-        inspect.status.success(),
-        "render fixture inspect: stderr={}",
-        String::from_utf8_lossy(&inspect.stderr)
-    );
-    let report: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
-    assert!(report["render"]["layerCount"].as_u64().unwrap() > 0);
-    assert!(report["render"]["nodeCount"].as_u64().unwrap() >= expected_draw_ops);
-    assert_eq!(
-        report["render"]["drawOps"].as_u64(),
-        Some(expected_draw_ops)
-    );
-    let viewport = report["render"]["viewport"]
-        .as_array()
-        .unwrap_or_else(|| panic!("{source:?}: missing Render viewport"));
-    assert_eq!(viewport.len(), 2, "{source:?}: Render viewport dimensions");
-    assert_eq!(
-        viewport[0].as_f64(),
-        Some(fixture["width"].as_integer().unwrap() as f64),
-        "{source:?}: Render viewport width"
-    );
-    assert_eq!(
-        viewport[1].as_f64(),
-        Some(fixture["height"].as_integer().unwrap() as f64),
-        "{source:?}: Render viewport height"
-    );
+    for fixture in manifest["fixture"].as_array().unwrap() {
+        let id = fixture["id"].as_str().unwrap();
+        let source = render.join(fixture["source"].as_str().unwrap());
+        let expected: serde_json::Value =
+            fs::read_to_string(render.join(fixture["semantic_expected"].as_str().unwrap()))
+                .unwrap()
+                .parse()
+                .unwrap();
+        let expected_draw_ops = expected["drawOrder"].as_array().unwrap().len() as u64;
+        let output_path = directory.path().join(format!("{id}.fcbc"));
+        let compile = bin()
+            .arg("compile")
+            .arg(&source)
+            .arg("--output")
+            .arg(&output_path)
+            .output()
+            .unwrap();
+        assert!(
+            compile.status.success(),
+            "{id}: render fixture compile failed: stderr={}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        let inspect = bin()
+            .arg("inspect")
+            .arg(&output_path)
+            .arg("--render")
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert!(
+            inspect.status.success(),
+            "{id}: render fixture inspect failed: stderr={}",
+            String::from_utf8_lossy(&inspect.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&inspect.stdout).unwrap();
+        assert!(report["render"]["layerCount"].as_u64().unwrap() > 0);
+        assert!(report["render"]["nodeCount"].as_u64().unwrap() >= expected_draw_ops);
+        assert_eq!(
+            report["render"]["drawOps"].as_u64(),
+            Some(expected_draw_ops),
+            "{id}: semantic draw count"
+        );
+        let viewport = report["render"]["viewport"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{source:?}: missing Render viewport"));
+        assert_eq!(viewport.len(), 2, "{source:?}: Render viewport dimensions");
+        assert_eq!(
+            viewport[0].as_f64(),
+            Some(fixture["width"].as_integer().unwrap() as f64),
+            "{source:?}: Render viewport width"
+        );
+        assert_eq!(
+            viewport[1].as_f64(),
+            Some(fixture["height"].as_integer().unwrap() as f64),
+            "{source:?}: Render viewport height"
+        );
+    }
 
     let binding = &manifest["binding_fixture"].as_array().unwrap()[0];
     let binding_expected: serde_json::Value =

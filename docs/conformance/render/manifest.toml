@@ -16,11 +16,113 @@ color_space = "linear-srgb"
 pixel_format = "rgba8"
 clauses = ["2", "3", "5", "6", "8", "9", "15"]
 
+[[fixture]]
+id = "render.nested-z-order-2x2"
+source = "nested-z-order-2x2.fcs"
+chart_time_seconds = 0.0
+semantic_expected = "nested-z-order-2x2.semantic.json"
+raster_expected = "nested-z-order-2x2.rgba8.hex"
+width = 2
+height = 2
+color_space = "linear-srgb"
+pixel_format = "rgba8"
+clauses = ["2", "3", "5", "6", "8", "9", "14", "15", "17"]
+
+[[fixture]]
+id = "render.solid-line-2x2"
+source = "solid-line-2x2.fcs"
+chart_time_seconds = 0.0
+semantic_expected = "solid-line-2x2.semantic.json"
+raster_expected = "solid-line-2x2.rgba8.hex"
+width = 2
+height = 2
+color_space = "linear-srgb"
+pixel_format = "rgba8"
+clauses = ["2", "3", "5", "6", "8.2", "9", "14", "15", "17"]
+
+[[fixture]]
+id = "render.linear-gradient-stroke-2x2"
+source = "linear-gradient-stroke-2x2.fcs"
+chart_time_seconds = 0.0
+semantic_expected = "linear-gradient-stroke-2x2.semantic.json"
+raster_expected = "linear-gradient-stroke-2x2.rgba8.hex"
+width = 2
+height = 2
+color_space = "linear-srgb"
+pixel_format = "rgba8"
+clauses = ["2", "3", "5", "6", "8.2", "9", "14", "15", "17"]
+
+[[fixture]]
+id = "render.radial-gradient-stroke-2x2"
+source = "radial-gradient-stroke-2x2.fcs"
+chart_time_seconds = 0.0
+semantic_expected = "radial-gradient-stroke-2x2.semantic.json"
+raster_expected = "radial-gradient-stroke-2x2.rgba8.hex"
+width = 2
+height = 2
+color_space = "linear-srgb"
+pixel_format = "rgba8"
+clauses = ["2", "3", "5", "6", "8.2", "9", "14", "15", "17"]
+
+[[fixture]]
+id = "render.linear-gradient-fill-2x2"
+source = "linear-gradient-fill-2x2.fcs"
+chart_time_seconds = 0.0
+semantic_expected = "linear-gradient-fill-2x2.semantic.json"
+raster_expected = "linear-gradient-fill-2x2.rgba8.hex"
+width = 2
+height = 2
+color_space = "linear-srgb"
+pixel_format = "rgba8"
+clauses = ["2", "3", "5", "6", "8.1", "14", "15", "17"]
+
+[[fixture]]
+id = "render.image-pattern-fill-4x4"
+source = "image-pattern-fill-4x4.fcs"
+chart_time_seconds = 0.0
+semantic_expected = "image-pattern-fill-4x4.semantic.json"
+raster_expected = "image-pattern-fill-4x4.rgba8.hex"
+width = 4
+height = 4
+color_space = "linear-srgb"
+pixel_format = "rgba8"
+clauses = ["2", "3", "5", "6", "8.1", "10", "14", "15", "17"]
+
+[[fixture]]
+id = "render.image-pattern-stroke-4x2"
+source = "image-pattern-stroke-4x2.fcs"
+chart_time_seconds = 0.0
+semantic_expected = "image-pattern-stroke-4x2.semantic.json"
+raster_expected = "image-pattern-stroke-4x2.rgba8.hex"
+width = 4
+height = 2
+color_space = "linear-srgb"
+pixel_format = "rgba8"
+clauses = ["2", "3", "5", "6", "8.2", "10", "14", "15", "17"]
+
+[[fixture]]
+id = "render.clip-rect-8x8"
+source = "clip-rect-8x8.fcs"
+chart_time_seconds = 0.0
+semantic_expected = "clip-rect-8x8.semantic.json"
+raster_expected = "clip-rect-8x8.rgba8.hex"
+width = 8
+height = 8
+color_space = "linear-srgb"
+pixel_format = "rgba8"
+clauses = ["2", "3.1", "3.3", "6", "9", "14.6", "14.8", "15", "17"]
+
 [[source_fixture]]
 id = "render.source.valid.solid-rect"
 source = "solid-rect-4x4.fcs"
 expect = "success"
 clauses = ["2"]
+
+[[source_fixture]]
+id = "render.source.contract.image-pattern-sibling-fields"
+source = "image-pattern-sibling-fields.fcs"
+expect = "success"
+clauses = ["8.1", "8.2", "10", "15.2", "17"]
 
 [[source_fixture]]
 id = "render.source.invalid.missing-viewport"
@@ -35,6 +137,13 @@ source = "invalid-unknown-node-kind.fcs"
 expect = "error"
 diagnostic = "syntax.invalid-token"
 clauses = ["2", "3.1"]
+
+[[source_fixture]]
+id = "render.source.invalid.clip-kind"
+source = "invalid-clip-kind.fcs"
+expect = "error"
+diagnostic = "render.invalid-clip"
+clauses = ["3.1", "9", "16"]
 
 [[binding_fixture]]
 id = "render.binding.embedded-image-resource"

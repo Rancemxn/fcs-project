@@ -1,0 +1,27 @@
+#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport {
+        width: 2px;
+        height: 2px;
+        colorSpace: "linear-srgb";
+    }
+    layer main {
+        pass: "overlay";
+        zOrder: 0;
+        space: "screen";
+        children {
+            rect gradient {
+                origin: vec2(-1px, -1px);
+                size: vec2(2px, 2px);
+                fill: linearGradient(
+                    vec2(-1px, 0px),
+                    vec2(1px, 0px),
+                    [stop(0.0, #FF0000FF), stop(1.0, #0000FFFF)],
+                    "pad"
+                );
+            }
+        }
+    }
+}

@@ -1,0 +1,15 @@
+#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 8px; height: 8px; }
+    layer main {
+        pass: "overlay";
+        children {
+            clipGroup invalid {
+                clip.kind: "line";
+                clip.fillRule: "nonzero";
+            }
+        }
+    }
+}

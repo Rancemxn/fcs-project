@@ -1,0 +1,35 @@
+#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport {
+        width: 2px;
+        height: 2px;
+        colorSpace: "linear-srgb";
+    }
+    layer main {
+        pass: "overlay";
+        zOrder: 0;
+        space: "screen";
+        children {
+            line gradient {
+                start: vec2(-1px, 0px);
+                end: vec2(1px, 0px);
+                stroke: radialGradient(
+                    vec2(0px, 0px),
+                    0px,
+                    vec2(0px, 0px),
+                    2px,
+                    [stop(0.0, #FF0000FF), stop(1.0, #0000FFFF)],
+                    "pad"
+                );
+                width: 2px;
+                cap: "butt";
+                join: "miter";
+                miterLimit: 4.0;
+                dash: [];
+                dashOffset: 0px;
+            }
+        }
+    }
+}

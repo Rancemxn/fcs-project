@@ -118,8 +118,15 @@ struct SubtreeState {
 
 struct EvaluatedScene {
     ops: Vec<DrawOp>,
+    events: Vec<SceneEvent>,
     shapes: BTreeMap<u64, EvaluatedShape>,
     clips: BTreeMap<u64, EvaluatedClip>,
+}
+
+enum SceneEvent {
+    BeginIsolation(IsolationDrawOp),
+    Draw(usize),
+    EndIsolation(u64),
 }
 
 #[derive(Clone)]
@@ -136,6 +143,7 @@ type TextContours = Vec<Vec<[f64; 2]>>;
 struct PathSubpath {
     points: Vec<[f64; 2]>,
     segment_lengths: Vec<f64>,
+    joins_after: Vec<bool>,
     closed: bool,
 }
 
@@ -147,6 +155,7 @@ enum LocalShape {
     RoundedRect {
         bounds: [f64; 4],
         radii: [f64; 4],
+        stroke_path: Option<PathSubpath>,
     },
     Circle {
         center: [f64; 2],
@@ -157,6 +166,7 @@ enum LocalShape {
         radius_x: f64,
         radius_y: f64,
         rotation: f64,
+        stroke_path: Option<PathSubpath>,
     },
     Line {
         start: [f64; 2],
@@ -222,6 +232,7 @@ fn evaluate_scene_at(
     }
     let mut scene = EvaluatedScene {
         ops: Vec::new(),
+        events: Vec::new(),
         shapes: BTreeMap::new(),
         clips: BTreeMap::new(),
     };
@@ -351,6 +362,7 @@ fn emit_draw_subtree(
             chart_time,
             attachment.environment,
             world_matrix,
+            false,
         )?;
         scene.clips.insert(
             clip_id,
@@ -370,6 +382,7 @@ fn emit_draw_subtree(
                 chart_time,
                 attachment.environment,
                 world_matrix,
+                node.stroke_ref.is_some(),
             )?;
             if let Some(shape) = geometry.shape {
                 scene.shapes.insert(
@@ -471,6 +484,7 @@ fn emit_draw_subtree(
         return Err("render.invalid-composite");
     }
     if node.kind.is_drawable() {
+        let op_index = scene.ops.len();
         scene.ops.push(DrawOp {
             node_id: node.id,
             kind: node.kind,
@@ -490,15 +504,20 @@ fn emit_draw_subtree(
             isolation_chain: isolation_chain.clone(),
             bounds,
         });
+        scene.events.push(SceneEvent::Draw(op_index));
+    }
+    let mut child_isolation_chain = isolation_chain;
+    let isolation = node.isolated().then_some(IsolationDrawOp {
+        node_id: node.id,
+        opacity,
+        composite: node.composite,
+    });
+    if let Some(boundary) = isolation {
+        scene.events.push(SceneEvent::BeginIsolation(boundary));
+        child_isolation_chain.push(boundary);
     }
     for child_index in children.get(node_index).ok_or("render.invalid-graph")? {
-        let mut child_isolation_chain = isolation_chain.clone();
         let child_opacity = if node.isolated() {
-            child_isolation_chain.push(IsolationDrawOp {
-                node_id: node.id,
-                opacity,
-                composite: node.composite,
-            });
             inherited_opacity
         } else {
             effective_opacity
@@ -512,11 +531,16 @@ fn emit_draw_subtree(
                 inherited_opacity: child_opacity,
                 parent_matrix: world_matrix,
                 inherited_clips: clip_chain.clone(),
-                isolation_chain: child_isolation_chain,
+                isolation_chain: child_isolation_chain.clone(),
                 attachment: Some(attachment),
             },
             scene,
         )?;
+    }
+    if let Some(boundary) = isolation {
+        scene
+            .events
+            .push(SceneEvent::EndIsolation(boundary.node_id));
     }
     Ok(())
 }
@@ -1021,57 +1045,11 @@ struct RasterOp {
     stroke: Option<StrokeDrawOp>,
     opacity: f64,
     composite: u16,
-    isolation_chain: Vec<IsolationDrawOp>,
-}
-
-#[derive(Clone)]
-enum RasterSource {
-    Solid([f64; 4]),
-    LinearGradient(LinearGradientDrawOp),
-    RadialGradient(RadialGradientDrawOp),
-    ImagePattern(ImagePatternDrawOp),
-    Image(ImageDrawOp),
 }
 
 struct RasterIsolationBuffer {
     boundary: IsolationDrawOp,
     color: [f64; 4],
-}
-
-fn sync_isolation_stack(
-    destination: &mut [f64; 4],
-    stack: &mut Vec<RasterIsolationBuffer>,
-    chain: &[IsolationDrawOp],
-) -> Result<(), &'static str> {
-    let common_len = stack
-        .iter()
-        .zip(chain)
-        .take_while(|(current, next)| current.boundary.node_id == next.node_id)
-        .count();
-    while stack.len() > common_len {
-        let buffer = stack.pop().ok_or("render.invalid-composite")?;
-        if !buffer.boundary.opacity.is_finite()
-            || !(0.0..=1.0).contains(&buffer.boundary.opacity)
-            || !matches!(buffer.boundary.composite, 1..=5)
-        {
-            return Err("render.invalid-composite");
-        }
-        let source = buffer
-            .color
-            .map(|component| component * buffer.boundary.opacity);
-        if let Some(parent) = stack.last_mut() {
-            composite_premultiplied(&mut parent.color, source, buffer.boundary.composite)?;
-        } else {
-            composite_premultiplied(destination, source, buffer.boundary.composite)?;
-        }
-    }
-    for boundary in &chain[common_len..] {
-        stack.push(RasterIsolationBuffer {
-            boundary: *boundary,
-            color: [0.0; 4],
-        });
-    }
-    Ok(())
 }
 
 fn composite_raster_sample(
@@ -1085,6 +1063,14 @@ fn composite_raster_sample(
     } else {
         composite_premultiplied(destination, source, composite)
     }
+}
+
+enum RasterSource {
+    Solid([f64; 4]),
+    LinearGradient(LinearGradientDrawOp),
+    RadialGradient(RadialGradientDrawOp),
+    ImagePattern(ImagePatternDrawOp),
+    Image(ImageDrawOp),
 }
 
 fn raster_shape(shape: &EvaluatedShape) -> RasterShape {
@@ -1137,7 +1123,9 @@ fn local_shape_contains(shape: &LocalShape, point: [f64; 2]) -> bool {
                 && point[1] >= bounds[1]
                 && point[1] <= bounds[3]
         }
-        LocalShape::RoundedRect { bounds, radii } => rounded_rect_contains(*bounds, *radii, point),
+        LocalShape::RoundedRect { bounds, radii, .. } => {
+            rounded_rect_contains(*bounds, *radii, point)
+        }
         LocalShape::Circle { center, radius } => {
             *radius > 0.0
                 && (point[0] - center[0]).mul_add(
@@ -1150,6 +1138,7 @@ fn local_shape_contains(shape: &LocalShape, point: [f64; 2]) -> bool {
             radius_x,
             radius_y,
             rotation,
+            ..
         } => ellipse_contains(*center, *radius_x, *radius_y, *rotation, point),
         LocalShape::Line { .. } => false,
         LocalShape::Polygon { points, .. } => polygon_contains(points, point),
@@ -1214,38 +1203,48 @@ fn stroke_contains(
         || stroke.miter_limit < 1.0
         || !matches!(stroke.cap, 1..=3)
         || !matches!(stroke.join, 1..=3)
-        || (!stroke.dash.is_empty() && !stroke.dash.len().is_multiple_of(2))
         || stroke
             .dash
             .iter()
             .any(|value| !value.is_finite() || *value < 0.0)
-        || (!stroke.dash.is_empty() && stroke.dash.iter().sum::<f64>() <= 0.0)
     {
         return Err("render.invalid-stroke");
     }
-    Ok(())
-}
-
-fn stroke_polyline_contains(
-    points: &[[f64; 2]],
-    closed: bool,
-    point: [f64; 2],
-    stroke: &StrokeDrawOp,
-) -> Result<bool, &'static str> {
-    let segments = build_stroke_segments(points, closed)?;
-    let Some(total) = segments.last().map(|segment| segment.end_distance) else {
+    if stroke.width == 0.0 {
         return Ok(false);
     }
     if !point.iter().all(|value| value.is_finite()) {
         return Err("render.invalid-geometry");
     }
     match shape {
+        LocalShape::Rect { bounds } => {
+            // Section 15.2 starts at Rect origin, walks left/up, top/right, right/down,
+            // then closes along the bottom edge: clockwise in FCS Y-up coordinates.
+            let points = [
+                [bounds[0], bounds[1]],
+                [bounds[0], bounds[3]],
+                [bounds[2], bounds[3]],
+                [bounds[2], bounds[1]],
+            ];
+            stroke_polyline_contains(&points, true, None, None, point, stroke)
+        }
         LocalShape::Line { start, end } => stroke_line_contains(*start, *end, point, stroke),
         LocalShape::Circle { center, radius } => {
             stroke_circle_contains(*center, *radius, point, stroke)
         }
         LocalShape::Polygon { points, closed } => {
-            stroke_polyline_contains(points, *closed, None, point, stroke)
+            stroke_polyline_contains(points, *closed, None, None, point, stroke)
+        }
+        LocalShape::RoundedRect { stroke_path, .. } | LocalShape::Ellipse { stroke_path, .. } => {
+            let subpath = stroke_path.as_ref().ok_or("render.invalid-geometry")?;
+            stroke_polyline_contains(
+                &subpath.points,
+                subpath.closed,
+                Some(&subpath.segment_lengths),
+                Some(&subpath.joins_after),
+                point,
+                stroke,
+            )
         }
         LocalShape::Path { subpaths, .. } => {
             for subpath in subpaths {
@@ -1253,9 +1252,18 @@ fn stroke_polyline_contains(
                     &subpath.points,
                     subpath.closed,
                     Some(&subpath.segment_lengths),
+                    Some(&subpath.joins_after),
                     point,
                     stroke,
                 )? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        LocalShape::Text { contours } => {
+            for contour in contours {
+                if stroke_polyline_contains(contour, true, None, None, point, stroke)? {
                     return Ok(true);
                 }
             }
@@ -1272,11 +1280,13 @@ fn stroke_polyline_contains(
 /// A zero-length segment produces no coverage, cap, join or tangent and does not advance the
 /// dash phase, so it is dropped before anything else. `cap` applies at each dash segment's two
 /// endpoints, and for an undashed stroke only at the two ends of an open Polyline. `join`
-/// applies at every vertex the stroke covers on both sides.
+/// applies at every declared vertex the stroke covers on both sides; adaptive subdivision
+/// points are not vertices.
 fn stroke_polyline_contains(
     points: &[[f64; 2]],
     closed: bool,
     segment_lengths: Option<&[f64]>,
+    joins_after: Option<&[bool]>,
     point: [f64; 2],
     stroke: &StrokeDrawOp,
 ) -> Result<bool, &'static str> {
@@ -1289,6 +1299,9 @@ fn stroke_polyline_contains(
                 .iter()
                 .any(|length| !length.is_finite() || *length < 0.0)
     }) {
+        return Err("render.invalid-geometry");
+    }
+    if joins_after.is_some_and(|joins| joins.len() != points.len() - 1) {
         return Err("render.invalid-geometry");
     }
     let half_width = stroke.width / 2.0;
@@ -1313,6 +1326,7 @@ fn stroke_polyline_contains(
             offset: total,
             length,
             metric_length,
+            join_after: joins_after.map_or(true, |joins| joins[index]),
         });
         total += metric_length;
     }
@@ -1324,6 +1338,13 @@ fn stroke_polyline_contains(
     // An undashed stroke covers the whole path, so every vertex joins and only an open path's
     // two ends cap. Section 15.2 gives a closed undashed stroke no endpoint at all.
     let whole_path_on = stroke.dash.is_empty();
+    let dash_wraps = closed
+        && dash_intervals
+            .first()
+            .is_some_and(|interval| interval.0 == 0.0)
+        && dash_intervals
+            .last()
+            .is_some_and(|interval| interval.1 == total);
     for (dash_start, dash_end) in &dash_intervals {
         for segment in &segments {
             let along = (point[0] - segment.start[0]) * segment.direction[0]
@@ -1346,6 +1367,9 @@ fn stroke_polyline_contains(
             continue;
         }
         for (arc, forward) in [(*dash_start, false), (*dash_end, true)] {
+            if dash_wraps && ((!forward && arc == 0.0) || (forward && arc == total)) {
+                continue;
+            }
             let segment = segments
                 .iter()
                 .find(|segment| arc <= segment.offset + segment.metric_length)
@@ -1371,10 +1395,21 @@ fn stroke_polyline_contains(
         let outgoing = &segments[(index + 1) % segments.len()];
         let arc = incoming.offset + incoming.metric_length;
         let joined = whole_path_on
+            || (dash_wraps && index + 1 == segments.len())
             || dash_intervals
                 .iter()
                 .any(|(start, end)| arc > *start && arc < *end);
         if !joined {
+            continue;
+        }
+        if !incoming.join_after {
+            let vertex = [
+                incoming.start[0] + incoming.direction[0] * incoming.length,
+                incoming.start[1] + incoming.direction[1] * incoming.length,
+            ];
+            if (point[0] - vertex[0]).hypot(point[1] - vertex[1]) <= half_width {
+                return Ok(true);
+            }
             continue;
         }
         if join_contains(incoming, outgoing, point, half_width, stroke)? {
@@ -1390,6 +1425,7 @@ struct PolylineSegment {
     offset: f64,
     length: f64,
     metric_length: f64,
+    join_after: bool,
 }
 
 /// Render section 15.2: butt truncates at the endpoint, square extends `width/2` along the
@@ -1509,6 +1545,10 @@ fn stroke_circle_contains(
     if segments.is_empty() {
         return Ok(false);
     }
+    let dash_wraps = segments.first().is_some_and(|interval| interval.0 == 0.0)
+        && segments
+            .last()
+            .is_some_and(|interval| interval.1 == circumference);
     if distance == 0.0 {
         // The centre lies on the radial boundary of every sector, and section 15.2 counts a
         // boundary sample as inside, so any dash segment reaches it once the band does.
@@ -1526,6 +1566,11 @@ fn stroke_circle_contains(
             _ => return Err("render.invalid-stroke"),
         }
         for (end_arc, sign) in [(segment_start, -1.0), (segment_end, 1.0)] {
+            if dash_wraps
+                && ((sign < 0.0 && end_arc == 0.0) || (sign > 0.0 && end_arc == circumference))
+            {
+                continue;
+            }
             let (sin, cos) = (-end_arc / radius).sin_cos();
             let to_point = [offset[0] - radius * cos, offset[1] - radius * sin];
             if stroke.cap == 2 {
@@ -1569,230 +1614,40 @@ fn stroke_line_contains(
         if along >= segment_start && along <= segment_end && perpendicular <= half_width {
             return Ok(true);
         }
+        match stroke.cap {
+            1 => {}
+            2 => {
+                let endpoint = if along < segment_start {
+                    [
+                        start[0] + direction[0] * segment_start,
+                        start[1] + direction[1] * segment_start,
+                    ]
+                } else {
+                    [
+                        start[0] + direction[0] * segment_end,
+                        start[1] + direction[1] * segment_end,
+                    ]
+                };
+                if along < segment_start || along > segment_end {
+                    let dx = point[0] - endpoint[0];
+                    let dy = point[1] - endpoint[1];
+                    if dx.mul_add(dx, dy * dy) <= half_width * half_width {
+                        return Ok(true);
+                    }
+                }
+            }
+            3 => {
+                if along >= segment_start - half_width
+                    && along <= segment_end + half_width
+                    && perpendicular <= half_width
+                {
+                    return Ok(true);
+                }
+            }
+            _ => return Err("render.invalid-stroke"),
+        }
     }
     Ok(false)
-}
-
-fn build_stroke_segments(
-    points: &[[f64; 2]],
-    closed: bool,
-) -> Result<Vec<StrokeSegment>, &'static str> {
-    let mut segments = Vec::new();
-    for pair in points.windows(2) {
-        append_stroke_segment(&mut segments, pair[0], pair[1])?;
-    }
-    if closed && points.len() > 1 && points.first() != points.last() {
-        append_stroke_segment(&mut segments, *points.last().unwrap(), points[0])?;
-    }
-    Ok(segments)
-}
-
-fn append_stroke_segment(
-    segments: &mut Vec<StrokeSegment>,
-    start: [f64; 2],
-    end: [f64; 2],
-) -> Result<(), &'static str> {
-    ensure_finite_point(start)?;
-    ensure_finite_point(end)?;
-    let dx = end[0] - start[0];
-    let dy = end[1] - start[1];
-    let length = dx.hypot(dy);
-    if !length.is_finite() {
-        return Err("render.invalid-geometry");
-    }
-    if length == 0.0 {
-        return Ok(());
-    }
-    let start_distance = segments.last().map_or(0.0, |segment| segment.end_distance);
-    segments.push(StrokeSegment {
-        start,
-        end,
-        direction: [dx / length, dy / length],
-        start_distance,
-        end_distance: start_distance + length,
-    });
-    Ok(())
-}
-
-fn stroke_run_contains(
-    segments: &[StrokeSegment],
-    total: f64,
-    closed: bool,
-    run: (f64, f64),
-    point: [f64; 2],
-    stroke: &StrokeDrawOp,
-) -> bool {
-    let half_width = stroke.width / 2.0;
-    for segment in segments {
-        let start = run.0.max(segment.start_distance);
-        let end = run.1.min(segment.end_distance);
-        if end < start {
-            continue;
-        }
-        let delta = [point[0] - segment.start[0], point[1] - segment.start[1]];
-        let along = delta[0] * segment.direction[0] + delta[1] * segment.direction[1];
-        let perpendicular =
-            (delta[0] * segment.direction[1] - delta[1] * segment.direction[0]).abs();
-        if along >= start - segment.start_distance
-            && along <= end - segment.start_distance
-            && perpendicular <= half_width
-        {
-            return true;
-        }
-    }
-
-    let dashed = !stroke.dash.is_empty();
-    if (dashed || !closed)
-        && (stroke_cap_contains(segments, run.0, true, point, stroke, half_width)
-            || stroke_cap_contains(segments, run.1, false, point, stroke, half_width))
-    {
-        return true;
-    }
-
-    for pair in segments.windows(2) {
-        let distance = pair[0].end_distance;
-        if distance > run.0
-            && distance < run.1
-            && stroke_join_contains(point, &pair[0], &pair[1], stroke, half_width)
-        {
-            return true;
-        }
-    }
-    if closed && !dashed && run.0 == 0.0 && run.1 == total && segments.len() > 1 {
-        let last = segments.last().unwrap();
-        if stroke_join_contains(point, last, &segments[0], stroke, half_width) {
-            return true;
-        }
-    }
-    false
-}
-
-fn stroke_cap_contains(
-    segments: &[StrokeSegment],
-    distance: f64,
-    at_start: bool,
-    point: [f64; 2],
-    stroke: &StrokeDrawOp,
-    half_width: f64,
-) -> bool {
-    let Some((segment, local_distance)) = segment_at_distance(segments, distance, at_start) else {
-        return false;
-    };
-    let center = [
-        segment.start[0] + segment.direction[0] * local_distance,
-        segment.start[1] + segment.direction[1] * local_distance,
-    ];
-    let delta = [point[0] - center[0], point[1] - center[1]];
-    match stroke.cap {
-        1 => false,
-        2 => delta[0].mul_add(delta[0], delta[1] * delta[1]) <= half_width * half_width,
-        3 => {
-            let outward = if at_start {
-                [-segment.direction[0], -segment.direction[1]]
-            } else {
-                segment.direction
-            };
-            let along = delta[0] * outward[0] + delta[1] * outward[1];
-            let perpendicular =
-                (delta[0] * segment.direction[1] - delta[1] * segment.direction[0]).abs();
-            along >= 0.0 && along <= half_width && perpendicular <= half_width
-        }
-        _ => false,
-    }
-}
-
-fn segment_at_distance(
-    segments: &[StrokeSegment],
-    distance: f64,
-    at_start: bool,
-) -> Option<(&StrokeSegment, f64)> {
-    if at_start {
-        segments
-            .iter()
-            .find(|segment| distance >= segment.start_distance && distance < segment.end_distance)
-            .or_else(|| {
-                segments
-                    .last()
-                    .filter(|segment| distance == segment.end_distance)
-            })
-    } else {
-        segments
-            .iter()
-            .rev()
-            .find(|segment| distance > segment.start_distance && distance <= segment.end_distance)
-            .or_else(|| {
-                segments
-                    .first()
-                    .filter(|segment| distance == segment.start_distance)
-            })
-    }
-    .map(|segment| (segment, distance - segment.start_distance))
-}
-
-fn stroke_join_contains(
-    point: [f64; 2],
-    previous: &StrokeSegment,
-    next: &StrokeSegment,
-    stroke: &StrokeDrawOp,
-    half_width: f64,
-) -> bool {
-    let turn =
-        previous.direction[0] * next.direction[1] - previous.direction[1] * next.direction[0];
-    if turn == 0.0 {
-        return false;
-    }
-    let vertex = previous.end;
-    let left_previous = [-previous.direction[1], previous.direction[0]];
-    let left_next = [-next.direction[1], next.direction[0]];
-    let outer_sign = if turn > 0.0 { -1.0 } else { 1.0 };
-    let first_outer = [left_previous[0] * outer_sign, left_previous[1] * outer_sign];
-    let second_outer = [left_next[0] * outer_sign, left_next[1] * outer_sign];
-    let first = [
-        vertex[0] + first_outer[0] * half_width,
-        vertex[1] + first_outer[1] * half_width,
-    ];
-    let second = [
-        vertex[0] + second_outer[0] * half_width,
-        vertex[1] + second_outer[1] * half_width,
-    ];
-    match stroke.join {
-        2 => {
-            let delta = [point[0] - vertex[0], point[1] - vertex[1]];
-            let distance = delta[0].mul_add(delta[0], delta[1] * delta[1]);
-            if distance > half_width * half_width {
-                return false;
-            }
-            let cross_first = first_outer[0] * delta[1] - first_outer[1] * delta[0];
-            let cross_second = delta[0] * second_outer[1] - delta[1] * second_outer[0];
-            if turn > 0.0 {
-                cross_first >= 0.0 && cross_second >= 0.0
-            } else {
-                cross_first <= 0.0 && cross_second <= 0.0
-            }
-        }
-        3 => polygon_contains(&[vertex, first, second], point),
-        1 => {
-            let denominator = previous.direction[0] * next.direction[1]
-                - previous.direction[1] * next.direction[0];
-            if denominator.abs() <= f64::EPSILON {
-                return polygon_contains(&[vertex, first, second], point);
-            }
-            let offset = [second[0] - first[0], second[1] - first[1]];
-            let distance =
-                (offset[0] * next.direction[1] - offset[1] * next.direction[0]) / denominator;
-            let miter = [
-                first[0] + previous.direction[0] * distance,
-                first[1] + previous.direction[1] * distance,
-            ];
-            let miter_length = (miter[0] - vertex[0]).hypot(miter[1] - vertex[1]);
-            if miter_length <= half_width * stroke.miter_limit {
-                polygon_contains(&[vertex, first, miter, second], point)
-            } else {
-                polygon_contains(&[vertex, first, second], point)
-            }
-        }
-        _ => false,
-    }
 }
 
 fn stroke_segments(
@@ -1808,9 +1663,6 @@ fn stroke_segments(
             .then_some((0.0, length))
             .into_iter()
             .collect());
-    }
-    if !dash.len().is_multiple_of(2) {
-        return Err("render.invalid-stroke");
     }
     let total = dash.iter().try_fold(0.0, |total, value| {
         if !value.is_finite() || *value < 0.0 {
@@ -1830,13 +1682,15 @@ fn stroke_segments(
     let mut consumed = dash_offset.rem_euclid(total);
     loop {
         let element = dash[index];
-        if element == 0.0 {
-            index = (index + 1) % dash.len();
-        } else if consumed < element {
+        if element > 0.0 && consumed < element {
             break;
-        } else {
-            consumed -= element;
-            index = (index + 1) % dash.len();
+        }
+        if element > 0.0 {
+            consumed = (consumed - element).max(0.0);
+        }
+        index = (index + 1) % dash.len();
+        if consumed == 0.0 && dash[index] > 0.0 {
+            break;
         }
     }
 
@@ -1849,14 +1703,21 @@ fn stroke_segments(
             consumed = 0.0;
             continue;
         }
-        let end = (distance + element - consumed).min(length);
-        if index.is_multiple_of(2) && end > distance {
-            result.push((distance, end));
-        }
-        distance = end;
-        if distance < length {
+        let span = element - consumed;
+        let remaining = length - distance;
+        if span <= remaining {
+            let end = distance + span;
+            if index.is_multiple_of(2) && end > distance {
+                result.push((distance, end));
+            }
+            distance = end;
             index = (index + 1) % dash.len();
             consumed = 0.0;
+        } else {
+            if index.is_multiple_of(2) {
+                result.push((distance, length));
+            }
+            break;
         }
     }
     Ok(result)
@@ -1945,43 +1806,6 @@ fn path_has_area(points: &[[f64; 2]]) -> bool {
             - (pair[0][1] - first[1]) * (pair[1][0] - first[0])
             != 0.0
     })
-}
-
-fn path_contains(subpaths: &[PathSubpath], fill_rule: u16, point: [f64; 2]) -> bool {
-    let mut winding = 0i32;
-    let mut crossings = 0u32;
-    for subpath in subpaths {
-        if subpath.points.len() < 2 {
-            continue;
-        }
-        for index in 0..subpath.points.len() {
-            let [x0, y0] = subpath.points[index];
-            let [x1, y1] = subpath.points[(index + 1) % subpath.points.len()];
-            let cross = (x1 - x0) * (point[1] - y0) - (point[0] - x0) * (y1 - y0);
-            if cross == 0.0
-                && point[0] >= x0.min(x1)
-                && point[0] <= x0.max(x1)
-                && point[1] >= y0.min(y1)
-                && point[1] <= y0.max(y1)
-            {
-                return true;
-            }
-            if y0 <= point[1] {
-                if y1 > point[1] && cross > 0.0 {
-                    winding += 1;
-                    crossings += 1;
-                }
-            } else if y1 <= point[1] && cross < 0.0 {
-                winding -= 1;
-                crossings += 1;
-            }
-        }
-    }
-    match fill_rule {
-        1 => winding != 0,
-        2 => crossings % 2 == 1,
-        _ => false,
-    }
 }
 
 fn rounded_rect_contains(bounds: [f64; 4], radii: [f64; 4], point: [f64; 2]) -> bool {
@@ -2152,7 +1976,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
         return Err("render.limit-exceeded");
     }
     let scene = evaluate_scene_at(chart, chart_time)?;
-    let mut raster_ops = Vec::new();
+    let mut raster_ops = Vec::with_capacity(scene.ops.len());
     for op in &scene.ops {
         if !matches!(
             op.kind,
@@ -2167,6 +1991,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                 | NodeKind::Text
                 | NodeKind::Image
         ) {
+            raster_ops.push(None);
             continue;
         }
         if !op.opacity.is_finite() {
@@ -2176,6 +2001,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
             return Err("render.invalid-composite");
         }
         let Some(shape) = scene.shapes.get(&op.node_id) else {
+            raster_ops.push(None);
             continue;
         };
         let source = if op.kind == NodeKind::Image {
@@ -2197,11 +2023,15 @@ pub fn rasterize_solid_rgba8_with_limits_at(
         // stroke without a resolvable paint is invalid rather than merely unpainted.
         let stroke_source = if matches!(
             op.kind,
-            NodeKind::Line
+            NodeKind::Rect
+                | NodeKind::Line
+                | NodeKind::RoundedRect
                 | NodeKind::Circle
+                | NodeKind::Ellipse
                 | NodeKind::Polyline
                 | NodeKind::Polygon
                 | NodeKind::Path
+                | NodeKind::Text
         ) {
             match op.stroke.as_ref() {
                 Some(stroke) => Some(
@@ -2221,6 +2051,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
             None
         };
         if source.is_none() && stroke_source.is_none() {
+            raster_ops.push(None);
             continue;
         }
         let mut clips = Vec::new();
@@ -2230,7 +2061,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                 clips.push(raster_shape(shape));
             }
         }
-        raster_ops.push(RasterOp {
+        raster_ops.push(Some(RasterOp {
             shape: raster_shape(shape),
             clips,
             source,
@@ -2238,8 +2069,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
             stroke: op.stroke.clone(),
             opacity: op.opacity,
             composite: op.composite,
-            isolation_chain: op.isolation_chain.clone(),
-        });
+        }));
     }
     let capacity = (width as usize)
         .checked_mul(height as usize)
@@ -2265,44 +2095,90 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                     let point = [logical_x, logical_y];
                     let mut sample = [0.0; 4];
                     let mut isolation_stack = Vec::new();
-                    for op in &raster_ops {
-                        sync_isolation_stack(
-                            &mut sample,
-                            &mut isolation_stack,
-                            &op.isolation_chain,
-                        )?;
-                        let Some(local_point) = raster_shape_local_point(&op.shape, point) else {
-                            continue;
-                        };
-                        if !op
-                            .clips
-                            .iter()
-                            .all(|clip| raster_shape_contains(clip, point))
-                        {
-                            continue;
-                        }
-                        // Render section 7 emits the fill draw op before the stroke draw op
-                        // for the same node, so a node carrying both composites in that order.
-                        if let Some(source) = &op.source
-                            && local_shape_contains(&op.shape.shape, local_point)
-                            && let Some(value) =
-                                raster_source_at(chart, source, local_point, op.opacity)?
-                        {
-                            composite_premultiplied(&mut sample, value, op.composite)?;
-                        }
-                        if let Some(source) = &op.stroke_source
-                            && stroke_contains(
-                                &op.shape.shape,
-                                local_point,
-                                op.stroke.as_ref().ok_or("render.invalid-stroke")?,
-                            )?
-                            && let Some(value) =
-                                raster_source_at(chart, source, local_point, op.opacity)?
-                        {
-                            composite_premultiplied(&mut sample, value, op.composite)?;
+                    for event in &scene.events {
+                        match event {
+                            SceneEvent::BeginIsolation(boundary) => {
+                                if !boundary.opacity.is_finite()
+                                    || !(0.0..=1.0).contains(&boundary.opacity)
+                                    || !matches!(boundary.composite, 1..=5)
+                                {
+                                    return Err("render.invalid-composite");
+                                }
+                                isolation_stack.push(RasterIsolationBuffer {
+                                    boundary: *boundary,
+                                    color: [0.0; 4],
+                                });
+                            }
+                            SceneEvent::EndIsolation(node_id) => {
+                                let buffer =
+                                    isolation_stack.pop().ok_or("render.invalid-composite")?;
+                                if buffer.boundary.node_id != *node_id {
+                                    return Err("render.invalid-composite");
+                                }
+                                let source = buffer
+                                    .color
+                                    .map(|component| component * buffer.boundary.opacity);
+                                composite_raster_sample(
+                                    &mut sample,
+                                    &mut isolation_stack,
+                                    source,
+                                    buffer.boundary.composite,
+                                )?;
+                            }
+                            SceneEvent::Draw(index) => {
+                                let Some(op) = raster_ops
+                                    .get(*index)
+                                    .ok_or("render.invalid-graph")?
+                                    .as_ref()
+                                else {
+                                    continue;
+                                };
+                                let Some(local_point) = raster_shape_local_point(&op.shape, point)
+                                else {
+                                    continue;
+                                };
+                                if !op
+                                    .clips
+                                    .iter()
+                                    .all(|clip| raster_shape_contains(clip, point))
+                                {
+                                    continue;
+                                }
+                                // Render section 7 emits fill before stroke for the same node.
+                                if let Some(source) = &op.source
+                                    && local_shape_contains(&op.shape.shape, local_point)
+                                    && let Some(value) =
+                                        raster_source_at(chart, source, local_point, op.opacity)?
+                                {
+                                    composite_raster_sample(
+                                        &mut sample,
+                                        &mut isolation_stack,
+                                        value,
+                                        op.composite,
+                                    )?;
+                                }
+                                if let Some(source) = &op.stroke_source
+                                    && stroke_contains(
+                                        &op.shape.shape,
+                                        local_point,
+                                        op.stroke.as_ref().ok_or("render.invalid-stroke")?,
+                                    )?
+                                    && let Some(value) =
+                                        raster_source_at(chart, source, local_point, op.opacity)?
+                                {
+                                    composite_raster_sample(
+                                        &mut sample,
+                                        &mut isolation_stack,
+                                        value,
+                                        op.composite,
+                                    )?;
+                                }
+                            }
                         }
                     }
-                    sync_isolation_stack(&mut sample, &mut isolation_stack, &[])?;
+                    if !isolation_stack.is_empty() {
+                        return Err("render.invalid-composite");
+                    }
                     for component in 0..4 {
                         sum[component] += sample[component];
                     }
@@ -3238,6 +3114,7 @@ fn evaluate_path(
                 active = Some(PathSubpath {
                     points: vec![point],
                     segment_lengths: Vec::new(),
+                    joins_after: Vec::new(),
                     closed: false,
                 });
                 current = point;
@@ -3444,7 +3321,8 @@ fn append_curve(
 ) -> Result<(), &'static str> {
     let subpath = active.ok_or("render.invalid-geometry")?;
     subpath.closed = false;
-    let length = subpath.points.len();
+    let point_start = subpath.points.len();
+    let segment_start = subpath.segment_lengths.len();
     flatten_curve(
         curve,
         &mut subpath.points,
@@ -3453,7 +3331,13 @@ fn append_curve(
         world_matrix,
         point_count,
     )?;
-    for point in &subpath.points[length..] {
+    subpath
+        .joins_after
+        .resize(subpath.segment_lengths.len(), false);
+    if subpath.segment_lengths.len() > segment_start {
+        *subpath.joins_after.last_mut().expect("curve segment") = true;
+    }
+    for point in &subpath.points[point_start..] {
         update_bounds(bounds, *point);
     }
     Ok(())
@@ -3476,8 +3360,125 @@ fn append_path_point(
     claim_path_point(point_count)?;
     subpath.points.push(point);
     subpath.segment_lengths.push(segment_length);
+    subpath.joins_after.push(true);
     update_bounds(bounds, point);
     Ok(())
+}
+
+fn ellipse_stroke_path(
+    center: Point,
+    radius_x: f64,
+    radius_y: f64,
+    rotation: f64,
+    world_matrix: [f64; 9],
+) -> Result<PathSubpath, &'static str> {
+    let mut points = vec![ellipse_arc_point(
+        center, radius_x, radius_y, rotation, 0.0, 0.0, 0.0,
+    )?];
+    let mut segment_lengths = Vec::new();
+    let mut point_count = 1;
+    for (start_angle, end_angle) in [
+        (0.0, -std::f64::consts::FRAC_PI_2),
+        (-std::f64::consts::FRAC_PI_2, -std::f64::consts::PI),
+        (-std::f64::consts::PI, -3.0 * std::f64::consts::FRAC_PI_2),
+        (-3.0 * std::f64::consts::FRAC_PI_2, -std::f64::consts::TAU),
+    ] {
+        flatten_curve(
+            PathCurve::EllipseArc {
+                center,
+                radius_x,
+                radius_y,
+                rotation,
+                start_angle,
+                end_angle,
+            },
+            &mut points,
+            &mut segment_lengths,
+            0,
+            world_matrix,
+            &mut point_count,
+        )?;
+    }
+    Ok(PathSubpath {
+        joins_after: vec![false; segment_lengths.len()],
+        points,
+        segment_lengths,
+        closed: true,
+    })
+}
+
+fn rounded_rect_stroke_path(
+    bounds: [f64; 4],
+    radii: [f64; 4],
+    world_matrix: [f64; 9],
+) -> Result<PathSubpath, &'static str> {
+    let [left, bottom, right, top] = bounds;
+    let [top_left, top_right, bottom_right, bottom_left] = radii;
+    let mut subpath = PathSubpath {
+        points: vec![[left + top_left, top]],
+        segment_lengths: Vec::new(),
+        joins_after: Vec::new(),
+        closed: false,
+    };
+    let mut bounds = None;
+    let mut point_count = 1;
+    for (line_end, arc) in [
+        (
+            [right - top_right, top],
+            PathCurve::EllipseArc {
+                center: [right - top_right, top - top_right],
+                radius_x: top_right,
+                radius_y: top_right,
+                rotation: 0.0,
+                start_angle: std::f64::consts::FRAC_PI_2,
+                end_angle: 0.0,
+            },
+        ),
+        (
+            [right, bottom + bottom_right],
+            PathCurve::EllipseArc {
+                center: [right - bottom_right, bottom + bottom_right],
+                radius_x: bottom_right,
+                radius_y: bottom_right,
+                rotation: 0.0,
+                start_angle: 0.0,
+                end_angle: -std::f64::consts::FRAC_PI_2,
+            },
+        ),
+        (
+            [left + bottom_left, bottom],
+            PathCurve::EllipseArc {
+                center: [left + bottom_left, bottom + bottom_left],
+                radius_x: bottom_left,
+                radius_y: bottom_left,
+                rotation: 0.0,
+                start_angle: -std::f64::consts::FRAC_PI_2,
+                end_angle: -std::f64::consts::PI,
+            },
+        ),
+        (
+            [left, top - top_left],
+            PathCurve::EllipseArc {
+                center: [left + top_left, top - top_left],
+                radius_x: top_left,
+                radius_y: top_left,
+                rotation: 0.0,
+                start_angle: std::f64::consts::PI,
+                end_angle: std::f64::consts::FRAC_PI_2,
+            },
+        ),
+    ] {
+        append_path_point(Some(&mut subpath), line_end, &mut bounds, &mut point_count)?;
+        append_curve(
+            Some(&mut subpath),
+            arc,
+            &mut bounds,
+            world_matrix,
+            &mut point_count,
+        )?;
+    }
+    subpath.closed = true;
+    Ok(subpath)
 }
 
 fn claim_path_point(point_count: &mut usize) -> Result<(), &'static str> {
@@ -3619,6 +3620,7 @@ fn geometry_evaluation(
     chart_time: f64,
     environment: EvaluationEnvironment,
     world_matrix: [f64; 9],
+    needs_stroke: bool,
 ) -> Result<GeometryEvaluation, &'static str> {
     let Some(index) = geometry_ref else {
         return Ok(GeometryEvaluation {
@@ -3696,6 +3698,9 @@ fn geometry_evaluation(
                 Some(LocalShape::RoundedRect {
                     bounds: [x, y, right, top],
                     radii: values,
+                    stroke_path: needs_stroke
+                        .then(|| rounded_rect_stroke_path([x, y, right, top], values, world_matrix))
+                        .transpose()?,
                 }),
                 None,
             )
@@ -3759,6 +3764,11 @@ fn geometry_evaluation(
                     radius_x,
                     radius_y,
                     rotation,
+                    stroke_path: needs_stroke
+                        .then(|| {
+                            ellipse_stroke_path(center, radius_x, radius_y, rotation, world_matrix)
+                        })
+                        .transpose()?,
                 }),
                 None,
             )
@@ -3899,539 +3909,6 @@ fn geometry_evaluation(
         shape,
         image,
     })
-}
-
-fn evaluate_text(
-    chart: &DecodedRenderChart,
-    glyph_run_refs: &[u32],
-    origin_descriptor: u32,
-    chart_time: f64,
-    environment: EvaluationEnvironment,
-) -> Result<([f64; 4], LocalShape), &'static str> {
-    let origin = query_vec2_in(
-        chart,
-        origin_descriptor,
-        chart_time,
-        ValueType::Vec2Length,
-        environment,
-    )?;
-    let mut subpaths = Vec::new();
-    for glyph_run_ref in glyph_run_refs {
-        let run = chart
-            .glyph_runs
-            .get(*glyph_run_ref as usize)
-            .ok_or("render.invalid-reference")?;
-        let size = query_scalar_in(
-            chart,
-            run.size_descriptor,
-            chart_time,
-            ValueType::Length,
-            environment,
-        )?;
-        if size <= 0.0 {
-            return Err("render.invalid-geometry");
-        }
-        let font = chart
-            .decoded_fonts
-            .get(&run.font_resource_id)
-            .ok_or("render.resource-not-found")?;
-        if font.units_per_em == 0 || !run.run_offset.iter().all(|value| value.is_finite()) {
-            return Err("render.invalid-geometry");
-        }
-        let scale = size / f64::from(font.units_per_em);
-        let mut pen = [run.run_offset[0] * size, run.run_offset[1] * size];
-        for placement in &run.glyphs {
-            if ![
-                placement.x_advance,
-                placement.y_advance,
-                placement.x_offset,
-                placement.y_offset,
-            ]
-            .iter()
-            .all(|value| value.is_finite())
-            {
-                return Err("render.invalid-geometry");
-            }
-            let glyph = font
-                .glyphs
-                .get(placement.glyph_id as usize)
-                .ok_or("render.invalid-geometry")?;
-            let glyph_origin = [
-                origin[0] + pen[0] + placement.x_offset * size,
-                origin[1] + pen[1] + placement.y_offset * size,
-            ];
-            for contour in &glyph.contours {
-                let points = glyph_contour(contour, glyph_origin, scale)?;
-                if points.len() >= 3 {
-                    subpaths.push(PathSubpath {
-                        points,
-                        closed: true,
-                    });
-                }
-            }
-            pen[0] += placement.x_advance * size;
-            pen[1] += placement.y_advance * size;
-            if !pen.iter().all(|value| value.is_finite()) {
-                return Err("render.invalid-geometry");
-            }
-        }
-    }
-    let mut bounds = [origin[0], origin[1], origin[0], origin[1]];
-    for [x, y] in subpaths.iter().flat_map(|subpath| subpath.points.iter()) {
-        bounds[0] = bounds[0].min(*x);
-        bounds[1] = bounds[1].min(*y);
-        bounds[2] = bounds[2].max(*x);
-        bounds[3] = bounds[3].max(*y);
-    }
-    Ok((
-        bounds,
-        LocalShape::Path {
-            subpaths,
-            fill_rule: 1,
-        },
-    ))
-}
-
-fn glyph_contour(
-    contour: &[crate::assets::OutlinePoint],
-    origin: [f64; 2],
-    scale: f64,
-) -> Result<Vec<[f64; 2]>, &'static str> {
-    if contour.len() < 2 || !scale.is_finite() {
-        return Err("render.invalid-geometry");
-    }
-    let points: Vec<_> = contour
-        .iter()
-        .map(|point| {
-            (
-                [
-                    origin[0] + f64::from(point.x) * scale,
-                    origin[1] + f64::from(point.y) * scale,
-                ],
-                point.on_curve,
-            )
-        })
-        .collect();
-    if points
-        .iter()
-        .any(|(point, _)| !point.iter().all(|value| value.is_finite()))
-    {
-        return Err("render.invalid-geometry");
-    }
-    let last = points.len() - 1;
-    let (start_index, start) = if points[0].1 {
-        (1, points[0].0)
-    } else if points[last].1 {
-        (0, points[last].0)
-    } else {
-        (0, midpoint(points[last].0, points[0].0))
-    };
-    let mut output = vec![start];
-    let mut current = start;
-    let mut pending_control = None;
-    for offset in 0..points.len() {
-        let (point, on_curve) = points[(start_index + offset) % points.len()];
-        if on_curve {
-            if let Some(control) = pending_control.take() {
-                append_quadratic(&mut output, current, control, point, 0)?;
-            } else if point != current {
-                output.push(point);
-            }
-            current = point;
-        } else if let Some(control) = pending_control.replace(point) {
-            let implied = midpoint(control, point);
-            append_quadratic(&mut output, current, control, implied, 0)?;
-            current = implied;
-        }
-    }
-    if let Some(control) = pending_control {
-        append_quadratic(&mut output, current, control, start, 0)?;
-    } else if output.last().copied() != Some(start) {
-        output.push(start);
-    }
-    Ok(output)
-}
-
-fn evaluate_path(
-    chart: &DecodedRenderChart,
-    path: &PathRecord,
-    chart_time: f64,
-    environment: EvaluationEnvironment,
-) -> Result<(Vec<PathSubpath>, [f64; 4]), &'static str> {
-    if !matches!(path.fill_rule, 1 | 2) {
-        return Err("render.invalid-geometry");
-    }
-    let mut subpaths = Vec::new();
-    let mut current_subpath: Option<PathSubpath> = None;
-    let mut current = None;
-    let mut start = None;
-    for command in &path.commands {
-        match command {
-            PathCommand::MoveTo(point) => {
-                if let Some(subpath) = current_subpath.take() {
-                    subpaths.push(subpath);
-                }
-                let point = query_vec2_in(
-                    chart,
-                    *point,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?;
-                ensure_finite_point(point)?;
-                current_subpath = Some(PathSubpath {
-                    points: vec![point],
-                    closed: false,
-                });
-                current = Some(point);
-                start = Some(point);
-            }
-            PathCommand::LineTo(point) => {
-                let end = query_vec2_in(
-                    chart,
-                    *point,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?;
-                ensure_finite_point(end)?;
-                current.ok_or("render.invalid-geometry")?;
-                let subpath = current_subpath.as_mut().ok_or("render.invalid-geometry")?;
-                subpath.points.push(end);
-                subpath.closed = false;
-                current = Some(end);
-            }
-            PathCommand::QuadraticTo(control, end) => {
-                let control = query_vec2_in(
-                    chart,
-                    *control,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?;
-                let end =
-                    query_vec2_in(chart, *end, chart_time, ValueType::Vec2Length, environment)?;
-                ensure_finite_point(control)?;
-                ensure_finite_point(end)?;
-                let from = current.ok_or("render.invalid-geometry")?;
-                let subpath = current_subpath.as_mut().ok_or("render.invalid-geometry")?;
-                append_quadratic(&mut subpath.points, from, control, end, 0)?;
-                subpath.closed = false;
-                current = Some(end);
-            }
-            PathCommand::CubicTo(first, second, end) => {
-                let first = query_vec2_in(
-                    chart,
-                    *first,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?;
-                let second = query_vec2_in(
-                    chart,
-                    *second,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?;
-                let end =
-                    query_vec2_in(chart, *end, chart_time, ValueType::Vec2Length, environment)?;
-                ensure_finite_point(first)?;
-                ensure_finite_point(second)?;
-                ensure_finite_point(end)?;
-                let from = current.ok_or("render.invalid-geometry")?;
-                let subpath = current_subpath.as_mut().ok_or("render.invalid-geometry")?;
-                append_cubic(&mut subpath.points, from, first, second, end, 0)?;
-                subpath.closed = false;
-                current = Some(end);
-            }
-            PathCommand::Arc {
-                center,
-                radius,
-                start_angle,
-                end_angle,
-                direction,
-            } => {
-                let center = query_vec2_in(
-                    chart,
-                    *center,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?;
-                let radius =
-                    query_scalar_in(chart, *radius, chart_time, ValueType::Length, environment)?;
-                let start_angle = query_scalar_in(
-                    chart,
-                    *start_angle,
-                    chart_time,
-                    ValueType::Angle,
-                    environment,
-                )?;
-                let end_angle =
-                    query_scalar_in(chart, *end_angle, chart_time, ValueType::Angle, environment)?;
-                let from = current.ok_or("render.invalid-geometry")?;
-                let subpath = current_subpath.as_mut().ok_or("render.invalid-geometry")?;
-                let end = append_arc(
-                    &mut subpath.points,
-                    from,
-                    ArcGeometry {
-                        center,
-                        radius_x: radius,
-                        radius_y: radius,
-                        rotation: 0.0,
-                    },
-                    start_angle,
-                    end_angle,
-                    *direction,
-                )?;
-                subpath.closed = false;
-                current = Some(end);
-            }
-            PathCommand::EllipseArc {
-                center,
-                radius_x,
-                radius_y,
-                rotation,
-                start_angle,
-                end_angle,
-                direction,
-            } => {
-                let center = query_vec2_in(
-                    chart,
-                    *center,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?;
-                let radius_x =
-                    query_scalar_in(chart, *radius_x, chart_time, ValueType::Length, environment)?;
-                let radius_y =
-                    query_scalar_in(chart, *radius_y, chart_time, ValueType::Length, environment)?;
-                let rotation =
-                    query_scalar_in(chart, *rotation, chart_time, ValueType::Angle, environment)?;
-                let start_angle = query_scalar_in(
-                    chart,
-                    *start_angle,
-                    chart_time,
-                    ValueType::Angle,
-                    environment,
-                )?;
-                let end_angle =
-                    query_scalar_in(chart, *end_angle, chart_time, ValueType::Angle, environment)?;
-                let from = current.ok_or("render.invalid-geometry")?;
-                let subpath = current_subpath.as_mut().ok_or("render.invalid-geometry")?;
-                let end = append_arc(
-                    &mut subpath.points,
-                    from,
-                    ArcGeometry {
-                        center,
-                        radius_x,
-                        radius_y,
-                        rotation,
-                    },
-                    start_angle,
-                    end_angle,
-                    *direction,
-                )?;
-                subpath.closed = false;
-                current = Some(end);
-            }
-            PathCommand::Close => {
-                let start = start.ok_or("render.invalid-geometry")?;
-                let subpath = current_subpath.as_mut().ok_or("render.invalid-geometry")?;
-                if subpath.points.last().copied() != Some(start) {
-                    subpath.points.push(start);
-                }
-                subpath.closed = true;
-                current = Some(start);
-            }
-        }
-    }
-    if let Some(subpath) = current_subpath {
-        subpaths.push(subpath);
-    }
-    let mut bounds: Option<[f64; 4]> = None;
-    for point in subpaths.iter().flat_map(|subpath| subpath.points.iter()) {
-        let [x, y] = *point;
-        bounds = Some(match bounds {
-            Some([left, bottom, right, top]) => {
-                [left.min(x), bottom.min(y), right.max(x), top.max(y)]
-            }
-            None => [x, y, x, y],
-        });
-    }
-    let bounds = bounds.ok_or("render.invalid-geometry")?;
-    Ok((subpaths, bounds))
-}
-
-fn ensure_finite_point(point: [f64; 2]) -> Result<(), &'static str> {
-    point
-        .iter()
-        .all(|value| value.is_finite())
-        .then_some(())
-        .ok_or("render.invalid-geometry")
-}
-
-fn append_quadratic(
-    points: &mut Vec<[f64; 2]>,
-    start: [f64; 2],
-    control: [f64; 2],
-    end: [f64; 2],
-    depth: u8,
-) -> Result<(), &'static str> {
-    let flatness = distance_to_segment(control, start, end);
-    if !flatness.is_finite() {
-        return Err("render.invalid-geometry");
-    }
-    if flatness <= PATH_FLATTEN_TOLERANCE {
-        points.push(end);
-        return Ok(());
-    }
-    if depth >= PATH_MAX_FLATTEN_DEPTH {
-        return Err("render.limit-exceeded");
-    }
-    let first = midpoint(start, control);
-    let second = midpoint(control, end);
-    let middle = midpoint(first, second);
-    append_quadratic(points, start, first, middle, depth + 1)?;
-    append_quadratic(points, middle, second, end, depth + 1)
-}
-
-fn append_cubic(
-    points: &mut Vec<[f64; 2]>,
-    start: [f64; 2],
-    first: [f64; 2],
-    second: [f64; 2],
-    end: [f64; 2],
-    depth: u8,
-) -> Result<(), &'static str> {
-    let flatness =
-        distance_to_segment(first, start, end).max(distance_to_segment(second, start, end));
-    if !flatness.is_finite() {
-        return Err("render.invalid-geometry");
-    }
-    if flatness <= PATH_FLATTEN_TOLERANCE {
-        points.push(end);
-        return Ok(());
-    }
-    if depth >= PATH_MAX_FLATTEN_DEPTH {
-        return Err("render.limit-exceeded");
-    }
-    let first_mid = midpoint(start, first);
-    let center = midpoint(first, second);
-    let second_mid = midpoint(second, end);
-    let left_center = midpoint(first_mid, center);
-    let right_center = midpoint(center, second_mid);
-    let middle = midpoint(left_center, right_center);
-    append_cubic(points, start, first_mid, left_center, middle, depth + 1)?;
-    append_cubic(points, middle, right_center, second_mid, end, depth + 1)
-}
-
-fn append_arc(
-    points: &mut Vec<[f64; 2]>,
-    current: [f64; 2],
-    geometry: ArcGeometry,
-    start_angle: f64,
-    end_angle: f64,
-    direction: u16,
-) -> Result<[f64; 2], &'static str> {
-    if geometry.radius_x < 0.0
-        || geometry.radius_y < 0.0
-        || !geometry.center.iter().all(|value| value.is_finite())
-        || !geometry.radius_x.is_finite()
-        || !geometry.radius_y.is_finite()
-        || !geometry.rotation.is_finite()
-        || !start_angle.is_finite()
-        || !end_angle.is_finite()
-        || !matches!(direction, 1 | 2)
-    {
-        return Err("render.invalid-geometry");
-    }
-    let sweep = end_angle - start_angle;
-    if !sweep.is_finite()
-        || (sweep != 0.0 && ((direction == 1 && sweep >= 0.0) || (direction == 2 && sweep <= 0.0)))
-    {
-        return Err("render.invalid-geometry");
-    }
-    let start = arc_point(geometry, start_angle);
-    let end = arc_point(geometry, end_angle);
-    ensure_finite_point(start)?;
-    ensure_finite_point(end)?;
-    if current != start {
-        points.push(start);
-    }
-    append_arc_segment(points, geometry, start_angle, end_angle, 0)?;
-    Ok(end)
-}
-
-fn append_arc_segment(
-    points: &mut Vec<[f64; 2]>,
-    geometry: ArcGeometry,
-    start_angle: f64,
-    end_angle: f64,
-    depth: u8,
-) -> Result<(), &'static str> {
-    let middle_angle = start_angle + (end_angle - start_angle) / 2.0;
-    let start = arc_point(geometry, start_angle);
-    let end = arc_point(geometry, end_angle);
-    let middle = arc_point(geometry, middle_angle);
-    ensure_finite_point(middle)?;
-    let flatness = distance_to_segment(middle, start, end);
-    if !flatness.is_finite() {
-        return Err("render.invalid-geometry");
-    }
-    if (end_angle - start_angle).abs() <= std::f64::consts::PI && flatness <= PATH_FLATTEN_TOLERANCE
-    {
-        points.push(end);
-        return Ok(());
-    }
-    if depth >= PATH_MAX_FLATTEN_DEPTH {
-        return Err("render.limit-exceeded");
-    }
-    append_arc_segment(points, geometry, start_angle, middle_angle, depth + 1)?;
-    append_arc_segment(points, geometry, middle_angle, end_angle, depth + 1)
-}
-
-fn arc_point(geometry: ArcGeometry, angle: f64) -> [f64; 2] {
-    let (sin_angle, cos_angle) = angle.sin_cos();
-    let (sin_rotation, cos_rotation) = geometry.rotation.sin_cos();
-    [
-        geometry.center[0] + (geometry.radius_x * cos_angle) * cos_rotation
-            - (geometry.radius_y * sin_angle) * sin_rotation,
-        geometry.center[1]
-            + (geometry.radius_x * cos_angle) * sin_rotation
-            + (geometry.radius_y * sin_angle) * cos_rotation,
-    ]
-}
-
-fn midpoint(first: [f64; 2], second: [f64; 2]) -> [f64; 2] {
-    [
-        first[0] / 2.0 + second[0] / 2.0,
-        first[1] / 2.0 + second[1] / 2.0,
-    ]
-}
-
-fn distance_to_segment(point: [f64; 2], start: [f64; 2], end: [f64; 2]) -> f64 {
-    let dx = end[0] - start[0];
-    let dy = end[1] - start[1];
-    let length = dx.hypot(dy);
-    if length == 0.0 {
-        return (point[0] - start[0]).hypot(point[1] - start[1]);
-    }
-    if !length.is_finite() {
-        return f64::INFINITY;
-    }
-    let projection = (((point[0] - start[0]) * dx) + ((point[1] - start[1]) * dy)) / length;
-    if !projection.is_finite() {
-        return f64::INFINITY;
-    }
-    let along = projection.clamp(0.0, length);
-    let nearest = [
-        start[0] + along * dx / length,
-        start[1] + along * dy / length,
-    ];
-    (point[0] - nearest[0]).hypot(point[1] - nearest[1])
 }
 
 fn validate_source_rect(

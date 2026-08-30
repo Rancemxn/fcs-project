@@ -1,0 +1,29 @@
+{
+  "drawOrder": ["main/gradient"],
+  "drawOps": [
+    {
+      "nodeKind": "Line",
+      "worldBounds": [-1.0, 0.0, 1.0, 0.0],
+      "stroke": {
+        "width": 2.0,
+        "cap": "butt",
+        "join": "miter",
+        "miterLimit": 4.0,
+        "dashOffset": 0.0,
+        "dash": [],
+        "radialGradient": {
+          "startCenter": [0.0, 0.0],
+          "startRadius": 0.0,
+          "endCenter": [0.0, 0.0],
+          "endRadius": 2.0,
+          "spread": "pad",
+          "stops": [
+            {"offset": 0.0, "color": [1.0, 0.0, 0.0, 1.0]},
+            {"offset": 1.0, "color": [0.0, 0.0, 1.0, 1.0]}
+          ]
+        }
+      },
+      "composite": "sourceOver"
+    }
+  ]
+}

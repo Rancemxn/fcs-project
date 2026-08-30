@@ -14,15 +14,13 @@ use fcs_fcbc::write_from_compilation;
 use fcs_model::{
     CanonicalArcDirection, CanonicalCompilation, CanonicalDescriptorKind,
     CanonicalExpressionEnvironment, CanonicalExpressionType, CanonicalGlyphRun,
-    CanonicalImageRepeat, CanonicalImageSampling, CanonicalPathCommand, CanonicalPatternTransform,
-    CanonicalRenderFillRule, CanonicalRenderGeometry, CanonicalRenderGeometryData,
-    CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
-    CanonicalRenderPaintData, CanonicalRenderPath, CanonicalRenderScene, CanonicalRenderSceneSpec,
-    CanonicalRenderStroke, CanonicalStrokeCap, CanonicalStrokeJoin, CanonicalTextualId, EntityKind,
-    StableIdRegistry,
+    CanonicalPathCommand, CanonicalRenderAttachment, CanonicalRenderFillRule,
+    CanonicalRenderGeometry, CanonicalRenderGeometryData, CanonicalRenderNode,
+    CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint, CanonicalRenderPath,
+    CanonicalRenderScene, CanonicalRenderSceneSpec, CanonicalRenderStroke, CanonicalStrokeCap,
+    CanonicalStrokeJoin, CanonicalTextualId, EntityKind, StableIdRegistry, derive_stable_id,
 };
 use fcs_source::ResourceLimits;
-use fcs_source::diagnostic::DiagnosticCode;
 use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
 
@@ -185,135 +183,6 @@ render profile 1.0.0 {
     )
 }
 
-fn canonical_text_compilation() -> CanonicalCompilation {
-    let source = r#"#fcs 5.0.0
-format { profile: renderable; }
-resources {
-    font textFont {
-        source: "assets/fcs-test-font.ttf";
-        hash: "sha256:f603c8bcf005ee2a53ea78acae8002e91285ca26fee32ace235684b636706800";
-        mediaType: "font/ttf";
-    }
-}
-tempoMap { 0beat -> 120bpm; }
-render profile 1.0.0 {
-    viewport { width: 16px; height: 16px; }
-    layer main {
-        pass: "overlay";
-        children {
-            circle sourceShape {
-                center: vec2(0px, 0px);
-                radius: 5px;
-                fill: solid(#FFFFFFFF);
-            }
-        }
-    }
-}
-"#;
-    let document = parse_document(source)
-        .into_result()
-        .expect("canonical Text writer source parses");
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/conformance/render");
-    let base = document
-        .canonical_compilation_with_source(
-            source,
-            CompileTimeLimits::default(),
-            &workspace,
-            ResourceLimits::default(),
-        )
-        .expect("canonical Text writer source lowers");
-    let original = base.chart().render().expect("source Render scene");
-    let original_node = &original.nodes()[0];
-    let CanonicalRenderGeometryData::Circle { center, .. } = original.geometries()[0].data() else {
-        panic!("source fixture must provide a Circle geometry");
-    };
-    let size_descriptor = base
-        .chart()
-        .descriptors()
-        .expect("source Render descriptors")
-        .descriptors()
-        .iter()
-        .position(|descriptor| descriptor.property_type() == &CanonicalExpressionType::Length)
-        .expect("source fixture must provide a Length descriptor");
-    let mut ids = StableIdRegistry::new();
-    let font_id = ids
-        .insert(
-            EntityKind::Resource,
-            CanonicalTextualId::explicit("textFont").expect("font textual ID"),
-        )
-        .expect("font stable ID");
-    let glyph_run_id = ids
-        .insert(
-            EntityKind::RenderGlyphRun,
-            CanonicalTextualId::explicit("writer-text-run").expect("glyph run textual ID"),
-        )
-        .expect("glyph run stable ID");
-    let glyph_run = CanonicalGlyphRun::new(
-        glyph_run_id,
-        font_id,
-        0,
-        size_descriptor,
-        [0.0, 0.0],
-        vec![CanonicalGlyphPlacement {
-            glyph_id: 1,
-            x_advance: 1.0,
-            y_advance: 0.0,
-            x_offset: 0.0,
-            y_offset: 0.0,
-        }],
-    )
-    .expect("canonical glyph run");
-    let node = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
-        id: original_node.id().clone(),
-        kind: CanonicalRenderNodeKind::Text,
-        parent: original_node.parent(),
-        layer: original_node.layer(),
-        document_order: original_node.document_order(),
-        z_order: original_node.z_order(),
-        attachment: original_node.attachment().clone(),
-        active: original_node.active(),
-        isolate: original_node.isolate(),
-        follow_hidden_attachment: original_node.follow_hidden_attachment(),
-        position: original_node.position(),
-        origin: original_node.origin(),
-        rotation: original_node.rotation(),
-        scale: original_node.scale(),
-        opacity: original_node.opacity(),
-        visibility: original_node.visibility(),
-        geometry: Some(0),
-        fill_paint: Some(0),
-        stroke: None,
-        clip: None,
-        composite: original_node.composite(),
-    })
-    .expect("canonical Text node");
-    let geometry = CanonicalRenderGeometry::new(
-        original.geometries()[0].id().clone(),
-        CanonicalRenderGeometryData::Text {
-            glyph_runs: vec![0],
-            origin: *center,
-        },
-    )
-    .expect("canonical Text geometry");
-    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
-        viewport: original.viewport(),
-        layers: original.layers().to_vec(),
-        nodes: vec![node],
-        geometries: vec![geometry],
-        paths: Vec::new(),
-        paints: original.paints().to_vec(),
-        strokes: Vec::new(),
-        clips: Vec::new(),
-        glyph_runs: vec![glyph_run],
-    })
-    .expect("canonical Text scene");
-    CanonicalCompilation::new(
-        base.chart().clone().with_render(scene),
-        base.resources().clone(),
-        base.distribution().clone(),
-    )
-}
-
 #[test]
 fn solid_rect_source_reaches_product_render_loader() {
     let source = include_str!("../../../docs/conformance/render/solid-rect-4x4.fcs");
@@ -343,6 +212,20 @@ fn solid_rect_source_reaches_product_render_loader() {
         .chart()
         .render()
         .expect("canonical Render scene");
+    let layer_id = derive_stable_id(EntityKind::RenderLayer, "layer/main");
+    let node_id = derive_stable_id(EntityKind::RenderNode, "layer/main/node/full");
+    let geometry_id = derive_stable_id(
+        EntityKind::RenderGeometry,
+        &format!("owner/{node_id:016x}/field/geometryRef/ordinal/0"),
+    );
+    let paint_id = derive_stable_id(
+        EntityKind::RenderPaint,
+        &format!("owner/{node_id:016x}/field/fillPaint/ordinal/0"),
+    );
+    assert_eq!(scene.layers()[0].id().value(), layer_id);
+    assert_eq!(scene.nodes()[0].id().value(), node_id);
+    assert_eq!(scene.geometries()[0].id().value(), geometry_id);
+    assert_eq!(scene.paints()[0].id().value(), paint_id);
     assert_eq!(render.layers[0].id, scene.layers()[0].id().value());
     assert_eq!(render.nodes[0].id, scene.nodes()[0].id().value());
     assert_eq!(render.geometries[0].id, scene.geometries()[0].id().value());
@@ -367,6 +250,157 @@ fn solid_rect_source_reaches_product_render_loader() {
         section[node + 88..node + 92].copy_from_slice(&u32::MAX.to_le_bytes());
     });
     assert_eq!(load_render(&malformed), Err("render.invalid-reference"));
+}
+
+#[test]
+fn render_static_fields_resolve_compile_time_definitions() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+definitions {
+    const WIDTH: length = 4px;
+    const HEIGHT: length = 4px;
+    const VIEWPORT_SPACE: string = "screen";
+    const PASS: string = "overlay";
+    const POSITION: vec2<length> = vec2(-2px, -2px);
+    const SIZE: vec2<length> = vec2(4px, 4px);
+    const COLOR: color = #FF0000FF;
+    const ACTIVE_START: time = 0s;
+    const ACTIVE_END: time = 1s;
+}
+render profile 1.0.0 {
+    viewport {
+        width: WIDTH;
+        height: HEIGHT;
+    }
+    layer main {
+        pass: PASS;
+        space: VIEWPORT_SPACE;
+        children {
+            rect full {
+                position: POSITION;
+                size: SIZE;
+                active: [ACTIVE_START, ACTIVE_END);
+                fill: solid(COLOR);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("definition-backed Render source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .expect("definition-backed Render source lowers");
+    let bytes =
+        write_from_compilation(&compilation).expect("definition-backed Render FCBC writing");
+    let render = load_render(&bytes).expect("definition-backed product Render loader");
+
+    assert_eq!(render.viewport_width, 4.0);
+    assert_eq!(render.viewport_height, 4.0);
+    assert_eq!(render.layers[0].pass, 6);
+    assert_eq!(render.nodes[0].active_start, 0.0);
+    assert_eq!(render.nodes[0].active_end, 1.0);
+}
+
+#[test]
+fn source_line_and_note_attachments_reach_product_render_loader() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+    notes {
+        tap {
+            id: "anchor";
+            line: @main;
+            gameplay.time: 0beat;
+        };
+    }
+}
+render profile 1.0.0 {
+    viewport { width: 4px; height: 4px; }
+    layer lineLayer {
+        pass: "overlay";
+        space: line(@main);
+        children {
+            rect lineRect {
+                origin: vec2(-2px, -2px);
+                size: vec2(1px, 1px);
+                fill: solid(#FFFFFFFF);
+            }
+        }
+    }
+    layer noteLayer {
+        pass: "overlay";
+        zOrder: 1;
+        space: note(@anchor);
+        children {
+            rect noteRect {
+                origin: vec2(-2px, -2px);
+                size: vec2(1px, 1px);
+                fill: solid(#FFFFFFFF);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("line/note attachment source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .expect("line/note attachment source lowers");
+    let scene = compilation
+        .chart()
+        .render()
+        .expect("canonical Render scene");
+    let line_id = scene
+        .nodes()
+        .iter()
+        .find_map(|node| match node.attachment() {
+            CanonicalRenderAttachment::Line(id) => Some(id.value()),
+            CanonicalRenderAttachment::World
+            | CanonicalRenderAttachment::Screen
+            | CanonicalRenderAttachment::Note(_) => None,
+        })
+        .expect("canonical line attachment");
+    let note_id = scene
+        .nodes()
+        .iter()
+        .find_map(|node| match node.attachment() {
+            CanonicalRenderAttachment::Note(id) => Some(id.value()),
+            CanonicalRenderAttachment::World
+            | CanonicalRenderAttachment::Screen
+            | CanonicalRenderAttachment::Line(_) => None,
+        })
+        .expect("canonical note attachment");
+
+    let bytes = write_from_compilation(&compilation).expect("attachment FCBC writing");
+    let render = load_render(&bytes).expect("attachment product Render loader");
+    assert!(
+        render
+            .nodes
+            .iter()
+            .any(|node| node.attachment.kind == 3 && node.attachment.id == line_id)
+    );
+    assert!(
+        render
+            .nodes
+            .iter()
+            .any(|node| node.attachment.kind == 4 && node.attachment.id == note_id)
+    );
 }
 
 #[test]
@@ -801,13 +835,22 @@ render profile 1.0.0 {
             line guide {
                 start: vec2(-1px, 0px);
                 end: vec2(1px, 0px);
-                stroke: solid(#FFFFFFFF);
-                width: 1px;
+                stroke: solid(choose {
+                    when s < 1s => #FFFFFFFF;
+                    else => #FF0000FF;
+                });
+                width: choose {
+                    when s < 1s => 1px;
+                    else => 2px;
+                };
                 cap: "round";
                 join: "bevel";
                 miterLimit: 4.0;
                 dash: [1px, 1px, 1px];
-                dashOffset: 0px;
+                dashOffset: choose {
+                    when s < 1s => 0px;
+                    else => 0.5px;
+                };
             }
         }
     }
@@ -830,6 +873,30 @@ render profile 1.0.0 {
         .chart()
         .render()
         .expect("canonical Render scene");
+    let node_id = derive_stable_id(EntityKind::RenderNode, "layer/main/node/guide");
+    let geometry_id = derive_stable_id(
+        EntityKind::RenderGeometry,
+        &format!("owner/{node_id:016x}/field/geometryRef/ordinal/0"),
+    );
+    let stroke_id = derive_stable_id(
+        EntityKind::RenderStroke,
+        &format!("owner/{node_id:016x}/field/strokeRef/ordinal/0"),
+    );
+    let paint_id = derive_stable_id(
+        EntityKind::RenderPaint,
+        &format!("owner/{stroke_id:016x}/field/paintRef/ordinal/0"),
+    );
+    assert_eq!(
+        scene.layers()[0].id().value(),
+        derive_stable_id(EntityKind::RenderLayer, "layer/main")
+    );
+    assert_eq!(scene.nodes()[0].id().value(), node_id);
+    assert_eq!(scene.geometries()[0].id().value(), geometry_id);
+    assert_eq!(scene.strokes()[0].id().value(), stroke_id);
+    assert_eq!(
+        scene.paints()[scene.strokes()[0].paint()].id().value(),
+        paint_id
+    );
     assert_eq!(scene.nodes()[0].kind(), CanonicalRenderNodeKind::Line);
     assert_eq!(scene.nodes()[0].fill_paint(), None);
     assert_eq!(scene.nodes()[0].stroke(), Some(0));
@@ -842,18 +909,37 @@ render profile 1.0.0 {
     assert_eq!(scene.strokes()[0].join(), CanonicalStrokeJoin::Bevel);
     assert_eq!(scene.strokes()[0].miter_limit().to_bits(), 4.0f64.to_bits());
     assert_eq!(scene.strokes()[0].dash(), &[1.0, 1.0, 1.0, 1.0, 1.0, 1.0]);
-    let roots = compilation
+    let descriptors = compilation
         .chart()
         .descriptors()
-        .expect("Render descriptors")
-        .roots();
-    assert!(
-        ["render.stroke.width", "render.stroke.dashOffset"]
-            .into_iter()
-            .all(|path| roots.iter().any(|root| {
+        .expect("Render descriptors");
+    for path in ["render.stroke.width", "render.stroke.dashOffset"] {
+        let root = descriptors
+            .roots()
+            .iter()
+            .find(|root| {
                 root.target_path() == path && root.owner() == scene.strokes()[0].id().value()
-            }))
-    );
+            })
+            .expect("dynamic stroke descriptor root");
+        assert!(matches!(
+            descriptors.descriptors()[root.descriptor()].kind(),
+            CanonicalDescriptorKind::Expression(expression)
+                if expression.required_environment().contains(&CanonicalExpressionEnvironment::S)
+        ));
+    }
+    let paint_root = descriptors
+        .roots()
+        .iter()
+        .find(|root| {
+            root.target_path() == "render.paint.color"
+                && root.owner() == scene.paints()[0].id().value()
+        })
+        .expect("dynamic solid color root");
+    assert!(matches!(
+        descriptors.descriptors()[paint_root.descriptor()].kind(),
+        CanonicalDescriptorKind::Expression(expression)
+            if expression.required_environment().contains(&CanonicalExpressionEnvironment::S)
+    ));
 
     let bytes = write_from_compilation(&compilation).expect("source Line stroke FCBC writing");
     let render = load_render(&bytes).expect("source Line stroke product loader");
@@ -864,11 +950,20 @@ render profile 1.0.0 {
     assert_eq!(render.strokes[0].dash, vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0]);
     let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Line semantic draw list");
     assert_eq!(draw.len(), 1);
-    assert!(draw[0].stroke.is_some());
+    let stroke = draw[0].stroke.as_ref().expect("Line stroke payload");
+    assert_eq!((stroke.width, stroke.dash_offset), (1.0, 0.0));
+    assert_eq!(stroke.fill_rgba, Some([1.0, 1.0, 1.0, 1.0]));
+    let later = evaluate_semantic_draw_list_at(&render, 2.0).expect("later Line draw list");
+    let stroke = later[0].stroke.as_ref().expect("later Line stroke payload");
+    assert_eq!((stroke.width, stroke.dash_offset), (2.0, 0.5));
+    assert_eq!(stroke.fill_rgba, Some([1.0, 0.0, 0.0, 1.0]));
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("Line rasterization");
     assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
 
-    let invalid = source.replace("width: 1px;", "width: -1px;");
+    let invalid = source.replace(
+        "width: choose {\n                    when s < 1s => 1px;\n                    else => 2px;\n                };",
+        "width: -1px;",
+    );
     let document = parse_document(&invalid)
         .into_result()
         .expect("negative-width Line source parses");
@@ -982,6 +1077,91 @@ fn source_circle_without_fill_or_stroke_is_rejected() {
     let error = lower_source_circle("", "")
         .expect_err("a Circle with neither fill nor stroke must be rejected at lowering");
     assert!(error.contains("fill"), "{error}");
+}
+
+#[test]
+fn source_ellipse_and_rounded_rect_strokes_reach_the_product_raster() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 20px; height: 12px; }
+    layer main {
+        pass: "overlay";
+        children {
+            ellipse oval {
+                center: vec2(-4px, 0px);
+                radiusX: 3px;
+                radiusY: 2px;
+                stroke: solid(#FFFFFFFF);
+                width: 1px;
+                cap: "round";
+                join: "miter";
+                miterLimit: 4.0;
+                dash: [2px, 1px];
+                dashOffset: 0px;
+            }
+            roundedRect box {
+                origin: vec2(1px, -3px);
+                size: vec2(6px, 6px);
+                radius: 1px;
+                stroke: solid(#FF0000FF);
+                width: 1px;
+                cap: "butt";
+                join: "miter";
+                miterLimit: 4.0;
+                dash: [];
+                dashOffset: 0px;
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("parametric stroke source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| panic!("parametric strokes must lower: {diagnostics:?}"));
+    let scene = compilation.chart().render().expect("Render scene");
+    assert_eq!(scene.strokes().len(), 2);
+    assert!(
+        scene
+            .nodes()
+            .iter()
+            .all(|node| node.stroke().is_some() && node.fill_paint().is_none())
+    );
+
+    let bytes = write_from_compilation(&compilation).expect("parametric stroke FCBC writing");
+    let render = load_render(&bytes).expect("parametric stroke product loader");
+    for kind in [NodeKind::Ellipse, NodeKind::RoundedRect] {
+        let node = render
+            .nodes
+            .iter()
+            .find(|node| node.kind == kind)
+            .expect("decoded parametric node");
+        assert_eq!(node.fill_paint, None);
+        assert!(node.stroke_ref.is_some());
+    }
+    let ellipse = render
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Ellipse)
+        .expect("decoded Ellipse");
+    assert_eq!(
+        render.strokes[ellipse.stroke_ref.expect("Ellipse stroke") as usize].dash,
+        vec![2.0, 1.0]
+    );
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("parametric semantic draw list");
+    assert_eq!(draw.len(), 2);
+    assert!(draw.iter().all(|operation| operation.stroke.is_some()));
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 20, 12).expect("parametric stroke raster");
+    assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
 }
 
 /// Lower a source fixture whose hidden `circle ruler` supplies the scalar Length descriptor a
@@ -1142,16 +1322,46 @@ fn canonical_polyline_and_polygon_strokes_reach_the_product_raster() {
 }
 
 #[test]
-fn canonical_rect_stroke_is_still_rejected() {
+fn canonical_rect_strokes_reach_the_product_raster() {
     let compilation = canonical_stroked_shape_compilation(
         "rect",
         "origin: vec2(-3px, -3px);
                 size: vec2(6px, 6px);",
         Vec::new(),
     );
-    // Adding Polyline and Polygon must not widen the writer to every fillable geometry.
-    let error = write_from_compilation(&compilation).expect_err("a Rect stroke stays rejected");
-    assert_eq!(error.category(), "fcbc.render-unsupported");
+    let bytes = write_from_compilation(&compilation).expect("solid Rect stroke FCBC writing");
+    let render = load_render(&bytes).expect("solid Rect stroke product loader");
+    assert_eq!(render.nodes[1].stroke_ref, Some(0));
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("solid Rect stroke semantics");
+    assert!(draw[0].stroke.is_some());
+    let pixels =
+        rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("solid Rect stroke rasterization");
+    let solid_coverage = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|pixel| pixel[3] != 0)
+        .count();
+    assert!(solid_coverage > 0);
+
+    let dashed = canonical_stroked_shape_compilation(
+        "rect",
+        "origin: vec2(-3px, -3px);
+                size: vec2(6px, 6px);",
+        vec![2.0, 3.0],
+    );
+    let bytes = write_from_compilation(&dashed).expect("dashed Rect FCBC writing");
+    let render = load_render(&bytes).expect("dashed Rect product loader");
+    assert_eq!(render.strokes[0].dash, vec![2.0, 3.0]);
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("dashed Rect rasterization");
+    let dashed_coverage = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|pixel| pixel[3] != 0)
+        .count();
+    assert!(dashed_coverage > 0);
+    assert!(dashed_coverage < solid_coverage);
 }
 
 /// A source `polyline` or `polygon` with the flat stroke fields Render uses for `line`.
@@ -1286,529 +1496,6 @@ render profile 1.0.0 {
 }
 
 #[test]
-fn canonical_text_writer_reaches_product_render_loader() {
-    let compilation = canonical_text_compilation();
-    let scene = compilation.chart().render().expect("canonical Text scene");
-    let bytes = write_from_compilation(&compilation).expect("canonical Text FCBC writing");
-    let render = load_render(&bytes).expect("canonical Text product loader");
-
-    assert_eq!(render.nodes.len(), 1);
-    assert_eq!(render.nodes[0].kind, NodeKind::Text);
-    assert_eq!(render.nodes[0].fill_paint, Some(0));
-    assert_eq!(render.glyph_runs.len(), 1);
-    assert_eq!(render.glyph_runs[0].id, scene.glyph_runs()[0].id().value());
-    assert_eq!(render.glyph_runs[0].glyphs.len(), 1);
-    assert_eq!(render.glyph_runs[0].glyphs[0].glyph_id, 1);
-    assert!(render.decoded_fonts.contains_key(&render.resources[0].id));
-    assert!(matches!(
-        render.geometries[0].data,
-        GeometryData::Text { ref glyph_runs, .. } if glyph_runs == &vec![0]
-    ));
-    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Text semantic evaluation");
-    assert_eq!(draw.len(), 1);
-    assert_eq!(draw[0].kind, NodeKind::Text);
-    assert!(draw[0].bounds[2] > draw[0].bounds[0]);
-    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Text rasterization");
-    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
-}
-
-#[test]
-fn source_line_stroke_reaches_product_render_loader() {
-    let source = r#"#fcs 5.0.0
-format { profile: renderable; }
-definitions {
-    const gradientStart: length = -4px;
-    const initialColor: color = #FF0000FF;
-}
-tempoMap { 0beat -> 120bpm; }
-render profile 1.0.0 {
-    viewport { width: 16px; height: 16px; }
-    layer main {
-        pass: "overlay";
-        children {
-            line guide {
-                start: vec2(-6px, 0px);
-                end: vec2(6px, 0px);
-                stroke: solid(#FFFFFFFF);
-                width: 2px;
-                cap: "round";
-                join: "bevel";
-                miterLimit: 4.0;
-                dash: [2px, 1px, 3px];
-                dashOffset: 0px;
-            }
-        }
-    }
-}
-"#;
-    let document = parse_document(source)
-        .into_result()
-        .expect("source Line stroke parses");
-    let compilation = document
-        .canonical_compilation_with_source(
-            source,
-            CompileTimeLimits::default(),
-            env!("CARGO_MANIFEST_DIR"),
-            ResourceLimits::default(),
-        )
-        .unwrap_or_else(|diagnostics| {
-            panic!("source Line stroke lowering failed: {diagnostics:?}")
-        });
-    let scene = compilation
-        .chart()
-        .render()
-        .expect("canonical Render scene");
-    assert_eq!(scene.nodes()[0].kind(), CanonicalRenderNodeKind::Line);
-    assert_eq!(scene.nodes()[0].fill_paint(), None);
-    assert_eq!(scene.nodes()[0].stroke(), Some(0));
-    assert!(matches!(
-        scene.geometries()[0].data(),
-        CanonicalRenderGeometryData::Line { .. }
-    ));
-    assert_eq!(scene.strokes().len(), 1);
-    assert_eq!(scene.strokes()[0].cap(), CanonicalStrokeCap::Round);
-    assert_eq!(scene.strokes()[0].join(), CanonicalStrokeJoin::Bevel);
-    assert_eq!(scene.strokes()[0].dash(), &[2.0, 1.0, 3.0, 2.0, 1.0, 3.0]);
-
-    let bytes = write_from_compilation(&compilation).expect("source Line stroke FCBC writing");
-    let render = load_render(&bytes).expect("source Line stroke product loader");
-    assert_eq!(render.nodes[0].kind, NodeKind::Line);
-    assert_eq!(render.nodes[0].fill_paint, None);
-    assert_eq!(render.nodes[0].stroke_ref, Some(0));
-    assert_eq!(render.strokes[0].cap, 2);
-    assert_eq!(render.strokes[0].join, 3);
-    assert_eq!(render.strokes[0].dash, vec![2.0, 1.0, 3.0, 2.0, 1.0, 3.0]);
-    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Line semantic draw list");
-    assert_eq!(draw.len(), 1);
-    assert!(draw[0].stroke.is_some());
-}
-
-#[test]
-fn source_render_if_selects_concrete_children() {
-    let source = r#"#fcs 5.0.0
-format { profile: renderable; }
-definitions {
-    const showCircle: bool = true;
-}
-tempoMap { 0beat -> 120bpm; }
-render profile 1.0.0 {
-    viewport { width: 8px; height: 8px; }
-    layer main {
-        pass: "overlay";
-        children {
-            if showCircle {
-                circle selected {
-                    radius: 2px;
-                    fill: solid(#FFFFFFFF);
-                }
-            } else {
-                rect unselected {
-                    size: vec2(4px, 4px);
-                    fill: solid(#FFFFFFFF);
-                }
-            }
-        }
-    }
-}
-"#;
-    let document = parse_document(source)
-        .into_result()
-        .expect("Render if source parses");
-    let compilation = document
-        .canonical_compilation_with_source(
-            source,
-            CompileTimeLimits::default(),
-            env!("CARGO_MANIFEST_DIR"),
-            ResourceLimits::default(),
-        )
-        .expect("Render if lowering");
-    let scene = compilation
-        .chart()
-        .render()
-        .expect("canonical Render scene");
-    assert_eq!(scene.nodes().len(), 1);
-    assert_eq!(scene.nodes()[0].kind(), CanonicalRenderNodeKind::Circle);
-}
-
-#[test]
-fn source_render_if_does_not_validate_unselected_tracks() {
-    let source = r#"#fcs 5.0.0
-format { profile: renderable; }
-definitions {
-    const showHidden: bool = false;
-}
-tempoMap { 0beat -> 120bpm; }
-render profile 1.0.0 {
-    viewport { width: 8px; height: 8px; }
-    layer main {
-        pass: "overlay";
-        children {
-            if showHidden {
-                group hidden {
-                    tracks {
-                        track fade -> opacity: float {
-                            segments { point 0beat: 0.0; }
-                        }
-                    }
-                }
-            } else {
-                circle visible {
-                    radius: 2px;
-                    fill: solid(#FFFFFFFF);
-                }
-            }
-        }
-    }
-}
-"#;
-    let document = parse_document(source)
-        .into_result()
-        .expect("Render lazy branch source parses");
-    let compilation = document
-        .canonical_compilation_with_source(
-            source,
-            CompileTimeLimits::default(),
-            env!("CARGO_MANIFEST_DIR"),
-            ResourceLimits::default(),
-        )
-        .expect("unselected Render tracks must not be lowered");
-    let scene = compilation
-        .chart()
-        .render()
-        .expect("canonical Render scene");
-    assert_eq!(scene.nodes().len(), 1);
-    assert_eq!(scene.nodes()[0].kind(), CanonicalRenderNodeKind::Circle);
-}
-
-#[test]
-fn source_render_rejects_duplicate_body_fields() {
-    let source = r#"#fcs 5.0.0
-format { profile: renderable; }
-tempoMap { 0beat -> 120bpm; }
-render profile 1.0.0 {
-    viewport { width: 8px; height: 8px; }
-    layer main {
-        pass: "overlay";
-        children {
-            circle duplicate {
-                radius: 1px;
-                radius: 2px;
-                fill: solid(#FFFFFFFF);
-            }
-        }
-    }
-}
-"#;
-    let document = parse_document(source)
-        .into_result()
-        .expect("duplicate Render field source parses");
-    let diagnostics = document
-        .canonical_compilation_with_source(
-            source,
-            CompileTimeLimits::default(),
-            env!("CARGO_MANIFEST_DIR"),
-            ResourceLimits::default(),
-        )
-        .expect_err("duplicate Render fields must fail closed");
-    assert_eq!(
-        diagnostics[0].code(),
-        DiagnosticCode::SCHEMA_DUPLICATE_FIELD
-    );
-}
-
-#[test]
-fn source_render_active_interval_resolves_definitions() {
-    let source = r#"#fcs 5.0.0
-format { profile: renderable; }
-definitions {
-    const activeStart: beat = 1beat;
-    const activeEnd: beat = 2beat;
-}
-tempoMap { 0beat -> 120bpm; }
-render profile 1.0.0 {
-    viewport { width: 8px; height: 8px; }
-    layer main {
-        pass: "overlay";
-        children {
-            circle active {
-                active: [activeStart, activeEnd);
-                radius: 2px;
-                fill: solid(#FFFFFFFF);
-            }
-        }
-    }
-}
-"#;
-    let document = parse_document(source)
-        .into_result()
-        .expect("definition-backed active interval source parses");
-    let compilation = document
-        .canonical_compilation_with_source(
-            source,
-            CompileTimeLimits::default(),
-            env!("CARGO_MANIFEST_DIR"),
-            ResourceLimits::default(),
-        )
-        .expect("definition-backed active interval lowers");
-    let node = &compilation
-        .chart()
-        .render()
-        .expect("canonical Render scene")
-        .nodes()[0];
-    assert_eq!(node.active().start().to_bits(), 0.5f64.to_bits());
-    assert_eq!(node.active().end().to_bits(), 1.0f64.to_bits());
-}
-
-#[test]
-fn source_polyline_stroke_reaches_product_render_loader() {
-    let source = r#"#fcs 5.0.0
-format { profile: renderable; }
-tempoMap { 0beat -> 120bpm; }
-render profile 1.0.0 {
-    viewport { width: 16px; height: 16px; }
-    layer main {
-        pass: "overlay";
-        children {
-            polyline guide {
-                points: [vec2(-6px, -2px), vec2(0px, 4px), vec2(6px, -2px)];
-                stroke: solid(#FFFFFFFF);
-                width: 2px;
-                cap: "round";
-                join: "bevel";
-                miterLimit: 4.0;
-                dash: [];
-                dashOffset: 0px;
-            }
-        }
-    }
-}
-"#;
-    let document = parse_document(source)
-        .into_result()
-        .expect("source Polyline stroke parses");
-    let compilation = document
-        .canonical_compilation_with_source(
-            source,
-            CompileTimeLimits::default(),
-            env!("CARGO_MANIFEST_DIR"),
-            ResourceLimits::default(),
-        )
-        .unwrap_or_else(|diagnostics| {
-            panic!("source Polyline stroke lowering failed: {diagnostics:?}")
-        });
-    let scene = compilation
-        .chart()
-        .render()
-        .expect("canonical Polyline scene");
-    assert_eq!(scene.nodes()[0].kind(), CanonicalRenderNodeKind::Polyline);
-    assert_eq!(scene.nodes()[0].fill_paint(), None);
-    assert_eq!(scene.nodes()[0].stroke(), Some(0));
-    assert_eq!(scene.strokes().len(), 1);
-
-    let bytes = write_from_compilation(&compilation).expect("source Polyline stroke FCBC writing");
-    let render = load_render(&bytes).expect("source Polyline stroke product loader");
-    assert_eq!(render.nodes[0].kind, NodeKind::Polyline);
-    assert_eq!(render.nodes[0].fill_paint, None);
-    assert_eq!(render.nodes[0].stroke_ref, Some(0));
-    let draw =
-        evaluate_semantic_draw_list_at(&render, 0.0).expect("Polyline stroke semantic draw list");
-    assert_eq!(draw.len(), 1);
-    assert!(draw[0].stroke.is_some());
-    let pixels =
-        rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Polyline stroke rasterization");
-    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
-}
-
-#[test]
-fn source_curved_shape_strokes_reach_product_render_loader() {
-    let source = r#"#fcs 5.0.0
-format { profile: renderable; }
-tempoMap { 0beat -> 120bpm; }
-render profile 1.0.0 {
-    viewport { width: 20px; height: 20px; }
-    layer main {
-        pass: "overlay";
-        children {
-            roundedRect rounded {
-                origin: vec2(-9px, 3px);
-                size: vec2(6px, 4px);
-                radius: 1px;
-                stroke: solid(#FFFFFFFF);
-                width: 1px;
-                cap: "butt";
-                join: "round";
-                miterLimit: 4.0;
-                dash: [];
-                dashOffset: 0px;
-            }
-            circle circular {
-                center: vec2(0px, 0px);
-                radius: 3px;
-                stroke: solid(#FFFFFFFF);
-                width: 1px;
-                cap: "butt";
-                join: "round";
-                miterLimit: 4.0;
-                dash: [];
-                dashOffset: 0px;
-            }
-            ellipse oval {
-                center: vec2(6px, -4px);
-                radiusX: 3px;
-                radiusY: 2px;
-                stroke: solid(#FFFFFFFF);
-                width: 1px;
-                cap: "butt";
-                join: "round";
-                miterLimit: 4.0;
-                dash: [];
-                dashOffset: 0px;
-            }
-        }
-    }
-}
-"#;
-    let document = parse_document(source)
-        .into_result()
-        .expect("curved shape stroke source parses");
-    let compilation = document
-        .canonical_compilation_with_source(
-            source,
-            CompileTimeLimits::default(),
-            env!("CARGO_MANIFEST_DIR"),
-            ResourceLimits::default(),
-        )
-        .unwrap_or_else(|diagnostics| {
-            panic!("curved shape stroke lowering failed: {diagnostics:?}")
-        });
-    let scene = compilation
-        .chart()
-        .render()
-        .expect("canonical curved shape scene");
-    assert_eq!(scene.nodes().len(), 3);
-    assert!(scene.nodes().iter().all(|node| node.fill_paint().is_none()));
-    assert!(scene.nodes().iter().all(|node| node.stroke().is_some()));
-
-    let bytes = write_from_compilation(&compilation).expect("curved shape stroke FCBC writing");
-    let render = load_render(&bytes).expect("curved shape stroke product loader");
-    assert_eq!(render.nodes.len(), 3);
-    assert!(render.nodes.iter().all(|node| node.fill_paint.is_none()));
-    assert!(render.nodes.iter().all(|node| node.stroke_ref.is_some()));
-    let draw = evaluate_semantic_draw_list_at(&render, 0.0)
-        .expect("curved shape stroke semantic evaluation");
-    assert_eq!(draw.len(), 3);
-    assert!(draw.iter().all(|operation| operation.stroke.is_some()));
-    let pixels =
-        rasterize_solid_rgba8_at(&render, 0.0, 20, 20).expect("curved shape stroke rasterization");
-    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
-}
-
-#[test]
-fn source_image_pattern_reaches_product_render_loader() {
-    let source = r#"#fcs 5.0.0
-format { profile: renderable; }
-resources {
-    image sprite {
-        source: "assets/fcs-test-rgba8.png";
-        hash: "sha256:a108791d9edc1d9c37644a45ce29d4a20e479711db97daf85375b82924e8fa22";
-        mediaType: "image/png";
-        colorSpace: "srgb";
-        alpha: "straight";
-        sampling: "linear";
-    }
-}
-tempoMap { 0beat -> 120bpm; }
-render profile 1.0.0 {
-    viewport { width: 4px; height: 4px; }
-    layer main {
-        pass: "overlay";
-        children {
-            circle patternShape {
-                center: vec2(0px, 0px);
-                radius: 2px;
-                fill: imagePattern(
-                    @sprite,
-                    { position: vec2(seconds(s) * 1px, 0px) },
-                    "both",
-                    "linear"
-                );
-            }
-        }
-    }
-}
-"#;
-    let document = parse_document(source)
-        .into_result()
-        .expect("source ImagePattern parses");
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/conformance/render");
-    let compilation = document
-        .canonical_compilation_with_source(
-            source,
-            CompileTimeLimits::default(),
-            &workspace,
-            ResourceLimits::default(),
-        )
-        .unwrap_or_else(|diagnostics| {
-            panic!("source ImagePattern lowering failed: {diagnostics:?}")
-        });
-    let scene = compilation
-        .chart()
-        .render()
-        .expect("canonical Render scene");
-    let resource_id = match scene.paints()[0].data() {
-        CanonicalRenderPaintData::ImagePattern {
-            resource,
-            transform,
-            repeat,
-            sampling,
-        } => {
-            assert_eq!(*repeat, CanonicalImageRepeat::Both);
-            assert_eq!(*sampling, CanonicalImageSampling::Bilinear);
-            assert_ne!(transform.position, scene.nodes()[0].position());
-            assert_eq!(transform.origin, scene.nodes()[0].origin());
-            assert_eq!(transform.rotation, scene.nodes()[0].rotation());
-            assert_eq!(transform.scale, scene.nodes()[0].scale());
-            resource.value()
-        }
-        other => panic!("expected source ImagePattern paint, found {other:?}"),
-    };
-
-    let bytes = write_from_compilation(&compilation).expect("source ImagePattern FCBC writing");
-    let render = load_render(&bytes).expect("source ImagePattern product loader");
-    let PaintData::ImagePattern {
-        resource_id: decoded_resource,
-        repeat,
-        sampling,
-        ..
-    } = render.paints[0].data
-    else {
-        panic!("expected product ImagePattern paint");
-    };
-    assert_eq!(decoded_resource, resource_id);
-    assert_eq!(repeat, 4);
-    assert_eq!(sampling, 2);
-    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("ImagePattern draw list");
-    assert!(
-        draw.iter()
-            .any(|operation| operation.image_pattern.is_some())
-    );
-    let draw_at_end =
-        evaluate_semantic_draw_list_at(&render, 1.0).expect("dynamic ImagePattern draw list");
-    let pattern_at_start = draw
-        .iter()
-        .find_map(|operation| operation.image_pattern)
-        .expect("start ImagePattern semantic payload");
-    let pattern_at_end = draw_at_end
-        .iter()
-        .find_map(|operation| operation.image_pattern)
-        .expect("end ImagePattern semantic payload");
-    assert_eq!(pattern_at_start.position[0], 0.0);
-    assert_eq!(pattern_at_end.position[0], 1.0);
-    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("ImagePattern rasterization");
-    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
-}
-
-#[test]
 fn linear_gradient_source_reaches_product_loader_semantics_and_raster() {
     let source = r#"#fcs 5.0.0
 format { profile: renderable; }
@@ -1824,8 +1511,17 @@ render profile 1.0.0 {
             rect gradient {
                 origin: vec2(-4px, -4px);
                 size: vec2(8px, 8px);
-                fill: linearGradient(vec2(gradientStart + seconds(s) * 1px, 0px), vec2(4px, 0px), [
-                    stop(0.0, choose(s < 1s, initialColor, #00FF00FF)),
+                fill: linearGradient(choose {
+                    when s < 1s => vec2(-4px, 0px);
+                    else => vec2(-2px, 0px);
+                }, choose {
+                    when s < 1s => vec2(4px, 0px);
+                    else => vec2(2px, 0px);
+                }, [
+                    stop(0.0, choose {
+                        when s < 1s => #FF0000FF;
+                        else => #00FF00FF;
+                    }),
                     stop(1.0, #0000FFFF),
                 ], "repeat");
             }
@@ -1849,6 +1545,26 @@ render profile 1.0.0 {
         .render()
         .expect("canonical Render scene");
     assert_eq!(scene.paints().len(), 1);
+    let descriptors = compilation
+        .chart()
+        .descriptors()
+        .expect("gradient descriptors");
+    for path in [
+        "render.paint.start",
+        "render.paint.end",
+        "render.paint.stop[0].color",
+    ] {
+        let root = descriptors
+            .roots()
+            .iter()
+            .find(|root| root.target_path() == path)
+            .expect("dynamic LinearGradient root");
+        assert!(matches!(
+            descriptors.descriptors()[root.descriptor()].kind(),
+            CanonicalDescriptorKind::Expression(expression)
+                if expression.required_environment().contains(&CanonicalExpressionEnvironment::S)
+        ));
+    }
 
     let bytes = write_from_compilation(&compilation).expect("linear gradient FCBC writing");
     let render = load_render(&bytes).expect("linear gradient product loader");
@@ -1858,23 +1574,19 @@ render profile 1.0.0 {
     ));
 
     let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("gradient semantic evaluation");
-    assert!(draw.iter().any(|op| op.linear_gradient.is_some()));
-    let draw_at_end =
-        evaluate_semantic_draw_list_at(&render, 1.0).expect("dynamic gradient evaluation");
-    let gradient_at_start = draw
+    let gradient = draw
         .iter()
         .find_map(|op| op.linear_gradient.as_ref())
-        .expect("start gradient semantic payload");
-    let gradient_at_end = draw_at_end
+        .expect("LinearGradient payload");
+    assert_eq!((gradient.start, gradient.end), ([-4.0, 0.0], [4.0, 0.0]));
+    assert_eq!(gradient.stops[0].color, [1.0, 0.0, 0.0, 1.0]);
+    let later = evaluate_semantic_draw_list_at(&render, 2.0).expect("later gradient semantics");
+    let gradient = later
         .iter()
         .find_map(|op| op.linear_gradient.as_ref())
-        .expect("end gradient semantic payload");
-    assert_eq!(gradient_at_start.start[0], -4.0);
-    assert_eq!(gradient_at_end.start[0], -3.0);
-    assert_ne!(
-        gradient_at_start.stops[0].color,
-        gradient_at_end.stops[0].color
-    );
+        .expect("later LinearGradient payload");
+    assert_eq!((gradient.start, gradient.end), ([-2.0, 0.0], [2.0, 0.0]));
+    assert_eq!(gradient.stops[0].color, [0.0, 1.0, 0.0, 1.0]);
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 8, 8).expect("gradient rasterization");
     assert_eq!(pixels.len(), 8 * 8 * 4);
     let left = &pixels[0..4];
@@ -1904,10 +1616,22 @@ render profile 1.0.0 {
                 origin: vec2(-4px, -4px);
                 size: vec2(8px, 8px);
                 fill: radialGradient(
-                    vec2(0px, 0px),
-                    0px,
-                    vec2(0px, 0px),
-                    4px,
+                    choose {
+                        when s < 1s => vec2(0px, 0px);
+                        else => vec2(-1px, 0px);
+                    },
+                    choose {
+                        when s < 1s => 0px;
+                        else => 1px;
+                    },
+                    choose {
+                        when s < 1s => vec2(0px, 0px);
+                        else => vec2(1px, 0px);
+                    },
+                    choose {
+                        when s < 1s => 4px;
+                        else => 3px;
+                    },
                     [
                         stop(0.0, #FF0000FF),
                         stop(1.0, #0000FFFF),
@@ -1935,6 +1659,27 @@ render profile 1.0.0 {
         .render()
         .expect("canonical Render scene");
     assert_eq!(scene.paints().len(), 1);
+    let descriptors = compilation
+        .chart()
+        .descriptors()
+        .expect("radial gradient descriptors");
+    for path in [
+        "render.paint.startCenter",
+        "render.paint.startRadius",
+        "render.paint.endCenter",
+        "render.paint.endRadius",
+    ] {
+        let root = descriptors
+            .roots()
+            .iter()
+            .find(|root| root.target_path() == path)
+            .expect("dynamic RadialGradient root");
+        assert!(matches!(
+            descriptors.descriptors()[root.descriptor()].kind(),
+            CanonicalDescriptorKind::Expression(expression)
+                if expression.required_environment().contains(&CanonicalExpressionEnvironment::S)
+        ));
+    }
 
     let bytes = write_from_compilation(&compilation).expect("radial gradient FCBC writing");
     let render = load_render(&bytes).expect("radial gradient product loader");
@@ -1948,7 +1693,33 @@ render profile 1.0.0 {
     ));
 
     let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("radial gradient semantics");
-    assert!(draw.iter().any(|op| op.radial_gradient.is_some()));
+    let gradient = draw
+        .iter()
+        .find_map(|op| op.radial_gradient.as_ref())
+        .expect("RadialGradient payload");
+    assert_eq!(
+        (
+            gradient.start_center,
+            gradient.start_radius,
+            gradient.end_center,
+            gradient.end_radius,
+        ),
+        ([0.0, 0.0], 0.0, [0.0, 0.0], 4.0)
+    );
+    let later = evaluate_semantic_draw_list_at(&render, 2.0).expect("later radial semantics");
+    let gradient = later
+        .iter()
+        .find_map(|op| op.radial_gradient.as_ref())
+        .expect("later RadialGradient payload");
+    assert_eq!(
+        (
+            gradient.start_center,
+            gradient.start_radius,
+            gradient.end_center,
+            gradient.end_radius,
+        ),
+        ([-1.0, 0.0], 1.0, [1.0, 0.0], 3.0)
+    );
     let pixels =
         rasterize_solid_rgba8_at(&render, 0.0, 8, 8).expect("radial gradient rasterization");
     assert_eq!(pixels.len(), 8 * 8 * 4);
@@ -1961,6 +1732,25 @@ render profile 1.0.0 {
     );
     assert!(corner[2] > corner[0]);
     assert!(center[0] > center[2]);
+
+    let invalid = source.replace("else => 1px;", "else => -1px;");
+    let document = parse_document(&invalid)
+        .into_result()
+        .expect("dynamic negative-radius source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            &invalid,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .expect("dynamic radius is validated at query time");
+    let bytes = write_from_compilation(&compilation).expect("dynamic negative-radius FCBC writing");
+    let render = load_render(&bytes).expect("dynamic negative-radius product loader");
+    assert_eq!(
+        evaluate_semantic_draw_list_at(&render, 2.0).expect_err("negative radius must fail"),
+        "render.invalid-paint"
+    );
 }
 
 #[test]
@@ -2017,14 +1807,11 @@ render profile 1.0.0 {
         pass: "overlay";
         children {
             group root {
-                opacity: 0.5;
-                isolate: true;
                 children {
                     circle circleShape {
                         zOrder: 2;
-                        radius: 2px * (1.0 + s / 2s);
-                        opacity: 1.0 - s / 2s;
-                        fill: solid(choose(s < 1s, #0000FFFF, #00FFFFFF));
+                        radius: 2px;
+                        fill: solid(#0000FFFF);
                     }
                     roundedRect roundedShape {
                         zOrder: 0;
@@ -2057,6 +1844,39 @@ render profile 1.0.0 {
         .unwrap_or_else(|diagnostics| {
             panic!("nested Render canonical lowering failed: {diagnostics:?}")
         });
+    let scene = compilation
+        .chart()
+        .render()
+        .expect("canonical Render scene");
+    assert_eq!(
+        scene.layers()[0].id().value(),
+        derive_stable_id(EntityKind::RenderLayer, "layer/main")
+    );
+    for (kind, textual) in [
+        (CanonicalRenderNodeKind::Group, "layer/main/node/root"),
+        (
+            CanonicalRenderNodeKind::Circle,
+            "layer/main/node/root/node/circleShape",
+        ),
+        (
+            CanonicalRenderNodeKind::RoundedRect,
+            "layer/main/node/root/node/roundedShape",
+        ),
+        (
+            CanonicalRenderNodeKind::Ellipse,
+            "layer/main/node/root/node/ellipseShape",
+        ),
+    ] {
+        let node = scene
+            .nodes()
+            .iter()
+            .find(|node| node.kind() == kind)
+            .expect("nested source node kind");
+        assert_eq!(
+            node.id().value(),
+            derive_stable_id(EntityKind::RenderNode, textual)
+        );
+    }
 
     let bytes = write_from_compilation(&compilation).expect("nested Render FCBC writing");
     let render = load_render(&bytes).expect("nested Render product loader");
@@ -2090,36 +1910,94 @@ render profile 1.0.0 {
             .any(|geometry| matches!(geometry.data, GeometryData::Ellipse { .. }))
     );
     assert_eq!(render.paints.len(), 3);
+}
 
-    let isolated_group_id = render.nodes[0].id;
-    let draw = evaluate_semantic_draw_list_at(&render, 0.0)
-        .expect("isolated nested Render semantic evaluation");
-    assert_eq!(draw.len(), 3);
-    assert!(draw.iter().all(|operation| {
-        operation.isolation_chain.iter().any(|boundary| {
-            boundary.node_id == isolated_group_id
-                && (boundary.opacity - 0.5).abs() < f64::EPSILON
-                && boundary.composite == 1
-        })
+#[test]
+fn nested_isolated_groups_composite_offscreen_and_preserve_empty_copy() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 2px; height: 2px; colorSpace: "linear-srgb"; }
+    layer main {
+        pass: "overlay";
+        children {
+            rect background {
+                origin: vec2(-1px, -1px);
+                size: vec2(2px, 2px);
+                fill: solid(#0000FFFF);
+            }
+            group outer {
+                isolate: true;
+                opacity: 0.5;
+                composite: "copy";
+                children {
+                    group inner {
+                        isolate: true;
+                        opacity: 0.5;
+                        composite: "sourceOver";
+                        children {
+                            rect first {
+                                origin: vec2(-1px, -1px);
+                                size: vec2(2px, 2px);
+                                visibility: choose {
+                                    when s < 1s => true;
+                                    else => false;
+                                };
+                                fill: solid(#FF0000FF);
+                            }
+                            rect second {
+                                origin: vec2(-1px, -1px);
+                                size: vec2(2px, 2px);
+                                visibility: choose {
+                                    when s < 1s => true;
+                                    else => false;
+                                };
+                                fill: solid(#FF0000FF);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("nested isolation source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| panic!("nested isolation lowering failed: {diagnostics:?}"));
+    let bytes = write_from_compilation(&compilation).expect("nested isolation FCBC writing");
+    let render = load_render(&bytes).expect("nested isolation product loader");
+
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("nested isolation semantics");
+    let isolated: Vec<_> = draw
+        .iter()
+        .filter(|operation| operation.isolation_chain.len() == 2)
+        .collect();
+    assert_eq!(isolated.len(), 2);
+    assert!(isolated.iter().all(|operation| operation.opacity == 1.0));
+    assert!(isolated.iter().all(|operation| {
+        operation
+            .isolation_chain
+            .iter()
+            .map(|boundary| (boundary.opacity, boundary.composite))
+            .eq([(0.5, 2), (0.5, 1)])
     }));
-
-    let circle_id = render.nodes[3].id;
-    let circle_start = draw
-        .iter()
-        .find(|operation| operation.node_id == circle_id)
-        .expect("circle draw at start");
-    assert!((circle_start.opacity - 1.0).abs() < f64::EPSILON);
-    let draw_end = evaluate_semantic_draw_list_at(&render, 1.0)
-        .expect("dynamic nested Render semantic evaluation");
-    let circle_end = draw_end
-        .iter()
-        .find(|operation| operation.node_id == circle_id)
-        .expect("circle draw at end");
-    assert!((circle_end.opacity - 0.5).abs() < f64::EPSILON);
-    assert_ne!(circle_start.fill_rgba, circle_end.fill_rgba);
-    assert!(
-        circle_end.bounds[2] - circle_end.bounds[0]
-            > circle_start.bounds[2] - circle_start.bounds[0]
+    assert_eq!(
+        rasterize_solid_rgba8_at(&render, 0.0, 1, 1).expect("nested isolation raster"),
+        vec![255, 0, 0, 64]
+    );
+    assert_eq!(
+        rasterize_solid_rgba8_at(&render, 2.0, 1, 1).expect("empty isolation raster"),
+        vec![0, 0, 0, 0]
     );
 }
 
@@ -2297,44 +2175,13 @@ render profile 1.0.0 {
 }
 
 #[test]
-fn canonical_image_pattern_writer_reaches_product_render_loader() {
-    let source = r#"#fcs 5.0.0
-format { profile: renderable; }
-resources {
-    image sprite {
-        source: "assets/fcs-test-rgba8.png";
-        hash: "sha256:a108791d9edc1d9c37644a45ce29d4a20e479711db97daf85375b82924e8fa22";
-        mediaType: "image/png";
-        colorSpace: "srgb";
-        alpha: "straight";
-        sampling: "linear";
-    }
-}
-tempoMap { 0beat -> 120bpm; }
-render profile 1.0.0 {
-    viewport { width: 4px; height: 4px; }
-    layer main {
-        pass: "overlay";
-        children {
-            circle patternShape {
-                center: vec2(0px, 0px);
-                radius: 2px;
-                fill: solid(#FFFFFFFF);
-            }
-            image spriteNode {
-                resource: @sprite;
-                destination.origin: vec2(-2px, -2px);
-                destination.size: vec2(4px, 4px);
-            }
-        }
-    }
-}
-"#;
+fn source_image_pattern_sibling_fields_reach_product_raster() {
+    let source = include_str!("../../../docs/conformance/render/image-pattern-sibling-fields.fcs");
     let document = parse_document(source)
         .into_result()
         .expect("ImagePattern source parses");
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/conformance/render");
-    let base = document
+    let compilation = document
         .canonical_compilation_with_source(
             source,
             CompileTimeLimits::default(),
@@ -2344,83 +2191,130 @@ render profile 1.0.0 {
         .unwrap_or_else(|diagnostics| {
             panic!("ImagePattern canonical lowering failed: {diagnostics:?}")
         });
-    let original = base.chart().render().expect("source Render scene");
-    let pattern_node = &original.nodes()[0];
-    let resource_id = original
-        .geometries()
+    let scene = compilation.chart().render().expect("source Render scene");
+    let node = &scene.nodes()[0];
+    let fill_index = node.fill_paint().expect("ImagePattern fill");
+    let stroke_index = node.stroke().expect("ImagePattern stroke");
+    let stroke_paint_index = scene.strokes()[stroke_index].paint();
+    assert_eq!(scene.strokes()[stroke_index].dash(), &[1.0, 2.0]);
+    let (fill_resource, fill_transform, fill_repeat, fill_sampling) =
+        match scene.paints()[fill_index].data() {
+            fcs_model::CanonicalRenderPaintData::ImagePattern {
+                resource,
+                transform,
+                repeat,
+                sampling,
+            } => (resource.value(), *transform, *repeat, *sampling),
+            _ => panic!("expected source ImagePattern fill"),
+        };
+    let (stroke_resource, stroke_transform, stroke_repeat, stroke_sampling) =
+        match scene.paints()[stroke_paint_index].data() {
+            fcs_model::CanonicalRenderPaintData::ImagePattern {
+                resource,
+                transform,
+                repeat,
+                sampling,
+            } => (resource.value(), *transform, *repeat, *sampling),
+            _ => panic!("expected source ImagePattern stroke"),
+        };
+    assert_ne!(fill_resource, stroke_resource);
+    assert_eq!(fill_transform, stroke_transform);
+    assert_eq!(fill_repeat.ordinal(), 4);
+    assert_eq!(stroke_repeat.ordinal(), 4);
+    assert_eq!(fill_sampling.ordinal(), 2);
+    assert_eq!(stroke_sampling.ordinal(), 1);
+
+    let descriptors = compilation
+        .chart()
+        .descriptors()
+        .expect("ImagePattern descriptors");
+    let position_roots = descriptors
+        .roots()
         .iter()
-        .find_map(|geometry| match geometry.data() {
-            CanonicalRenderGeometryData::Image { resource, .. } => Some(resource.clone()),
-            _ => None,
-        })
-        .expect("source fixture must provide an image resource");
-    let paint = CanonicalRenderPaint::new(
-        original.paints()[0].id().clone(),
-        CanonicalRenderPaintData::ImagePattern {
-            resource: resource_id.clone(),
-            transform: CanonicalPatternTransform {
-                position: pattern_node.position(),
-                origin: pattern_node.origin(),
-                rotation: pattern_node.rotation(),
-                scale: pattern_node.scale(),
-            },
-            repeat: CanonicalImageRepeat::Both,
-            sampling: CanonicalImageSampling::Bilinear,
-        },
-    )
-    .expect("canonical ImagePattern paint");
-    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
-        viewport: original.viewport(),
-        layers: original.layers().to_vec(),
-        nodes: original.nodes().to_vec(),
-        geometries: original.geometries().to_vec(),
-        paths: original.paths().to_vec(),
-        paints: vec![paint],
-        strokes: original.strokes().to_vec(),
-        clips: original.clips().to_vec(),
-        glyph_runs: original.glyph_runs().to_vec(),
-    })
-    .expect("canonical ImagePattern scene");
-    let compilation = CanonicalCompilation::new(
-        base.chart().clone().with_render(scene),
-        base.resources().clone(),
-        base.distribution().clone(),
+        .filter(|root| root.target_path() == "render.paint.position")
+        .collect::<Vec<_>>();
+    assert_eq!(position_roots.len(), 2);
+    assert_eq!(
+        position_roots[0].descriptor(),
+        position_roots[1].descriptor()
     );
+    assert!(matches!(
+        descriptors.descriptors()[position_roots[0].descriptor()].kind(),
+        CanonicalDescriptorKind::Expression(expression)
+            if expression.required_environment().contains(&CanonicalExpressionEnvironment::S)
+    ));
+
     let bytes = write_from_compilation(&compilation).expect("ImagePattern FCBC writing");
     let render = load_render(&bytes).expect("ImagePattern product Render loader");
-
-    assert_eq!(render.paints.len(), 1);
+    let node = &render.nodes[0];
+    let fill_index = node.fill_paint.expect("decoded ImagePattern fill") as usize;
+    let stroke = &render.strokes[node.stroke_ref.expect("decoded ImagePattern stroke") as usize];
+    assert_eq!(stroke.dash, vec![1.0, 2.0]);
+    let stroke_index = stroke.paint_ref as usize;
     let PaintData::ImagePattern {
-        resource_id: decoded_resource,
-        position,
-        origin,
-        rotation,
-        scale,
-        repeat,
-        sampling,
-    } = render.paints[0].data
+        resource_id: decoded_fill_resource,
+        position: fill_position,
+        origin: fill_origin,
+        rotation: fill_rotation,
+        scale: fill_scale,
+        repeat: decoded_fill_repeat,
+        sampling: decoded_fill_sampling,
+    } = render.paints[fill_index].data
     else {
-        panic!("expected ImagePattern paint");
+        panic!("expected decoded ImagePattern fill");
     };
-    assert_eq!(decoded_resource, resource_id.value());
-    assert_eq!(position, render.nodes[0].position_descriptor);
-    assert_eq!(origin, render.nodes[0].origin_descriptor);
-    assert_eq!(rotation, render.nodes[0].rotation_descriptor);
-    assert_eq!(scale, render.nodes[0].scale_descriptor);
-    assert_eq!(repeat, 4);
-    assert_eq!(sampling, 2);
-    assert_eq!(render.resources.len(), 1);
-    assert_eq!(render.resources[0].id, decoded_resource);
+    let PaintData::ImagePattern {
+        resource_id: decoded_stroke_resource,
+        position: stroke_position,
+        origin: stroke_origin,
+        rotation: stroke_rotation,
+        scale: stroke_scale,
+        repeat: decoded_stroke_repeat,
+        sampling: decoded_stroke_sampling,
+    } = render.paints[stroke_index].data
+    else {
+        panic!("expected decoded ImagePattern stroke");
+    };
+    assert_eq!(decoded_fill_resource, fill_resource);
+    assert_eq!(decoded_stroke_resource, stroke_resource);
+    assert_eq!(
+        [fill_position, fill_origin, fill_rotation, fill_scale],
+        [
+            stroke_position,
+            stroke_origin,
+            stroke_rotation,
+            stroke_scale
+        ]
+    );
+    assert_eq!((decoded_fill_repeat, decoded_fill_sampling), (4, 2));
+    assert_eq!((decoded_stroke_repeat, decoded_stroke_sampling), (4, 1));
+    assert_eq!(render.resources.len(), 2);
 
     let draw =
         evaluate_semantic_draw_list_at(&render, 0.0).expect("ImagePattern semantic evaluation");
-    let pattern = draw
+    let operation = draw
         .iter()
-        .find_map(|operation| operation.image_pattern)
-        .expect("ImagePattern draw payload");
-    assert_eq!(pattern.resource_id, decoded_resource);
-    assert_eq!(pattern.repeat, 4);
-    assert_eq!(pattern.sampling, 2);
+        .find(|operation| operation.kind == NodeKind::Rect)
+        .expect("ImagePattern draw operation");
+    let fill = operation.image_pattern.expect("ImagePattern fill payload");
+    let stroke_payload = operation
+        .stroke
+        .as_ref()
+        .expect("ImagePattern stroke payload");
+    assert_eq!(stroke_payload.dash, vec![1.0, 2.0]);
+    let stroke = stroke_payload
+        .image_pattern
+        .expect("ImagePattern stroke payload");
+    assert_eq!(
+        (fill.resource_id, fill.repeat, fill.sampling),
+        (fill_resource, 4, 2)
+    );
+    assert_eq!(
+        (stroke.resource_id, stroke.repeat, stroke.sampling),
+        (stroke_resource, 4, 1)
+    );
+    assert_eq!(fill.position, [0.0, 0.0]);
+    assert_eq!(fill.position, stroke.position);
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 4, 4).expect("ImagePattern rasterization");
     assert_eq!(pixels.len(), 4 * 4 * 4);
     assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
@@ -2771,6 +2665,106 @@ render profile 1.0.0 {
     );
 }
 
+#[test]
+fn source_path_commands_reach_the_product_raster() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 20px; height: 16px; }
+    layer main {
+        pass: "overlay";
+        children {
+            path outline {
+                commands: [
+                    moveTo(vec2(-6px, -4px)),
+                    lineTo(choose {
+                        when s < 1s => vec2(6px, -4px);
+                        else => vec2(5px, -4px);
+                    }),
+                    quadraticTo(vec2(7px, 0px), vec2(6px, 4px)),
+                    cubicTo(vec2(2px, 6px), vec2(-2px, 6px), vec2(-6px, 4px)),
+                    arc(vec2(-6px, 2px), 2px, 1.5707963267948966rad, 3.141592653589793rad, "counterClockwise"),
+                    ellipseArc(vec2(-6px, 0px), 2px, 1px, 0rad, 0rad, -1.5707963267948966rad, "clockwise"),
+                    close(),
+                ];
+                fillRule: "evenodd";
+                fill: solid(#FF0000FF);
+                stroke: solid(#FFFFFFFF);
+                width: 1px;
+                cap: "round";
+                join: "bevel";
+                miterLimit: 4.0;
+                dash: [];
+                dashOffset: 0px;
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("source Path parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| panic!("source Path lowering failed: {diagnostics:?}"));
+    let scene = compilation.chart().render().expect("source Path scene");
+    assert_eq!(scene.paths().len(), 1);
+    assert_eq!(
+        scene.paths()[0].fill_rule(),
+        CanonicalRenderFillRule::EvenOdd
+    );
+    assert!(matches!(
+        scene.paths()[0].commands(),
+        [
+            CanonicalPathCommand::MoveTo(_),
+            CanonicalPathCommand::LineTo(_),
+            CanonicalPathCommand::QuadraticTo(_, _),
+            CanonicalPathCommand::CubicTo(_, _, _),
+            CanonicalPathCommand::Arc { .. },
+            CanonicalPathCommand::EllipseArc { .. },
+            CanonicalPathCommand::Close,
+        ]
+    ));
+    let descriptors = compilation.chart().descriptors().expect("Path descriptors");
+    let dynamic_point = descriptors
+        .roots()
+        .iter()
+        .find(|root| root.target_path() == "render.path.command[1].point")
+        .expect("dynamic lineTo point root");
+    assert!(matches!(
+        descriptors.descriptors()[dynamic_point.descriptor()].kind(),
+        CanonicalDescriptorKind::Expression(expression)
+            if expression.required_environment().contains(&CanonicalExpressionEnvironment::S)
+    ));
+
+    let bytes = write_from_compilation(&compilation).expect("source Path FCBC writing");
+    let render = load_render(&bytes).expect("source Path product loader");
+    let node = render
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::Path)
+        .expect("decoded Path node");
+    assert!(node.fill_paint.is_some());
+    assert!(node.stroke_ref.is_some());
+    assert_eq!(render.paths[0].fill_rule, 2);
+    assert_eq!(render.paths[0].commands.len(), 7);
+    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("source Path semantics");
+    let path = draw
+        .iter()
+        .find(|operation| operation.kind == NodeKind::Path)
+        .expect("source Path draw operation");
+    assert!(path.fill_rgba.is_some());
+    assert!(path.stroke.is_some());
+    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 20, 16).expect("source Path raster");
+    assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
+}
+
 const SOURCE_TEXT_FILL: &str = r#"#fcs 5.0.0
 format { profile: renderable; }
 resources {
@@ -2794,6 +2788,13 @@ render profile 1.0.0 {
                 font: @primary;
                 size: 8px;
                 fill: solid(#FFFFFFFF);
+                stroke: solid(#FF0000FF);
+                width: 1px;
+                cap: "butt";
+                join: "miter";
+                miterLimit: 4.0;
+                dash: [];
+                dashOffset: 0px;
             }
         }
     }
@@ -2830,8 +2831,8 @@ fn checked_in_text_fixture_reaches_product_raster() {
     let render = load_render(&bytes).expect("source Text product loader");
     assert_eq!(render.nodes.len(), 1);
     assert_eq!(render.nodes[0].kind, NodeKind::Text);
-    assert_eq!(render.nodes[0].fill_paint, Some(0));
-    assert_eq!(render.nodes[0].stroke_ref, None);
+    assert!(render.nodes[0].fill_paint.is_some());
+    assert!(render.nodes[0].stroke_ref.is_some());
     assert!(matches!(
         &render.geometries[0].data,
         GeometryData::Text { glyph_runs, origin }
@@ -2872,10 +2873,20 @@ fn checked_in_text_fixture_reaches_product_raster() {
         evaluate_semantic_draw_list_at(&render, 0.0).expect("repeat Text query")
     );
     assert_eq!(text.fill_rgba, Some([1.0, 1.0, 1.0, 1.0]));
+    assert_eq!(
+        text.stroke.as_ref().and_then(|stroke| stroke.fill_rgba),
+        Some([1.0, 0.0, 0.0, 1.0])
+    );
     assert!(text.bounds[2] > text.bounds[0]);
     assert!(text.bounds[3] > text.bounds[1]);
 
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Text rasterization");
+    assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
+
+    let mut stroke_only = render.clone();
+    stroke_only.nodes[0].fill_paint = None;
+    let pixels =
+        rasterize_solid_rgba8_at(&stroke_only, 0.0, 16, 16).expect("Text stroke rasterization");
     assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
 
     let empty = source_text_compilation("");
@@ -3024,198 +3035,7 @@ fn canonical_text_writer_rejects_missing_or_non_font_resources() {
 }
 
 #[test]
-fn canonical_path_writer_reaches_product_render_loader() {
-    let source = r#"#fcs 5.0.0
-format { profile: renderable; }
-tempoMap { 0beat -> 120bpm; }
-render profile 1.0.0 {
-    viewport { width: 4px; height: 4px; }
-    layer main {
-        pass: "overlay";
-        children {
-            polyline pathShape {
-                points: [
-                    vec2(-1px, -1px),
-                    vec2(1px, -1px),
-                    vec2(0px, 1px),
-                ];
-                fill: solid(#FFFFFFFF);
-            }
-            circle referenceShape {
-                center: vec2(0px, 0px);
-                radius: 1px;
-                fill: solid(#000000FF);
-            }
-        }
-    }
-}
-"#;
-    let document = parse_document(source)
-        .into_result()
-        .expect("Path Render source parses");
-    let base = document
-        .canonical_compilation_with_source(
-            source,
-            CompileTimeLimits::default(),
-            env!("CARGO_MANIFEST_DIR"),
-            ResourceLimits::default(),
-        )
-        .unwrap_or_else(|diagnostics| panic!("Path canonical lowering failed: {diagnostics:?}"));
-    let original = base.chart().render().expect("source Render scene");
-    let path_node_index = original
-        .nodes()
-        .iter()
-        .position(|node| node.kind() == CanonicalRenderNodeKind::Polyline)
-        .expect("source fixture must provide a Polyline node");
-    let path_node = &original.nodes()[path_node_index];
-    let path_geometry_index = path_node.geometry().expect("Polyline geometry");
-    let points = match original.geometries()[path_geometry_index].data() {
-        CanonicalRenderGeometryData::Polyline { points } => points.clone(),
-        _ => panic!("source fixture must provide Polyline points"),
-    };
-    let reference_node = original
-        .nodes()
-        .iter()
-        .find(|node| node.kind() == CanonicalRenderNodeKind::Circle)
-        .expect("source fixture must provide a Circle node");
-    let reference_geometry_index = reference_node.geometry().expect("Circle geometry");
-    let CanonicalRenderGeometryData::Circle { center, radius } =
-        original.geometries()[reference_geometry_index].data()
-    else {
-        panic!("source fixture must provide Circle geometry");
-    };
-    let mut ids = StableIdRegistry::new();
-    let path_id = ids
-        .insert(
-            EntityKind::RenderPath,
-            CanonicalTextualId::explicit("writer-path").expect("path textual ID"),
-        )
-        .expect("path stable ID");
-    let path = CanonicalRenderPath::new(
-        path_id,
-        CanonicalRenderFillRule::NonZero,
-        vec![
-            CanonicalPathCommand::MoveTo(points[0]),
-            CanonicalPathCommand::LineTo(points[1]),
-            CanonicalPathCommand::QuadraticTo(points[0], points[1]),
-            CanonicalPathCommand::CubicTo(points[0], points[1], points[2]),
-            CanonicalPathCommand::Arc {
-                center: *center,
-                radius: *radius,
-                start_angle: path_node.rotation(),
-                end_angle: path_node.rotation(),
-                direction: CanonicalArcDirection::Clockwise,
-            },
-            CanonicalPathCommand::EllipseArc {
-                center: *center,
-                radius_x: *radius,
-                radius_y: *radius,
-                rotation: path_node.rotation(),
-                start_angle: path_node.rotation(),
-                end_angle: path_node.rotation(),
-                direction: CanonicalArcDirection::CounterClockwise,
-            },
-            CanonicalPathCommand::Close,
-        ],
-    )
-    .expect("canonical Path");
-    let node = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
-        id: path_node.id().clone(),
-        kind: CanonicalRenderNodeKind::Path,
-        parent: path_node.parent(),
-        layer: path_node.layer(),
-        document_order: path_node.document_order(),
-        z_order: path_node.z_order(),
-        attachment: path_node.attachment().clone(),
-        active: path_node.active(),
-        isolate: path_node.isolate(),
-        follow_hidden_attachment: path_node.follow_hidden_attachment(),
-        position: path_node.position(),
-        origin: path_node.origin(),
-        rotation: path_node.rotation(),
-        scale: path_node.scale(),
-        opacity: path_node.opacity(),
-        visibility: path_node.visibility(),
-        geometry: Some(path_geometry_index),
-        fill_paint: path_node.fill_paint(),
-        stroke: None,
-        clip: None,
-        composite: path_node.composite(),
-    })
-    .expect("canonical Path node");
-    let geometry = CanonicalRenderGeometry::new(
-        original.geometries()[path_geometry_index].id().clone(),
-        CanonicalRenderGeometryData::Path { path: 0 },
-    )
-    .expect("canonical Path geometry");
-    let mut nodes = original.nodes().to_vec();
-    nodes[path_node_index] = node;
-    let mut geometries = original.geometries().to_vec();
-    geometries[path_geometry_index] = geometry;
-    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
-        viewport: original.viewport(),
-        layers: original.layers().to_vec(),
-        nodes,
-        geometries,
-        paths: vec![path],
-        paints: original.paints().to_vec(),
-        strokes: original.strokes().to_vec(),
-        clips: original.clips().to_vec(),
-        glyph_runs: original.glyph_runs().to_vec(),
-    })
-    .expect("canonical Path scene");
-    let compilation = CanonicalCompilation::new(
-        base.chart().clone().with_render(scene),
-        base.resources().clone(),
-        base.distribution().clone(),
-    );
-    let scene = compilation.chart().render().expect("canonical Path scene");
-    let bytes = write_from_compilation(&compilation).expect("canonical Path FCBC writing");
-    let render = load_render(&bytes).expect("canonical Path product loader");
-
-    let decoded_node_index = render
-        .nodes
-        .iter()
-        .position(|node| node.id == scene.nodes()[path_node_index].id().value())
-        .expect("decoded Path node");
-    let decoded_geometry_index = render
-        .geometries
-        .iter()
-        .position(|geometry| geometry.kind == NodeKind::Path)
-        .expect("decoded Path geometry");
-    assert_eq!(render.nodes[decoded_node_index].kind, NodeKind::Path);
-    assert_eq!(
-        render.nodes[decoded_node_index].geometry_ref,
-        Some(decoded_geometry_index as u32)
-    );
-    assert_eq!(
-        render.geometries[decoded_geometry_index].kind,
-        NodeKind::Path
-    );
-    assert!(matches!(
-        render.geometries[decoded_geometry_index].data,
-        GeometryData::Path { path_ref: 0 }
-    ));
-    assert_eq!(render.paths.len(), 1);
-    assert_eq!(render.paths[0].id, scene.paths()[0].id().value());
-    assert_eq!(render.paths[0].fill_rule, 1);
-    assert_eq!(render.paths[0].commands.len(), 7);
-
-    let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Path semantic evaluation");
-    assert!(
-        draw.iter()
-            .any(|operation| operation.kind == NodeKind::Path)
-    );
-    let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Path rasterization");
-    assert!(
-        pixels
-            .chunks_exact(4)
-            .any(|pixel| pixel[0] > 200 && pixel[1] > 200 && pixel[2] > 200 && pixel[3] > 0)
-    );
-}
-
-#[test]
-fn source_path_commands_reach_product_render_loader() {
+fn source_clip_group_reaches_product_semantic_and_raster_paths() {
     let source = r#"#fcs 5.0.0
 format { profile: renderable; }
 tempoMap { 0beat -> 120bpm; }
@@ -3224,73 +3044,11 @@ render profile 1.0.0 {
     layer main {
         pass: "overlay";
         children {
-            path outline {
-                commands: [
-                    moveTo(vec2(-2px, -2px)),
-                    lineTo(vec2(2px, -2px)),
-                    quadraticTo(vec2(3px, 0px), vec2(2px, 2px)),
-                    lineTo(vec2(-2px, 2px)),
-                    close(),
-                ];
-                fillRule: "nonzero";
-                fill: solid(#FFFFFFFF);
-            }
-        }
-    }
-}
-"#;
-    let document = parse_document(source)
-        .into_result()
-        .expect("source Path commands parse");
-    let compilation = document
-        .canonical_compilation_with_source(
-            source,
-            CompileTimeLimits::default(),
-            env!("CARGO_MANIFEST_DIR"),
-            ResourceLimits::default(),
-        )
-        .unwrap_or_else(|diagnostics| panic!("source Path lowering failed: {diagnostics:?}"));
-    let scene = compilation.chart().render().expect("source Path scene");
-    assert_eq!(scene.paths().len(), 1);
-    assert!(matches!(
-        scene.geometries()[0].data(),
-        CanonicalRenderGeometryData::Path { path: 0 }
-    ));
-    assert_eq!(
-        scene.paths()[0].fill_rule(),
-        CanonicalRenderFillRule::NonZero
-    );
-    assert_eq!(scene.paths()[0].commands().len(), 5);
-
-    let bytes = write_from_compilation(&compilation).expect("source Path FCBC writing");
-    let render = load_render(&bytes).expect("source Path product loader");
-    assert_eq!(render.paths.len(), 1);
-    assert_eq!(render.paths[0].commands.len(), 5);
-    assert!(
-        evaluate_semantic_draw_list_at(&render, 0.0)
-            .expect("source Path semantic evaluation")
-            .iter()
-            .any(|operation| operation.kind == NodeKind::Path)
-    );
-    assert!(
-        rasterize_solid_rgba8_at(&render, 0.0, 16, 16)
-            .expect("source Path rasterization")
-            .chunks_exact(4)
-            .any(|pixel| pixel[3] != 0)
-    );
-}
-
-#[test]
-fn canonical_clip_writer_reaches_product_render_loader() {
-    let source = r#"#fcs 5.0.0
-format { profile: renderable; }
-tempoMap { 0beat -> 120bpm; }
-render profile 1.0.0 {
-    viewport { width: 8px; height: 8px; }
-    layer main {
-        pass: "overlay";
-        children {
-            group root {
+            clipGroup root {
+                clip.kind: "rect";
+                clip.fillRule: "nonzero";
+                clip.origin: vec2(-1px, -3px);
+                clip.size: vec2(2px, 6px);
                 children {
                     rect target {
                         origin: vec2(-3px, -3px);
@@ -3314,77 +3072,18 @@ render profile 1.0.0 {
             ResourceLimits::default(),
         )
         .expect("Clip canonical lowering");
-    let original = base.chart().render().expect("source Render scene");
-    let mut ids = StableIdRegistry::new();
-    let clip_geometry_id = ids
-        .insert(
-            EntityKind::RenderGeometry,
-            CanonicalTextualId::explicit("writer-clip-geometry").expect("clip geometry ID"),
-        )
-        .expect("clip geometry stable ID");
-    let clip_id = ids
-        .insert(
-            EntityKind::RenderClip,
-            CanonicalTextualId::explicit("writer-clip").expect("clip ID"),
-        )
-        .expect("clip stable ID");
-    let clip_geometry =
-        CanonicalRenderGeometry::new(clip_geometry_id, original.geometries()[0].data().clone())
-            .expect("canonical clip geometry");
-    let clip = CanonicalRenderClip::new(
-        clip_id,
-        CanonicalRenderFillRule::NonZero,
-        original.geometries().len(),
-    )
-    .expect("canonical clip");
-    let root = &original.nodes()[0];
-    let clip_group = CanonicalRenderNode::new(CanonicalRenderNodeSpec {
-        id: root.id().clone(),
-        kind: CanonicalRenderNodeKind::ClipGroup,
-        parent: root.parent(),
-        layer: root.layer(),
-        document_order: root.document_order(),
-        z_order: root.z_order(),
-        attachment: root.attachment().clone(),
-        active: root.active(),
-        isolate: root.isolate(),
-        follow_hidden_attachment: root.follow_hidden_attachment(),
-        position: root.position(),
-        origin: root.origin(),
-        rotation: root.rotation(),
-        scale: root.scale(),
-        opacity: root.opacity(),
-        visibility: root.visibility(),
-        geometry: None,
-        fill_paint: None,
-        stroke: None,
-        clip: Some(0),
-        composite: root.composite(),
-    })
-    .expect("canonical ClipGroup node");
-    let mut nodes = original.nodes().to_vec();
-    nodes[0] = clip_group;
-    let mut geometries = original.geometries().to_vec();
-    geometries.push(clip_geometry);
-    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
-        viewport: original.viewport(),
-        layers: original.layers().to_vec(),
-        nodes,
-        geometries,
-        paths: original.paths().to_vec(),
-        paints: original.paints().to_vec(),
-        strokes: original.strokes().to_vec(),
-        clips: vec![clip],
-        glyph_runs: original.glyph_runs().to_vec(),
-    })
-    .expect("canonical Clip scene");
-    let compilation = CanonicalCompilation::new(
-        base.chart().clone().with_render(scene),
-        base.resources().clone(),
-        base.distribution().clone(),
-    );
-    let scene = compilation.chart().render().expect("canonical Clip scene");
-    let bytes = write_from_compilation(&compilation).expect("canonical Clip FCBC writing");
+    let scene = base.chart().render().expect("canonical Clip scene");
+    let clip_group = &scene.nodes()[0];
+    assert_eq!(clip_group.kind(), CanonicalRenderNodeKind::ClipGroup);
+    assert_eq!(clip_group.geometry(), None);
+    let clip = &scene.clips()[clip_group.clip().expect("canonical Clip reference")];
+    assert_eq!(clip.fill_rule(), CanonicalRenderFillRule::NonZero);
+    assert!(matches!(
+        scene.geometries()[clip.geometry()].data(),
+        CanonicalRenderGeometryData::Rect { .. }
+    ));
+
+    let bytes = write_from_compilation(&base).expect("canonical Clip FCBC writing");
     let render = load_render(&bytes).expect("canonical Clip product loader");
 
     let clip_node = render
@@ -3394,18 +3093,158 @@ render profile 1.0.0 {
         .expect("decoded ClipGroup node");
     let clip_index = clip_node.clip_ref.expect("decoded Clip reference") as usize;
     let decoded_clip = &render.clips[clip_index];
-    assert_eq!(decoded_clip.id, scene.clips()[0].id().value());
+    assert_eq!(decoded_clip.id, clip.id().value());
     assert_eq!(decoded_clip.fill_rule, 1);
     assert_eq!(
         render.geometries[decoded_clip.geometry_ref as usize].id,
-        scene.geometries()[scene.clips()[0].geometry()].id().value()
+        scene.geometries()[clip.geometry()].id().value()
     );
     let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Clip semantic evaluation");
     let target = draw
         .iter()
         .find(|operation| operation.kind == NodeKind::Rect)
         .expect("clipped target draw op");
-    assert_eq!(target.clip_chain, vec![scene.clips()[0].id().value()]);
+    assert_eq!(target.clip_chain, vec![clip.id().value()]);
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 8, 8).expect("Clip rasterization");
-    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
+    assert_eq!(
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[3] != 0)
+            .count(),
+        12
+    );
+}
+
+#[test]
+fn source_clip_group_rejects_invalid_kind_and_fill_rule_with_clip_category() {
+    for (kind, fill_rule) in [("line", "nonzero"), ("rect", "winding")] {
+        let source = format!(
+            r#"#fcs 5.0.0
+format {{ profile: renderable; }}
+tempoMap {{ 0beat -> 120bpm; }}
+render profile 1.0.0 {{
+    viewport {{ width: 8px; height: 8px; }}
+    layer main {{
+        pass: "overlay";
+        children {{
+            clipGroup root {{
+                clip.kind: "{kind}";
+                clip.fillRule: "{fill_rule}";
+                clip.origin: vec2(-1px, -1px);
+                clip.size: vec2(2px, 2px);
+            }}
+        }}
+    }}
+}}
+"#
+        );
+        let document = parse_document(&source)
+            .into_result()
+            .expect("invalid Clip source still parses");
+        let diagnostics = document
+            .canonical_chart_with_source(&source, CompileTimeLimits::default())
+            .expect_err("invalid Clip source must fail during canonical lowering");
+        assert_eq!(diagnostics.len(), 1, "{kind}/{fill_rule}");
+        assert_eq!(
+            diagnostics[0].code().as_str(),
+            "render.invalid-clip",
+            "{kind}/{fill_rule}"
+        );
+    }
+}
+
+#[test]
+fn source_clip_group_lowers_every_allowed_geometry_kind() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 8px; height: 8px; }
+    layer main {
+        pass: "overlay";
+        children {
+            clipGroup rectClip {
+                clip.kind: "rect";
+                clip.fillRule: "nonzero";
+                clip.size: vec2(2px, 2px);
+            }
+            clipGroup roundedRectClip {
+                clip.kind: "roundedRect";
+                clip.fillRule: "nonzero";
+                clip.size: vec2(2px, 2px);
+                clip.radius: 0.5px;
+            }
+            clipGroup circleClip {
+                clip.kind: "circle";
+                clip.fillRule: "nonzero";
+                clip.radius: 1px;
+            }
+            clipGroup ellipseClip {
+                clip.kind: "ellipse";
+                clip.fillRule: "nonzero";
+                clip.radiusX: 1px;
+                clip.radiusY: 0.5px;
+            }
+            clipGroup polygonClip {
+                clip.kind: "polygon";
+                clip.fillRule: "nonzero";
+                clip.points: [vec2(-1px, -1px), vec2(1px, -1px), vec2(0px, 1px)];
+            }
+            clipGroup pathClip {
+                clip.kind: "path";
+                clip.fillRule: "evenodd";
+                clip.commands: [
+                    moveTo(vec2(-1px, -1px)),
+                    lineTo(vec2(1px, -1px)),
+                    lineTo(vec2(0px, 1px)),
+                    close(),
+                ];
+            }
+        }
+    }
+}
+"#;
+    let scene = parse_document(source)
+        .into_result()
+        .expect("Clip geometry source parses")
+        .canonical_chart_with_source(source, CompileTimeLimits::default())
+        .expect("every allowed Clip geometry lowers")
+        .render()
+        .expect("canonical Clip scene")
+        .clone();
+    assert_eq!(scene.clips().len(), 6);
+    assert!(
+        scene
+            .nodes()
+            .iter()
+            .all(|node| node.kind() == CanonicalRenderNodeKind::ClipGroup)
+    );
+    assert_eq!(
+        scene
+            .clips()
+            .iter()
+            .map(|clip| scene.geometries()[clip.geometry()].kind())
+            .collect::<Vec<_>>(),
+        [
+            CanonicalRenderNodeKind::Rect,
+            CanonicalRenderNodeKind::RoundedRect,
+            CanonicalRenderNodeKind::Circle,
+            CanonicalRenderNodeKind::Ellipse,
+            CanonicalRenderNodeKind::Polygon,
+            CanonicalRenderNodeKind::Path,
+        ]
+    );
+    let path_clip = scene.clips().last().expect("Path Clip");
+    assert_eq!(path_clip.fill_rule(), CanonicalRenderFillRule::EvenOdd);
+    let CanonicalRenderGeometryData::Path { path } =
+        scene.geometries()[path_clip.geometry()].data()
+    else {
+        panic!("last Clip owns Path geometry");
+    };
+    assert_eq!(
+        scene.paths()[*path].fill_rule(),
+        CanonicalRenderFillRule::EvenOdd
+    );
 }

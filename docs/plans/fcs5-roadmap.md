@@ -806,7 +806,26 @@ git diff --check
   draw order, and #522 the section 15.2 closed parametric dash seam plus the dashed Circle stroke it determines,
   and #525 source `circle` stroke lowering with an optional fill, and #529 Polyline and Polygon
   strokes with section 15.2 joins, caps, closure and exact dash arc length, and #531 source
-  `polyline` and `polygon` stroke lowering with an optional fill;
-  dynamic source Line stroke descriptors, Ellipse and RoundedRect strokes,
-  source ImagePattern lowering, source Path lowering, broader canonical writer coverage, Text geometry,
-  broader resource semantics, isolated compositing, and semantic/raster conformance remain open under #296/#9.
+  `polyline` and `polygon` stroke lowering with an optional fill, bounded source/product
+  Ellipse and RoundedRect stroke lowering and flattened semantic/raster coverage, source Path
+  command-array lowering through dynamic numeric descriptors, fill, stroke, semantics, and raster,
+  source ImagePattern shared sibling descriptors, per-resource sampling, FCBC, semantics, and raster,
+  exact source stroke width/dashOffset descriptors through product query semantics, plus
+  solid/non-empty-dash Rect source/writer/semantic/raster coverage with a fixed origin/clockwise seam,
+  active ImagePattern fixture evidence, and
+  Text stroke source/writer/loader/semantic/raster coverage, plus exact Solid/LinearGradient/
+  RadialGradient geometry and color descriptors through product semantic queries, and nested
+  isolated Group offscreen buffers with opacity/composite application and empty-`copy` clearing;
+  source Render layer `world`/`screen`/`line(@id)`/`note(@id)` attachment resolution and
+  definition-backed static Render field evaluation now reach the product FCBC/loader path; source
+  Layer/Node ancestry and Node-owned Geometry/fill/Stroke plus Stroke-owned Paint stable IDs now use
+  the exact section 14 `layer/.../node/...` and `owner/.../field/.../ordinal/...` textual forms; the
+  manifest semantic oracle now supports a complete multi-DrawOp list, with independent nested
+  z-order, solid Line Stroke, linear-gradient Stroke, radial-gradient Stroke, linear-gradient
+  Rect fill, nearest-sampled ImagePattern fill, and nearest-sampled ImagePattern Line Stroke
+  semantic/raster fixtures executed through both the domain and CLI product lanes;
+  source `clipGroup` now lowers all six allowed `clip.*` geometry kinds into the canonical Clip/
+  Geometry ownership chain, with a Rect source-to-FCBC-to-loader-to-semantic/raster fixture and
+  stable invalid-kind/fill-rule evidence; exact-head Full Gate evidence for this combined delta is
+  pending. Broader canonical writer coverage, resource semantics, and complete semantic/raster
+  conformance remain open under #296/#9.

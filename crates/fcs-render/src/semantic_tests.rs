@@ -203,6 +203,28 @@ fn line_stroke_caps_and_dash_boundaries_are_stable() {
 }
 
 #[test]
+fn dashed_rect_starts_at_origin_and_winds_clockwise() {
+    let rect = LocalShape::Rect {
+        bounds: [0.0, 0.0, 4.0, 2.0],
+    };
+    let stroke = StrokeDrawOp {
+        width: 0.25,
+        cap: 1,
+        join: 1,
+        miter_limit: 2.0,
+        dash_offset: 0.0,
+        dash: vec![1.0, 100.0],
+        fill_rgba: Some([1.0, 1.0, 1.0, 1.0]),
+        linear_gradient: None,
+        radial_gradient: None,
+        image_pattern: None,
+    };
+
+    assert!(stroke_contains(&rect, [0.0, 0.5], &stroke).unwrap());
+    assert!(!stroke_contains(&rect, [0.5, 0.0], &stroke).unwrap());
+}
+
+#[test]
 fn polyline_stroke_joins_caps_and_closure_follow_section_15_2() {
     let elbow = vec![[-2.0, 0.0], [0.0, 0.0], [0.0, 2.0]];
     let open = LocalShape::Polygon {
@@ -279,16 +301,19 @@ fn path_fill_rules_cover_implicit_subpath_closures() {
     let outer = PathSubpath {
         points: vec![[-2.0, -2.0], [2.0, -2.0], [2.0, 2.0], [-2.0, 2.0]],
         segment_lengths: Vec::new(),
+        joins_after: Vec::new(),
         closed: false,
     };
     let inner_same_direction = PathSubpath {
         points: vec![[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
         segment_lengths: Vec::new(),
+        joins_after: Vec::new(),
         closed: false,
     };
     let inner_reverse_direction = PathSubpath {
         points: vec![[-1.0, -1.0], [-1.0, 1.0], [1.0, 1.0], [1.0, -1.0]],
         segment_lengths: Vec::new(),
+        joins_after: Vec::new(),
         closed: false,
     };
 
@@ -330,6 +355,7 @@ fn path_stroke_preserves_explicit_close_and_shared_dash_rules() {
         subpaths: vec![PathSubpath {
             points: points.clone(),
             segment_lengths: vec![2.0, 0.0, 2.0, 2.0, 2.0],
+            joins_after: vec![true; 5],
             closed: false,
         }],
         fill_rule: 1,
@@ -338,6 +364,7 @@ fn path_stroke_preserves_explicit_close_and_shared_dash_rules() {
         subpaths: vec![PathSubpath {
             points,
             segment_lengths: vec![2.0, 0.0, 2.0, 2.0, 2.0],
+            joins_after: vec![true; 5],
             closed: true,
         }],
         fill_rule: 1,
@@ -396,12 +423,16 @@ fn path_arc_dash_uses_exact_arclength_instead_of_flattened_chords() {
     assert!(flattened < exact);
 
     let phase_gap = exact - flattened;
+    let mut joins_after = vec![false; segment_lengths.len()];
+    *joins_after.last_mut().expect("flattened Arc segment") = true;
     points.push([0.0, 2.0]);
     segment_lengths.push(1.0);
+    joins_after.push(true);
     let path = LocalShape::Path {
         subpaths: vec![PathSubpath {
             points,
             segment_lengths,
+            joins_after,
             closed: false,
         }],
         fill_rule: 1,

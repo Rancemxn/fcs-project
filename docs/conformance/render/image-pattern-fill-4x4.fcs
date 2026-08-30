@@ -1,15 +1,7 @@
 #fcs 5.0.0
 format { profile: renderable; }
 resources {
-    image linearSprite {
-        source: "assets/fcs-test-rgba8.png";
-        hash: "sha256:a108791d9edc1d9c37644a45ce29d4a20e479711db97daf85375b82924e8fa22";
-        mediaType: "image/png";
-        colorSpace: "srgb";
-        alpha: "straight";
-        sampling: "linear";
-    }
-    image nearestSprite {
+    image sprite {
         source: "assets/fcs-test-rgba8.png";
         hash: "sha256:a108791d9edc1d9c37644a45ce29d4a20e479711db97daf85375b82924e8fa22";
         mediaType: "image/png";
@@ -27,28 +19,19 @@ render profile 1.0.0 {
     }
     layer main {
         pass: "overlay";
+        zOrder: 0;
         space: "screen";
         children {
             rect patterned {
                 origin: vec2(-2px, -2px);
                 size: vec2(4px, 4px);
-                position: vec2(0px, 0px);
-                fill: imagePattern(@linearSprite);
-                stroke: imagePattern(@nearestSprite);
-                width: 1px;
-                cap: "round";
-                join: "round";
-                miterLimit: 4.0;
-                dash: [1px, 2px];
-                dashOffset: 0px;
-                patternPosition: choose {
-                    when s < 1s => vec2(0px, 0px);
-                    else => vec2(1px, 0px);
-                };
+                fill: imagePattern(@sprite);
+                patternPosition: vec2(0px, 0px);
                 patternOrigin: vec2(0px, 0px);
                 patternRotation: 0deg;
                 patternScale: vec2(1.0, 1.0);
                 patternRepeat: "both";
+                patternSampling: "nearest";
             }
         }
     }
