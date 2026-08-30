@@ -592,6 +592,7 @@ impl CanonicalRenderNode {
                 {
                     return Err(CanonicalRenderError::ImageCarriesPaint);
                 }
+                CanonicalRenderNodeKind::Image => {}
                 CanonicalRenderNodeKind::Line
                     if spec.fill_paint.is_some() || spec.stroke.is_none() =>
                 {
@@ -2230,6 +2231,14 @@ mod tests {
                 ..base.clone()
             }),
             Err(CanonicalRenderError::IsolatedDrawable)
+        );
+        assert!(
+            CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+                kind: CanonicalRenderNodeKind::Image,
+                fill_paint: None,
+                ..base.clone()
+            })
+            .is_ok()
         );
         assert_eq!(
             CanonicalRenderNode::new(CanonicalRenderNodeSpec {
