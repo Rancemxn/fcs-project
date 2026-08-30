@@ -10,11 +10,11 @@ mod fcbc_render_reference_assets;
 #[allow(dead_code)]
 mod fcbc_render_reference_loader;
 
-use fcs_fcbc::{write_from_compilation, write_nonempty_execution};
+use fcs_fcbc::write_from_compilation;
 use fcs_model::{
     CanonicalArcDirection, CanonicalCompilation, CanonicalDescriptorKind,
-    CanonicalExpressionEnvironment, CanonicalExpressionType, CanonicalImageRepeat,
-    CanonicalImageSampling, CanonicalPathCommand, CanonicalPatternTransform,
+    CanonicalExpressionEnvironment, CanonicalExpressionType, CanonicalGlyphRun,
+    CanonicalImageRepeat, CanonicalImageSampling, CanonicalPathCommand, CanonicalPatternTransform,
     CanonicalRenderFillRule, CanonicalRenderGeometry, CanonicalRenderGeometryData,
     CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
     CanonicalRenderPaintData, CanonicalRenderPath, CanonicalRenderScene, CanonicalRenderSceneSpec,
@@ -26,8 +26,8 @@ use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
 
 use fcs_render::{
-    GeometryData, NodeKind, PaintData, RenderAssets, encode_test_png, encode_test_webp,
-    evaluate_semantic_draw_list_at, load_render, rasterize_solid_rgba8_at, write_nonempty_render,
+    GeometryData, NodeKind, PaintData, evaluate_semantic_draw_list_at, load_render,
+    rasterize_solid_rgba8_at,
 };
 
 fn u32_at(bytes: &[u8], offset: usize) -> u32 {
@@ -2068,31 +2068,97 @@ render profile 1.0.0 {
     );
 }
 
-#[test]
-fn checked_in_text_fixture_reaches_product_raster() {
-    let core = write_nonempty_execution();
-    let png = encode_test_png();
-    let webp = encode_test_webp();
-    let font = include_bytes!("../../../docs/conformance/render/assets/fcs-test-font.ttf");
-    let mut render = load_render(&write_nonempty_render(
-        &core,
-        RenderAssets {
-            png: &png,
-            webp: &webp,
-            font,
-            malformed: b"not-an-image",
-        },
-    ))
-    .expect("checked-in Text fixture");
-
-    for node in &mut render.nodes {
-        if node.kind != NodeKind::Text {
-            node.geometry_ref = None;
-            node.fill_paint = None;
-            node.stroke_ref = None;
-            node.clip_ref = None;
+const SOURCE_TEXT_FILL: &str = r#"#fcs 5.0.0
+format { profile: renderable; }
+resources {
+    font primary {
+        source: "assets/fcs-test-font.ttf";
+        mediaType: "font/ttf";
+    }
+    binary blob {
+        source: "assets/fcs-test-font.ttf";
+        mediaType: "application/octet-stream";
+    }
+}
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 16px; height: 16px; }
+    layer main {
+        pass: "overlay";
+        children {
+            text label {
+                content: "A";
+                font: @primary;
+                size: 8px;
+                fill: solid(#FFFFFFFF);
+            }
         }
     }
+}
+"#;
+
+fn source_text_compilation(content: &str) -> CanonicalCompilation {
+    let source = SOURCE_TEXT_FILL.replace("content: \"A\";", &format!("content: {content:?};"));
+    let document = parse_document(&source)
+        .into_result()
+        .expect("source Text parses");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/conformance/render");
+    document
+        .canonical_compilation_with_source(
+            &source,
+            CompileTimeLimits::default(),
+            workspace,
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| panic!("source Text lowering failed: {diagnostics:?}"))
+}
+
+#[test]
+fn checked_in_text_fixture_reaches_product_raster() {
+    let compilation = source_text_compilation("A");
+    let scene = compilation.chart().render().expect("canonical Text scene");
+    let CanonicalRenderGeometryData::Text { glyph_runs, .. } = scene.geometries()[0].data() else {
+        panic!("source Text geometry");
+    };
+    assert_eq!(glyph_runs.as_slice(), [0]);
+    let canonical_run = &scene.glyph_runs()[0];
+
+    let bytes = write_from_compilation(&compilation).expect("source Text FCBC writing");
+    let render = load_render(&bytes).expect("source Text product loader");
+    assert_eq!(render.nodes.len(), 1);
+    assert_eq!(render.nodes[0].kind, NodeKind::Text);
+    assert_eq!(render.nodes[0].fill_paint, Some(0));
+    assert_eq!(render.nodes[0].stroke_ref, None);
+    assert!(matches!(
+        &render.geometries[0].data,
+        GeometryData::Text { glyph_runs, origin }
+            if glyph_runs.as_slice() == [0] && *origin != u32::MAX
+    ));
+    let loaded_run = &render.glyph_runs[0];
+    assert_eq!(loaded_run.id, canonical_run.id().value());
+    assert_eq!(loaded_run.font_resource_id, canonical_run.font().value());
+    assert_eq!(loaded_run.face_index, canonical_run.face_index());
+    assert_eq!(
+        loaded_run.run_offset[0].to_bits(),
+        canonical_run.run_offset()[0].to_bits()
+    );
+    assert_eq!(
+        loaded_run.run_offset[1].to_bits(),
+        canonical_run.run_offset()[1].to_bits()
+    );
+    assert_eq!(
+        render.core.descriptors[loaded_run.size_descriptor as usize].property_type,
+        fcs_fcbc::ValueType::Length
+    );
+    assert_eq!(loaded_run.glyphs.len(), canonical_run.glyphs().len());
+    for (loaded, canonical) in loaded_run.glyphs.iter().zip(canonical_run.glyphs()) {
+        assert_eq!(loaded.glyph_id, canonical.glyph_id);
+        assert_eq!(loaded.x_advance.to_bits(), canonical.x_advance.to_bits());
+        assert_eq!(loaded.y_advance.to_bits(), canonical.y_advance.to_bits());
+        assert_eq!(loaded.x_offset.to_bits(), canonical.x_offset.to_bits());
+        assert_eq!(loaded.y_offset.to_bits(), canonical.y_offset.to_bits());
+    }
+
     let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Text semantic evaluation");
     let text = draw
         .iter()
@@ -2108,4 +2174,148 @@ fn checked_in_text_fixture_reaches_product_raster() {
 
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Text rasterization");
     assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
+
+    let empty = source_text_compilation("");
+    let empty_bytes = write_from_compilation(&empty).expect("empty source Text FCBC writing");
+    let empty_render = load_render(&empty_bytes).expect("empty source Text product loader");
+    assert_eq!(empty_render.glyph_runs.len(), 1);
+    assert!(empty_render.glyph_runs[0].glyphs.is_empty());
+}
+
+#[test]
+fn canonical_text_writer_remaps_stable_glyph_run_order() {
+    let compilation = source_text_compilation("A");
+    let original = compilation.chart().render().expect("canonical Text scene");
+    let original_run = &original.glyph_runs()[0];
+    let CanonicalRenderGeometryData::Text { origin, .. } = original.geometries()[0].data() else {
+        panic!("source Text geometry");
+    };
+    let mut ids = StableIdRegistry::new();
+    let first = ids
+        .insert(
+            EntityKind::RenderGlyphRun,
+            CanonicalTextualId::explicit("writer-glyph-first").expect("first GlyphRun textual ID"),
+        )
+        .expect("first GlyphRun stable ID");
+    let second = ids
+        .insert(
+            EntityKind::RenderGlyphRun,
+            CanonicalTextualId::explicit("writer-glyph-second")
+                .expect("second GlyphRun textual ID"),
+        )
+        .expect("second GlyphRun stable ID");
+    let (low, high) = if first.value() < second.value() {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    let high_run = CanonicalGlyphRun::new(
+        high.clone(),
+        original_run.font().clone(),
+        original_run.face_index(),
+        original_run.size(),
+        original_run.run_offset(),
+        original_run.glyphs().to_vec(),
+    )
+    .expect("high-ID GlyphRun");
+    let low_run = CanonicalGlyphRun::new(
+        low.clone(),
+        original_run.font().clone(),
+        original_run.face_index(),
+        original_run.size(),
+        [1.0, 0.0],
+        Vec::new(),
+    )
+    .expect("low-ID GlyphRun");
+    let geometry = CanonicalRenderGeometry::new(
+        original.geometries()[0].id().clone(),
+        CanonicalRenderGeometryData::Text {
+            glyph_runs: vec![0, 1],
+            origin: *origin,
+        },
+    )
+    .expect("two-run Text geometry");
+    let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+        viewport: original.viewport(),
+        layers: original.layers().to_vec(),
+        nodes: original.nodes().to_vec(),
+        geometries: vec![geometry],
+        paths: original.paths().to_vec(),
+        paints: original.paints().to_vec(),
+        strokes: original.strokes().to_vec(),
+        clips: original.clips().to_vec(),
+        glyph_runs: vec![high_run, low_run],
+    })
+    .expect("two-run canonical Text scene");
+    let compilation = CanonicalCompilation::new(
+        compilation.chart().clone().with_render(scene),
+        compilation.resources().clone(),
+        compilation.distribution().clone(),
+    );
+
+    let bytes = write_from_compilation(&compilation).expect("two-run Text FCBC writing");
+    let render = load_render(&bytes).expect("two-run Text product loader");
+    assert_eq!(render.glyph_runs[0].id, low.value());
+    assert_eq!(render.glyph_runs[1].id, high.value());
+    assert!(matches!(
+        &render.geometries[0].data,
+        GeometryData::Text { glyph_runs, .. } if glyph_runs.as_slice() == [1, 0]
+    ));
+}
+
+#[test]
+fn canonical_text_writer_rejects_missing_or_non_font_resources() {
+    let compilation = source_text_compilation("A");
+    let original = compilation.chart().render().expect("canonical Text scene");
+    let original_run = &original.glyph_runs()[0];
+    let with_font = |font| {
+        let glyph_run = CanonicalGlyphRun::new(
+            original_run.id().clone(),
+            font,
+            original_run.face_index(),
+            original_run.size(),
+            original_run.run_offset(),
+            original_run.glyphs().to_vec(),
+        )
+        .expect("replacement GlyphRun");
+        let scene = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+            viewport: original.viewport(),
+            layers: original.layers().to_vec(),
+            nodes: original.nodes().to_vec(),
+            geometries: original.geometries().to_vec(),
+            paths: original.paths().to_vec(),
+            paints: original.paints().to_vec(),
+            strokes: original.strokes().to_vec(),
+            clips: original.clips().to_vec(),
+            glyph_runs: vec![glyph_run],
+        })
+        .expect("canonical Text scene with replacement font");
+        CanonicalCompilation::new(
+            compilation.chart().clone().with_render(scene),
+            compilation.resources().clone(),
+            compilation.distribution().clone(),
+        )
+    };
+    let mut ids = StableIdRegistry::new();
+    let missing = ids
+        .insert(
+            EntityKind::Resource,
+            CanonicalTextualId::explicit("missing").expect("missing resource textual ID"),
+        )
+        .expect("missing resource stable ID");
+    let blob = ids
+        .insert(
+            EntityKind::Resource,
+            CanonicalTextualId::explicit("blob").expect("blob resource textual ID"),
+        )
+        .expect("blob resource stable ID");
+
+    for (font, category) in [
+        (missing, "fcbc.render-resource-not-found"),
+        (blob, "fcbc.render-resource-type-mismatch"),
+    ] {
+        let error = write_from_compilation(&with_font(font))
+            .expect_err("invalid GlyphRun font resource must fail closed");
+        assert_eq!(error.category(), category);
+    }
 }
