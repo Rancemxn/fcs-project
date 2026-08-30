@@ -777,15 +777,13 @@ render profile 1.0.0 {{
     )
 }
 
-// A source stroke must declare `dash`, and a source `[]` is rejected because a Render node
-// body gives an empty array literal no expected element type, so this fixture dashes.
 const SOURCE_CIRCLE_FILL: &str = "                fill: solid(#FF0000FF);\n";
 const SOURCE_CIRCLE_STROKE: &str = "                stroke: solid(#FFFFFFFF);
                 width: 2px;
                 cap: \"butt\";
                 join: \"miter\";
                 miterLimit: 4.0;
-                dash: [3px, 2px];
+                dash: [];
                 dashOffset: 0px;
 ";
 
@@ -812,6 +810,7 @@ fn source_circle_stroke_reaches_product_render_loader() {
     // Render section 14.2 requires a fill paint or a stroke, so a declared stroke is what
     // makes `fill` optional. Before this path existed the stroke was silently dropped.
     assert_eq!(scene.strokes().len(), 1);
+    assert!(scene.strokes()[0].dash().is_empty());
     assert_eq!(scene.nodes()[0].stroke(), Some(0));
     assert_eq!(scene.nodes()[0].fill_paint(), None);
 
@@ -820,13 +819,14 @@ fn source_circle_stroke_reaches_product_render_loader() {
     assert_eq!(render.nodes[0].kind, NodeKind::Circle);
     assert_eq!(render.nodes[0].fill_paint, None);
     assert_eq!(render.nodes[0].stroke_ref, Some(0));
+    assert!(render.strokes[0].dash.is_empty());
 
     let draw = evaluate_semantic_draw_list_at(&render, 0.0).expect("Circle semantic draw list");
     assert_eq!(draw.len(), 1);
     assert!(draw[0].stroke.is_some());
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Circle stroke raster");
     // The 2px stroke dilates the 5px centre line into the ring `[4, 6]`, so the interior is
-    // empty and the dashed ring is not.
+    // empty and the continuous ring is not.
     assert_eq!(centre_pixel(&pixels, 16)[3], 0);
     assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
 }

@@ -630,20 +630,28 @@ fn render_stroke_join(
     }
 }
 
-fn render_dash(value: TypedValue, span: SourceSpan) -> Result<Vec<f64>, Diagnostic> {
+fn render_dash(field: &SchemaField) -> Result<Vec<f64>, Diagnostic> {
+    if matches!(
+        &field.value,
+        SchemaValue::Expression(SourceExpression::Array { elements, .. }) if elements.is_empty()
+    ) {
+        return Ok(Vec::new());
+    }
+
+    let value = render_value(field)?;
     let TypedValue::Array { values, .. } = value else {
         return Err(render_error(
             "Render dash must be an array of lengths",
-            span,
+            field.span,
         ));
     };
     let mut dash = Vec::with_capacity(values.len());
     for value in values {
-        let value = render_length(value, span)?;
+        let value = render_length(value, field.span)?;
         if value < 0.0 {
             return Err(render_error(
                 "Render dash elements must be non-negative",
-                span,
+                field.span,
             ));
         }
         dash.push(value);
@@ -1480,7 +1488,7 @@ impl<'a> RenderLowerer<'a> {
             join: render_stroke_join(render_value(join_field)?, join_field.span)?,
             miter_limit,
             dash_offset: self.descriptor(TypedValue::Length(dash_offset))?,
-            dash: render_dash(render_value(dash_field)?, dash_field.span)?,
+            dash: render_dash(dash_field)?,
         })
     }
 
