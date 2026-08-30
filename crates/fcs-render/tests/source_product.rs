@@ -639,7 +639,10 @@ render profile 1.0.0 {
     let rect_node = scene
         .nodes()
         .iter()
-        .find(|node| node.kind() == CanonicalRenderNodeKind::Rect)
+        .find(|node| {
+            node.id().value()
+                == derive_stable_id(EntityKind::RenderNode, "layer/main/node/dynamicRect")
+        })
         .expect("dynamic Rect node");
     for descriptor in [
         rect_node.position(),
@@ -649,23 +652,25 @@ render profile 1.0.0 {
     ] {
         assert!(is_expression(descriptor));
     }
+    let CanonicalRenderGeometryData::Rect { size, .. } =
+        scene.geometries()[rect_node.geometry().expect("dynamic Rect geometry")].data()
+    else {
+        panic!("dynamic Rect node must own Rect geometry");
+    };
+    assert!(is_expression(*size));
 
-    let mut seen = [false; 7];
+    let mut seen = [false; 6];
     for geometry in scene.geometries() {
         match geometry.data() {
-            CanonicalRenderGeometryData::Rect { size, .. } => {
-                assert!(is_expression(*size));
-                seen[0] = true;
-            }
             CanonicalRenderGeometryData::RoundedRect { size, radii, .. } => {
                 assert!(is_expression(*size));
                 assert!(radii.iter().all(|descriptor| is_expression(*descriptor)));
-                seen[1] = true;
+                seen[0] = true;
             }
             CanonicalRenderGeometryData::Circle { center, radius } => {
                 assert!(is_expression(*center));
                 assert!(is_expression(*radius));
-                seen[2] = true;
+                seen[1] = true;
             }
             CanonicalRenderGeometryData::Ellipse {
                 center,
@@ -677,20 +682,20 @@ render profile 1.0.0 {
                 assert!(is_expression(*radius_x));
                 assert!(is_expression(*radius_y));
                 assert!(is_expression(*rotation));
-                seen[3] = true;
+                seen[2] = true;
             }
             CanonicalRenderGeometryData::Line { start, end } => {
                 assert!(is_expression(*start));
                 assert!(is_expression(*end));
-                seen[4] = true;
+                seen[3] = true;
             }
             CanonicalRenderGeometryData::Polyline { points } => {
                 assert!(points.iter().all(|descriptor| is_expression(*descriptor)));
-                seen[5] = true;
+                seen[4] = true;
             }
             CanonicalRenderGeometryData::Polygon { points } => {
                 assert!(points.iter().all(|descriptor| is_expression(*descriptor)));
-                seen[6] = true;
+                seen[5] = true;
             }
             _ => {}
         }
