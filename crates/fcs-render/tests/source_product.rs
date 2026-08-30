@@ -427,6 +427,7 @@ render profile 1.0.0 {
     }
 }
 "#;
+
     let document = parse_document(source)
         .into_result()
         .expect("dynamic Render source parses");
@@ -502,6 +503,175 @@ render profile 1.0.0 {
     assert_eq!(
         evaluate_semantic_draw_list_at(&render, 1.0),
         Err("render.invalid-composite")
+    );
+}
+
+#[test]
+fn source_exact_node_and_geometry_descriptors_reach_product_semantics() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 16px; height: 16px; }
+    layer main {
+        pass: "overlay";
+        space: "screen";
+        children {
+            rect dynamicRect {
+                position: choose { when s < 1s => vec2(0px, 0px); else => vec2(1px, 0px); };
+                origin: choose { when s < 1s => vec2(-7px, -7px); else => vec2(-6px, -7px); };
+                rotation: choose { when s < 1s => 0rad; else => 0.1rad; };
+                scale: choose { when s < 1s => vec2(1.0, 1.0); else => vec2(1.5, 1.0); };
+                size: choose { when s < 1s => vec2(2px, 2px); else => vec2(3px, 2px); };
+                fill: solid(#FFFFFFFF);
+            }
+            roundedRect dynamicRounded {
+                origin: vec2(-3px, -7px);
+                size: choose { when s < 1s => vec2(2px, 2px); else => vec2(3px, 3px); };
+                radius: choose { when s < 1s => 0.5px; else => 1px; };
+                fill: solid(#FFFFFFFF);
+            }
+            circle dynamicCircle {
+                center: choose { when s < 1s => vec2(1px, -6px); else => vec2(2px, -6px); };
+                radius: choose { when s < 1s => 1px; else => 2px; };
+                fill: solid(#FFFFFFFF);
+            }
+            ellipse dynamicEllipse {
+                center: choose { when s < 1s => vec2(5px, -6px); else => vec2(5px, -5px); };
+                radiusX: choose { when s < 1s => 1px; else => 2px; };
+                radiusY: choose { when s < 1s => 2px; else => 1px; };
+                rotation: choose { when s < 1s => 0rad; else => 0.2rad; };
+                fill: solid(#FFFFFFFF);
+            }
+            line dynamicLine {
+                start: choose { when s < 1s => vec2(-7px, 0px); else => vec2(-6px, 0px); };
+                end: choose { when s < 1s => vec2(-4px, 0px); else => vec2(-3px, 1px); };
+                stroke: solid(#FFFFFFFF);
+                width: 1px;
+                cap: "butt";
+                join: "miter";
+                miterLimit: 4.0;
+                dash: [];
+                dashOffset: 0px;
+            }
+            polyline dynamicPolyline {
+                points: [
+                    choose { when s < 1s => vec2(-2px, 0px); else => vec2(-1px, 0px); },
+                    choose { when s < 1s => vec2(0px, 2px); else => vec2(0px, 3px); },
+                    choose { when s < 1s => vec2(2px, 0px); else => vec2(3px, 0px); },
+                ];
+                fill: solid(#FFFFFFFF);
+            }
+            polygon dynamicPolygon {
+                points: [
+                    choose { when s < 1s => vec2(4px, 0px); else => vec2(4px, 1px); },
+                    choose { when s < 1s => vec2(6px, 2px); else => vec2(7px, 2px); },
+                    choose { when s < 1s => vec2(7px, 0px); else => vec2(7px, 1px); },
+                ];
+                fill: solid(#FFFFFFFF);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("exact descriptor Render source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .unwrap_or_else(|diagnostics| {
+            panic!("exact descriptor Render lowering failed: {diagnostics:?}")
+        });
+    let descriptors = compilation.chart().descriptors().expect("descriptor table");
+    let is_expression = |descriptor: usize| {
+        matches!(
+            descriptors.descriptors()[descriptor].kind(),
+            CanonicalDescriptorKind::Expression(expression)
+                if expression.required_environment().contains(&CanonicalExpressionEnvironment::S)
+        )
+    };
+    let scene = compilation
+        .chart()
+        .render()
+        .expect("canonical Render scene");
+    let rect_node = scene
+        .nodes()
+        .iter()
+        .find(|node| node.kind() == CanonicalRenderNodeKind::Rect)
+        .expect("dynamic Rect node");
+    for descriptor in [
+        rect_node.position(),
+        rect_node.origin(),
+        rect_node.rotation(),
+        rect_node.scale(),
+    ] {
+        assert!(is_expression(descriptor));
+    }
+
+    let mut seen = [false; 7];
+    for geometry in scene.geometries() {
+        match geometry.data() {
+            CanonicalRenderGeometryData::Rect { size, .. } => {
+                assert!(is_expression(*size));
+                seen[0] = true;
+            }
+            CanonicalRenderGeometryData::RoundedRect { size, radii, .. } => {
+                assert!(is_expression(*size));
+                assert!(radii.iter().all(|descriptor| is_expression(*descriptor)));
+                seen[1] = true;
+            }
+            CanonicalRenderGeometryData::Circle { center, radius } => {
+                assert!(is_expression(*center));
+                assert!(is_expression(*radius));
+                seen[2] = true;
+            }
+            CanonicalRenderGeometryData::Ellipse {
+                center,
+                radius_x,
+                radius_y,
+                rotation,
+            } => {
+                assert!(is_expression(*center));
+                assert!(is_expression(*radius_x));
+                assert!(is_expression(*radius_y));
+                assert!(is_expression(*rotation));
+                seen[3] = true;
+            }
+            CanonicalRenderGeometryData::Line { start, end } => {
+                assert!(is_expression(*start));
+                assert!(is_expression(*end));
+                seen[4] = true;
+            }
+            CanonicalRenderGeometryData::Polyline { points } => {
+                assert!(points.iter().all(|descriptor| is_expression(*descriptor)));
+                seen[5] = true;
+            }
+            CanonicalRenderGeometryData::Polygon { points } => {
+                assert!(points.iter().all(|descriptor| is_expression(*descriptor)));
+                seen[6] = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(seen.into_iter().all(|present| present));
+
+    let bytes = write_from_compilation(&compilation).expect("exact descriptor FCBC writing");
+    let render = load_render(&bytes).expect("exact descriptor product loader");
+    let before = evaluate_semantic_draw_list_at(&render, 0.0).expect("first semantic query");
+    let after = evaluate_semantic_draw_list_at(&render, 2.0).expect("second semantic query");
+    assert_eq!(before.len(), 7);
+    assert_eq!(after.len(), 7);
+    assert!(
+        before
+            .iter()
+            .zip(&after)
+            .any(|(before, after)| before.bounds != after.bounds
+                || before.world_matrix != after.world_matrix)
     );
 }
 
