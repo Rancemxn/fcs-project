@@ -315,10 +315,36 @@ where
                     *span,
                 )
             }
+            SourceExpression::FieldAccess { base, field, span } => {
+                let base = self.lower(base)?;
+                let CanonicalExpressionType::Vec2(element) = &base.ty else {
+                    return Err(self.error(
+                        DiagnosticCode::TYPE_MISMATCH,
+                        "runtime field access requires a vec2 operand",
+                        *span,
+                    ));
+                };
+                let opcode = match field.as_str() {
+                    "x" => CanonicalExpressionOpcode::Vec2X,
+                    "y" => CanonicalExpressionOpcode::Vec2Y,
+                    _ => {
+                        return Err(self.error(
+                            DiagnosticCode::TYPE_MISMATCH,
+                            "runtime vec2 field must be x or y",
+                            *span,
+                        ));
+                    }
+                };
+                self.insert(
+                    opcode,
+                    element.as_ref().clone(),
+                    [Some(base.index), None, None],
+                    *span,
+                )
+            }
             SourceExpression::Reference { span, .. }
             | SourceExpression::Array { span, .. }
             | SourceExpression::Object { span, .. }
-            | SourceExpression::FieldAccess { span, .. }
             | SourceExpression::Index { span, .. } => Err(self.error(
                 DiagnosticCode::TYPE_INVALID_OPERATION,
                 "runtime expressions may only contain scalar/vector Core nodes",

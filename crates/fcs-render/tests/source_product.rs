@@ -570,6 +570,43 @@ render profile 1.0.0 {
                 ];
                 fill: solid(#FFFFFFFF);
             }
+            clipGroup dynamicRectClip {
+                clip.kind: "rect";
+                clip.fillRule: "nonzero";
+                clip.origin: choose {
+                    when s < 1s => vec2(-7px, 4px);
+                    else => vec2(-6px, 4px);
+                };
+                clip.size: choose {
+                    when s < 1s => vec2(2px, 2px);
+                    else => vec2(3px, 2px);
+                };
+                children {
+                    rect clippedByRect {
+                        origin: vec2(-7px, 4px);
+                        size: vec2(4px, 4px);
+                        fill: solid(#FFFFFFFF);
+                    }
+                }
+            }
+            clipGroup dynamicEllipseClip {
+                clip.kind: "ellipse";
+                clip.fillRule: "nonzero";
+                clip.center: choose {
+                    when s < 1s => vec2(2px, 5px);
+                    else => vec2(3px, 5px);
+                };
+                clip.radiusX: choose { when s < 1s => 2px; else => 3px; };
+                clip.radiusY: choose { when s < 1s => 1px; else => 2px; };
+                clip.rotation: choose { when s < 1s => 0rad; else => 0.2rad; };
+                children {
+                    rect clippedByEllipse {
+                        origin: vec2(0px, 3px);
+                        size: vec2(6px, 4px);
+                        fill: solid(#FFFFFFFF);
+                    }
+                }
+            }
         }
     }
 }
@@ -659,19 +696,234 @@ render profile 1.0.0 {
         }
     }
     assert!(seen.into_iter().all(|present| present));
+    let mut seen_rect_clip = false;
+    let mut seen_ellipse_clip = false;
+    for clip in scene.clips() {
+        match scene.geometries()[clip.geometry()].data() {
+            CanonicalRenderGeometryData::Rect { origin, size } => {
+                assert!(is_expression(*origin));
+                assert!(is_expression(*size));
+                seen_rect_clip = true;
+            }
+            CanonicalRenderGeometryData::Ellipse {
+                center,
+                radius_x,
+                radius_y,
+                rotation,
+            } => {
+                for descriptor in [center, radius_x, radius_y, rotation] {
+                    assert!(is_expression(*descriptor));
+                }
+                seen_ellipse_clip = true;
+            }
+            other => panic!("unexpected dynamic Clip geometry {other:?}"),
+        }
+    }
+    assert!(seen_rect_clip && seen_ellipse_clip);
 
     let bytes = write_from_compilation(&compilation).expect("exact descriptor FCBC writing");
     let render = load_render(&bytes).expect("exact descriptor product loader");
     let before = evaluate_semantic_draw_list_at(&render, 0.0).expect("first semantic query");
     let after = evaluate_semantic_draw_list_at(&render, 2.0).expect("second semantic query");
-    assert_eq!(before.len(), 7);
-    assert_eq!(after.len(), 7);
+    assert_eq!(before.len(), 9);
+    assert_eq!(after.len(), 9);
     assert!(
         before
             .iter()
             .zip(&after)
             .any(|(before, after)| before.bounds != after.bounds
                 || before.world_matrix != after.world_matrix)
+    );
+}
+
+#[test]
+fn source_exact_image_and_text_descriptors_reach_product_semantics() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+resources {
+    image sprite {
+        source: "assets/fcs-test-rgba8.png";
+        hash: "sha256:a108791d9edc1d9c37644a45ce29d4a20e479711db97daf85375b82924e8fa22";
+        mediaType: "image/png";
+        colorSpace: "srgb";
+        alpha: "straight";
+        sampling: "nearest";
+    }
+    font primary {
+        source: "assets/fcs-test-font.ttf";
+        mediaType: "font/ttf";
+    }
+}
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 16px; height: 16px; }
+    layer main {
+        pass: "overlay";
+        children {
+            image dynamicImage {
+                resource: @sprite;
+                destination.origin: choose {
+                    when s < 1s => vec2(-2px, -2px);
+                    else => vec2(-1px, -1px);
+                };
+                destination.size: choose {
+                    when s < 1s => vec2(4px, 4px);
+                    else => vec2(3px, 2px);
+                };
+                sourceRect.origin: choose {
+                    when s < 1s => vec2(0.0, 0.0);
+                    else => vec2(1.0, 1.0);
+                };
+                sourceRect.size: choose {
+                    when s < 1s => vec2(2.0, 2.0);
+                    else => vec2(1.0, 1.0);
+                };
+            }
+            text dynamicText {
+                content: "A";
+                font: @primary;
+                origin: choose {
+                    when s < 1s => vec2(0px, 0px);
+                    else => vec2(1px, 0px);
+                };
+                size: choose { when s < 2s => 4px; else => 8px; };
+                fill: solid(#FFFFFFFF);
+            }
+        }
+    }
+}
+"#;
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/conformance/render");
+    let compile = |source: &str| {
+        let document = parse_document(source)
+            .into_result()
+            .expect("exact Image/Text source parses");
+        document
+            .canonical_compilation_with_source(
+                source,
+                CompileTimeLimits::default(),
+                &workspace,
+                ResourceLimits::default(),
+            )
+            .unwrap_or_else(|diagnostics| {
+                panic!("exact Image/Text lowering failed: {diagnostics:?}")
+            })
+    };
+    let product = |compilation: &CanonicalCompilation| {
+        let bytes = write_from_compilation(compilation).expect("exact Image/Text FCBC writing");
+        load_render(&bytes).expect("exact Image/Text product loader")
+    };
+
+    let compilation = compile(source);
+    let descriptors = compilation.chart().descriptors().expect("descriptor table");
+    let is_expression = |descriptor: usize| {
+        matches!(
+            descriptors.descriptors()[descriptor].kind(),
+            CanonicalDescriptorKind::Expression(expression)
+                if expression.required_environment().contains(&CanonicalExpressionEnvironment::S)
+        )
+    };
+    let scene = compilation
+        .chart()
+        .render()
+        .expect("canonical Render scene");
+    let image_geometry = scene
+        .geometries()
+        .iter()
+        .find_map(|geometry| match geometry.data() {
+            CanonicalRenderGeometryData::Image {
+                destination,
+                source: Some(source),
+                ..
+            } => Some((destination, source)),
+            _ => None,
+        })
+        .expect("dynamic Image geometry");
+    assert!(
+        image_geometry
+            .0
+            .iter()
+            .chain(image_geometry.1)
+            .all(|descriptor| is_expression(*descriptor))
+    );
+    let text_node = scene
+        .nodes()
+        .iter()
+        .find(|node| node.kind() == CanonicalRenderNodeKind::Text)
+        .expect("dynamic Text node");
+    assert!(is_expression(text_node.origin()));
+    let text_geometry = scene
+        .geometries()
+        .iter()
+        .find_map(|geometry| match geometry.data() {
+            CanonicalRenderGeometryData::Text { glyph_runs, origin } => Some((glyph_runs, origin)),
+            _ => None,
+        })
+        .expect("dynamic Text geometry");
+    assert_eq!(*text_geometry.1, text_node.origin());
+    assert!(is_expression(*text_geometry.1));
+    assert!(
+        text_geometry
+            .0
+            .iter()
+            .all(|run| is_expression(scene.glyph_runs()[*run].size()))
+    );
+
+    let render = product(&compilation);
+    let before = evaluate_semantic_draw_list_at(&render, 0.0).expect("first Image/Text query");
+    let moved = evaluate_semantic_draw_list_at(&render, 1.5).expect("moved Image/Text query");
+    let after = evaluate_semantic_draw_list_at(&render, 3.0).expect("resized Image/Text query");
+    let before_image = before
+        .iter()
+        .find(|operation| operation.kind == NodeKind::Image)
+        .and_then(|operation| operation.image)
+        .expect("first Image payload");
+    let after_image = moved
+        .iter()
+        .find(|operation| operation.kind == NodeKind::Image)
+        .and_then(|operation| operation.image)
+        .expect("second Image payload");
+    assert_eq!(before_image.destination, [-2.0, -2.0, 4.0, 4.0]);
+    assert_eq!(after_image.destination, [-1.0, -1.0, 3.0, 2.0]);
+    assert_eq!(before_image.source, [0.0, 0.0, 2.0, 2.0]);
+    assert_eq!(after_image.source, [1.0, 1.0, 1.0, 1.0]);
+    let before_text = before
+        .iter()
+        .find(|operation| operation.kind == NodeKind::Text)
+        .expect("first Text draw operation");
+    let moved_text = moved
+        .iter()
+        .find(|operation| operation.kind == NodeKind::Text)
+        .expect("moved Text draw operation");
+    let after_text = after
+        .iter()
+        .find(|operation| operation.kind == NodeKind::Text)
+        .expect("resized Text draw operation");
+    assert!(moved_text.bounds[0] > before_text.bounds[0]);
+    assert!(moved_text.bounds[2] > before_text.bounds[2]);
+    assert!(
+        after_text.bounds[2] - after_text.bounds[0] > moved_text.bounds[2] - moved_text.bounds[0]
+    );
+    assert!(
+        after_text.bounds[3] - after_text.bounds[1] > moved_text.bounds[3] - moved_text.bounds[1]
+    );
+    let before_pixels =
+        rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("first Image/Text raster");
+    let after_pixels =
+        rasterize_solid_rgba8_at(&render, 3.0, 16, 16).expect("second Image/Text raster");
+    assert_ne!(before_pixels, after_pixels);
+
+    let invalid_image = source.replace("else => vec2(3px, 2px);", "else => vec2(-1px, 2px);");
+    let invalid_image = product(&compile(&invalid_image));
+    assert_eq!(
+        evaluate_semantic_draw_list_at(&invalid_image, 2.0),
+        Err("render.invalid-geometry")
+    );
+    let invalid_text = source.replace("else => 8px;", "else => 0px;");
+    let invalid_text = product(&compile(&invalid_text));
+    assert_eq!(
+        evaluate_semantic_draw_list_at(&invalid_text, 3.0),
+        Err("render.invalid-geometry")
     );
 }
 

@@ -1372,6 +1372,89 @@ impl<'a> RenderLowerer<'a> {
         }
     }
 
+    fn field_descriptor(
+        &mut self,
+        field: &SchemaField,
+        expected: CanonicalExpressionType,
+    ) -> Result<(usize, Option<TypedValue>), Diagnostic> {
+        let SchemaValue::Expression(expression) = &field.value else {
+            return Err(render_error(
+                "Render descriptor field must be an expression",
+                field.span,
+            ));
+        };
+        self.expression_descriptor(expression, expected)
+    }
+
+    fn vector_component_descriptors(
+        &mut self,
+        field: &SchemaField,
+        element_type: CanonicalExpressionType,
+    ) -> Result<([usize; 2], Option<TypedValue>), Diagnostic> {
+        let SchemaValue::Expression(expression) = &field.value else {
+            return Err(render_error(
+                "Render vector descriptor field must be an expression",
+                field.span,
+            ));
+        };
+        let component = |name: &str| SourceExpression::FieldAccess {
+            base: Box::new(expression.clone()),
+            field: name.to_owned(),
+            span: expression.span(),
+        };
+        let (x, x_value) = self.expression_descriptor(&component("x"), element_type.clone())?;
+        let (y, y_value) = self.expression_descriptor(&component("y"), element_type)?;
+        let value = match (x_value, y_value) {
+            (Some(x), Some(y)) => Some(TypedValue::vec2(x, y).map_err(|_| {
+                render_error("Render vector components differ in type", field.span)
+            })?),
+            _ => None,
+        };
+        Ok(([x, y], value))
+    }
+
+    fn point_descriptors(&mut self, field: &SchemaField) -> Result<Vec<usize>, Diagnostic> {
+        let SchemaValue::Expression(expression) = &field.value else {
+            return Err(render_error(
+                "Render points must be an expression array",
+                field.span,
+            ));
+        };
+        match crate::elaborator::evaluate_metadata_expression(expression, self.definitions) {
+            Ok(TypedValue::Array { values, .. }) => values
+                .into_iter()
+                .map(|value| {
+                    let [x, y] = render_vec2_length(value, field.span)?;
+                    self.descriptor(
+                        TypedValue::vec2(TypedValue::Length(x), TypedValue::Length(y))
+                            .expect("homogeneous length vector"),
+                    )
+                })
+                .collect(),
+            Ok(other) => Err(render_error(
+                format!("Render points must be an array, found {}", other.ty()),
+                field.span,
+            )),
+            Err(constant_error) => {
+                let SourceExpression::Array { elements, .. } = expression else {
+                    return Err(constant_error);
+                };
+                elements
+                    .iter()
+                    .map(|element| {
+                        self.expression_descriptor(
+                            element,
+                            CanonicalExpressionType::Vec2(Box::new(
+                                CanonicalExpressionType::Length,
+                            )),
+                        )
+                        .map(|(descriptor, _)| descriptor)
+                    })
+                    .collect()
+            }
+        }
+    }
+
     fn dynamic_opacity_descriptor(&mut self, field: &SchemaField) -> Result<usize, Diagnostic> {
         let SchemaValue::Expression(expression) = &field.value else {
             return Err(render_error(
@@ -2347,8 +2430,11 @@ impl<'a> RenderLowerer<'a> {
         }
         let size_field = render_body_field(&node.items, "size")
             .ok_or_else(|| render_error("Text requires size", node.span))?;
-        let size = render_length(render_value(size_field, self.definitions)?, size_field.span)?;
-        if size <= 0.0 {
+        let (size_descriptor, static_size) =
+            self.field_descriptor(size_field, CanonicalExpressionType::Length)?;
+        if let Some(value) = static_size
+            && render_length(value, size_field.span)? <= 0.0
+        {
             return Err(render_error(
                 "Text size must be greater than zero",
                 size_field.span,
@@ -2441,7 +2527,6 @@ impl<'a> RenderLowerer<'a> {
         }
         drop(fonts);
 
-        let size_descriptor = self.descriptor(TypedValue::Length(size))?;
         let mut glyph_run_refs = Vec::with_capacity(shaped_runs.len());
         for (index, run) in shaped_runs.into_iter().enumerate() {
             let font_id = self.resource_id(&run.font_name, font_field.span)?;
@@ -2488,16 +2573,20 @@ impl<'a> RenderLowerer<'a> {
                 let path = render_scoped_body_path(scope, "size");
                 let field = render_scoped_body_field(&node.items, scope, "size")?
                     .ok_or_else(|| render_error(format!("Rect requires {path}"), node.span))?;
-                let size = render_vec2_length(render_value(field, self.definitions)?, field.span)?;
-                if size.iter().any(|value| *value < 0.0) {
+                let (size, static_size) = self.field_descriptor(
+                    field,
+                    CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Length)),
+                )?;
+                if let Some(value) = static_size
+                    && render_vec2_length(value, field.span)?
+                        .iter()
+                        .any(|value| *value < 0.0)
+                {
                     return Err(render_error("Rect size must be non-negative", field.span));
                 }
                 Ok(CanonicalRenderGeometryData::Rect {
                     origin: origin.expect("Rect lowering provides an origin"),
-                    size: self.descriptor(
-                        TypedValue::vec2(TypedValue::Length(size[0]), TypedValue::Length(size[1]))
-                            .expect("homogeneous length vector"),
-                    )?,
+                    size,
                 })
             }
             CanonicalRenderNodeKind::RoundedRect => {
@@ -2506,11 +2595,15 @@ impl<'a> RenderLowerer<'a> {
                     render_scoped_body_field(&node.items, scope, "size")?.ok_or_else(|| {
                         render_error(format!("RoundedRect requires {size_path}"), node.span)
                     })?;
-                let size = render_vec2_length(
-                    render_value(size_field, self.definitions)?,
-                    size_field.span,
+                let (size, static_size) = self.field_descriptor(
+                    size_field,
+                    CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Length)),
                 )?;
-                if size.iter().any(|value| *value < 0.0) {
+                if let Some(value) = static_size
+                    && render_vec2_length(value, size_field.span)?
+                        .iter()
+                        .any(|value| *value < 0.0)
+                {
                     return Err(render_error(
                         "RoundedRect size must be non-negative",
                         size_field.span,
@@ -2521,21 +2614,16 @@ impl<'a> RenderLowerer<'a> {
                     .ok_or_else(|| {
                         render_error(format!("RoundedRect requires {radius_path}"), node.span)
                     })?;
-                let radius = render_length(
-                    render_value(radius_field, self.definitions)?,
-                    radius_field.span,
-                )?;
-                if radius < 0.0 {
+                let (radius, static_radius) =
+                    self.field_descriptor(radius_field, CanonicalExpressionType::Length)?;
+                if let Some(value) = static_radius
+                    && render_length(value, radius_field.span)? < 0.0
+                {
                     return Err(render_error(
                         "RoundedRect radius must be non-negative",
                         radius_field.span,
                     ));
                 }
-                let size = self.descriptor(
-                    TypedValue::vec2(TypedValue::Length(size[0]), TypedValue::Length(size[1]))
-                        .expect("homogeneous length vector"),
-                )?;
-                let radius = self.descriptor(TypedValue::Length(radius))?;
                 Ok(CanonicalRenderGeometryData::RoundedRect {
                     origin: origin.expect("RoundedRect lowering provides an origin"),
                     size,
@@ -2544,33 +2632,46 @@ impl<'a> RenderLowerer<'a> {
             }
             CanonicalRenderNodeKind::Circle => {
                 let center = match render_scoped_body_field(&node.items, scope, "center")? {
-                    Some(field) => render_value(field, self.definitions)?,
-                    None => zero_length_vec(),
+                    Some(field) => {
+                        self.field_descriptor(
+                            field,
+                            CanonicalExpressionType::Vec2(Box::new(
+                                CanonicalExpressionType::Length,
+                            )),
+                        )?
+                        .0
+                    }
+                    None => self.descriptor(zero_length_vec())?,
                 };
                 let radius_path = render_scoped_body_path(scope, "radius");
                 let radius_field = render_scoped_body_field(&node.items, scope, "radius")?
                     .ok_or_else(|| {
                         render_error(format!("Circle requires {radius_path}"), node.span)
                     })?;
-                let radius = render_length(
-                    render_value(radius_field, self.definitions)?,
-                    radius_field.span,
-                )?;
-                if radius < 0.0 {
+                let (radius, static_radius) =
+                    self.field_descriptor(radius_field, CanonicalExpressionType::Length)?;
+                if let Some(value) = static_radius
+                    && render_length(value, radius_field.span)? < 0.0
+                {
                     return Err(render_error(
                         "Circle radius must be non-negative",
                         radius_field.span,
                     ));
                 }
-                Ok(CanonicalRenderGeometryData::Circle {
-                    center: self.descriptor(center)?,
-                    radius: self.descriptor(TypedValue::Length(radius))?,
-                })
+                Ok(CanonicalRenderGeometryData::Circle { center, radius })
             }
             CanonicalRenderNodeKind::Ellipse => {
                 let center = match render_scoped_body_field(&node.items, scope, "center")? {
-                    Some(field) => render_value(field, self.definitions)?,
-                    None => zero_length_vec(),
+                    Some(field) => {
+                        self.field_descriptor(
+                            field,
+                            CanonicalExpressionType::Vec2(Box::new(
+                                CanonicalExpressionType::Length,
+                            )),
+                        )?
+                        .0
+                    }
+                    None => self.descriptor(zero_length_vec())?,
                 };
                 let radius_x_path = render_scoped_body_path(scope, "radiusX");
                 let radius_y_path = render_scoped_body_path(scope, "radiusY");
@@ -2582,24 +2683,28 @@ impl<'a> RenderLowerer<'a> {
                     .ok_or_else(|| {
                         render_error(format!("Ellipse requires {radius_y_path}"), node.span)
                     })?;
-                let radius_x = render_length(
-                    render_value(radius_x_field, self.definitions)?,
-                    radius_x_field.span,
-                )?;
-                let radius_y = render_length(
-                    render_value(radius_y_field, self.definitions)?,
-                    radius_y_field.span,
-                )?;
-                if radius_x < 0.0 || radius_y < 0.0 {
+                let (radius_x, static_radius_x) =
+                    self.field_descriptor(radius_x_field, CanonicalExpressionType::Length)?;
+                let (radius_y, static_radius_y) =
+                    self.field_descriptor(radius_y_field, CanonicalExpressionType::Length)?;
+                if static_radius_x
+                    .map(|value| render_length(value, radius_x_field.span))
+                    .transpose()?
+                    .is_some_and(|value| value < 0.0)
+                    || static_radius_y
+                        .map(|value| render_length(value, radius_y_field.span))
+                        .transpose()?
+                        .is_some_and(|value| value < 0.0)
+                {
                     return Err(render_error(
                         "Ellipse radii must be non-negative",
                         node.span,
                     ));
                 }
                 Ok(CanonicalRenderGeometryData::Ellipse {
-                    center: self.descriptor(center)?,
-                    radius_x: self.descriptor(TypedValue::Length(radius_x))?,
-                    radius_y: self.descriptor(TypedValue::Length(radius_y))?,
+                    center,
+                    radius_x,
+                    radius_y,
                     rotation: rotation.expect("Ellipse lowering provides a rotation"),
                 })
             }
@@ -2609,23 +2714,7 @@ impl<'a> RenderLowerer<'a> {
                     .ok_or_else(|| {
                         render_error(format!("Polygon requires {points_path}"), node.span)
                     })?;
-                let points = render_value(points_field, self.definitions)?;
-                let TypedValue::Array { values, .. } = points else {
-                    return Err(render_error(
-                        "Polygon points must be an array of vec2<length>",
-                        points_field.span,
-                    ));
-                };
-                let points = values
-                    .into_iter()
-                    .map(|value| {
-                        let [x, y] = render_vec2_length(value, points_field.span)?;
-                        self.descriptor(
-                            TypedValue::vec2(TypedValue::Length(x), TypedValue::Length(y))
-                                .expect("homogeneous length vector"),
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                let points = self.point_descriptors(points_field)?;
                 Ok(CanonicalRenderGeometryData::Polygon { points })
             }
             CanonicalRenderNodeKind::Path => {
@@ -2746,21 +2835,36 @@ impl<'a> RenderLowerer<'a> {
             kind,
             CanonicalRenderNodeKind::Rect | CanonicalRenderNodeKind::RoundedRect
         ) {
-            let value = match render_scoped_body_field(&node.items, Some("clip"), "origin")? {
-                Some(field) => render_value(field, self.definitions)?,
-                None => TypedValue::vec2(TypedValue::Length(0.0), TypedValue::Length(0.0))
-                    .expect("homogeneous length vector"),
-            };
-            Some(self.descriptor(value)?)
+            Some(
+                match render_scoped_body_field(&node.items, Some("clip"), "origin")? {
+                    Some(field) => {
+                        self.field_descriptor(
+                            field,
+                            CanonicalExpressionType::Vec2(Box::new(
+                                CanonicalExpressionType::Length,
+                            )),
+                        )?
+                        .0
+                    }
+                    None => self.descriptor(
+                        TypedValue::vec2(TypedValue::Length(0.0), TypedValue::Length(0.0))
+                            .expect("homogeneous length vector"),
+                    )?,
+                },
+            )
         } else {
             None
         };
         let rotation = if kind == CanonicalRenderNodeKind::Ellipse {
-            let value = match render_scoped_body_field(&node.items, Some("clip"), "rotation")? {
-                Some(field) => render_angle(render_value(field, self.definitions)?, field.span)?,
-                None => 0.0,
-            };
-            Some(self.descriptor(TypedValue::Angle(value))?)
+            Some(
+                match render_scoped_body_field(&node.items, Some("clip"), "rotation")? {
+                    Some(field) => {
+                        self.field_descriptor(field, CanonicalExpressionType::Angle)?
+                            .0
+                    }
+                    None => self.descriptor(TypedValue::Angle(0.0))?,
+                },
+            )
         } else {
             None
         };
@@ -2836,35 +2940,29 @@ impl<'a> RenderLowerer<'a> {
             TypedValue::vec2(TypedValue::Float(1.0), TypedValue::Float(1.0))
                 .expect("homogeneous float vector")
         };
-        let position = self.descriptor(render_body_value_or(
-            &node.items,
-            "position",
-            zero_length_vec(),
-            self.definitions,
-            Ok::<_, Diagnostic>,
-        )?)?;
-        let origin_value = render_body_value_or(
-            &node.items,
-            "origin",
-            zero_length_vec(),
-            self.definitions,
-            Ok::<_, Diagnostic>,
-        )?;
-        let origin = self.descriptor(origin_value)?;
-        let rotation = self.descriptor(TypedValue::Angle(render_body_value_or(
-            &node.items,
-            "rotation",
-            0.0,
-            self.definitions,
-            |value| render_angle(value, node.span),
-        )?))?;
-        let scale = self.descriptor(render_body_value_or(
-            &node.items,
-            "scale",
-            one_float_vec(),
-            self.definitions,
-            Ok::<_, Diagnostic>,
-        )?)?;
+        let vector_length =
+            || CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Length));
+        let vector_float =
+            || CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Float));
+        let position = match render_body_field(&node.items, "position") {
+            Some(field) => self.field_descriptor(field, vector_length())?.0,
+            None => self.descriptor(zero_length_vec())?,
+        };
+        let origin = match render_body_field(&node.items, "origin") {
+            Some(field) => self.field_descriptor(field, vector_length())?.0,
+            None => self.descriptor(zero_length_vec())?,
+        };
+        let rotation = match render_body_field(&node.items, "rotation") {
+            Some(field) => {
+                self.field_descriptor(field, CanonicalExpressionType::Angle)?
+                    .0
+            }
+            None => self.descriptor(TypedValue::Angle(0.0))?,
+        };
+        let scale = match render_body_field(&node.items, "scale") {
+            Some(field) => self.field_descriptor(field, vector_float())?.0,
+            None => self.descriptor(one_float_vec())?,
+        };
         let pattern = if node.kind == CanonicalRenderNodeKind::ClipGroup {
             None
         } else {
@@ -2973,52 +3071,16 @@ impl<'a> RenderLowerer<'a> {
                     .ok_or_else(|| render_error("Line requires start", node.span))?;
                 let end_field = render_body_field(&node.items, "end")
                     .ok_or_else(|| render_error("Line requires end", node.span))?;
-                let start = render_vec2_length(
-                    render_value(start_field, self.definitions)?,
-                    start_field.span,
-                )?;
-                let end =
-                    render_vec2_length(render_value(end_field, self.definitions)?, end_field.span)?;
-                (
-                    Some(CanonicalRenderGeometryData::Line {
-                        start: self.descriptor(
-                            TypedValue::vec2(
-                                TypedValue::Length(start[0]),
-                                TypedValue::Length(start[1]),
-                            )
-                            .expect("homogeneous length vector"),
-                        )?,
-                        end: self.descriptor(
-                            TypedValue::vec2(
-                                TypedValue::Length(end[0]),
-                                TypedValue::Length(end[1]),
-                            )
-                            .expect("homogeneous length vector"),
-                        )?,
-                    }),
-                    None,
-                )
+                let vector_length =
+                    || CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Length));
+                let start = self.field_descriptor(start_field, vector_length())?.0;
+                let end = self.field_descriptor(end_field, vector_length())?.0;
+                (Some(CanonicalRenderGeometryData::Line { start, end }), None)
             }
             CanonicalRenderNodeKind::Polyline => {
                 let points_field = render_body_field(&node.items, "points")
                     .ok_or_else(|| render_error("Polyline requires points", node.span))?;
-                let points = render_value(points_field, self.definitions)?;
-                let TypedValue::Array { values, .. } = points else {
-                    return Err(render_error(
-                        "Polyline points must be an array of vec2<length>",
-                        points_field.span,
-                    ));
-                };
-                let points = values
-                    .into_iter()
-                    .map(|value| {
-                        let [x, y] = render_vec2_length(value, points_field.span)?;
-                        self.descriptor(
-                            TypedValue::vec2(TypedValue::Length(x), TypedValue::Length(y))
-                                .expect("homogeneous length vector"),
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                let points = self.point_descriptors(points_field)?;
                 (
                     Some(CanonicalRenderGeometryData::Polyline { points }),
                     // Render section 14.2 requires at least one of the two, so a declared
@@ -3111,17 +3173,22 @@ impl<'a> RenderLowerer<'a> {
                 let resource_id = self.resource_id(&resource_name, resource_field.span)?;
                 let destination_origin_field = render_body_field(&node.items, "destination.origin")
                     .ok_or_else(|| render_error("Image requires destination.origin", node.span))?;
-                let destination_origin = render_vec2_length(
-                    render_value(destination_origin_field, self.definitions)?,
-                    destination_origin_field.span,
+                let (destination_origin, _) = self.vector_component_descriptors(
+                    destination_origin_field,
+                    CanonicalExpressionType::Length,
                 )?;
                 let destination_size_field = render_body_field(&node.items, "destination.size")
                     .ok_or_else(|| render_error("Image requires destination.size", node.span))?;
-                let destination_size = render_vec2_length(
-                    render_value(destination_size_field, self.definitions)?,
-                    destination_size_field.span,
-                )?;
-                if destination_size.iter().any(|value| *value < 0.0) {
+                let (destination_size, static_destination_size) = self
+                    .vector_component_descriptors(
+                        destination_size_field,
+                        CanonicalExpressionType::Length,
+                    )?;
+                if let Some(value) = static_destination_size
+                    && render_vec2_length(value, destination_size_field.span)?
+                        .iter()
+                        .any(|value| *value < 0.0)
+                {
                     return Err(render_error(
                         "Image destination.size must be non-negative",
                         destination_size_field.span,
@@ -3137,16 +3204,23 @@ impl<'a> RenderLowerer<'a> {
                 }
                 let source = match (source_origin_field, source_size_field) {
                     (Some(origin_field), Some(size_field)) => {
-                        let source_origin = render_vec2_float(
-                            render_value(origin_field, self.definitions)?,
-                            origin_field.span,
+                        let (source_origin, static_source_origin) = self
+                            .vector_component_descriptors(
+                                origin_field,
+                                CanonicalExpressionType::Float,
+                            )?;
+                        let (source_size, static_source_size) = self.vector_component_descriptors(
+                            size_field,
+                            CanonicalExpressionType::Float,
                         )?;
-                        let source_size = render_vec2_float(
-                            render_value(size_field, self.definitions)?,
-                            size_field.span,
-                        )?;
-                        if source_origin.iter().any(|value| *value < 0.0)
-                            || source_size.iter().any(|value| *value < 0.0)
+                        if static_source_origin
+                            .map(|value| render_vec2_float(value, origin_field.span))
+                            .transpose()?
+                            .is_some_and(|value| value.iter().any(|component| *component < 0.0))
+                            || static_source_size
+                                .map(|value| render_vec2_float(value, size_field.span))
+                                .transpose()?
+                                .is_some_and(|value| value.iter().any(|component| *component < 0.0))
                         {
                             return Err(render_error(
                                 "Image sourceRect origin and size must be non-negative",
@@ -3154,20 +3228,20 @@ impl<'a> RenderLowerer<'a> {
                             ));
                         }
                         Some([
-                            self.descriptor(TypedValue::Float(source_origin[0]))?,
-                            self.descriptor(TypedValue::Float(source_origin[1]))?,
-                            self.descriptor(TypedValue::Float(source_size[0]))?,
-                            self.descriptor(TypedValue::Float(source_size[1]))?,
+                            source_origin[0],
+                            source_origin[1],
+                            source_size[0],
+                            source_size[1],
                         ])
                     }
                     (None, None) => None,
                     _ => unreachable!("paired sourceRect fields were checked"),
                 };
                 let destination = [
-                    self.descriptor(TypedValue::Length(destination_origin[0]))?,
-                    self.descriptor(TypedValue::Length(destination_origin[1]))?,
-                    self.descriptor(TypedValue::Length(destination_size[0]))?,
-                    self.descriptor(TypedValue::Length(destination_size[1]))?,
+                    destination_origin[0],
+                    destination_origin[1],
+                    destination_size[0],
+                    destination_size[1],
                 ];
                 (
                     Some(CanonicalRenderGeometryData::Image {
