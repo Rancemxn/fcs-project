@@ -826,6 +826,10 @@ git diff --check
   semantic/raster fixtures executed through both the domain and CLI product lanes;
   source `clipGroup` now lowers all six allowed `clip.*` geometry kinds into the canonical Clip/
   Geometry ownership chain, with a Rect source-to-FCBC-to-loader-to-semantic/raster fixture and
-  stable invalid-kind/fill-rule evidence; exact-head Full Gate evidence for this combined delta is
-  pending. Broader canonical writer coverage, resource semantics, and complete semantic/raster
-  conformance remain open under #296/#9.
+  stable invalid-kind/fill-rule evidence; source Text fallback lists stay Render-owned direct
+  reference lists without widening Core arrays, and node visibility now preserves exact runtime Bool
+  descriptors. This combined delta passed exact-head Full Gate run `33321167413` (`push`) on head
+  `3e14bcae5a51b3df66fda6b739bbeb4c29cbbe29`, including all 922 nextest cases and the ten bounded
+  fuzz targets. Broader canonical writer coverage, resource semantics, complete semantic/raster
+  conformance, final cross-domain audit, joint review, and five-domain re-freeze remain open under
+  #296/#9.

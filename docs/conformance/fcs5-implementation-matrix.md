@@ -246,7 +246,8 @@ record makes exact-arclength priority and the shared pattern configuration expli
 ImagePattern lowering now has focused product evidence, and the checked-in Rect source and contract
 `render/image-pattern-sibling-fields.{fcs,contract.md}` are active with a non-empty Rect dash. The
 separate ImagePattern fill and Line Stroke fixtures provide machine semantic/raster oracles. No
-same-head Full Gate or final Render closure is claimed.
+final Render closure is claimed; the combined delta passed exact-head Full Gate run `33321167413`
+on head `3e14bcae5a51b3df66fda6b739bbeb4c29cbbe29`.
 Issue #531 then makes a source `polyline` or `polygon` able to declare that stroke on the same
 terms as #525 gave `circle`, bound by
 `source_product::{source_polyline_and_polygon_strokes_reach_the_product_raster,source_polygon_fill_and_stroke_keep_separate_paint_records,source_polyline_without_fill_or_stroke_is_rejected}`.
@@ -279,6 +280,11 @@ evidence is bound by `source_product::canonical_rect_strokes_reach_the_product_r
 Text strokes now pass through source lowering, the canonical FCBC writer/loader, semantic DrawOps,
 and the existing closed glyph-contour stroke kernel; the fill-disabled raster assertion in
 `source_product::checked_in_text_fixture_reaches_product_raster` proves independent stroke coverage.
+The source Text fallback list is parsed as the Render-owned explicit `[@font, ...]` reference list
+instead of widening Core `array<T>` to entity values; `canonical_chart::canonical_source_text_shapes_against_the_resolved_font_bundle`
+binds ordered primary/fallback shaping against embedded font bytes. Node `visibility` now lowers
+constant or runtime exact Bool descriptors through the shared expression-DAG path; the nested
+isolation regression uses runtime visibility to prove the hidden-subtree and empty-`copy` boundary.
 Solid and gradient paint geometry/colors now use exact source descriptors through canonical roots,
 FCBC, and product semantic queries; evidence is bound by
 `source_product::source_line_stroke_reaches_product_render_loader`,
@@ -292,7 +298,8 @@ lowering now accepts the six specified `clip.kind` values, shares the existing g
 constructs `Node.clipRef -> Clip.geometryRef -> Geometry`, and carries a Rect Clip through the product
 writer, loader, semantic clip chain, and reference raster. Focused evidence is bound by
 `source_product::{source_clip_group_reaches_product_semantic_and_raster_paths,source_clip_group_rejects_invalid_kind_and_fill_rule_with_clip_category,source_clip_group_lowers_every_allowed_geometry_kind}` and
-`render.{clip-rect-8x8,source.invalid.clip-kind}`. Exact-head Full Gate, broader Render closure, and
+`render.{clip-rect-8x8,source.invalid.clip-kind}`. The combined delta passed exact-head Full Gate run
+`33321167413` on head `3e14bcae5a51b3df66fda6b739bbeb4c29cbbe29`; broader Render audit and
 Frozen/final I10 evidence remain open.
 
 Source Render layer attachments now resolve `world`, `screen`, `line(@id)`, and `note(@id)` against
@@ -323,8 +330,8 @@ evaluation, and full-coverage reference rasters. The two-resource shared-sibling
 remains additionally covered in the source-product lane and broader Render conformance.
 `render.clip-rect-8x8` additionally binds a source ClipGroup to its canonical Clip-owned Rect,
 semantic ancestor clip chain, and independently derived 8x8 RGBA8 mask; the matching invalid source
-fixture binds `render.invalid-clip`. These additions have local static evidence only until an exact-head
-Full Gate succeeds.
+fixture binds `render.invalid-clip`. These additions passed exact-head Full Gate run `33321167413` on
+head `3e14bcae5a51b3df66fda6b739bbeb4c29cbbe29`.
 
 ## Bounded Render Text fill semantic/raster delta
 
