@@ -1405,7 +1405,7 @@ impl<'a> RenderLowerer<'a> {
         let (x, x_value) = self.expression_descriptor(&component("x"), element_type.clone())?;
         let (y, y_value) = self.expression_descriptor(&component("y"), element_type)?;
         let value = match (x_value, y_value) {
-            (Some(x), Some(y)) => Some(TypedValue::vec2(x, y).map_err(|_| {
+            (Some(x), Some(y)) => Some(TypedValue::vec2(x, y).ok_or_else(|| {
                 render_error("Render vector components differ in type", field.span)
             })?),
             _ => None,
