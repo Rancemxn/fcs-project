@@ -1825,12 +1825,18 @@ mod tests {
             .iter()
             .position(|node| node.parent.is_none() && node.kind == NodeKind::ClipGroup)
             .expect("fixture has a later root sibling");
+        let rect_geometry = render
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Rect)
+            .expect("fixture has a Rect")
+            .geometry_ref;
         // The bytes have already passed loader validation. Making this root
         // drawable isolates traversal order without constructing another full
         // RenderSection fixture.
         render.nodes[root_index].kind = NodeKind::Rect;
         render.nodes[root_index].clip_ref = None;
-        render.nodes[root_index].geometry_ref = None;
+        render.nodes[root_index].geometry_ref = rect_geometry;
         render.nodes[root_index].fill_paint = None;
         render.nodes[root_index].stroke_ref = None;
         render.nodes[path_index].z_order = 10;

@@ -3059,7 +3059,6 @@ render profile 1.0.0 {
         if node.kind == NodeKind::Path {
             node.fill_paint = None;
         } else {
-            node.geometry_ref = None;
             node.fill_paint = None;
             node.stroke_ref = None;
         }
