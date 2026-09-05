@@ -18,10 +18,11 @@ pub use loader::{
     DecodedRenderChart, GeometryData, NodeKind, PaintData, load_render, load_render_with_limits,
 };
 pub use semantic::{
-    DrawOp, GradientStopDrawOp, ImageDrawOp, ImagePatternDrawOp, IsolationDrawOp,
-    LinearGradientDrawOp, RadialGradientDrawOp, StrokeDrawOp, evaluate_semantic_draw_list,
-    evaluate_semantic_draw_list_at, rasterize_solid_rgba8, rasterize_solid_rgba8_at,
-    rasterize_solid_rgba8_with_limits, rasterize_solid_rgba8_with_limits_at,
+    DrawOp, GlyphDrawOp, GlyphRunDrawOp, GradientStopDrawOp, ImageDrawOp, ImagePatternDrawOp,
+    IsolationDrawOp, LinearGradientDrawOp, RadialGradientDrawOp, StrokeDrawOp, TextDrawOp,
+    evaluate_semantic_draw_list, evaluate_semantic_draw_list_at, rasterize_solid_rgba8,
+    rasterize_solid_rgba8_at, rasterize_solid_rgba8_with_limits,
+    rasterize_solid_rgba8_with_limits_at,
 };
 pub use writer::{
     ANALYTIC_NOTE_TEXT_ID, FONT_RESOURCE_TEXT_ID, MALFORMED_RESOURCE_TEXT_ID, PNG_RESOURCE_TEXT_ID,
@@ -443,21 +444,13 @@ mod tests {
         !crc
     }
 
-    fn section_entry(bytes: &[u8], section_type: u32) -> usize {
-        let section_count = u32_at(bytes, 36) as usize;
-        let table_offset = u64_at(bytes, 40) as usize;
-        (0..section_count)
+    fn mutate_render_section(mut bytes: Vec<u8>, mutate: impl FnOnce(&mut [u8])) -> Vec<u8> {
+        let section_count = u32_at(&bytes, 36) as usize;
+        let table_offset = u64_at(&bytes, 40) as usize;
+        let entry = (0..section_count)
             .map(|index| table_offset + index * 40)
-            .find(|entry| u32_at(bytes, *entry) == section_type)
-            .expect("fixture section entry")
-    }
-
-    fn mutate_section(
-        mut bytes: Vec<u8>,
-        section_type: u32,
-        mutate: impl FnOnce(&mut [u8]),
-    ) -> Vec<u8> {
-        let entry = section_entry(&bytes, section_type);
+            .find(|entry| u32_at(&bytes, *entry) == 14)
+            .expect("Render section entry");
         let offset = u64_at(&bytes, entry + 16) as usize;
         let length = u64_at(&bytes, entry + 24) as usize;
         mutate(&mut bytes[offset..offset + length]);
@@ -466,28 +459,17 @@ mod tests {
         bytes
     }
 
-    fn mutate_render_section(bytes: Vec<u8>, mutate: impl FnOnce(&mut [u8])) -> Vec<u8> {
-        mutate_section(bytes, 14, mutate)
-    }
-
-    fn render_table_record_offsets(section: &[u8], table_index: usize) -> Vec<usize> {
-        assert!(table_index < 8, "Render table index");
-        let mut offset = 68usize;
-        for current in 0..8 {
-            let mut records = Vec::new();
-            for _ in 0..u32_at(section, 36 + current * 4) {
-                records.push(offset);
-                offset += u32_at(section, offset) as usize;
-            }
-            if current == table_index {
-                return records;
-            }
-        }
-        unreachable!()
-    }
-
     fn node_record_offsets(section: &[u8]) -> Vec<usize> {
-        render_table_record_offsets(section, 1)
+        let mut offset = 68usize;
+        for _ in 0..u32_at(section, 36) {
+            offset += u32_at(section, offset) as usize;
+        }
+        let mut nodes = Vec::new();
+        for _ in 0..u32_at(section, 40) {
+            nodes.push(offset);
+            offset += u32_at(section, offset) as usize;
+        }
+        nodes
     }
 
     #[test]
@@ -512,133 +494,6 @@ mod tests {
         assert!(!draw.is_empty());
         let pixels = rasterize_solid_rgba8(&render, 4, 4).expect("solid raster");
         assert_eq!(pixels.len(), 4 * 4 * 4);
-    }
-
-    #[test]
-    fn render_binary_mutations_preserve_record_and_descriptor_categories() {
-        let mut checksum = render_fixture();
-        let render_entry = section_entry(&checksum, 14);
-        checksum[render_entry + 32] ^= 1;
-        assert_eq!(load_render(&checksum), Err("fcbc.section-checksum"));
-
-        let node_tail = mutate_render_section(render_fixture(), |section| {
-            let node = node_record_offsets(section)[0];
-            assert_eq!(u32_at(section, node), 124);
-            // Claim four bytes from the following record as an unregistered NodeRecord tail.
-            section[node..node + 4].copy_from_slice(&128u32.to_le_bytes());
-        });
-        assert_eq!(load_render(&node_tail), Err("render.invalid-record"));
-
-        let node_cases = [
-            (
-                "node kind",
-                16,
-                99u16.to_le_bytes().to_vec(),
-                "render.invalid-geometry",
-            ),
-            (
-                "zero node ID",
-                8,
-                0u64.to_le_bytes().to_vec(),
-                "render.invalid-graph",
-            ),
-            (
-                "Group geometry reference",
-                88,
-                0u32.to_le_bytes().to_vec(),
-                "render.invalid-reference",
-            ),
-            (
-                "position descriptor type",
-                64,
-                3u32.to_le_bytes().to_vec(),
-                "render.invalid-descriptor",
-            ),
-            (
-                "composite enum",
-                104,
-                99u16.to_le_bytes().to_vec(),
-                "render.invalid-composite",
-            ),
-        ];
-        for (name, field_offset, replacement, category) in node_cases {
-            let bytes = mutate_render_section(render_fixture(), |section| {
-                let node = node_record_offsets(section)[0];
-                let field = node + field_offset;
-                section[field..field + replacement.len()].copy_from_slice(&replacement);
-            });
-            assert_eq!(load_render(&bytes), Err(category), "{name}");
-        }
-
-        let root_range = mutate_render_section(render_fixture(), |section| {
-            let layer = render_table_record_offsets(section, 0)[0];
-            section[layer + 28..layer + 32].copy_from_slice(&1u32.to_le_bytes());
-        });
-        assert_eq!(load_render(&root_range), Err("render.invalid-graph"));
-
-        let geometry_key = mutate_render_section(render_fixture(), |section| {
-            let rect = render_table_record_offsets(section, 2)
-                .into_iter()
-                .find(|record| u16_at(section, record + 16) == 3)
-                .expect("fixture Rect GeometryRecord");
-            let duplicate_key = u32_at(section, rect + 52).to_le_bytes();
-            section[rect + 32..rect + 36].copy_from_slice(&duplicate_key);
-        });
-        assert_eq!(load_render(&geometry_key), Err("render.invalid-geometry"));
-
-        let table_cases = [
-            ("paint kind", 4, 16, "render.invalid-paint"),
-            ("stroke cap", 5, 28, "render.invalid-stroke"),
-            ("clip fill rule", 6, 18, "render.invalid-clip"),
-        ];
-        for (name, table_index, field_offset, category) in table_cases {
-            let bytes = mutate_render_section(render_fixture(), |section| {
-                let record = render_table_record_offsets(section, table_index)[0];
-                section[record + field_offset..record + field_offset + 2]
-                    .copy_from_slice(&99u16.to_le_bytes());
-            });
-            assert_eq!(load_render(&bytes), Err(category), "{name}");
-        }
-
-        let resource_cases = [
-            ("missing image", 1, "render.resource-not-found"),
-            (
-                "font as image",
-                resource_id(FONT_RESOURCE_TEXT_ID),
-                "render.resource-type-mismatch",
-            ),
-            (
-                "unsupported image",
-                resource_id(UNSUPPORTED_RESOURCE_TEXT_ID),
-                "render.resource-capability-missing",
-            ),
-            (
-                "malformed image",
-                resource_id(MALFORMED_RESOURCE_TEXT_ID),
-                "render.resource-decode-failed",
-            ),
-        ];
-        for (name, resource, category) in resource_cases {
-            let bytes = mutate_render_section(render_fixture(), |section| {
-                let image = render_table_record_offsets(section, 2)
-                    .into_iter()
-                    .find(|record| u16_at(section, record + 16) == 11)
-                    .expect("fixture Image GeometryRecord");
-                assert_eq!(
-                    u64_at(section, image + 44),
-                    resource_id(PNG_RESOURCE_TEXT_ID)
-                );
-                section[image + 44..image + 52].copy_from_slice(&resource.to_le_bytes());
-            });
-            assert_eq!(load_render(&bytes), Err(category), "{name}");
-        }
-
-        let baked_curve = mutate_section(render_fixture(), 11, |section| {
-            assert!(u32_at(section, 0) > 0, "fixture has no descriptors");
-            // Tracks begins with count:u32; the first Record's descriptor-kind byte is at +13.
-            section[13] = 5;
-        });
-        assert_eq!(load_render(&baked_curve), Err("fcbc.forbidden-descriptor"));
     }
 
     #[test]

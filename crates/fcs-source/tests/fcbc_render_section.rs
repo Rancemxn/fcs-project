@@ -28,8 +28,8 @@ use fcbc_render_reference_assets::{
 };
 use fcbc_render_reference_loader::{PaintData, ParsedValue, PathCommand};
 use fcbc_render_reference_writer::{
-    FONT_RESOURCE_TEXT_ID, MALFORMED_RESOURCE_TEXT_ID, PNG_RESOURCE_TEXT_ID, RenderAssets,
-    UNSUPPORTED_RESOURCE_TEXT_ID, WEBP_RESOURCE_TEXT_ID, resource_id, write_nonempty_render,
+    FONT_RESOURCE_TEXT_ID, PNG_RESOURCE_TEXT_ID, RenderAssets, WEBP_RESOURCE_TEXT_ID, resource_id,
+    write_nonempty_render,
 };
 
 fn repository_root() -> PathBuf {
@@ -103,6 +103,10 @@ fn static_fixture() -> Vec<u8> {
 fn decode_hex_file(path: &Path) -> Vec<u8> {
     let source = fs::read_to_string(path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    decode_lower_hex(&source, &path.display().to_string())
+}
+
+fn decode_lower_hex(source: &str, description: &str) -> Vec<u8> {
     let compact: String = source
         .chars()
         .filter(|character| !character.is_whitespace())
@@ -113,8 +117,7 @@ fn decode_hex_file(path: &Path) -> Vec<u8> {
             && compact
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-        "{} must be nonempty even-length lowercase hex",
-        path.display()
+        "{description} must be nonempty even-length lowercase hex"
     );
     compact
         .as_bytes()
@@ -267,10 +270,6 @@ fn u32_at(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("u32 bytes"))
 }
 
-fn u16_at(bytes: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes(bytes[offset..offset + 2].try_into().expect("u16 bytes"))
-}
-
 fn u64_at(bytes: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(bytes[offset..offset + 8].try_into().expect("u64 bytes"))
 }
@@ -317,22 +316,6 @@ fn mutate_render_section(bytes: Vec<u8>, mutate: impl FnOnce(&mut [u8])) -> Vec<
     mutate_section(bytes, 14, mutate)
 }
 
-fn render_table_record_offsets(section: &[u8], table_index: usize) -> Vec<usize> {
-    assert!(table_index < 8, "Render table index");
-    let mut offset = 68usize;
-    for current in 0..8 {
-        let mut records = Vec::new();
-        for _ in 0..u32_at(section, 36 + current * 4) {
-            records.push(offset);
-            offset += u32_at(section, offset) as usize;
-        }
-        if current == table_index {
-            return records;
-        }
-    }
-    unreachable!()
-}
-
 #[test]
 fn independent_core_loader_checks_resource_coverage_before_hash() {
     let bytes = mutate_section(static_fixture(), 6, |section| {
@@ -366,7 +349,11 @@ fn independent_core_loader_checks_resource_coverage_before_hash() {
 }
 
 fn first_node_record_offset(section: &[u8]) -> usize {
-    render_table_record_offsets(section, 1)[0]
+    let mut offset = 68usize;
+    for _ in 0..u32_at(section, 36) {
+        offset += u32_at(section, offset) as usize;
+    }
+    offset
 }
 
 #[test]
@@ -535,197 +522,80 @@ fn independent_render_loader_validates_static_golden_tables_codecs_and_shaping()
         WEBP_PIXELS
     );
     let font = &chart.decoded_fonts[&resource_id(FONT_RESOURCE_TEXT_ID)];
-    let shaped = shape_simple_ltr(font, "A").expect("simple-ltr-1 shaping");
-    assert_eq!(shaped.len(), 1);
-    assert_eq!(shaped[0].glyph_id, 1);
-    assert_eq!(shaped[0].x_advance.to_bits(), 1.0f64.to_bits());
-    assert_eq!(shaped[0].y_advance.to_bits(), 0.0f64.to_bits());
-    assert_eq!(shaped[0].x_offset.to_bits(), 0.0f64.to_bits());
-    assert_eq!(shaped[0].y_offset.to_bits(), 0.0f64.to_bits());
-    assert_eq!(chart.glyph_runs[0].glyphs[0].glyph_id, shaped[0].glyph_id);
+    let root = repository_root().join("docs/conformance/render");
+    let suite: toml::Value = load_toml(&root.join("manifest.toml"));
+    let fixture = suite["binary_fixture"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"].as_str() == Some("render.nonempty-render"))
+        .unwrap();
+    let vector: toml::Value = load_toml(&root.join(fixture["vector"].as_str().unwrap()));
+    let shaping = &vector["shaping"];
+    assert_eq!(shaping["profile"].as_str(), Some("simple-ltr-1"));
     assert_eq!(
-        chart.glyph_runs[0].glyphs[0].x_advance.to_bits(),
-        shaped[0].x_advance.to_bits()
+        shaping["font_resource_id"].as_str().unwrap(),
+        format!("{:016x}", resource_id(FONT_RESOURCE_TEXT_ID))
     );
+    let shaped = shape_simple_ltr(font, shaping["input"].as_str().unwrap()).unwrap();
+    let expected = shaping["glyph"].as_array().unwrap();
+    assert_eq!(shaped.len(), expected.len());
+    assert_eq!(chart.glyph_runs[0].glyphs.len(), expected.len());
+    for ((actual, placed), expected) in shaped.iter().zip(&chart.glyph_runs[0].glyphs).zip(expected)
+    {
+        assert_eq!(
+            actual.glyph_id as i64,
+            expected["glyph_id"].as_integer().unwrap()
+        );
+        assert_eq!(placed.glyph_id, actual.glyph_id);
+        for (field, value, placed_value) in [
+            ("x_advance_bits", actual.x_advance, placed.x_advance),
+            ("y_advance_bits", actual.y_advance, placed.y_advance),
+            ("x_offset_bits", actual.x_offset, placed.x_offset),
+            ("y_offset_bits", actual.y_offset, placed.y_offset),
+        ] {
+            assert_eq!(
+                format!("{:016x}", value.to_bits()),
+                expected[field].as_str().unwrap()
+            );
+            assert_eq!(placed_value.to_bits(), value.to_bits());
+        }
+    }
 }
 
 #[test]
 fn static_render_deep_mutations_keep_stable_categories() {
-    let mut checksum = static_fixture();
-    let render_entry = section_entry(&checksum, 14);
-    checksum[render_entry + 32] ^= 1;
-    assert_eq!(
-        fcbc_render_reference_loader::load_render(&checksum),
-        Err("fcbc.section-checksum")
-    );
-
-    let node_tail = mutate_render_section(static_fixture(), |section| {
-        let node = first_node_record_offset(section);
-        assert_eq!(u32_at(section, node), 124);
-        section[node..node + 4].copy_from_slice(&128u32.to_le_bytes());
-    });
-    assert_eq!(
-        fcbc_render_reference_loader::load_render(&node_tail),
-        Err("render.invalid-record")
-    );
-
-    let node_cases = [
-        (
-            "node kind",
-            16,
-            99u16.to_le_bytes().to_vec(),
-            "render.invalid-geometry",
-        ),
-        (
-            "zero node ID",
-            8,
-            0u64.to_le_bytes().to_vec(),
-            "render.invalid-graph",
-        ),
-        (
-            "Group geometry reference",
-            88,
-            0u32.to_le_bytes().to_vec(),
-            "render.invalid-reference",
-        ),
-        (
-            "position descriptor type",
-            64,
-            3u32.to_le_bytes().to_vec(),
-            "render.invalid-descriptor",
-        ),
-        (
-            "composite enum",
-            104,
-            99u16.to_le_bytes().to_vec(),
-            "render.invalid-composite",
-        ),
-    ];
-    for (name, field_offset, replacement, category) in node_cases {
-        let bytes = mutate_render_section(static_fixture(), |section| {
-            let field = first_node_record_offset(section) + field_offset;
-            section[field..field + replacement.len()].copy_from_slice(&replacement);
-        });
-        assert_eq!(
-            fcbc_render_reference_loader::load_render(&bytes),
-            Err(category),
-            "{name}"
-        );
+    let root = repository_root().join("docs/conformance/render");
+    let suite: toml::Value = load_toml(&root.join("manifest.toml"));
+    for fixture in suite["binary_fixture"].as_array().unwrap() {
+        let mutations: toml::Value = load_toml(&root.join(fixture["mutations"].as_str().unwrap()));
+        assert_eq!(mutations["schema_version"].as_integer(), Some(1));
+        let bytes = decode_hex_file(&root.join(mutations["base"].as_str().unwrap()));
+        let cases = mutations["mutation"].as_array().unwrap();
+        assert!(!cases.is_empty());
+        for case in cases {
+            let id = case["id"].as_str().unwrap();
+            let mut mutated = bytes.clone();
+            let patches = case["patch"].as_array().unwrap();
+            assert!(!patches.is_empty());
+            let mut end = 0;
+            for patch in patches {
+                let offset = usize::try_from(patch["offset"].as_integer().unwrap()).unwrap();
+                let replacement = decode_lower_hex(patch["replace_hex"].as_str().unwrap(), id);
+                assert!(
+                    offset >= end && offset + replacement.len() <= bytes.len(),
+                    "{id}: patch range"
+                );
+                end = offset + replacement.len();
+                mutated[offset..end].copy_from_slice(&replacement);
+            }
+            assert_eq!(
+                fcbc_render_reference_loader::load_render(&mutated),
+                Err(case["diagnostic"].as_str().unwrap()),
+                "{id}",
+            );
+        }
     }
-
-    let root_range = mutate_render_section(static_fixture(), |section| {
-        let layer = render_table_record_offsets(section, 0)[0];
-        section[layer + 28..layer + 32].copy_from_slice(&1u32.to_le_bytes());
-    });
-    assert_eq!(
-        fcbc_render_reference_loader::load_render(&root_range),
-        Err("render.invalid-graph")
-    );
-
-    let table_order = mutate_render_section(static_fixture(), |section| {
-        let geometries = render_table_record_offsets(section, 2);
-        let first = u64_at(section, geometries[0] + 8).to_le_bytes();
-        let second = u64_at(section, geometries[1] + 8).to_le_bytes();
-        section[geometries[0] + 8..geometries[0] + 16].copy_from_slice(&second);
-        section[geometries[1] + 8..geometries[1] + 16].copy_from_slice(&first);
-    });
-    assert_eq!(
-        fcbc_render_reference_loader::load_render(&table_order),
-        Err("render.invalid-graph")
-    );
-
-    let geometry_key = mutate_render_section(static_fixture(), |section| {
-        let rect = render_table_record_offsets(section, 2)
-            .into_iter()
-            .find(|record| u16_at(section, record + 16) == 3)
-            .expect("fixture Rect GeometryRecord");
-        let duplicate_key = u32_at(section, rect + 52).to_le_bytes();
-        section[rect + 32..rect + 36].copy_from_slice(&duplicate_key);
-    });
-    assert_eq!(
-        fcbc_render_reference_loader::load_render(&geometry_key),
-        Err("render.invalid-geometry")
-    );
-
-    for (name, table_index, field_offset, category) in [
-        ("paint kind", 4, 16, "render.invalid-paint"),
-        ("stroke cap", 5, 28, "render.invalid-stroke"),
-        ("clip fill rule", 6, 18, "render.invalid-clip"),
-    ] {
-        let bytes = mutate_render_section(static_fixture(), |section| {
-            let record = render_table_record_offsets(section, table_index)[0];
-            section[record + field_offset..record + field_offset + 2]
-                .copy_from_slice(&99u16.to_le_bytes());
-        });
-        assert_eq!(
-            fcbc_render_reference_loader::load_render(&bytes),
-            Err(category),
-            "{name}"
-        );
-    }
-
-    for (name, resource, category) in [
-        ("missing image", 1, "render.resource-not-found"),
-        (
-            "font as image",
-            resource_id(FONT_RESOURCE_TEXT_ID),
-            "render.resource-type-mismatch",
-        ),
-        (
-            "unsupported image",
-            resource_id(UNSUPPORTED_RESOURCE_TEXT_ID),
-            "render.resource-capability-missing",
-        ),
-        (
-            "malformed image",
-            resource_id(MALFORMED_RESOURCE_TEXT_ID),
-            "render.resource-decode-failed",
-        ),
-    ] {
-        let bytes = mutate_render_section(static_fixture(), |section| {
-            let image = render_table_record_offsets(section, 2)
-                .into_iter()
-                .find(|record| u16_at(section, record + 16) == 11)
-                .expect("fixture Image GeometryRecord");
-            section[image + 44..image + 52].copy_from_slice(&resource.to_le_bytes());
-        });
-        assert_eq!(
-            fcbc_render_reference_loader::load_render(&bytes),
-            Err(category),
-            "{name}"
-        );
-    }
-
-    let cycle = mutate_render_section(static_fixture(), |section| {
-        let nodes = render_table_record_offsets(section, 1);
-        let root_count = u32_at(section, 100) as usize;
-        let child = nodes[root_count];
-        section[child + 20..child + 24].copy_from_slice(&(root_count as u32).to_le_bytes());
-    });
-    assert_eq!(
-        fcbc_render_reference_loader::load_render(&cycle),
-        Err("render.invalid-graph")
-    );
-
-    let glyph_source_text_tail = mutate_render_section(static_fixture(), |section| {
-        let glyph = render_table_record_offsets(section, 7)[0];
-        assert_eq!(u32_at(section, glyph), 100);
-        section[glyph + 52..glyph + 56].copy_from_slice(&0u32.to_le_bytes());
-        section[glyph + 60..glyph + 71].copy_from_slice(b"source text");
-    });
-    assert_eq!(
-        fcbc_render_reference_loader::load_render(&glyph_source_text_tail),
-        Err("render.invalid-record")
-    );
-
-    let baked_curve = mutate_section(static_fixture(), 11, |section| {
-        assert!(u32_at(section, 0) > 0, "fixture has no descriptors");
-        section[13] = 5;
-    });
-    assert_eq!(
-        fcbc_render_reference_loader::load_render(&baked_curve),
-        Err("fcbc.forbidden-descriptor")
-    );
 }
 
 #[test]

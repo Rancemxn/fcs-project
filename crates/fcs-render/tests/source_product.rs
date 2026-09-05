@@ -3287,6 +3287,32 @@ fn checked_in_text_fixture_reaches_product_raster() {
     );
     assert!(text.bounds[2] > text.bounds[0]);
     assert!(text.bounds[3] > text.bounds[1]);
+    let run = &text.text.as_ref().expect("evaluated Text layout").runs[0];
+    assert_eq!(run.run_id, loaded_run.id);
+    assert_eq!(run.font_resource_id, loaded_run.font_resource_id);
+    assert_eq!(run.size.to_bits(), 8.0f64.to_bits());
+    assert_eq!(run.glyphs[0].origin, [0.0, 0.0]);
+    assert_eq!(run.glyphs[0].world_origin, [0.0, 0.0]);
+
+    let mut positioned = render.clone();
+    let run = &mut positioned.glyph_runs[0];
+    run.run_offset = [0.25, -0.5];
+    run.glyphs[0].x_offset = 0.125;
+    run.glyphs[0].y_offset = 0.25;
+    run.glyphs.push(run.glyphs[0].clone());
+    let draws = evaluate_semantic_draw_list_at(&positioned, 0.0).unwrap();
+    let glyphs = &draws[0].text.as_ref().unwrap().runs[0].glyphs;
+    assert_eq!(
+        glyphs.iter().map(|glyph| glyph.origin).collect::<Vec<_>>(),
+        [[3.0, -2.0], [11.0, -2.0]]
+    );
+    assert_eq!(
+        glyphs
+            .iter()
+            .map(|glyph| glyph.world_origin)
+            .collect::<Vec<_>>(),
+        [[3.0, -2.0], [11.0, -2.0]]
+    );
 
     let pixels = rasterize_solid_rgba8_at(&render, 0.0, 16, 16).expect("Text rasterization");
     assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 0));
@@ -3302,6 +3328,12 @@ fn checked_in_text_fixture_reaches_product_raster() {
     let empty_render = load_render(&empty_bytes).expect("empty source Text product loader");
     assert_eq!(empty_render.glyph_runs.len(), 1);
     assert!(empty_render.glyph_runs[0].glyphs.is_empty());
+    let empty_draws = evaluate_semantic_draw_list_at(&empty_render, 0.0).unwrap();
+    assert!(
+        empty_draws[0].text.as_ref().unwrap().runs[0]
+            .glyphs
+            .is_empty()
+    );
 }
 
 #[test]

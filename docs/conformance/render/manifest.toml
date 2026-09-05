@@ -4,6 +4,16 @@ fcbc_version = "2.0.0"
 execution_abi_version = "1.0.0"
 hash_algorithm = "sha256"
 
+[[binary_fixture]]
+id = "render.nonempty-render"
+manifest = "nonempty-render.manifest.toml"
+vector = "nonempty-render.vector.toml"
+mutations = "nonempty-render.mutations.toml"
+semantic_expected = "nonempty-render.semantic.json"
+raster_expected = "nonempty-render.rgba8.hex"
+assets = ["assets/fcs-test-rgba8.png", "assets/fcs-test-lossless.webp", "assets/fcs-test-font.ttf", "binding/assets/opaque-image.bin"]
+clauses = ["3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "14", "15", "16", "17"]
+
 [[fixture]]
 id = "render.solid-rect-4x4"
 source = "solid-rect-4x4.fcs"

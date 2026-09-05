@@ -20,6 +20,11 @@ pub struct DrawOp {
     pub node_id: u64,
     pub kind: NodeKind,
     pub layer_index: u32,
+    /// Layer (pass, zOrder, documentOrder, stable ID).
+    pub layer_key: (u16, i32, u32, u64),
+    /// Root-to-node sibling keys (zOrder, documentOrder, stable ID).
+    pub ancestry_key: Vec<(i32, u32, u64)>,
+    pub geometry_id: u64,
     pub z_order: i32,
     pub document_order: u32,
     pub fill_rgba: Option<[f64; 4]>,
@@ -28,6 +33,7 @@ pub struct DrawOp {
     pub image_pattern: Option<ImagePatternDrawOp>,
     pub stroke: Option<StrokeDrawOp>,
     pub image: Option<ImageDrawOp>,
+    pub text: Option<TextDrawOp>,
     pub opacity: f64,
     pub world_matrix: [f64; 9],
     pub composite: u16,
@@ -50,6 +56,30 @@ pub struct ImageDrawOp {
     pub destination: [f64; 4],
     pub source: [f64; 4],
     pub sampling: u16,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextDrawOp {
+    pub origin: [f64; 2],
+    pub runs: Vec<GlyphRunDrawOp>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GlyphRunDrawOp {
+    pub run_id: u64,
+    pub font_resource_id: u64,
+    pub face_index: u32,
+    pub size: f64,
+    pub run_offset: [f64; 2],
+    pub glyphs: Vec<GlyphDrawOp>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlyphDrawOp {
+    pub glyph_id: u32,
+    /// Text-local origin after run offset, pen advance, and glyph offset.
+    pub origin: [f64; 2],
+    pub world_origin: [f64; 2],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -114,6 +144,7 @@ struct SubtreeState {
     inherited_clips: Vec<u64>,
     isolation_chain: Vec<IsolationDrawOp>,
     attachment: Option<AttachmentState>,
+    ancestry_key: Vec<(i32, u32, u64)>,
 }
 
 struct EvaluatedScene {
@@ -290,6 +321,7 @@ fn evaluate_scene_at(
                     inherited_clips: Vec::new(),
                     isolation_chain: Vec::new(),
                     attachment: None,
+                    ancestry_key: Vec::new(),
                 },
                 &mut scene,
             )?;
@@ -323,6 +355,7 @@ fn emit_draw_subtree(
         inherited_clips,
         isolation_chain,
         attachment,
+        mut ancestry_key,
     } = state;
     let node = chart.nodes.get(node_index).ok_or("render.invalid-graph")?;
     if !active_at(node, chart_time) {
@@ -335,6 +368,7 @@ fn emit_draw_subtree(
     if !query_visibility(chart, node, chart_time, attachment.environment)? {
         return Ok(());
     }
+    ancestry_key.push((node.z_order, node.document_order, node.id));
     let parent_matrix = if node.parent.is_none() {
         attachment.matrix
     } else {
@@ -374,6 +408,7 @@ fn emit_draw_subtree(
             },
         );
     }
+    let mut text = None;
     let (fill_rgba, linear_gradient, radial_gradient, image_pattern, bounds, image, stroke) =
         if node.kind.is_drawable() {
             let geometry = geometry_evaluation(
@@ -384,6 +419,7 @@ fn emit_draw_subtree(
                 world_matrix,
                 node.stroke_ref.is_some(),
             )?;
+            text = geometry.text;
             if let Some(shape) = geometry.shape {
                 scene.shapes.insert(
                     node.id,
@@ -485,10 +521,22 @@ fn emit_draw_subtree(
     }
     if node.kind.is_drawable() {
         let op_index = scene.ops.len();
+        let layer = chart
+            .layers
+            .get(node.layer_index as usize)
+            .ok_or("render.invalid-graph")?;
+        let geometry_id = node
+            .geometry_ref
+            .and_then(|index| chart.geometries.get(index as usize))
+            .ok_or("render.invalid-reference")?
+            .id;
         scene.ops.push(DrawOp {
             node_id: node.id,
             kind: node.kind,
             layer_index: node.layer_index,
+            layer_key: (layer.pass, layer.z_order, layer.document_order, layer.id),
+            ancestry_key: ancestry_key.clone(),
+            geometry_id,
             z_order: node.z_order,
             document_order: node.document_order,
             fill_rgba,
@@ -497,6 +545,7 @@ fn emit_draw_subtree(
             image_pattern,
             stroke,
             image,
+            text,
             opacity: effective_opacity,
             world_matrix,
             composite: node.composite,
@@ -533,6 +582,7 @@ fn emit_draw_subtree(
                 inherited_clips: clip_chain.clone(),
                 isolation_chain: child_isolation_chain.clone(),
                 attachment: Some(attachment),
+                ancestry_key: ancestry_key.clone(),
             },
             scene,
         )?;
@@ -3612,6 +3662,7 @@ struct GeometryEvaluation {
     world_bounds: [f64; 4],
     shape: Option<LocalShape>,
     image: Option<ImageDrawOp>,
+    text: Option<TextDrawOp>,
 }
 
 fn geometry_evaluation(
@@ -3627,11 +3678,13 @@ fn geometry_evaluation(
             world_bounds: [0.0, 0.0, 0.0, 0.0],
             shape: None,
             image: None,
+            text: None,
         });
     };
     let Some(geometry) = chart.geometries.get(index as usize) else {
         return Err("render.invalid-reference");
     };
+    let mut text = None;
     let (local_bounds, shape, image) = match &geometry.data {
         GeometryData::Rect { origin, size } => {
             let [x, y] = query_vec2_in(
@@ -3845,8 +3898,15 @@ fn geometry_evaluation(
             )
         }
         GeometryData::Text { glyph_runs, origin } => {
-            let (bounds, contours) =
-                evaluate_text(chart, glyph_runs, *origin, chart_time, environment)?;
+            let (bounds, contours, evaluated) = evaluate_text(
+                chart,
+                glyph_runs,
+                *origin,
+                chart_time,
+                environment,
+                world_matrix,
+            )?;
+            text = Some(evaluated);
             (bounds, Some(LocalShape::Text { contours }), None)
         }
         GeometryData::Image {
@@ -3908,6 +3968,7 @@ fn geometry_evaluation(
         world_bounds: transformed_bounds(world_matrix, local_bounds)?,
         shape,
         image,
+        text,
     })
 }
 
@@ -3957,7 +4018,8 @@ fn evaluate_text(
     origin_descriptor: u32,
     chart_time: f64,
     environment: EvaluationEnvironment,
-) -> Result<([f64; 4], TextContours), &'static str> {
+    world_matrix: [f64; 9],
+) -> Result<([f64; 4], TextContours, TextDrawOp), &'static str> {
     let origin = query_vec2_in(
         chart,
         origin_descriptor,
@@ -3966,6 +4028,10 @@ fn evaluate_text(
         environment,
     )?;
     let mut contours = Vec::new();
+    let mut text = TextDrawOp {
+        origin,
+        runs: Vec::with_capacity(glyph_run_refs.len()),
+    };
     for glyph_run_ref in glyph_run_refs {
         let run = chart
             .glyph_runs
@@ -3993,6 +4059,7 @@ fn evaluate_text(
         if !pen.iter().all(|value| value.is_finite()) {
             return Err("render.invalid-geometry");
         }
+        let mut glyphs = Vec::with_capacity(run.glyphs.len());
         for placement in &run.glyphs {
             if ![
                 placement.x_advance,
@@ -4016,6 +4083,11 @@ fn evaluate_text(
             if !glyph_origin.iter().all(|value| value.is_finite()) {
                 return Err("render.invalid-geometry");
             }
+            glyphs.push(GlyphDrawOp {
+                glyph_id: placement.glyph_id,
+                origin: glyph_origin,
+                world_origin: transform_point(world_matrix, glyph_origin)?,
+            });
             for contour in &glyph.contours {
                 let points = glyph_contour(contour, glyph_origin, scale)?;
                 if points.len() >= 3 {
@@ -4028,6 +4100,14 @@ fn evaluate_text(
                 return Err("render.invalid-geometry");
             }
         }
+        text.runs.push(GlyphRunDrawOp {
+            run_id: run.id,
+            font_resource_id: run.font_resource_id,
+            face_index: run.face_index,
+            size,
+            run_offset: run.run_offset,
+            glyphs,
+        });
     }
     let mut bounds = [origin[0], origin[1], origin[0], origin[1]];
     for [x, y] in contours.iter().flat_map(|contour| contour.iter()) {
@@ -4039,7 +4119,7 @@ fn evaluate_text(
     if !bounds.iter().all(|value| value.is_finite()) {
         return Err("render.invalid-geometry");
     }
-    Ok((bounds, contours))
+    Ok((bounds, contours, text))
 }
 
 fn glyph_contour(

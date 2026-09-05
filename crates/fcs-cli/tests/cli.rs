@@ -1663,13 +1663,22 @@ fn inspect_executes_every_fcbc_golden_through_declared_core_contract() {
 
 #[test]
 fn inspect_executes_every_declared_fcbc_mutation() {
+    inspect_declared_binary_mutations("fcbc", "fixture", false);
+}
+
+#[test]
+fn inspect_executes_every_declared_render_mutation() {
+    inspect_declared_binary_mutations("render", "binary_fixture", true);
+}
+
+fn inspect_declared_binary_mutations(domain: &str, table: &str, render: bool) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let conformance = root.join("docs/conformance/fcbc");
+    let conformance = root.join("docs/conformance").join(domain);
     let manifest = load_toml(&conformance.join("manifest.toml"));
     let directory = tempfile::tempdir().unwrap();
     let mut checked = 0;
 
-    for fixture in manifest["fixture"].as_array().unwrap() {
+    for fixture in manifest[table].as_array().unwrap() {
         let fixture_id = fixture["id"].as_str().unwrap();
         let mutations = load_toml(&conformance.join(fixture["mutations"].as_str().unwrap()));
         let base = decode_hex_file(&conformance.join(mutations["base"].as_str().unwrap()));
@@ -1692,12 +1701,12 @@ fn inspect_executes_every_declared_fcbc_mutation() {
                 .path()
                 .join(format!("{fixture_id}-{mutation_id}.hex"));
             fs::write(&path, lower_hex(&bytes)).unwrap();
-            let output = bin()
-                .arg("inspect")
-                .arg(&path)
-                .arg("--json")
-                .output()
-                .unwrap();
+            let mut command = bin();
+            command.arg("inspect").arg(&path).arg("--json");
+            if render {
+                command.arg("--render");
+            }
+            let output = command.output().unwrap();
             let expected = mutation["diagnostic"].as_str().unwrap();
             assert_eq!(
                 output.status.code(),
@@ -1718,7 +1727,7 @@ fn inspect_executes_every_declared_fcbc_mutation() {
         }
     }
 
-    assert!(checked > 0, "FCBC mutation manifest must not be empty");
+    assert!(checked > 0, "binary mutation manifest must not be empty");
 }
 
 #[test]
@@ -1811,6 +1820,43 @@ fn render_manifest_source_and_product_paths_are_exercised() {
             viewport[1].as_f64(),
             Some(fixture["height"].as_integer().unwrap() as f64),
             "{source:?}: Render viewport height"
+        );
+    }
+
+    for fixture in manifest["binary_fixture"].as_array().unwrap() {
+        let id = fixture["id"].as_str().unwrap();
+        let golden = load_toml(&render.join(fixture["manifest"].as_str().unwrap()));
+        let expected: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(render.join(fixture["semantic_expected"].as_str().unwrap()))
+                .unwrap(),
+        )
+        .unwrap();
+        let output = bin()
+            .arg("inspect")
+            .arg(render.join(golden["path"].as_str().unwrap()))
+            .arg("--render")
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{id}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["coreLoaded"], true);
+        assert_eq!(report["sha256"].as_str(), golden["sha256"].as_str());
+        assert_eq!(
+            report["render"]["layerCount"].as_u64(),
+            Some(golden["table_counts"][0].as_integer().unwrap() as u64)
+        );
+        assert_eq!(
+            report["render"]["nodeCount"].as_u64(),
+            Some(golden["table_counts"][1].as_integer().unwrap() as u64)
+        );
+        assert_eq!(
+            report["render"]["drawOps"].as_u64(),
+            Some(expected["frames"][0]["drawOps"].as_array().unwrap().len() as u64)
         );
     }
 
