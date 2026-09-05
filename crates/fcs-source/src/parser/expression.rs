@@ -146,6 +146,15 @@ pub(super) fn expression_parser<'tokens, I>()
 where
     I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
 {
+    expression_parser_with_line_context(false)
+}
+
+pub(super) fn expression_parser_with_line_context<'tokens, I>(
+    allow_line: bool,
+) -> impl Parser<'tokens, I, SourceExpression, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
     recursive(|expression| {
         let literal = select! { Token::Literal(literal) => literal }
             .map_with(|literal, extra| SourceExpression::Literal {
@@ -158,12 +167,17 @@ where
                 literal: SourceLiteral::Null,
                 span: source_span(extra.span()),
             });
-        let identifier = select! { Token::Identifier(identifier) => identifier }
-            .map_with(|name, extra| SourceExpression::Name {
-                name,
-                span: source_span(extra.span()),
-            })
-            .labelled("identifier");
+        let identifier = choice((
+            select! { Token::Identifier(identifier) => identifier },
+            just(Token::Keyword(Keyword::Line))
+                .filter(move |_| allow_line)
+                .to("line".to_owned()),
+        ))
+        .map_with(|name, extra| SourceExpression::Name {
+            name,
+            span: source_span(extra.span()),
+        })
+        .labelled("identifier");
 
         let grouped = expression
             .clone()

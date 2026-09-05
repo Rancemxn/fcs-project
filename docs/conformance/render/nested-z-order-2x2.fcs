@@ -1,0 +1,33 @@
+#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport {
+        width: 2px;
+        height: 2px;
+        colorSpace: "linear-srgb";
+    }
+    layer main {
+        pass: "overlay";
+        zOrder: 0;
+        space: "screen";
+        children {
+            group root {
+                children {
+                    rect foreground {
+                        zOrder: 1;
+                        origin: vec2(0px, -1px);
+                        size: vec2(1px, 2px);
+                        fill: solid(#00FF00FF);
+                    }
+                    rect background {
+                        zOrder: 0;
+                        origin: vec2(-1px, -1px);
+                        size: vec2(2px, 2px);
+                        fill: solid(#FF0000FF);
+                    }
+                }
+            }
+        }
+    }
+}

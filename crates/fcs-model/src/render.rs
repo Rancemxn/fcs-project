@@ -6,7 +6,7 @@
 //! facts (forest shape, reference targets, compile-time topology) are validated
 //! once here so downstream stages can assume them.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{EntityKind, StableId};
 
@@ -370,7 +370,7 @@ impl CanonicalActiveInterval {
     }
 
     pub fn bounded(start: f64, end: f64) -> Result<Self, CanonicalRenderError> {
-        if !start.is_finite() || !end.is_finite() || start >= end {
+        if !start.is_finite() || !end.is_finite() || start > end {
             return Err(CanonicalRenderError::InvalidActiveInterval);
         }
         Ok(Self {
@@ -564,6 +564,9 @@ impl CanonicalRenderNode {
                 if spec.geometry.is_some() {
                     return Err(CanonicalRenderError::GroupCarriesGeometry);
                 }
+                if spec.clip.is_some() {
+                    return Err(CanonicalRenderError::GroupCarriesClip);
+                }
             }
             CanonicalRenderNodeKind::ClipGroup => {
                 if spec.geometry.is_some() {
@@ -579,7 +582,28 @@ impl CanonicalRenderNode {
                 }
             }
         }
-        if !spec.kind.is_drawable() {
+        if spec.isolate && spec.kind.is_drawable() {
+            return Err(CanonicalRenderError::IsolatedDrawable);
+        }
+        if spec.kind.is_drawable() {
+            match spec.kind {
+                CanonicalRenderNodeKind::Image
+                    if spec.fill_paint.is_some() || spec.stroke.is_some() =>
+                {
+                    return Err(CanonicalRenderError::ImageCarriesPaint);
+                }
+                CanonicalRenderNodeKind::Image => {}
+                CanonicalRenderNodeKind::Line
+                    if spec.fill_paint.is_some() || spec.stroke.is_none() =>
+                {
+                    return Err(CanonicalRenderError::LinePaintBinding);
+                }
+                _ if spec.fill_paint.is_none() && spec.stroke.is_none() => {
+                    return Err(CanonicalRenderError::DrawableWithoutPaint);
+                }
+                _ => {}
+            }
+        } else {
             if spec.fill_paint.is_some() || spec.stroke.is_some() {
                 return Err(CanonicalRenderError::GroupCarriesPaint);
             }
@@ -846,12 +870,6 @@ pub enum CanonicalPathCommand {
     Close,
 }
 
-impl CanonicalPathCommand {
-    const fn is_move_to(&self) -> bool {
-        matches!(self, Self::MoveTo(_))
-    }
-}
-
 /// An immutable path command sequence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalRenderPath {
@@ -869,13 +887,29 @@ impl CanonicalRenderPath {
         if id.namespace() != EntityKind::RenderPath {
             return Err(CanonicalRenderError::WrongNamespace);
         }
-        // A drawing command before the first MoveTo has no subpath start point.
-        match commands.first() {
-            None => return Err(CanonicalRenderError::EmptyPath),
-            Some(command) if !command.is_move_to() => {
-                return Err(CanonicalRenderError::PathWithoutInitialMoveTo);
+        if commands.is_empty() {
+            return Err(CanonicalRenderError::EmptyPath);
+        }
+        let mut open = false;
+        let mut closed = false;
+        let mut has_drawing = false;
+        for command in &commands {
+            match command {
+                CanonicalPathCommand::MoveTo(_) => {
+                    open = true;
+                    closed = false;
+                    has_drawing = false;
+                }
+                CanonicalPathCommand::Close if !open || closed || !has_drawing => {
+                    return Err(CanonicalRenderError::InvalidPathState);
+                }
+                CanonicalPathCommand::Close => closed = true,
+                _ if !open => return Err(CanonicalRenderError::PathWithoutInitialMoveTo),
+                _ => {
+                    closed = false;
+                    has_drawing = true;
+                }
             }
-            Some(_) => {}
         }
         Ok(Self {
             id,
@@ -1302,6 +1336,9 @@ impl CanonicalRenderScene {
     fn validate_layers(&self) -> Result<(), CanonicalRenderError> {
         let mut roots = Owners::new(self.nodes.len());
         for (index, layer) in self.layers.iter().enumerate() {
+            if layer.document_order() != index as u32 {
+                return Err(CanonicalRenderError::InvalidDocumentOrder);
+            }
             for root in layer.roots() {
                 roots.claim(*root)?;
                 let node = self
@@ -1320,6 +1357,7 @@ impl CanonicalRenderScene {
     }
 
     fn validate_nodes(&self) -> Result<(), CanonicalRenderError> {
+        let mut sibling_orders = BTreeMap::<(usize, Option<usize>), Vec<u32>>::new();
         for (index, node) in self.nodes.iter().enumerate() {
             if self.layers.get(node.layer()).is_none() {
                 return Err(CanonicalRenderError::UnresolvedReference);
@@ -1372,6 +1410,20 @@ impl CanonicalRenderScene {
                 && self.clips.get(clip).is_none()
             {
                 return Err(CanonicalRenderError::UnresolvedReference);
+            }
+            sibling_orders
+                .entry((node.layer(), node.parent()))
+                .or_default()
+                .push(node.document_order());
+        }
+        for orders in sibling_orders.values_mut() {
+            orders.sort_unstable();
+            if orders
+                .iter()
+                .enumerate()
+                .any(|(index, order)| *order != index as u32)
+            {
+                return Err(CanonicalRenderError::InvalidDocumentOrder);
             }
         }
         Ok(())
@@ -1755,6 +1807,7 @@ impl Owners {
 pub enum CanonicalRenderError {
     InvalidViewport,
     InvalidActiveInterval,
+    InvalidDocumentOrder,
     WrongNamespace,
     ZeroStableId,
     DuplicateStableId,
@@ -1766,11 +1819,16 @@ pub enum CanonicalRenderError {
     AttachmentOverrideBelowRoot,
     GroupCarriesGeometry,
     GroupCarriesPaint,
+    GroupCarriesClip,
     ClipGroupWithoutClip,
     DrawableWithoutGeometry,
+    DrawableWithoutPaint,
+    ImageCarriesPaint,
+    LinePaintBinding,
     GeometryKindMismatch,
     ClipGeometryKindNotAllowed,
     ClipFillRuleMismatch,
+    IsolatedDrawable,
     NonIsolatedGroupComposite,
     FollowHiddenWithoutNoteAttachment,
     SharedRecord,
@@ -1780,6 +1838,7 @@ pub enum CanonicalRenderError {
     NonFiniteGlyphMetric,
     EmptyPath,
     PathWithoutInitialMoveTo,
+    InvalidPathState,
     InvalidGradientStop,
     UnorderedGradientStops,
     InvalidMiterLimit,
@@ -1841,6 +1900,7 @@ impl CanonicalRenderError {
             // active interval, parent, layer and order, cycles, orphan
             // ownership and cross-owner sharing.
             Self::InvalidActiveInterval
+            | Self::InvalidDocumentOrder
             | Self::WrongNamespace
             | Self::ZeroStableId
             | Self::DuplicateStableId
@@ -1856,8 +1916,12 @@ impl CanonicalRenderError {
             | Self::AttachmentOverrideBelowRoot
             | Self::GroupCarriesGeometry
             | Self::GroupCarriesPaint
+            | Self::GroupCarriesClip
             | Self::ClipGroupWithoutClip
             | Self::DrawableWithoutGeometry
+            | Self::DrawableWithoutPaint
+            | Self::ImageCarriesPaint
+            | Self::LinePaintBinding
             | Self::FollowHiddenWithoutNoteAttachment => RENDER_DIAGNOSTIC_INVALID_REFERENCE,
             // Row 7: Node/Geometry kind, path state and compile-time geometry
             // ranges. Glyph run problems are geometry too once the font
@@ -1867,7 +1931,8 @@ impl CanonicalRenderError {
             | Self::EmptyGlyphRunList
             | Self::NonFiniteGlyphMetric
             | Self::EmptyPath
-            | Self::PathWithoutInitialMoveTo => RENDER_DIAGNOSTIC_INVALID_GEOMETRY,
+            | Self::PathWithoutInitialMoveTo
+            | Self::InvalidPathState => RENDER_DIAGNOSTIC_INVALID_GEOMETRY,
             // Row 8 and row 9.
             Self::InvalidGradientStop | Self::UnorderedGradientStops => {
                 RENDER_DIAGNOSTIC_INVALID_PAINT
@@ -1877,7 +1942,9 @@ impl CanonicalRenderError {
             | Self::InvalidDashElement
             | Self::ZeroDashTotal => RENDER_DIAGNOSTIC_INVALID_STROKE,
             // Row 11: composite enum and isolate applicability.
-            Self::NonIsolatedGroupComposite => RENDER_DIAGNOSTIC_INVALID_COMPOSITE,
+            Self::IsolatedDrawable | Self::NonIsolatedGroupComposite => {
+                RENDER_DIAGNOSTIC_INVALID_COMPOSITE
+            }
             // Row 10: clip fill rule, the geometry kinds a clip may use, and
             // Path fill-rule consistency.
             Self::ClipGeometryKindNotAllowed | Self::ClipFillRuleMismatch => {
@@ -1894,7 +1961,8 @@ impl CanonicalRenderError {
     const fn next_variant(self) -> Option<Self> {
         Some(match self {
             Self::InvalidViewport => Self::InvalidActiveInterval,
-            Self::InvalidActiveInterval => Self::WrongNamespace,
+            Self::InvalidActiveInterval => Self::InvalidDocumentOrder,
+            Self::InvalidDocumentOrder => Self::WrongNamespace,
             Self::WrongNamespace => Self::ZeroStableId,
             Self::ZeroStableId => Self::DuplicateStableId,
             Self::DuplicateStableId => Self::UnresolvedReference,
@@ -1905,12 +1973,17 @@ impl CanonicalRenderError {
             Self::UnlistedLayerRoot => Self::AttachmentOverrideBelowRoot,
             Self::AttachmentOverrideBelowRoot => Self::GroupCarriesGeometry,
             Self::GroupCarriesGeometry => Self::GroupCarriesPaint,
-            Self::GroupCarriesPaint => Self::ClipGroupWithoutClip,
+            Self::GroupCarriesPaint => Self::GroupCarriesClip,
+            Self::GroupCarriesClip => Self::ClipGroupWithoutClip,
             Self::ClipGroupWithoutClip => Self::DrawableWithoutGeometry,
-            Self::DrawableWithoutGeometry => Self::GeometryKindMismatch,
+            Self::DrawableWithoutGeometry => Self::DrawableWithoutPaint,
+            Self::DrawableWithoutPaint => Self::ImageCarriesPaint,
+            Self::ImageCarriesPaint => Self::LinePaintBinding,
+            Self::LinePaintBinding => Self::GeometryKindMismatch,
             Self::GeometryKindMismatch => Self::ClipGeometryKindNotAllowed,
             Self::ClipGeometryKindNotAllowed => Self::ClipFillRuleMismatch,
-            Self::ClipFillRuleMismatch => Self::NonIsolatedGroupComposite,
+            Self::ClipFillRuleMismatch => Self::IsolatedDrawable,
+            Self::IsolatedDrawable => Self::NonIsolatedGroupComposite,
             Self::NonIsolatedGroupComposite => Self::FollowHiddenWithoutNoteAttachment,
             Self::FollowHiddenWithoutNoteAttachment => Self::SharedRecord,
             Self::SharedRecord => Self::UnreachableRecord,
@@ -1919,7 +1992,8 @@ impl CanonicalRenderError {
             Self::EmptyGlyphRunList => Self::NonFiniteGlyphMetric,
             Self::NonFiniteGlyphMetric => Self::EmptyPath,
             Self::EmptyPath => Self::PathWithoutInitialMoveTo,
-            Self::PathWithoutInitialMoveTo => Self::InvalidGradientStop,
+            Self::PathWithoutInitialMoveTo => Self::InvalidPathState,
+            Self::InvalidPathState => Self::InvalidGradientStop,
             Self::InvalidGradientStop => Self::UnorderedGradientStops,
             Self::UnorderedGradientStops => Self::InvalidMiterLimit,
             Self::InvalidMiterLimit => Self::OddDashArray,
@@ -2064,8 +2138,12 @@ mod tests {
         assert!(interval.contains(1.999));
         assert!(!interval.contains(2.0));
         assert!(CanonicalActiveInterval::unbounded().contains(f64::MIN));
+        let empty = CanonicalActiveInterval::bounded(2.0, 2.0).expect("empty interval");
+        assert!(!empty.contains(1.999));
+        assert!(!empty.contains(2.0));
+        assert!(!empty.contains(2.001));
         assert_eq!(
-            CanonicalActiveInterval::bounded(2.0, 2.0),
+            CanonicalActiveInterval::bounded(2.0, 1.0),
             Err(CanonicalRenderError::InvalidActiveInterval)
         );
     }
@@ -2104,11 +2182,86 @@ mod tests {
         let painted = CanonicalRenderNodeSpec {
             geometry: None,
             fill_paint: Some(0),
-            ..spec
+            ..spec.clone()
         };
         assert_eq!(
             CanonicalRenderNode::new(painted),
             Err(CanonicalRenderError::GroupCarriesPaint)
+        );
+        let clipped = CanonicalRenderNodeSpec {
+            geometry: None,
+            clip: Some(0),
+            ..spec
+        };
+        assert_eq!(
+            CanonicalRenderNode::new(clipped),
+            Err(CanonicalRenderError::GroupCarriesClip)
+        );
+    }
+
+    #[test]
+    fn drawable_paint_bindings_match_loader_rules() {
+        let mut fixture = Fixture::new();
+        let node_id = fixture.id(EntityKind::RenderNode, "layer/main/drawable");
+        let base = CanonicalRenderNodeSpec {
+            id: node_id,
+            kind: CanonicalRenderNodeKind::Rect,
+            parent: None,
+            layer: 0,
+            document_order: 0,
+            z_order: 0,
+            attachment: CanonicalRenderAttachment::World,
+            active: CanonicalActiveInterval::unbounded(),
+            isolate: false,
+            follow_hidden_attachment: false,
+            position: 0,
+            origin: 1,
+            rotation: 2,
+            scale: 3,
+            opacity: 4,
+            visibility: 5,
+            geometry: Some(0),
+            fill_paint: Some(0),
+            stroke: None,
+            clip: None,
+            composite: CanonicalRenderComposite::SourceOver,
+        };
+        assert_eq!(
+            CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+                isolate: true,
+                ..base.clone()
+            }),
+            Err(CanonicalRenderError::IsolatedDrawable)
+        );
+        assert!(
+            CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+                kind: CanonicalRenderNodeKind::Image,
+                fill_paint: None,
+                ..base.clone()
+            })
+            .is_ok()
+        );
+        assert_eq!(
+            CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+                kind: CanonicalRenderNodeKind::Image,
+                ..base.clone()
+            }),
+            Err(CanonicalRenderError::ImageCarriesPaint)
+        );
+        assert_eq!(
+            CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+                kind: CanonicalRenderNodeKind::Line,
+                fill_paint: None,
+                ..base.clone()
+            }),
+            Err(CanonicalRenderError::LinePaintBinding)
+        );
+        assert_eq!(
+            CanonicalRenderNode::new(CanonicalRenderNodeSpec {
+                fill_paint: None,
+                ..base
+            }),
+            Err(CanonicalRenderError::DrawableWithoutPaint)
         );
     }
 
@@ -2429,6 +2582,35 @@ mod tests {
             ),
             Err(CanonicalRenderError::EmptyPath)
         );
+        assert_eq!(
+            CanonicalRenderPath::new(
+                path_id.clone(),
+                CanonicalRenderFillRule::NonZero,
+                vec![CanonicalPathCommand::MoveTo(0), CanonicalPathCommand::Close],
+            ),
+            Err(CanonicalRenderError::InvalidPathState)
+        );
+        assert_eq!(
+            CanonicalRenderPath::new(
+                path_id.clone(),
+                CanonicalRenderFillRule::NonZero,
+                vec![
+                    CanonicalPathCommand::MoveTo(0),
+                    CanonicalPathCommand::LineTo(1),
+                    CanonicalPathCommand::Close,
+                    CanonicalPathCommand::Close,
+                ],
+            ),
+            Err(CanonicalRenderError::InvalidPathState)
+        );
+        assert_eq!(
+            CanonicalRenderPath::new(
+                path_id.clone(),
+                CanonicalRenderFillRule::NonZero,
+                vec![CanonicalPathCommand::Close],
+            ),
+            Err(CanonicalRenderError::InvalidPathState)
+        );
         assert!(
             CanonicalRenderPath::new(
                 path_id,
@@ -2698,6 +2880,34 @@ mod tests {
     }
 
     #[test]
+    fn document_order_is_dense_within_each_expanded_collection() {
+        let mut fixture = Fixture::new();
+        let mut spec = fixture.solid_rect();
+        spec.layers.push(
+            CanonicalRenderLayer::new(
+                fixture.id(EntityKind::RenderLayer, "layer/second"),
+                CanonicalRenderPass::Overlay,
+                0,
+                2,
+                Vec::new(),
+            )
+            .expect("layer"),
+        );
+        assert_eq!(
+            CanonicalRenderScene::new(spec).expect_err("layer order gap"),
+            CanonicalRenderError::InvalidDocumentOrder
+        );
+
+        let mut fixture = Fixture::new();
+        let mut spec = fixture.solid_rect();
+        spec.nodes[0].document_order = 1;
+        assert_eq!(
+            CanonicalRenderScene::new(spec).expect_err("root order gap"),
+            CanonicalRenderError::InvalidDocumentOrder
+        );
+    }
+
+    #[test]
     fn every_auxiliary_record_needs_exactly_one_owner() {
         let mut fixture = Fixture::new();
         let mut spec = fixture.solid_rect();
@@ -2730,7 +2940,7 @@ mod tests {
                 kind: CanonicalRenderNodeKind::Rect,
                 parent: Some(0),
                 layer: 0,
-                document_order: 1,
+                document_order: 0,
                 z_order: 0,
                 attachment: CanonicalRenderAttachment::Screen,
                 active: CanonicalActiveInterval::unbounded(),
@@ -2893,7 +3103,7 @@ mod tests {
         // without an arm. This count catches the remaining hole: a chain that
         // skips a variant whose arm exists but that nothing points at. A stale
         // number fails loudly here rather than silently shrinking coverage.
-        assert_eq!(all.len(), 33, "variant walk skips a variant");
+        assert_eq!(all.len(), 40, "variant walk skips a variant");
         assert_eq!(
             all.iter().collect::<BTreeSet<_>>().len(),
             all.len(),
@@ -2920,6 +3130,7 @@ mod tests {
             CanonicalRenderError::DuplicateStableId,
             CanonicalRenderError::ParentNotBeforeChild,
             CanonicalRenderError::InvalidActiveInterval,
+            CanonicalRenderError::InvalidDocumentOrder,
             CanonicalRenderError::SharedRecord,
             CanonicalRenderError::UnreachableRecord,
         ] {
@@ -2929,6 +3140,9 @@ mod tests {
         for error in [
             CanonicalRenderError::UnresolvedReference,
             CanonicalRenderError::GroupCarriesGeometry,
+            CanonicalRenderError::DrawableWithoutPaint,
+            CanonicalRenderError::ImageCarriesPaint,
+            CanonicalRenderError::LinePaintBinding,
             CanonicalRenderError::ClipGroupWithoutClip,
             CanonicalRenderError::AttachmentOverrideBelowRoot,
         ] {
@@ -2950,6 +3164,18 @@ mod tests {
         assert_eq!(
             CanonicalRenderError::ClipGeometryKindNotAllowed.code(),
             "render.invalid-clip"
+        );
+        assert_eq!(
+            CanonicalRenderError::InvalidPathState.code(),
+            "render.invalid-geometry"
+        );
+        assert_eq!(
+            CanonicalRenderError::GroupCarriesClip.code(),
+            "render.invalid-reference"
+        );
+        assert_eq!(
+            CanonicalRenderError::IsolatedDrawable.code(),
+            "render.invalid-composite"
         );
     }
 }

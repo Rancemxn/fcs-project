@@ -12,8 +12,8 @@ direct/template、exact Expression DAG、Note policy、disabled sound policy、w
 resource hash mismatch。Root/FCS manifest schema 升为 2：root 使用 `candidate_baseline`，resource
 fixture 可以声明 `workspace_root`，resolver 只能在该目录内读取 opaque member bytes。原 32 项
 grammar baseline 继续作为 Reviewed 范围的历史证据；后续 I3–I5 stage-scoped fixture 持续追加，当前
-manifest 共 64 项。新增的 `source.valid.appendix-a-minimal-complete` 以 canonical stage 覆盖 FCS Appendix A；I5.3 新增 `source.invalid.resource-missing-member`，并把 existing valid resource、
-path escape 与 hash mismatch 向量接到显式 workspace bundle resolver；I5.4 新增 sync preview invalid fixtures 与 shared formula vectors，并执行 existing offset equation。当前 64 项
+manifest 共 65 项。新增的 `source.valid.appendix-a-minimal-complete` 以 canonical stage 覆盖 FCS Appendix A；I5.3 新增 `source.invalid.resource-missing-member`，并把 existing valid resource、
+path escape 与 hash mismatch 向量接到显式 workspace bundle resolver；I5.4 新增 sync preview invalid fixtures 与 shared formula vectors，并执行 existing offset equation。当前 65 项
 candidate 仍随五个 Draft/联合重审版本域审查，不是 Frozen baseline。当前状态和后续 re-freeze gate
 以 `docs/specifications/governance.md`、路线图与
 `docs/reviews/2026-07-15-fcs5-cross-spec-closure-review.md` 为准；后者是联合候选自检，不是独立
@@ -76,6 +76,7 @@ fcbc/minimal-runtime.*      空资源 FCBC 2.0 runtime golden 与 manifest
 fcbc/embedded-resource.*    内嵌原始资源的 FCBC 2.0 golden、manifest 与 mutations
 fcbc/mutations.toml         基于 minimal-runtime 的确定性损坏向量
 render/manifest.toml        Render source/semantic/raster fixture manifest
+render/nonempty-render.*    Static Render binary, inventory, mutations and typed semantic/raster vectors
 conversion/manifest.toml    Conversion schema 2 registry/vector 入口
 conversion/profile-registry.toml  12 个版本化 semantic profile 与 descriptor hash
 conversion/parser-dialects.toml   7 个 parser dialect contract
@@ -89,10 +90,23 @@ conversion/profiles/        各 profile 的完整、逐文件 hash-bound descrip
 
 Render manifest schema 3 在原 semantic/raster `fixture` 之外增加 `source_fixture`，其
 `expect`/`diagnostic` 规则与 FCS source manifest 一致，并增加 semantic-only `binding_fixture`。
+每个 source 派生的 semantic oracle 使用同长度的 `drawOrder` 与 `drawOps`：前者固定 Layer/Node identity 顺序，
+后者逐项固定 node kind、world bounds、可选 solid/gradient fill、Stroke 和 composite；Stroke 还固定
+width、cap、join、miter、dash，并按 paint 类型固定 linear RGBA、linear-gradient 或
+radial-gradient 几何与 stops；ImagePattern fill/Stroke 还固定 resource ID、transform、repeat 和 sampling。
+不得把整个 scene 压成单 DrawOp，也不得用缺失 fill 表示未校验的 Stroke paint。
 `fcs-render` domain tests 执行 source-to-Render/semantic/raster 与 resource-boundary 证据；CLI
-product lane 通过 `check`、`compile` 覆盖 source/FCBC 路径，使用 `inspect --render` 覆盖可解码的
+product lane 通过 `check`、`compile` 覆盖 source/FCBC 路径，并对全部 `fixture` 使用
+`inspect --render` 覆盖可解码的
 Render 语义路径，并用普通 `inspect` 覆盖 semantic-only opaque binding；它不替代 manifest 的
 semantic/raster oracle。
+
+`binary_fixture` 另绑定 `render.nonempty-render`：9,024-byte static FCBC golden 包含 section
+1–14、20 和八张非空 Render 表。其 inventory 固定 section CRC、resource ID/kind/media/metadata/range/SHA；
+独立 writer 逐 byte 比对，独立 loader 与产品 loader 读取 static bytes。两帧 typed semantic JSON 固定完整
+排序键、matrix/property raw bits、Image 和 Text 布局；独立推导的 12×12 raster 和 shaping vector 的依据见
+[`render/nonempty-render.contract.md`](render/nonempty-render.contract.md)。深层 mutation 同时经过两套
+loader 和 CLI `inspect --render`；fuzz 从两域 manifest 读取 binary goldens，并使用固定 PNG/WebP/font。
 
 S15 resource closure 又在同一候选 schema 2 增加一个 semantic-only `binding_fixture`：source 与
 29-byte opaque asset 必须位于声明的 workspace root，预期固定 canonical resource ID/hash、FCBC

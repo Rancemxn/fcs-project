@@ -18,7 +18,8 @@ use super::{
     MISPLACED_GENERATOR_ERROR, NESTED_GENERATOR_ERROR, ParseLimits,
     definitions::identifier_with_span,
     entities::{
-        entity_expression_parser, generator_parser, schema_field_parser, schema_fields_parser,
+        entity_expression_parser, generator_parser, render_schema_field_parser,
+        render_schema_fields_parser,
     },
     expression::expression_parser,
     input::{ChumskySpan, ParserExtra, SpannedToken, source_span},
@@ -225,7 +226,7 @@ where
     I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
 {
     let viewport = contextual_keyword("viewport")
-        .then(schema_fields_parser())
+        .then(render_schema_fields_parser())
         .map_with(|(keyword_span, fields), extra| RenderViewport {
             fields,
             span: source_span(extra.span()),
@@ -330,7 +331,7 @@ where
         let member = choice((
             children.map(|children| Some(RenderBodyItem::Children(children))),
             tracks_block_parser().map(|tracks| Some(RenderBodyItem::Tracks(tracks))),
-            schema_field_parser().map(|field| Some(RenderBodyItem::Field(Box::new(field)))),
+            render_schema_field_parser().map(|field| Some(RenderBodyItem::Field(Box::new(field)))),
             misplaced_generator_parser().map(|()| None),
         ));
         member

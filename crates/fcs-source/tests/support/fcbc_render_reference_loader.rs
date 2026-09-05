@@ -305,11 +305,11 @@ pub struct ResourceRecord {
     pub data_offset: u64,
     pub data_length: u64,
     pub data: Vec<u8>,
-    metadata: ParsedValue,
+    pub metadata: ParsedValue,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum ParsedValue {
+pub enum ParsedValue {
     Null,
     Bool(bool),
     Int(i64),
@@ -494,7 +494,7 @@ fn parse_resources(
         if hash.len() != 32 {
             return Err("fcbc.invalid-record");
         }
-        let metadata = parse_value(&mut record, strings.len())?;
+        let metadata = parse_value(&mut record, strings.len(), "fcbc.invalid-record")?;
         record.finish()?;
         let start = usize::try_from(data_offset).map_err(|_| "fcbc.resource-out-of-bounds")?;
         let length = usize::try_from(data_length).map_err(|_| "fcbc.resource-out-of-bounds")?;
@@ -526,7 +526,11 @@ fn parse_counted_bytes(cursor: &mut Cursor<'_>) -> Result<Vec<u8>, &'static str>
     Ok(bytes)
 }
 
-fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedValue, &'static str> {
+fn parse_value(
+    cursor: &mut Cursor<'_>,
+    string_count: usize,
+    duplicate_key_error: &'static str,
+) -> Result<ParsedValue, &'static str> {
     let tag = cursor.u8()?;
     if cursor.u8()? != 0 || cursor.u16()? != 0 {
         return Err(cursor.error);
@@ -600,7 +604,7 @@ fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedVal
             let count = limited_count(payload.u32()?)?;
             let mut values = Vec::with_capacity(count);
             for _ in 0..count {
-                let value = parse_value(&mut payload, string_count)?;
+                let value = parse_value(&mut payload, string_count, duplicate_key_error)?;
                 if value_tag(&value) != element_tag {
                     return Err(cursor.error);
                 }
@@ -618,9 +622,12 @@ fn parse_value(cursor: &mut Cursor<'_>, string_count: usize) -> Result<ParsedVal
                     return Err("fcbc.dangling-reference");
                 }
                 if !keys.insert(key) {
-                    return Err(cursor.error);
+                    return Err(duplicate_key_error);
                 }
-                fields.push((key, parse_value(&mut payload, string_count)?));
+                fields.push((
+                    key,
+                    parse_value(&mut payload, string_count, duplicate_key_error)?,
+                ));
             }
             ParsedValue::Object(fields)
         }
@@ -843,7 +850,7 @@ fn parse_node(cursor: &mut Cursor<'_>, string_count: usize) -> Result<NodeRecord
     };
     if record.u16()? != 0
         || !matches!(
-            parse_value(&mut record, string_count)?,
+            parse_value(&mut record, string_count, "render.invalid-record")?,
             ParsedValue::Object(_)
         )
     {
@@ -863,7 +870,10 @@ fn parse_geometry(
     if !kind.is_drawable() || record.u16()? != 0 {
         return Err("render.invalid-geometry");
     }
-    let fields = named_object(parse_value(&mut record, strings.len())?, strings)?;
+    let fields = named_object(
+        parse_value(&mut record, strings.len(), "render.invalid-geometry")?,
+        strings,
+    )?;
     record.finish()?;
     let data = geometry_data(kind, fields)?;
     Ok(GeometryRecord { id, kind, data })

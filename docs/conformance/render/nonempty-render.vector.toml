@@ -1,0 +1,32 @@
+schema_version = 1
+id = "render.nonempty-render"
+
+[[frame]]
+chart_time_bits = "0000000000000000"
+
+[[frame]]
+chart_time_bits = "3fd0000000000000"
+
+[raster]
+chart_time_bits = "0000000000000000"
+width = 12
+height = 12
+color_space = "srgb"
+pixel_format = "rgba8"
+sample_grid = 8
+decoded_length = 576
+sha256 = "7daa78240fb174e3327e671f77f26e2f4ea2dbe8f1dfbad1176d5c70aa73b389"
+max_channel_difference = 1
+max_different_pixels_per_thousand = 1
+
+[shaping]
+font_resource_id = "6a9110820d3ddf6a"
+profile = "simple-ltr-1"
+input = "A"
+
+[[shaping.glyph]]
+glyph_id = 1
+x_advance_bits = "3ff0000000000000"
+y_advance_bits = "0000000000000000"
+x_offset_bits = "0000000000000000"
+y_offset_bits = "0000000000000000"

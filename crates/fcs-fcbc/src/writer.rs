@@ -1037,12 +1037,6 @@ fn render_section(
     strings: &[&str],
     resources: &[ResourceFixture<'_>],
 ) -> FcbcResult<Vec<u8>> {
-    if scene.clips().iter().next().is_some() {
-        return Err(FcbcError::new(
-            "fcbc.render-unsupported",
-            "product Render writer currently does not support clips",
-        ));
-    }
     let descriptor = |index: usize| {
         descriptor_indices.get(index).copied().ok_or_else(|| {
             FcbcError::new(
@@ -1079,6 +1073,12 @@ fn render_section(
     let mut stroke_indices = vec![NULL_INDEX; scene.strokes().len()];
     for (index, stroke) in stroke_order.iter().enumerate() {
         stroke_indices[*stroke] = index as u32;
+    }
+    let mut clip_order: Vec<usize> = (0..scene.clips().len()).collect();
+    clip_order.sort_by_key(|index| scene.clips()[*index].id().value());
+    let mut clip_indices = vec![NULL_INDEX; scene.clips().len()];
+    for (index, clip) in clip_order.iter().enumerate() {
+        clip_indices[*clip] = index as u32;
     }
     let mut glyph_order: Vec<usize> = (0..scene.glyph_runs().len()).collect();
     glyph_order.sort_by_key(|index| scene.glyph_runs()[*index].id().value());
@@ -1140,7 +1140,7 @@ fn render_section(
     put_u32(&mut payload, scene.paths().len() as u32);
     put_u32(&mut payload, scene.paints().len() as u32);
     put_u32(&mut payload, scene.strokes().len() as u32);
-    put_u32(&mut payload, 0);
+    put_u32(&mut payload, scene.clips().len() as u32);
     put_u32(&mut payload, scene.glyph_runs().len() as u32);
     for (encoded, source_layer) in layer_order.iter().enumerate() {
         let layer = &scene.layers()[*source_layer];
@@ -1174,30 +1174,27 @@ fn render_section(
         };
         let geometry = node.geometry();
         let (paint, stroke) = match node.kind() {
-            fcs_model::CanonicalRenderNodeKind::Rect
-            | fcs_model::CanonicalRenderNodeKind::RoundedRect
-            | fcs_model::CanonicalRenderNodeKind::Ellipse => {
-                if node.stroke().is_some() {
+            fcs_model::CanonicalRenderNodeKind::Rect => {
+                let fill = node.fill_paint();
+                let stroke = node.stroke();
+                if fill.is_none() && stroke.is_none() {
                     return Err(FcbcError::new(
-                        "fcbc.render-unsupported",
-                        "product Render writer supports strokes only on Line, Circle, Polyline, Polygon, and Path nodes",
+                        "fcbc.dangling-reference",
+                        "Render Rect has no fill paint or stroke",
                     ));
                 }
-                (
-                    Some(node.fill_paint().ok_or_else(|| {
-                        FcbcError::new("fcbc.dangling-reference", "Render Rect has no fill paint")
-                    })?),
-                    None,
-                )
+                (fill, stroke)
             }
-            fcs_model::CanonicalRenderNodeKind::Circle
+            fcs_model::CanonicalRenderNodeKind::RoundedRect
+            | fcs_model::CanonicalRenderNodeKind::Circle
+            | fcs_model::CanonicalRenderNodeKind::Ellipse
             | fcs_model::CanonicalRenderNodeKind::Polyline
             | fcs_model::CanonicalRenderNodeKind::Polygon
             | fcs_model::CanonicalRenderNodeKind::Path => {
                 // Render section 14.2 lets a fillable geometry carry a fill paint, a stroke, or
                 // both, so one of these is rejected only when it carries neither. Section 15.2
-                // fixes the Circle dash seam at the local `+X` crossing winding clockwise, while
-                // Polyline, Polygon, and Path already have explicit segment order.
+                // fixes closed parametric geometry dash origins and winding, while Polyline,
+                // Polygon, and Path already have explicit segment order.
                 let fill = node.fill_paint();
                 let stroke = node.stroke();
                 if fill.is_none() && stroke.is_none() {
@@ -1223,20 +1220,32 @@ fn render_section(
                 )
             }
             fcs_model::CanonicalRenderNodeKind::Text => {
-                if node.stroke().is_some() {
+                let fill = node.fill_paint();
+                let stroke = node.stroke();
+                if fill.is_none() && stroke.is_none() {
                     return Err(FcbcError::new(
-                        "fcbc.render-unsupported",
-                        "product Render writer does not support Text strokes",
+                        "fcbc.dangling-reference",
+                        "Render Text has no fill paint or stroke",
                     ));
                 }
-                (
-                    Some(node.fill_paint().ok_or_else(|| {
-                        FcbcError::new("fcbc.dangling-reference", "Render Text has no fill paint")
-                    })?),
-                    None,
-                )
+                (fill, stroke)
             }
             fcs_model::CanonicalRenderNodeKind::Group => (None, None),
+            fcs_model::CanonicalRenderNodeKind::ClipGroup => {
+                if node.fill_paint().is_some() || node.stroke().is_some() {
+                    return Err(FcbcError::new(
+                        "fcbc.render-unsupported",
+                        "Render ClipGroup cannot carry fill or stroke",
+                    ));
+                }
+                if node.clip().is_none() {
+                    return Err(FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render ClipGroup has no clip",
+                    ));
+                }
+                (None, None)
+            }
             fcs_model::CanonicalRenderNodeKind::Image => {
                 if node.fill_paint().is_some() || node.stroke().is_some() {
                     return Err(FcbcError::new(
@@ -1245,12 +1254,6 @@ fn render_section(
                     ));
                 }
                 (None, None)
-            }
-            _ => {
-                return Err(FcbcError::new(
-                    "fcbc.render-unsupported",
-                    "product Render writer does not support this node kind",
-                ));
             }
         };
         let geometry = geometry
@@ -1286,6 +1289,18 @@ fn render_section(
             })
             .transpose()?
             .unwrap_or(NULL_INDEX);
+        let clip = node
+            .clip()
+            .map(|clip| {
+                clip_indices.get(clip).copied().ok_or_else(|| {
+                    FcbcError::new(
+                        "fcbc.dangling-reference",
+                        "Render node references a missing clip",
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(NULL_INDEX);
         let attachment_id = node.attachment().target().map_or(0, |id| id.value());
         let active = node.active();
         let flags = u16::from(active.unbounded_before())
@@ -1314,7 +1329,7 @@ fn render_section(
         put_u32(&mut record_payload, geometry);
         put_u32(&mut record_payload, paint);
         put_u32(&mut record_payload, stroke);
-        put_u32(&mut record_payload, NULL_INDEX);
+        put_u32(&mut record_payload, clip);
         put_u16(&mut record_payload, node.composite().ordinal());
         put_u16(&mut record_payload, 0);
         record_payload.extend_from_slice(&empty_object());
@@ -1691,6 +1706,24 @@ fn render_section(
         for dash in stroke.dash() {
             put_f64(&mut record_payload, *dash);
         }
+        payload.extend_from_slice(&record(record_payload));
+    }
+    for clip_index in &clip_order {
+        let clip = &scene.clips()[*clip_index];
+        let geometry = geometry_indices
+            .get(clip.geometry())
+            .copied()
+            .ok_or_else(|| {
+                FcbcError::new(
+                    "fcbc.dangling-reference",
+                    "Render clip references a missing geometry",
+                )
+            })?;
+        let mut record_payload = Vec::new();
+        put_u64(&mut record_payload, clip.id().value());
+        put_u16(&mut record_payload, 0);
+        put_u16(&mut record_payload, clip.fill_rule().ordinal());
+        put_u32(&mut record_payload, geometry);
         payload.extend_from_slice(&record(record_payload));
     }
     for glyph_index in &glyph_order {

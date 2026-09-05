@@ -524,6 +524,7 @@ fn parse_resources(
             limits.max_descriptor_values,
             limits.max_descriptor_value_depth,
             1,
+            "fcbc.invalid-record",
         )?;
         record.finish()?;
         if data_length > limits.max_single_resource_bytes {
@@ -569,6 +570,7 @@ fn parse_value(
     max_items: usize,
     max_depth: usize,
     depth: usize,
+    duplicate_key_error: &'static str,
 ) -> Result<ParsedValue, &'static str> {
     if depth > max_depth {
         return Err(RENDER_DIAGNOSTIC_LIMIT_EXCEEDED);
@@ -646,8 +648,14 @@ fn parse_value(
             let count = limited_count(payload.u32()?, max_items)?;
             let mut values = Vec::with_capacity(count);
             for _ in 0..count {
-                let value =
-                    parse_value(&mut payload, string_count, max_items, max_depth, depth + 1)?;
+                let value = parse_value(
+                    &mut payload,
+                    string_count,
+                    max_items,
+                    max_depth,
+                    depth + 1,
+                    duplicate_key_error,
+                )?;
                 if value_tag(&value) != element_tag {
                     return Err(cursor.error);
                 }
@@ -665,11 +673,18 @@ fn parse_value(
                     return Err("fcbc.dangling-reference");
                 }
                 if !keys.insert(key) {
-                    return Err(cursor.error);
+                    return Err(duplicate_key_error);
                 }
                 fields.push((
                     key,
-                    parse_value(&mut payload, string_count, max_items, max_depth, depth + 1)?,
+                    parse_value(
+                        &mut payload,
+                        string_count,
+                        max_items,
+                        max_depth,
+                        depth + 1,
+                        duplicate_key_error,
+                    )?,
                 ));
             }
             ParsedValue::Object(fields)
@@ -908,6 +923,7 @@ fn parse_node(
                 limits.max_descriptor_values,
                 limits.max_descriptor_value_depth,
                 1,
+                RENDER_DIAGNOSTIC_INVALID_RECORD,
             )?,
             ParsedValue::Object(_)
         )
@@ -941,6 +957,7 @@ fn parse_geometry(
             max_value_items,
             limits.max_descriptor_value_depth,
             1,
+            RENDER_DIAGNOSTIC_INVALID_GEOMETRY,
         )?,
         strings,
     )?;

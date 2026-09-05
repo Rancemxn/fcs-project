@@ -20,6 +20,11 @@ pub struct DrawOp {
     pub node_id: u64,
     pub kind: NodeKind,
     pub layer_index: u32,
+    /// Layer (pass, zOrder, documentOrder, stable ID).
+    pub layer_key: (u16, i32, u32, u64),
+    /// Root-to-node sibling keys (zOrder, documentOrder, stable ID).
+    pub ancestry_key: Vec<(i32, u32, u64)>,
+    pub geometry_id: u64,
     pub z_order: i32,
     pub document_order: u32,
     pub fill_rgba: Option<[f64; 4]>,
@@ -28,11 +33,21 @@ pub struct DrawOp {
     pub image_pattern: Option<ImagePatternDrawOp>,
     pub stroke: Option<StrokeDrawOp>,
     pub image: Option<ImageDrawOp>,
+    pub text: Option<TextDrawOp>,
     pub opacity: f64,
     pub world_matrix: [f64; 9],
     pub composite: u16,
     pub clip_chain: Vec<u64>,
+    pub isolation_chain: Vec<IsolationDrawOp>,
     pub bounds: [f64; 4],
+}
+
+/// One isolated Group/ClipGroup boundary surrounding a drawable operation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IsolationDrawOp {
+    pub node_id: u64,
+    pub opacity: f64,
+    pub composite: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -41,6 +56,30 @@ pub struct ImageDrawOp {
     pub destination: [f64; 4],
     pub source: [f64; 4],
     pub sampling: u16,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextDrawOp {
+    pub origin: [f64; 2],
+    pub runs: Vec<GlyphRunDrawOp>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GlyphRunDrawOp {
+    pub run_id: u64,
+    pub font_resource_id: u64,
+    pub face_index: u32,
+    pub size: f64,
+    pub run_offset: [f64; 2],
+    pub glyphs: Vec<GlyphDrawOp>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlyphDrawOp {
+    pub glyph_id: u32,
+    /// Text-local origin after run offset, pen advance, and glyph offset.
+    pub origin: [f64; 2],
+    pub world_origin: [f64; 2],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -103,13 +142,22 @@ struct SubtreeState {
     inherited_opacity: f64,
     parent_matrix: [f64; 9],
     inherited_clips: Vec<u64>,
+    isolation_chain: Vec<IsolationDrawOp>,
     attachment: Option<AttachmentState>,
+    ancestry_key: Vec<(i32, u32, u64)>,
 }
 
 struct EvaluatedScene {
     ops: Vec<DrawOp>,
+    events: Vec<SceneEvent>,
     shapes: BTreeMap<u64, EvaluatedShape>,
     clips: BTreeMap<u64, EvaluatedClip>,
+}
+
+enum SceneEvent {
+    BeginIsolation(IsolationDrawOp),
+    Draw(usize),
+    EndIsolation(u64),
 }
 
 #[derive(Clone)]
@@ -126,6 +174,7 @@ type TextContours = Vec<Vec<[f64; 2]>>;
 struct PathSubpath {
     points: Vec<[f64; 2]>,
     segment_lengths: Vec<f64>,
+    joins_after: Vec<bool>,
     closed: bool,
 }
 
@@ -137,6 +186,7 @@ enum LocalShape {
     RoundedRect {
         bounds: [f64; 4],
         radii: [f64; 4],
+        stroke_path: Option<PathSubpath>,
     },
     Circle {
         center: [f64; 2],
@@ -147,6 +197,7 @@ enum LocalShape {
         radius_x: f64,
         radius_y: f64,
         rotation: f64,
+        stroke_path: Option<PathSubpath>,
     },
     Line {
         start: [f64; 2],
@@ -212,6 +263,7 @@ fn evaluate_scene_at(
     }
     let mut scene = EvaluatedScene {
         ops: Vec::new(),
+        events: Vec::new(),
         shapes: BTreeMap::new(),
         clips: BTreeMap::new(),
     };
@@ -267,7 +319,9 @@ fn evaluate_scene_at(
                     inherited_opacity: 1.0,
                     parent_matrix: identity_matrix(),
                     inherited_clips: Vec::new(),
+                    isolation_chain: Vec::new(),
                     attachment: None,
+                    ancestry_key: Vec::new(),
                 },
                 &mut scene,
             )?;
@@ -299,7 +353,9 @@ fn emit_draw_subtree(
         inherited_opacity,
         parent_matrix,
         inherited_clips,
+        isolation_chain,
         attachment,
+        mut ancestry_key,
     } = state;
     let node = chart.nodes.get(node_index).ok_or("render.invalid-graph")?;
     if !active_at(node, chart_time) {
@@ -312,6 +368,7 @@ fn emit_draw_subtree(
     if !query_visibility(chart, node, chart_time, attachment.environment)? {
         return Ok(());
     }
+    ancestry_key.push((node.z_order, node.document_order, node.id));
     let parent_matrix = if node.parent.is_none() {
         attachment.matrix
     } else {
@@ -339,6 +396,7 @@ fn emit_draw_subtree(
             chart_time,
             attachment.environment,
             world_matrix,
+            false,
         )?;
         scene.clips.insert(
             clip_id,
@@ -350,6 +408,7 @@ fn emit_draw_subtree(
             },
         );
     }
+    let mut text = None;
     let (fill_rgba, linear_gradient, radial_gradient, image_pattern, bounds, image, stroke) =
         if node.kind.is_drawable() {
             let geometry = geometry_evaluation(
@@ -358,7 +417,9 @@ fn emit_draw_subtree(
                 chart_time,
                 attachment.environment,
                 world_matrix,
+                node.stroke_ref.is_some(),
             )?;
+            text = geometry.text;
             if let Some(shape) = geometry.shape {
                 scene.shapes.insert(
                     node.id,
@@ -459,10 +520,23 @@ fn emit_draw_subtree(
         return Err("render.invalid-composite");
     }
     if node.kind.is_drawable() {
+        let op_index = scene.ops.len();
+        let layer = chart
+            .layers
+            .get(node.layer_index as usize)
+            .ok_or("render.invalid-graph")?;
+        let geometry_id = node
+            .geometry_ref
+            .and_then(|index| chart.geometries.get(index as usize))
+            .ok_or("render.invalid-reference")?
+            .id;
         scene.ops.push(DrawOp {
             node_id: node.id,
             kind: node.kind,
             layer_index: node.layer_index,
+            layer_key: (layer.pass, layer.z_order, layer.document_order, layer.id),
+            ancestry_key: ancestry_key.clone(),
+            geometry_id,
             z_order: node.z_order,
             document_order: node.document_order,
             fill_rgba,
@@ -471,19 +545,27 @@ fn emit_draw_subtree(
             image_pattern,
             stroke,
             image,
+            text,
             opacity: effective_opacity,
             world_matrix,
             composite: node.composite,
             clip_chain: clip_chain.clone(),
+            isolation_chain: isolation_chain.clone(),
             bounds,
         });
+        scene.events.push(SceneEvent::Draw(op_index));
+    }
+    let mut child_isolation_chain = isolation_chain;
+    let isolation = node.isolated().then_some(IsolationDrawOp {
+        node_id: node.id,
+        opacity,
+        composite: node.composite,
+    });
+    if let Some(boundary) = isolation {
+        scene.events.push(SceneEvent::BeginIsolation(boundary));
+        child_isolation_chain.push(boundary);
     }
     for child_index in children.get(node_index).ok_or("render.invalid-graph")? {
-        // ponytail: isolated group opacity is dropped from descendants because
-        // this DrawOp protocol carries no group boundary; full isolated
-        // compositing (offscreen render + atomic boundary composite) requires
-        // either a Group marker on DrawOp or an offscreen buffer and is
-        // explicitly out of scope for Issue #448 (fcs-render.md §3.4 / §5).
         let child_opacity = if node.isolated() {
             inherited_opacity
         } else {
@@ -498,10 +580,17 @@ fn emit_draw_subtree(
                 inherited_opacity: child_opacity,
                 parent_matrix: world_matrix,
                 inherited_clips: clip_chain.clone(),
+                isolation_chain: child_isolation_chain.clone(),
                 attachment: Some(attachment),
+                ancestry_key: ancestry_key.clone(),
             },
             scene,
         )?;
+    }
+    if let Some(boundary) = isolation {
+        scene
+            .events
+            .push(SceneEvent::EndIsolation(boundary.node_id));
     }
     Ok(())
 }
@@ -1008,6 +1097,24 @@ struct RasterOp {
     composite: u16,
 }
 
+struct RasterIsolationBuffer {
+    boundary: IsolationDrawOp,
+    color: [f64; 4],
+}
+
+fn composite_raster_sample(
+    destination: &mut [f64; 4],
+    stack: &mut [RasterIsolationBuffer],
+    source: [f64; 4],
+    composite: u16,
+) -> Result<(), &'static str> {
+    if let Some(buffer) = stack.last_mut() {
+        composite_premultiplied(&mut buffer.color, source, composite)
+    } else {
+        composite_premultiplied(destination, source, composite)
+    }
+}
+
 enum RasterSource {
     Solid([f64; 4]),
     LinearGradient(LinearGradientDrawOp),
@@ -1066,7 +1173,9 @@ fn local_shape_contains(shape: &LocalShape, point: [f64; 2]) -> bool {
                 && point[1] >= bounds[1]
                 && point[1] <= bounds[3]
         }
-        LocalShape::RoundedRect { bounds, radii } => rounded_rect_contains(*bounds, *radii, point),
+        LocalShape::RoundedRect { bounds, radii, .. } => {
+            rounded_rect_contains(*bounds, *radii, point)
+        }
         LocalShape::Circle { center, radius } => {
             *radius > 0.0
                 && (point[0] - center[0]).mul_add(
@@ -1079,6 +1188,7 @@ fn local_shape_contains(shape: &LocalShape, point: [f64; 2]) -> bool {
             radius_x,
             radius_y,
             rotation,
+            ..
         } => ellipse_contains(*center, *radius_x, *radius_y, *rotation, point),
         LocalShape::Line { .. } => false,
         LocalShape::Polygon { points, .. } => polygon_contains(points, point),
@@ -1157,12 +1267,34 @@ fn stroke_contains(
         return Err("render.invalid-geometry");
     }
     match shape {
+        LocalShape::Rect { bounds } => {
+            // Section 15.2 starts at Rect origin, walks left/up, top/right, right/down,
+            // then closes along the bottom edge: clockwise in FCS Y-up coordinates.
+            let points = [
+                [bounds[0], bounds[1]],
+                [bounds[0], bounds[3]],
+                [bounds[2], bounds[3]],
+                [bounds[2], bounds[1]],
+            ];
+            stroke_polyline_contains(&points, true, None, None, point, stroke)
+        }
         LocalShape::Line { start, end } => stroke_line_contains(*start, *end, point, stroke),
         LocalShape::Circle { center, radius } => {
             stroke_circle_contains(*center, *radius, point, stroke)
         }
         LocalShape::Polygon { points, closed } => {
-            stroke_polyline_contains(points, *closed, None, point, stroke)
+            stroke_polyline_contains(points, *closed, None, None, point, stroke)
+        }
+        LocalShape::RoundedRect { stroke_path, .. } | LocalShape::Ellipse { stroke_path, .. } => {
+            let subpath = stroke_path.as_ref().ok_or("render.invalid-geometry")?;
+            stroke_polyline_contains(
+                &subpath.points,
+                subpath.closed,
+                Some(&subpath.segment_lengths),
+                Some(&subpath.joins_after),
+                point,
+                stroke,
+            )
         }
         LocalShape::Path { subpaths, .. } => {
             for subpath in subpaths {
@@ -1170,9 +1302,18 @@ fn stroke_contains(
                     &subpath.points,
                     subpath.closed,
                     Some(&subpath.segment_lengths),
+                    Some(&subpath.joins_after),
                     point,
                     stroke,
                 )? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        LocalShape::Text { contours } => {
+            for contour in contours {
+                if stroke_polyline_contains(contour, true, None, None, point, stroke)? {
                     return Ok(true);
                 }
             }
@@ -1189,11 +1330,13 @@ fn stroke_contains(
 /// A zero-length segment produces no coverage, cap, join or tangent and does not advance the
 /// dash phase, so it is dropped before anything else. `cap` applies at each dash segment's two
 /// endpoints, and for an undashed stroke only at the two ends of an open Polyline. `join`
-/// applies at every vertex the stroke covers on both sides.
+/// applies at every declared vertex the stroke covers on both sides; adaptive subdivision
+/// points are not vertices.
 fn stroke_polyline_contains(
     points: &[[f64; 2]],
     closed: bool,
     segment_lengths: Option<&[f64]>,
+    joins_after: Option<&[bool]>,
     point: [f64; 2],
     stroke: &StrokeDrawOp,
 ) -> Result<bool, &'static str> {
@@ -1206,6 +1349,9 @@ fn stroke_polyline_contains(
                 .iter()
                 .any(|length| !length.is_finite() || *length < 0.0)
     }) {
+        return Err("render.invalid-geometry");
+    }
+    if joins_after.is_some_and(|joins| joins.len() != points.len() - 1) {
         return Err("render.invalid-geometry");
     }
     let half_width = stroke.width / 2.0;
@@ -1230,6 +1376,7 @@ fn stroke_polyline_contains(
             offset: total,
             length,
             metric_length,
+            join_after: joins_after.is_none_or(|joins| joins[index]),
         });
         total += metric_length;
     }
@@ -1241,6 +1388,13 @@ fn stroke_polyline_contains(
     // An undashed stroke covers the whole path, so every vertex joins and only an open path's
     // two ends cap. Section 15.2 gives a closed undashed stroke no endpoint at all.
     let whole_path_on = stroke.dash.is_empty();
+    let dash_wraps = closed
+        && dash_intervals
+            .first()
+            .is_some_and(|interval| interval.0 == 0.0)
+        && dash_intervals
+            .last()
+            .is_some_and(|interval| interval.1 == total);
     for (dash_start, dash_end) in &dash_intervals {
         for segment in &segments {
             let along = (point[0] - segment.start[0]) * segment.direction[0]
@@ -1263,6 +1417,9 @@ fn stroke_polyline_contains(
             continue;
         }
         for (arc, forward) in [(*dash_start, false), (*dash_end, true)] {
+            if dash_wraps && ((!forward && arc == 0.0) || (forward && arc == total)) {
+                continue;
+            }
             let segment = segments
                 .iter()
                 .find(|segment| arc <= segment.offset + segment.metric_length)
@@ -1288,10 +1445,21 @@ fn stroke_polyline_contains(
         let outgoing = &segments[(index + 1) % segments.len()];
         let arc = incoming.offset + incoming.metric_length;
         let joined = whole_path_on
+            || (dash_wraps && index + 1 == segments.len())
             || dash_intervals
                 .iter()
                 .any(|(start, end)| arc > *start && arc < *end);
         if !joined {
+            continue;
+        }
+        if !incoming.join_after {
+            let vertex = [
+                incoming.start[0] + incoming.direction[0] * incoming.length,
+                incoming.start[1] + incoming.direction[1] * incoming.length,
+            ];
+            if (point[0] - vertex[0]).hypot(point[1] - vertex[1]) <= half_width {
+                return Ok(true);
+            }
             continue;
         }
         if join_contains(incoming, outgoing, point, half_width, stroke)? {
@@ -1307,6 +1475,7 @@ struct PolylineSegment {
     offset: f64,
     length: f64,
     metric_length: f64,
+    join_after: bool,
 }
 
 /// Render section 15.2: butt truncates at the endpoint, square extends `width/2` along the
@@ -1426,6 +1595,10 @@ fn stroke_circle_contains(
     if segments.is_empty() {
         return Ok(false);
     }
+    let dash_wraps = segments.first().is_some_and(|interval| interval.0 == 0.0)
+        && segments
+            .last()
+            .is_some_and(|interval| interval.1 == circumference);
     if distance == 0.0 {
         // The centre lies on the radial boundary of every sector, and section 15.2 counts a
         // boundary sample as inside, so any dash segment reaches it once the band does.
@@ -1443,6 +1616,11 @@ fn stroke_circle_contains(
             _ => return Err("render.invalid-stroke"),
         }
         for (end_arc, sign) in [(segment_start, -1.0), (segment_end, 1.0)] {
+            if dash_wraps
+                && ((sign < 0.0 && end_arc == 0.0) || (sign > 0.0 && end_arc == circumference))
+            {
+                continue;
+            }
             let (sin, cos) = (-end_arc / radius).sin_cos();
             let to_point = [offset[0] - radius * cos, offset[1] - radius * sin];
             if stroke.cap == 2 {
@@ -1848,7 +2026,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
         return Err("render.limit-exceeded");
     }
     let scene = evaluate_scene_at(chart, chart_time)?;
-    let mut raster_ops = Vec::new();
+    let mut raster_ops = Vec::with_capacity(scene.ops.len());
     for op in &scene.ops {
         if !matches!(
             op.kind,
@@ -1863,6 +2041,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                 | NodeKind::Text
                 | NodeKind::Image
         ) {
+            raster_ops.push(None);
             continue;
         }
         if !op.opacity.is_finite() {
@@ -1872,6 +2051,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
             return Err("render.invalid-composite");
         }
         let Some(shape) = scene.shapes.get(&op.node_id) else {
+            raster_ops.push(None);
             continue;
         };
         let source = if op.kind == NodeKind::Image {
@@ -1893,11 +2073,15 @@ pub fn rasterize_solid_rgba8_with_limits_at(
         // stroke without a resolvable paint is invalid rather than merely unpainted.
         let stroke_source = if matches!(
             op.kind,
-            NodeKind::Line
+            NodeKind::Rect
+                | NodeKind::Line
+                | NodeKind::RoundedRect
                 | NodeKind::Circle
+                | NodeKind::Ellipse
                 | NodeKind::Polyline
                 | NodeKind::Polygon
                 | NodeKind::Path
+                | NodeKind::Text
         ) {
             match op.stroke.as_ref() {
                 Some(stroke) => Some(
@@ -1917,6 +2101,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
             None
         };
         if source.is_none() && stroke_source.is_none() {
+            raster_ops.push(None);
             continue;
         }
         let mut clips = Vec::new();
@@ -1926,7 +2111,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                 clips.push(raster_shape(shape));
             }
         }
-        raster_ops.push(RasterOp {
+        raster_ops.push(Some(RasterOp {
             shape: raster_shape(shape),
             clips,
             source,
@@ -1934,7 +2119,7 @@ pub fn rasterize_solid_rgba8_with_limits_at(
             stroke: op.stroke.clone(),
             opacity: op.opacity,
             composite: op.composite,
-        });
+        }));
     }
     let capacity = (width as usize)
         .checked_mul(height as usize)
@@ -1959,37 +2144,90 @@ pub fn rasterize_solid_rgba8_with_limits_at(
                     let logical_y = (0.5 - device_y / f64::from(height)) * chart.viewport_height;
                     let point = [logical_x, logical_y];
                     let mut sample = [0.0; 4];
-                    for op in &raster_ops {
-                        let Some(local_point) = raster_shape_local_point(&op.shape, point) else {
-                            continue;
-                        };
-                        if !op
-                            .clips
-                            .iter()
-                            .all(|clip| raster_shape_contains(clip, point))
-                        {
-                            continue;
+                    let mut isolation_stack = Vec::new();
+                    for event in &scene.events {
+                        match event {
+                            SceneEvent::BeginIsolation(boundary) => {
+                                if !boundary.opacity.is_finite()
+                                    || !(0.0..=1.0).contains(&boundary.opacity)
+                                    || !matches!(boundary.composite, 1..=5)
+                                {
+                                    return Err("render.invalid-composite");
+                                }
+                                isolation_stack.push(RasterIsolationBuffer {
+                                    boundary: *boundary,
+                                    color: [0.0; 4],
+                                });
+                            }
+                            SceneEvent::EndIsolation(node_id) => {
+                                let buffer =
+                                    isolation_stack.pop().ok_or("render.invalid-composite")?;
+                                if buffer.boundary.node_id != *node_id {
+                                    return Err("render.invalid-composite");
+                                }
+                                let source = buffer
+                                    .color
+                                    .map(|component| component * buffer.boundary.opacity);
+                                composite_raster_sample(
+                                    &mut sample,
+                                    &mut isolation_stack,
+                                    source,
+                                    buffer.boundary.composite,
+                                )?;
+                            }
+                            SceneEvent::Draw(index) => {
+                                let Some(op) = raster_ops
+                                    .get(*index)
+                                    .ok_or("render.invalid-graph")?
+                                    .as_ref()
+                                else {
+                                    continue;
+                                };
+                                let Some(local_point) = raster_shape_local_point(&op.shape, point)
+                                else {
+                                    continue;
+                                };
+                                if !op
+                                    .clips
+                                    .iter()
+                                    .all(|clip| raster_shape_contains(clip, point))
+                                {
+                                    continue;
+                                }
+                                // Render section 7 emits fill before stroke for the same node.
+                                if let Some(source) = &op.source
+                                    && local_shape_contains(&op.shape.shape, local_point)
+                                    && let Some(value) =
+                                        raster_source_at(chart, source, local_point, op.opacity)?
+                                {
+                                    composite_raster_sample(
+                                        &mut sample,
+                                        &mut isolation_stack,
+                                        value,
+                                        op.composite,
+                                    )?;
+                                }
+                                if let Some(source) = &op.stroke_source
+                                    && stroke_contains(
+                                        &op.shape.shape,
+                                        local_point,
+                                        op.stroke.as_ref().ok_or("render.invalid-stroke")?,
+                                    )?
+                                    && let Some(value) =
+                                        raster_source_at(chart, source, local_point, op.opacity)?
+                                {
+                                    composite_raster_sample(
+                                        &mut sample,
+                                        &mut isolation_stack,
+                                        value,
+                                        op.composite,
+                                    )?;
+                                }
+                            }
                         }
-                        // Render section 7 emits the fill draw op before the stroke draw op
-                        // for the same node, so a node carrying both composites in that order.
-                        if let Some(source) = &op.source
-                            && local_shape_contains(&op.shape.shape, local_point)
-                            && let Some(value) =
-                                raster_source_at(chart, source, local_point, op.opacity)?
-                        {
-                            composite_premultiplied(&mut sample, value, op.composite)?;
-                        }
-                        if let Some(source) = &op.stroke_source
-                            && stroke_contains(
-                                &op.shape.shape,
-                                local_point,
-                                op.stroke.as_ref().ok_or("render.invalid-stroke")?,
-                            )?
-                            && let Some(value) =
-                                raster_source_at(chart, source, local_point, op.opacity)?
-                        {
-                            composite_premultiplied(&mut sample, value, op.composite)?;
-                        }
+                    }
+                    if !isolation_stack.is_empty() {
+                        return Err("render.invalid-composite");
                     }
                     for component in 0..4 {
                         sum[component] += sample[component];
@@ -2926,6 +3164,7 @@ fn evaluate_path(
                 active = Some(PathSubpath {
                     points: vec![point],
                     segment_lengths: Vec::new(),
+                    joins_after: Vec::new(),
                     closed: false,
                 });
                 current = point;
@@ -3132,7 +3371,8 @@ fn append_curve(
 ) -> Result<(), &'static str> {
     let subpath = active.ok_or("render.invalid-geometry")?;
     subpath.closed = false;
-    let length = subpath.points.len();
+    let point_start = subpath.points.len();
+    let segment_start = subpath.segment_lengths.len();
     flatten_curve(
         curve,
         &mut subpath.points,
@@ -3141,7 +3381,13 @@ fn append_curve(
         world_matrix,
         point_count,
     )?;
-    for point in &subpath.points[length..] {
+    subpath
+        .joins_after
+        .resize(subpath.segment_lengths.len(), false);
+    if subpath.segment_lengths.len() > segment_start {
+        *subpath.joins_after.last_mut().expect("curve segment") = true;
+    }
+    for point in &subpath.points[point_start..] {
         update_bounds(bounds, *point);
     }
     Ok(())
@@ -3164,8 +3410,125 @@ fn append_path_point(
     claim_path_point(point_count)?;
     subpath.points.push(point);
     subpath.segment_lengths.push(segment_length);
+    subpath.joins_after.push(true);
     update_bounds(bounds, point);
     Ok(())
+}
+
+fn ellipse_stroke_path(
+    center: Point,
+    radius_x: f64,
+    radius_y: f64,
+    rotation: f64,
+    world_matrix: [f64; 9],
+) -> Result<PathSubpath, &'static str> {
+    let mut points = vec![ellipse_arc_point(
+        center, radius_x, radius_y, rotation, 0.0, 0.0, 0.0,
+    )?];
+    let mut segment_lengths = Vec::new();
+    let mut point_count = 1;
+    for (start_angle, end_angle) in [
+        (0.0, -std::f64::consts::FRAC_PI_2),
+        (-std::f64::consts::FRAC_PI_2, -std::f64::consts::PI),
+        (-std::f64::consts::PI, -3.0 * std::f64::consts::FRAC_PI_2),
+        (-3.0 * std::f64::consts::FRAC_PI_2, -std::f64::consts::TAU),
+    ] {
+        flatten_curve(
+            PathCurve::EllipseArc {
+                center,
+                radius_x,
+                radius_y,
+                rotation,
+                start_angle,
+                end_angle,
+            },
+            &mut points,
+            &mut segment_lengths,
+            0,
+            world_matrix,
+            &mut point_count,
+        )?;
+    }
+    Ok(PathSubpath {
+        joins_after: vec![false; segment_lengths.len()],
+        points,
+        segment_lengths,
+        closed: true,
+    })
+}
+
+fn rounded_rect_stroke_path(
+    bounds: [f64; 4],
+    radii: [f64; 4],
+    world_matrix: [f64; 9],
+) -> Result<PathSubpath, &'static str> {
+    let [left, bottom, right, top] = bounds;
+    let [top_left, top_right, bottom_right, bottom_left] = radii;
+    let mut subpath = PathSubpath {
+        points: vec![[left + top_left, top]],
+        segment_lengths: Vec::new(),
+        joins_after: Vec::new(),
+        closed: false,
+    };
+    let mut bounds = None;
+    let mut point_count = 1;
+    for (line_end, arc) in [
+        (
+            [right - top_right, top],
+            PathCurve::EllipseArc {
+                center: [right - top_right, top - top_right],
+                radius_x: top_right,
+                radius_y: top_right,
+                rotation: 0.0,
+                start_angle: std::f64::consts::FRAC_PI_2,
+                end_angle: 0.0,
+            },
+        ),
+        (
+            [right, bottom + bottom_right],
+            PathCurve::EllipseArc {
+                center: [right - bottom_right, bottom + bottom_right],
+                radius_x: bottom_right,
+                radius_y: bottom_right,
+                rotation: 0.0,
+                start_angle: 0.0,
+                end_angle: -std::f64::consts::FRAC_PI_2,
+            },
+        ),
+        (
+            [left + bottom_left, bottom],
+            PathCurve::EllipseArc {
+                center: [left + bottom_left, bottom + bottom_left],
+                radius_x: bottom_left,
+                radius_y: bottom_left,
+                rotation: 0.0,
+                start_angle: -std::f64::consts::FRAC_PI_2,
+                end_angle: -std::f64::consts::PI,
+            },
+        ),
+        (
+            [left, top - top_left],
+            PathCurve::EllipseArc {
+                center: [left + top_left, top - top_left],
+                radius_x: top_left,
+                radius_y: top_left,
+                rotation: 0.0,
+                start_angle: std::f64::consts::PI,
+                end_angle: std::f64::consts::FRAC_PI_2,
+            },
+        ),
+    ] {
+        append_path_point(Some(&mut subpath), line_end, &mut bounds, &mut point_count)?;
+        append_curve(
+            Some(&mut subpath),
+            arc,
+            &mut bounds,
+            world_matrix,
+            &mut point_count,
+        )?;
+    }
+    subpath.closed = true;
+    Ok(subpath)
 }
 
 fn claim_path_point(point_count: &mut usize) -> Result<(), &'static str> {
@@ -3299,6 +3662,7 @@ struct GeometryEvaluation {
     world_bounds: [f64; 4],
     shape: Option<LocalShape>,
     image: Option<ImageDrawOp>,
+    text: Option<TextDrawOp>,
 }
 
 fn geometry_evaluation(
@@ -3307,17 +3671,20 @@ fn geometry_evaluation(
     chart_time: f64,
     environment: EvaluationEnvironment,
     world_matrix: [f64; 9],
+    needs_stroke: bool,
 ) -> Result<GeometryEvaluation, &'static str> {
     let Some(index) = geometry_ref else {
         return Ok(GeometryEvaluation {
             world_bounds: [0.0, 0.0, 0.0, 0.0],
             shape: None,
             image: None,
+            text: None,
         });
     };
     let Some(geometry) = chart.geometries.get(index as usize) else {
         return Err("render.invalid-reference");
     };
+    let mut text = None;
     let (local_bounds, shape, image) = match &geometry.data {
         GeometryData::Rect { origin, size } => {
             let [x, y] = query_vec2_in(
@@ -3384,6 +3751,9 @@ fn geometry_evaluation(
                 Some(LocalShape::RoundedRect {
                     bounds: [x, y, right, top],
                     radii: values,
+                    stroke_path: needs_stroke
+                        .then(|| rounded_rect_stroke_path([x, y, right, top], values, world_matrix))
+                        .transpose()?,
                 }),
                 None,
             )
@@ -3447,6 +3817,11 @@ fn geometry_evaluation(
                     radius_x,
                     radius_y,
                     rotation,
+                    stroke_path: needs_stroke
+                        .then(|| {
+                            ellipse_stroke_path(center, radius_x, radius_y, rotation, world_matrix)
+                        })
+                        .transpose()?,
                 }),
                 None,
             )
@@ -3523,8 +3898,15 @@ fn geometry_evaluation(
             )
         }
         GeometryData::Text { glyph_runs, origin } => {
-            let (bounds, contours) =
-                evaluate_text(chart, glyph_runs, *origin, chart_time, environment)?;
+            let (bounds, contours, evaluated) = evaluate_text(
+                chart,
+                glyph_runs,
+                *origin,
+                chart_time,
+                environment,
+                world_matrix,
+            )?;
+            text = Some(evaluated);
             (bounds, Some(LocalShape::Text { contours }), None)
         }
         GeometryData::Image {
@@ -3586,6 +3968,7 @@ fn geometry_evaluation(
         world_bounds: transformed_bounds(world_matrix, local_bounds)?,
         shape,
         image,
+        text,
     })
 }
 
@@ -3635,7 +4018,8 @@ fn evaluate_text(
     origin_descriptor: u32,
     chart_time: f64,
     environment: EvaluationEnvironment,
-) -> Result<([f64; 4], TextContours), &'static str> {
+    world_matrix: [f64; 9],
+) -> Result<([f64; 4], TextContours, TextDrawOp), &'static str> {
     let origin = query_vec2_in(
         chart,
         origin_descriptor,
@@ -3644,6 +4028,10 @@ fn evaluate_text(
         environment,
     )?;
     let mut contours = Vec::new();
+    let mut text = TextDrawOp {
+        origin,
+        runs: Vec::with_capacity(glyph_run_refs.len()),
+    };
     for glyph_run_ref in glyph_run_refs {
         let run = chart
             .glyph_runs
@@ -3671,6 +4059,7 @@ fn evaluate_text(
         if !pen.iter().all(|value| value.is_finite()) {
             return Err("render.invalid-geometry");
         }
+        let mut glyphs = Vec::with_capacity(run.glyphs.len());
         for placement in &run.glyphs {
             if ![
                 placement.x_advance,
@@ -3694,6 +4083,11 @@ fn evaluate_text(
             if !glyph_origin.iter().all(|value| value.is_finite()) {
                 return Err("render.invalid-geometry");
             }
+            glyphs.push(GlyphDrawOp {
+                glyph_id: placement.glyph_id,
+                origin: glyph_origin,
+                world_origin: transform_point(world_matrix, glyph_origin)?,
+            });
             for contour in &glyph.contours {
                 let points = glyph_contour(contour, glyph_origin, scale)?;
                 if points.len() >= 3 {
@@ -3706,6 +4100,14 @@ fn evaluate_text(
                 return Err("render.invalid-geometry");
             }
         }
+        text.runs.push(GlyphRunDrawOp {
+            run_id: run.id,
+            font_resource_id: run.font_resource_id,
+            face_index: run.face_index,
+            size,
+            run_offset: run.run_offset,
+            glyphs,
+        });
     }
     let mut bounds = [origin[0], origin[1], origin[0], origin[1]];
     for [x, y] in contours.iter().flat_map(|contour| contour.iter()) {
@@ -3717,7 +4119,7 @@ fn evaluate_text(
     if !bounds.iter().all(|value| value.is_finite()) {
         return Err("render.invalid-geometry");
     }
-    Ok((bounds, contours))
+    Ok((bounds, contours, text))
 }
 
 fn glyph_contour(

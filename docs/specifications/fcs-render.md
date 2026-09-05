@@ -177,6 +177,28 @@ environment，但 descendant 不重复应用 attachment matrix。Group 的 `geom
 ClipGroup 的 `geometryRef` 也为 null 且 `clipRef` 必须存在。其余 node 必须引用 kind-compatible
 GeometryRecord。
 
+`ClipGroup` 的 source clip 使用同一 node body 中的 `clip.*` schema field，不引入隐藏 child 或第二套
+geometry expression：
+
+```fcs
+clipGroup mask {
+    clip.kind: "rect";
+    clip.fillRule: "nonzero";
+    clip.origin: vec2(-1px, -3px);
+    clip.size: vec2(2px, 6px);
+    children { /* clipped subtree */ }
+}
+```
+
+`clip.kind` 与 `clip.fillRule` required 且 compile-time。`clip.kind` 只允许 `"rect"`、
+`"roundedRect"`、`"circle"`、`"ellipse"`、`"polygon"` 或 `"path"`；`clip.fillRule` 只允许
+`"nonzero"` 或 `"evenodd"`。其余 geometry field 使用对应 drawable node 的 schema 和默认值，但
+统一加 `clip.` 前缀，例如 `clip.center`、`clip.radius`、`clip.points`、`clip.commands`；Path 的
+`clip.fillRule` 同时成为 PathRecord 与 ClipRecord 的唯一 fill rule，因此两者必须由 lowering 构造为
+相等。`clip.*` field 不参与 Node 自身的 position/origin/rotation/scale。ClipGroup 不允许 `fill`、
+`stroke` 或 `pattern*` field。Canonical lowering 固定生成
+`Node.clipRef -> Clip.geometryRef -> Geometry` ownership；Path 再由 Geometry 拥有 PathRecord。
+
 ### 3.2 Children 和 generator
 
 `children` 是 `RenderNode` collection，可以使用 FCS Core template、compile-time `if` 和
@@ -391,6 +413,18 @@ coverage、cap、join 或 tangent。求 join tangent 时跳过连续零长度 se
 直到到达正长度 element，整个 array 总长大于 0 保证该过程有限。Arc/EllipseArc 的零长度概念性
 connector 遵守同一规则：保留有序边界但不制造额外 cap/join/coverage。
 
+The source spelling for a Path uses a compile-time `commands` array and a
+required `fillRule` field. Each array element is one of
+`moveTo(point)`, `lineTo(point)`, `quadraticTo(control, end)`,
+`cubicTo(control1, control2, end)`,
+`arc(center, radius, startAngle, endAngle, direction)`,
+`ellipseArc(center, radiusX, radiusY, rotation, startAngle, endAngle, direction)`,
+or `close()`. Points use `vec2<length>`, radii use `length`, angles use
+`angle`, and `direction` is the compile-time string `"clockwise"` or
+`"counterClockwise"`. Command count, command kind, `direction`, and
+`fillRule` are compile-time; numeric command arguments may be exact runtime
+descriptors. `fillRule` is `"nonzero"` or `"evenodd"`.
+
 ---
 
 ## 8. Paint 和 Stroke
@@ -406,18 +440,20 @@ ImagePattern(resource,transform,repeat,sampling)
 
 Render source uses the following fixed spellings for the bounded Core paint
 constructors. The product implementation currently supports `solid`,
-`linearGradient`, and `radialGradient`; its semantic/raster path also consumes
-loader-validated FCBC `ImagePattern` kind 4 records, kind 7 `Line` stroke
+`linearGradient`, `radialGradient`, and source `imagePattern`; its semantic/raster
+path also consumes loader-validated FCBC `ImagePattern` kind 4 records, kind 7 `Line` stroke
 records, and bounded Path/PathRecord records, and the canonical product writer
-covers those same bounded kind 4, kind 7, and Path records, plus a solid or dashed
-stroke on a Circle, Polyline, Polygon, or Path. The bounded source
-Line, Circle, Polyline, and Polygon lowering now cover compile-time strokes; dynamic stroke descriptors,
-source `imagePattern`, and source Path lowering remain separate
-bounded work. Path semantic/raster coverage consumes loader-validated fill and
-stroke records. A dashed stroke on a
+covers those same bounded kind 4, kind 7, and Path records, plus a solid or dashed stroke on Rect,
+RoundedRect, Circle, Ellipse, Polyline, Polygon, Path, or Text. The bounded source
+Line, RoundedRect, Circle, Ellipse, Polyline, Polygon, Path, and Text lowering now covers
+compile-time stroke topology and exact width/dashOffset descriptors. Source Path also lowers its fixed command topology and exact
+numeric descriptors. Source `imagePattern` lowers the shared sibling transform/repeat
+configuration, exact transform descriptors, static resource binding, explicit sampling
+override, and per-resource metadata sampling default into independent fill/stroke Paint
+records. Path and Text semantic/raster paths consume loader-validated fill
+and stroke records. A dashed stroke on a
 closed parametric geometry follows the subpath start and winding direction this
-section fixes below; Ellipse and RoundedRect strokes remain unimplemented in the
-product writer. The
+section fixes below. The
 gradient constructors take a
 compile-time array of `stop(offset, color)` calls and a compile-time spread
 string. `linearGradient` takes two `vec2<length>` expressions, while
@@ -433,9 +469,11 @@ fill: linearGradient(
 );
 ```
 
-The array, stop offsets, and radial radii are compile-time topology. This
-bounded source lowering accepts finite compile-time geometry and colors;
-descriptor-driven gradient geometry remains a separate source-lowering unit.
+The stop array shape, stop offsets, and spread are compile-time topology. Solid
+color, LinearGradient start/end and stop colors, and RadialGradient centers,
+radii, and stop colors use exact descriptors. A compile-time negative radial
+radius is rejected during source lowering; a dynamic negative result remains a
+query-time `render.invalid-paint`.
 An unsupported paint constructor is an error and does not fall back to a solid
 paint.
 
@@ -643,6 +681,12 @@ script: "Latn"                                      fixed
 direction: "ltr"                                    fixed
 features: compile-time empty array                   fixed
 ```
+
+`fallbackFonts` 是 Render schema 拥有的静态 reference list，不构造 FCS Core `array<T>` value：其
+source spelling 必须是显式 array literal，且每个 element 必须直接写成 `@fontIdentifier`。它不能由
+const、function、template binding 或普通 `array<Line>` 替换；空 list 的唯一显式 spelling 是 `[]`。
+这保持 `fcs.md` 第 3.1 节“entity/reference 不能成为 Core array element”的约束，同时固定 fallback
+identity 与查找顺序。
 
 其他 language/script/direction、normalization、bidi、GSUB/GPOS、kerning 或 feature set 需要显式
 required shaping extension；Core loader 不能按宿主 shaper 的默认值接受。`simple-ltr-1` 不做 Unicode
@@ -1295,9 +1339,11 @@ Close 的 closing segment 参与 dash。空 dash 是每个 subpath 的单一连�
 第 7 章的零长度 segment 不产生 sample coverage、cap、join 或 tangent，也不推进非空 dash phase；
 join/cap 使用最近的非零 on-segment。Sample 恰在 stroke boundary 上算 inside。
 
-Circle、Ellipse 和 RoundedRect 是闭合 parametric geometry。它们的 stroke 只有一个 subpath，
-该 subpath 的起点和绕行方向固定为：
+Rect、Circle、Ellipse 和 RoundedRect 的 stroke 都只有一个闭合 subpath。该 subpath 的起点和
+绕行方向固定为：
 
+- Rect：从 `origin=(x,y)` 开始，依次经过 `(x,y+height)`、`(x+width,y+height)`、
+  `(x+width,y)`，再闭合到 `origin`；每段使用直线 exact arclength；
 - Circle：local `+X` 轴与轮廓的交点，即三点钟位置；
 - Ellipse：在椭圆自身未旋转的 local frame 取参数 `t=0` 点，即 `center + (radiusX, 0)`，再随
   `rotation` 一同变换。Dash pattern 因此跟随椭圆旋转，不固定在 world `+X`；
@@ -1306,11 +1352,12 @@ Circle、Ellipse 和 RoundedRect 是闭合 parametric geometry。它们的 strok
 绕行方向是 clockwise，按第 7 章在 FCS Y-up 下的同一定义，即 signed angle difference 为负的方向。
 本节不引入新的方向词汇。
 
-Dash array 为空时，这三种 geometry 的 stroke 是闭合的：它没有 endpoint，因此 `cap` 不参与；
+Dash array 为空时，这四种 geometry 的 stroke 是闭合的：它没有 endpoint，因此 `cap` 不参与；
 Circle 与 Ellipse 也没有 vertex，因此 `join` 不参与，coverage 恰好是中心线按 `width/2` 扩张的
 闭集。Dash array 非空时，每个 dash segment 的两个端点都是 endpoint，按本节的 butt/square/round
-规则应用 `cap`。RoundedRect 的直边与 corner arc 交界处是真实 vertex，`join` 在那里按本节
-既有规则参与；该交界是切线连续的。
+规则应用 `cap`。Rect 的四角以及 RoundedRect 的直边与 corner arc 交界处是真实 vertex，`join` 在
+那里按本节既有规则参与；RoundedRect 的该交界是切线连续的。Rect 的 width 或 height 为零时，对应
+零长度边按第 7 章的通用规则不产生 coverage、cap、join、tangent 或 dash phase advancement。
 
 ### 15.3 Paint 与 compositing
 

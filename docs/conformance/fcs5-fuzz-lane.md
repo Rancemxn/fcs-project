@@ -56,10 +56,12 @@ fixtures; the fuzz targets provide an independent libFuzzer execution path.
 `scripts/fcs5-fuzz-seeds.py` materializes per-target seed corpora into a
 temporary directory tree; `fuzz/corpus/README.md` records the seed source for
 each target. Seeds come only from checked-in evidence — the FCS manifest
-fixtures and examples for the source targets, the hex-decoded FCBC container
-goldens for `fcbc_container`/`render_section`, and the public conversion
-fixture sources for the importer targets — so no corpus can silently drift
-from the conformance manifests.
+fixtures and examples for the source targets, every manifest-declared Core and
+Render binary golden for `fcbc_container`/`render_section`, and the public
+conversion fixture sources for the importer targets. Asset targets start with
+the fixed PNG/WebP/font and declared shaping input. The smoke lane first runs
+`scripts/test-fcs5-fuzz-seeds.py` to check the Render seed, media selectors,
+font/text inputs, and preservation of cached corpus files.
 
 Bounded smoke (the delivery command):
 

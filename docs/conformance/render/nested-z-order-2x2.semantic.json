@@ -1,0 +1,17 @@
+{
+  "drawOrder": ["main/root/background", "main/root/foreground"],
+  "drawOps": [
+    {
+      "nodeKind": "Rect",
+      "worldBounds": [-1.0, -1.0, 1.0, 1.0],
+      "fillLinearRgba": [1.0, 0.0, 0.0, 1.0],
+      "composite": "sourceOver"
+    },
+    {
+      "nodeKind": "Rect",
+      "worldBounds": [0.0, -1.0, 1.0, 1.0],
+      "fillLinearRgba": [0.0, 1.0, 0.0, 1.0],
+      "composite": "sourceOver"
+    }
+  ]
+}

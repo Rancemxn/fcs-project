@@ -18,10 +18,11 @@ pub use loader::{
     DecodedRenderChart, GeometryData, NodeKind, PaintData, load_render, load_render_with_limits,
 };
 pub use semantic::{
-    DrawOp, GradientStopDrawOp, ImageDrawOp, ImagePatternDrawOp, LinearGradientDrawOp,
-    RadialGradientDrawOp, StrokeDrawOp, evaluate_semantic_draw_list,
-    evaluate_semantic_draw_list_at, rasterize_solid_rgba8, rasterize_solid_rgba8_at,
-    rasterize_solid_rgba8_with_limits, rasterize_solid_rgba8_with_limits_at,
+    DrawOp, GlyphDrawOp, GlyphRunDrawOp, GradientStopDrawOp, ImageDrawOp, ImagePatternDrawOp,
+    IsolationDrawOp, LinearGradientDrawOp, RadialGradientDrawOp, StrokeDrawOp, TextDrawOp,
+    evaluate_semantic_draw_list, evaluate_semantic_draw_list_at, rasterize_solid_rgba8,
+    rasterize_solid_rgba8_at, rasterize_solid_rgba8_with_limits,
+    rasterize_solid_rgba8_with_limits_at,
 };
 pub use writer::{
     ANALYTIC_NOTE_TEXT_ID, FONT_RESOURCE_TEXT_ID, MALFORMED_RESOURCE_TEXT_ID, PNG_RESOURCE_TEXT_ID,
@@ -1540,14 +1541,17 @@ mod tests {
             .expect("isolated query")
             .into_iter()
             .find(|op| op.kind == NodeKind::Text)
-            .expect("fixture Text under isolated Group")
-            .opacity;
+            .expect("fixture Text under isolated Group");
 
-        // The isolated Group's own opacity must not multiply into descendants
-        // in this bounded DrawOp. If the boundary had been applied correctly
-        // via an offscreen pass the value would differ; we explicitly do not
-        // claim that behavior here.
-        assert_eq!(bounded_text, baseline_text);
+        assert_eq!(bounded_text.opacity, baseline_text);
+        assert_eq!(
+            bounded_text.isolation_chain,
+            vec![IsolationDrawOp {
+                node_id: render.nodes[isolated_index].id,
+                opacity: 0.5,
+                composite: render.nodes[isolated_index].composite,
+            }]
+        );
     }
 
     #[test]
@@ -1821,12 +1825,18 @@ mod tests {
             .iter()
             .position(|node| node.parent.is_none() && node.kind == NodeKind::ClipGroup)
             .expect("fixture has a later root sibling");
+        let rect_geometry = render
+            .nodes
+            .iter()
+            .find(|node| node.kind == NodeKind::Rect)
+            .expect("fixture has a Rect")
+            .geometry_ref;
         // The bytes have already passed loader validation. Making this root
         // drawable isolates traversal order without constructing another full
         // RenderSection fixture.
         render.nodes[root_index].kind = NodeKind::Rect;
         render.nodes[root_index].clip_ref = None;
-        render.nodes[root_index].geometry_ref = None;
+        render.nodes[root_index].geometry_ref = rect_geometry;
         render.nodes[root_index].fill_paint = None;
         render.nodes[root_index].stroke_ref = None;
         render.nodes[path_index].z_order = 10;
