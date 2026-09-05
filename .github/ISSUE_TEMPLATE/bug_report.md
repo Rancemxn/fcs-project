@@ -6,49 +6,22 @@ labels: "bug,needs-triage"
 assignees: ""
 ---
 
-## Observed behavior
+## Observed and expected behavior
 
-Describe the failure, including the exact diagnostic or output.
+<!-- Include the diagnostic or output and the relevant requirement, or explain why the issue is internal-only. -->
 
-## Expected behavior
+## Reproduction and environment
 
-Identify the governing specification clause or explain why this is internal-only behavior.
+<!-- Smallest known input and command; commit, platform, and relevant tool versions. Do not include private input. -->
 
-## Reproduction
+## Impact and acceptance
 
-Provide the smallest input and exact command that reproduces the issue.
+- [ ] The cause is distinguished from a specification ambiguity.
+- [ ] The fix has a regression test, fixture, or a reason why one is not applicable.
+- [ ] Applicable checks and any independent review required by the affected stage are identified.
 
-## Environment
+## Related work or missing evidence
 
-Record commit, platform, tool versions, and relevant configuration.
-
-## Evidence and impact
-
-List affected fixtures, manifests, public interfaces, stages, or version domains. Do not include secrets or private input.
-
-## Classification and routing
-
-- Stage:
-- Parent Issue:
-- Blocked by / blocking:
-- Owner or decision owner:
-- Is this a specification ambiguity? If yes, record the competing interpretations and route the choice through governance.
-
-## Acceptance criteria
-
-- [ ] A deterministic failing test or fixture reproduces the issue.
-- [ ] The cause is distinguished from any specification ambiguity.
-- [ ] Applicable focused/full gates and independent review requirements are identified.
-- [ ] The fix has a regression test, fixture, or documented reason why one is not applicable.
-
-## Progress
-
-### Report established
-
-- Completed: captured the smallest known reproduction and expected behavior.
-- Evidence: <!-- input, command, diagnostic, fixture, or link -->
-- Decisions: <!-- why this is treated as a bug rather than an open specification question -->
-- Blockers: <!-- exact missing fact/owner, or none -->
-- Next: reproduce deterministically and establish the failing test or fixture.
-
-Keep this initial checkpoint in the body. Send every later meaningful checkpoint as a new Issue comment with the same five fields; do not append to or repeatedly edit this message. Use an event- or state-only heading without a manually written date; GitHub supplies the timestamp.
+<!-- Link relevant Issues or fixtures. Describe a missing fact only if it affects reproduction or the decision.
+     Keep the body current; use comments for material decisions, blockers, or delivery.
+     Workflow details: docs/agents/issue-tracker.md. -->

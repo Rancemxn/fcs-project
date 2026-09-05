@@ -1,61 +1,30 @@
 ---
 name: Task or specification work
-about: Define a reviewable implementation, documentation, conformance, or specification unit
+about: Define an observable implementation, documentation, conformance, or specification outcome
 title: ""
 labels: "needs-triage"
 assignees: ""
 ---
 
-## Goal
+## Goal and scope
 
-State one observable outcome.
-
-## Stage and routing
-
-- Stage:
-- Owner:
-
-## Authority and current state
-
-List governing specification clauses, Accepted ADRs, governance status, plans, reviews, fixtures, and implementation evidence.
-
-## Scope
-
-- Included:
-- Excluded:
+<!-- State the observable outcome. Add explicit non-goals when they prevent ambiguity. -->
 
 ## Acceptance criteria
 
 - [ ]
 
-Observable success signal:
+## Authority and dependencies
 
-## Dependencies
-
-- Parent Issue:
-- Sub-issues:
-- Blocked by / blocking:
-- External decisions or owners:
+<!-- When applicable: owning specification clauses, Accepted ADRs, stage baseline, fixtures,
+     related Issues, and unresolved decisions. Internal-only work can say so. -->
 
 ## Verification
 
-List exact commands, fixtures, hashes, and review gates.
+<!-- Identify the checks or evidence needed for this outcome; apply AGENTS.md's change classification. -->
 
-## Risks and prohibited shortcuts
+## Risks or open decisions
 
-Identify ambiguity, technical debt, interfaces that must remain stable, and tempting shortcuts that must not be used.
-
-If this is specification work, record unresolved alternatives and the decision owner. This Issue may arrange the
-governance work but cannot choose new format or runtime semantics by itself.
-
-## Progress
-
-### Contract established
-
-- Completed: captured scope, authority inputs, acceptance criteria, and dependencies.
-- Evidence: <!-- relevant docs, Issue relationships, inspected code, or fixture -->
-- Decisions: <!-- why this work unit and direction exist -->
-- Blockers: <!-- exact missing fact/owner, or none -->
-- Next: <!-- next bounded action -->
-
-Keep this initial checkpoint in the body. Send every later meaningful checkpoint as a new Issue comment with the same five fields; do not append to or repeatedly edit this message. Use an event- or state-only heading without a manually written date; GitHub supplies the timestamp.
+<!-- Include only material uncertainty. Specification choices follow governance.
+     Keep the body current; use comments for material decisions or blockers.
+     Workflow details: docs/agents/issue-tracker.md. -->

@@ -1,75 +1,32 @@
-## Summary
+## Change
 
-- <!-- concise summary -->
+<!-- State the concrete problem and resulting behavior. Add scope/non-goals only when useful. -->
 
 ## Linked work
 
-- Issue: #
-- Relationship keyword (plain text, not code): Closes #<n> only when merge should close the Issue; otherwise use Refs #<n>.
+<!-- Link an Issue when one exists. Use Closes #<n> only when merge should close it; otherwise Refs #<n>. -->
 
-## Scope and non-goals
+## Authority impact
 
-- Included:
-- Excluded:
-
-## Authority and evidence impact
-
-- [ ] Internal-only; no normative behavior changes.
-- [ ] Relevant specification clauses and Accepted ADRs are identified.
-- [ ] Conformance fixtures/manifests/expected outputs are updated or confirmed unaffected.
-- [ ] Implementation matrix, plans, and dated reviews are updated when required.
-- [ ] Any reopened baseline or version-state gate is recorded.
-
-Explain the checked items and name affected files or gates.
-
-## Independent review handoff
-
-- Review required: <!-- yes for non-mechanical implementation; no only with a reason -->
-- Requested scope: <!-- fixed files/behavior/acceptance boundary -->
-- Required commands: <!-- focused/full commands and expected evidence -->
-- Fixed head SHA at request time: <!-- fill in the Review requested comment; do not rewrite history -->
-- Re-review triggers: <!-- any push, scope, command, dependency, or acceptance change -->
-
-The fixed-SHA reviewer records the verdict in append-only comments on the PR (and associated Issue). Do not
-repeatedly edit this section; follow `docs/loops/fcs5-session-pool-delivery.md`.
-
-## Progress
-
-### Initial reviewable checkpoint
-
-- Completed: <!-- meaningful commit/change group and resulting capability -->
-- Evidence: <!-- commits, tests, fixtures, review, or inspected output -->
-- Decisions: <!-- why this change group exists and why this approach was chosen -->
-- Blockers: <!-- exact blocker/owner, or none -->
-- Next: <!-- next bounded action or ready-for-review disposition -->
-
-Keep this initial checkpoint in the body. After each material push, blocker change, and before marking the PR ready, send a new PR comment with the same five fields. Do not append to or repeatedly edit this message; use a new explicitly superseding comment for corrections. Use an event- or state-only heading without a manually written date; GitHub supplies the timestamp. The latest message must match the current diff and commit set, and a raw commit list is not progress.
+<!-- For behavior/specification/conformance changes, name affected clauses, fixtures, manifests, and review gates.
+     For other work, state that normative behavior is unaffected. -->
 
 ## Verification
 
-- [ ] Rust/build/dependency/test/executable-fixture change: a full Rust checkpoint is required before ready/merge.
-- [ ] Documentation or workflow-policy-metadata-only change (not `.github/workflows/` implementation): Rust gates are not applicable.
+<!-- List checks actually run and results. Explain material gaps.
+     Rust/build/dependency/test/executable-fixture/gate-execution changes require a successful Full Gate
+     on the final target SHA before Ready/merge: URL, run ID, event, headSha, conclusion.
+     Documentation/policy-only work uses static checks and marks Rust Full Gate not applicable.
+     A file under docs/ may still be executable conformance input. -->
 
-Focused checks actually run:
+## Review and remaining work
 
-```text
-<!-- commands and results -->
-```
+<!-- For non-mechanical implementation, record or link the Primary audit bound to the current SHA.
+     Identify applicable independent review, blocking findings, and material residual risk.
+     Preserve old fixed-SHA verdicts; add a new conclusion for a changed target. -->
 
-Full Rust checkpoint, when applicable, runs in GitHub Actions rather than a local worktree:
+- [ ] Commits follow CONTRIBUTING.md, including DCO sign-off.
 
-```text
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo nextest run --workspace
-scripts/fcs5-fuzz-smoke.sh bounded
-```
-
-List every skipped or unavailable gate with its reason. Do not report a non-applicable gate as passed. The exact
-review/merge gate is defined by `docs/agents/issue-tracker.md` and `docs/loops/fcs5-session-pool-delivery.md`.
-
-## Risks and follow-up
-
-- Residual risk:
-- Follow-up Issues:
-- Prohibited shortcuts checked:
+<!-- Keep this body current. Add comments for material decisions, blockers, or delivery events;
+     do not duplicate each checkpoint on both the PR and Issue.
+     Workflow details: docs/agents/issue-tracker.md. -->

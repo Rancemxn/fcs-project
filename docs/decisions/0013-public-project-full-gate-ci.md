@@ -1,8 +1,11 @@
 # 0013：在公开项目仓库运行完整门禁
 
-状态：Accepted
+状态：Partially superseded by [ADR 0015](0015-portable-contributor-workflow.md)（仅全员本地执行限制）
 
 日期：2026-07-19
+
+2026-09-05：本机资源限制移入不受版本控制的本地补充，不再禁止其他贡献者进行本地验证。
+GitHub Full Gate 的执行序列、触发器和同 SHA 交付证据要求保留；详见 ADR 0015。
 
 取代：`0012-public-runner-private-gates.md`（使用公开执行仓库运行私有项目完整门禁）
 

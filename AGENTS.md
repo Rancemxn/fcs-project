@@ -1,303 +1,91 @@
 # FCS 仓库协作指南
 
-本文件适用于整个仓库。开始工作前先阅读本文件；如果子目录中出现更具体的 `AGENTS.md`，以距离目标文件更近的规则为准。不要覆盖或回退工作区中已有的、与当前任务无关的修改。
+本文件是所有贡献者共享的项目规则；更近的目录规则适用于其对应范围。任务中的明确授权和范围优先，
+已有授权无需逐步重复确认。保护与当前任务无关的修改。
 
-## 仓库结构与文档入口
+## 项目与资料入口
 
-- 默认开发分支是 `main`；活动 workspace 只有 `crates/fcs-source`。`archive/fcs4-pre-cutover` 仅供
-  阅读旧实现，不能作为活动依赖或兼容层来源；Cargo 不得使用指向 `refer/` 的 path dependency。
-- 根目录只保留本文件作为协作入口。完整文档索引见 `docs/README.md`，常用入口如下：
-  - `docs/CONTEXT.md`：项目术语和 single-context 词汇；
-  - `docs/specifications/`：四份 FCS/FCBC/Render/Conversion 规范及规范治理；
-  - `docs/conformance/`：机器可读 conformance corpus、manifest、golden 和覆盖 ledger；
-  - `docs/decisions/`：Accepted ADR 和治理修订历史；
-  - `docs/plans/`：路线图与阶段计划；
-  - `docs/reviews/`：固定范围、hash 和复审证据；
-  - `docs/agents/`：领域阅读、GitHub 交付和 triage 规则；
-  - `docs/loops/`：当前 session-pool delivery loop 契约（旧路径仅保留 superseded pointer）；
-  - `docs/community/`：外部格式证据综合；
-  - `docs/scratch/`：历史临时记录，只供追溯，不能作为当前状态入口。
-- `.github/ISSUE_TEMPLATE/` 和 `.github/pull_request_template.md`：Issue/PR 的初始契约模板；后续进度与
-  审查结果按 `docs/agents/issue-tracker.md` 和 `docs/loops/` 追加 comment。
-- `examples/` 保存输入样例；旧 converter、CLI、VM 和 bytecode 仅从归档分支读取，不迁移回活动
-  workspace。
-- 修改文档或计划时，固定权威入口、边界、验收证据和禁止的便利方案；不要把实现状态复制到协作入口。
+默认分支为 `main`，Rust workspace 使用 edition 2024。目录以 [Cargo.toml](Cargo.toml) 为准：
 
-## 资料职责、权威与冲突处理
+| 路径 | 职责 |
+| --- | --- |
+| `crates/fcs-source` | FCS source 解析与编译 |
+| `crates/fcs-model`、`crates/fcs-runtime` | Canonical model 与执行语义 |
+| `crates/fcs-fcbc` | FCBC 容器、加载与分发 |
+| `crates/fcs-conversion` | 外部格式导入、导出及转换报告 |
+| `crates/fcs-render`、`crates/fcs-cli` | Render Profile 与产品命令行 |
+| [docs/README.md](docs/README.md) | 规范、ADR、计划、conformance 与 review 索引 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 许可证与提交所需的 DCO sign-off |
+| `examples/`、`fuzz/` | 输入示例与 fuzz 目标 |
 
-本仓库不使用一条简单的“规范 > ADR > community > refer”总排名。必须区分本项目的规范权威与
-外部格式的证据权威：
+旧 FCS 4 实现保留在 `archive/fcs4-pre-cutover` 分支；不作为活动依赖或兼容层来源。
+`refer/` 可保存只读参考快照，不是必备开发环境，也不得成为 Cargo path dependency。
 
-- `docs/specifications/governance.md` 管理规范状态和流程；四份根规范在五个独立版本域内定义
-  规范性行为和 conformance 要求。
-- `docs/decisions/` 中 Accepted ADR 是已经接受的设计约束、架构边界和规范修订方向，但不是
-  source grammar、二进制布局或执行语义的替代文本。Accepted ADR 与现行规范冲突时，不得任选
-  一方直接实现；必须重开受影响规范，更新规范、fixture、manifest、review 和状态记录。依赖该
-  语义的 I1–I9 工作只能在受影响的阶段 baseline 重新独立复审后恢复；I10/发布仍须重新 Frozen。
-- Accepted ADR 是历史记录。后续决定改变它时，新建 ADR 并把旧记录标为 `Superseded` 或
-  `Partially superseded`；勘误或治理补充必须以明确的 dated amendment 记录，不得静默改写历史
-  背景和原决定。
-- `docs/community/` 是 PGR v1/v3、RPE、PEC 等外部格式的维护后证据综合、歧义索引和研究入口，
-  不定义 FCS/FCBC，也不能替代 Conversion Specification。
-- `refer/chart/` 是固定 commit/hash 下外部实现、编辑器和文档的一手证据。对“某项目在某版本
-  如何行为”的事实，固定快照比 community 摘要更直接；若二者冲突，应修订摘要或保留歧义。
-  单个参考项目不能定义整个社区格式，多个可信来源冲突时必须记录双方，并由显式、版本化的
-  semantic profile 作出项目内选择。
-- 当前 parser/compiler/runtime/converter、测试和 `examples/` 只说明实现状态或 fixture 意图，
-  不能静默成为新规范。实现与规范冲突时，先判断实现缺陷还是规范缺陷，再走相应修复或规范
-  变更流程。
+## 按任务读取
 
-## 阅读路由
+首次进入相关领域时定位需要的条款、调用方和测试；已读且未变化的资料不重复通读。
+普通文案、机械修改和只读问答不需要完整规范、ADR、计划和 review 的前置阅读。
 
-- 修改 FCS source、static、canonical 或 runtime 语义前，阅读 `docs/specifications/fcs.md`、治理文件、相关 Accepted
-  ADR、conformance matrix 以及对应 fixture；修改 FCBC/packager/loader/ABI 时同理阅读
-  `docs/specifications/fcbc.md` 和 ADR 0004、0005、0008、0009。
-- 修改 Render Profile 或其资源解析时，阅读 `docs/specifications/fcs-render.md`、相关 Core/FCBC 条款以及 ADR 0008、
-  0009。
-- 修改 Conversion Specification、semantic profile、ConversionReport 或 PGR/RPE/PEC
-  parser/importer/exporter 时，先读 `docs/specifications/fcs-conversion.md`、ADR 0001、0002、0005、0007、
-  `docs/community/README.md` 和对应格式文档，再核对与改动直接相关的固定参考快照。
-- 更新 `docs/community/`、新增外部格式结论、解释歧义或给 fixture 声明 producer/runtime 行为时，
-  必须进入 `refer/chart/`；先检查参考仓库自己的规则，再验证 origin、commit/hash、目标路径、
-  parser/schema、调用方和至少一个独立来源。结论记录“项目 + commit/hash + 路径 + 行为”，不能只
-  写“某工具就是这样”。若本地 HEAD 与 community 记录不一致，使用记录的 commit 读取，或显式
-  启动一次完整证据基线更新；不得混用快照。
-- 普通 FCS parser、内部重构和与外部格式无关的实现默认排除 `refer/`，防止参考实现反向定义本
-  项目语义。
-- `refer/dependencies/` 保存本项目所用依赖的固定版本源码。开始依赖/API 工作时先核对
-  `Cargo.toml`/`Cargo.lock` 与本地源码版本；存在匹配源码时直接阅读它，不使用 `tavily_hikari` 覆盖该
-  版本，也不得把 `refer/` 作为 Cargo path dependency。
-- 涉及格式行为的改动必须同时检查 parser、compiler、runtime、converter 和 conformance
-  fixture 中受影响的层；未冻结的假设只能记录为候选，不能通过计划或实现获得规范地位。
+| 任务 | 按影响范围读取 |
+| --- | --- |
+| Source、static、canonical、runtime 行为 | [FCS Core](docs/specifications/fcs.md) 的相关条款与对应 fixture |
+| FCBC、loader、packager、ABI | [FCBC / Execution ABI](docs/specifications/fcbc.md) 及相关 Core 条款 |
+| Render 与资源解析 | [Render Profile](docs/specifications/fcs-render.md) 及相关 Core/FCBC 条款 |
+| 外部格式、semantic profile、ConversionReport | [Conversion Specification](docs/specifications/fcs-conversion.md)、[community 索引](docs/community/README.md) 和对应格式证据 |
+| 规范变更、阶段 baseline、Frozen 声明 | [规范治理](docs/specifications/governance.md)、受影响 ADR、manifest 与 review |
+| 术语、设计冲突或陌生领域边界 | [domain.md](docs/agents/domain.md) 指向的相关术语与决定 |
+| Issue、PR、提交、审查或 worktree 整理 | [交付规则](docs/agents/issue-tracker.md) 的对应章节 |
 
-## 搜索与代码理解
+依赖/API 工作先核对 `Cargo.toml` 与 `Cargo.lock`；现有代码或匹配版本资料不能解决疑问时，
+再查询该版本的官方资料。区分固定版本与上游最新版本，不强制特定搜索服务。
+Skills 仅在任务匹配且当前环境可用时使用；不要求安装个人技能集合，也不因技能缺失阻塞普通任务。
 
-按用途选择搜索工具，优先从仓库根目录开始。默认排除 `.git/`、`refer/` 和任意层级的 `target/`；
-只有任务明确要求检查 Git 元数据、固定参考快照、依赖源码或构建产物时，才进入对应目录：
+## 权威与语义边界
 
-- 用 `eza` 看目录结构，替代 `ls`。必须显式给出路径：省略路径时本仓库环境下不输出任何内容且退出码为
-  0，容易被误读成目录为空。
+- 根规范定义项目行为；治理文件管理状态；Accepted ADR 约束设计方向。实现、测试、计划、
+  Issue 和审查报告只能安排或证明工作。ADR 索引位于 [docs/decisions/](docs/decisions/README.md)。
+- 实现与规范冲突时先判断缺陷所在。实质规范冲突按治理流程更新受影响条款与 conformance，
+  暂停依赖该语义的工作；无关任务继续，不能把局部问题扩大为全项目冻结。
+- 修改既有决定时记录明确的修订或后继 ADR，不静默改写历史。常规措辞和工具偏好整理不触发规范重开。
+- 外部格式结论应绑定项目、commit/hash、路径及行为；本地快照和上游固定版本均可作为来源。
+  新的通用结论或歧义选择应交叉核对独立来源，并使用显式、版本化的 semantic profile。
+- Strict mode 不猜测未定义语义；repair 不替用户选择多个合法解释。规范未授权的选择须明确记录，
+  仅停止依赖该选择的实现。不要通过放宽 fixture、诊断或输入校验使检查变绿。
 
-  ```text
-  eza -la --git-ignore .
-  eza --tree --level=2 --git-ignore crates
-  ```
+## 验证
 
-  `--git-ignore` 同时排除 `target/` 和 `refer/`；只有需要检查构建产物或参考快照时才去掉它。
+| 改动 | 所需证据 |
+| --- | --- |
+| 只读审查 | 相关文件或状态的核对结果；无需启动构建 |
+| 普通文档、协作规则、模板等不影响执行的元数据 | `git diff --check`、相关链接及适用格式检查；Rust Full Gate 不适用 |
+| Rust、依赖、构建、测试、可执行 fixture 或 gate 执行逻辑 | 有意义的针对性验证；交付前取得最终目标 SHA 的 GitHub Full Gate 成功记录 |
+| 规范、manifest、golden 或 conformance 变化 | 条款与预期绑定检查，以及受影响的执行验证和治理审查；不能仅按文件扩展名或 `docs/` 路径豁免 |
 
-- 用 `fd` 找文件和目录：
+完整 Rust 门禁的命令以 [.github/workflows/full-gate.yml](.github/workflows/full-gate.yml) 为准，
+包含 locked dependency、fmt、Clippy、nextest、bounded fuzz 和干净工作树检查。
+开发反馈选最小有意义的检查；回归修复留下能复现原问题的测试或 fixture。
+本机若不适合运行相关检查，使用远端执行；本地机器的资源限制不作为全体贡献者的禁令。
 
-  ```text
-  fd --hidden --exclude .git --exclude refer --exclude target --type f
-  fd --hidden --exclude .git --exclude refer --exclude target AGENTS.md
-  ```
+修复本次改动导致的失败并复查受影响范围。新变化、失败或未解决风险才需要追加验证，
+不要无理由重复已经有效的检查。交付证据必须说明命令、结果和限制；
+适用 Full Gate 必须核对 run URL、ID、event、`headSha` 与 conclusion。
+旧 SHA、pending、失败和不适用都不能写成通过；CI 成功不等于独立审查、Frozen 或发布授权。
 
-- 用 `rg` 搜索文本、符号、错误信息和配置：
+## 执行与完成
 
-  ```text
-  rg -n --hidden -g '!/.git/**' -g '!/refer/**' -g '!**/target/**' 'pattern' .
-  rg -n 'parse_document|nextest|tavily_hikari' crates docs
-  ```
+- 本地任务可以用用户请求界定范围；长期、跨阶段或需要协作跟踪的交付使用 Issue。
+  一个 PR 保持一个可审查工作单元，提交前检查实际 diff 并遵守 DCO。
+- 在已授权范围内继续读取、实现、验证、修复和整理，不在首版实现后提前停工。
+  GitHub 写入、合并和发布遵守已有授权；未授权的外部动作在结果可审查后集中确认。
+- 本地任务完成：验收满足、适用检查完成、由本次改动造成的问题已处理、剩余限制明确。
+  PR 交付还需完成已授权的推送、CI 和审查步骤；合并、阶段闭合、Frozen 与发布各自按其门槛判断。
+- 只读审查以有依据的报告结束。缺少信息时继续可独立推进的部分，只询问确实影响后续决定的问题。
+- 保护未提交、未推送和其他贡献者的成果；仅清理自己创建且满足交付与保留条件的临时资源。
+  不绕过分支保护，不静默重写历史，不提交凭据或权利不明的外部素材。
 
-- 用 `jq` 处理 `gh --json` 或 `gh api` 输出，不要解析面向人的表格文本：
+## 可选的本地补充
 
-  ```text
-  gh issue list --state open --json number,title,labels |
-    jq -r '.[] | "#\(.number)\t\(.title)\t\([.labels[].name] | join(","))"'
-  gh pr view 42 --json state,isDraft,mergeable,reviewDecision,statusCheckRollup |
-    jq -e '.state == "OPEN" and (.isDraft | not) and .mergeable != "CONFLICTING"'
-  ```
-
-  简单投影可直接用 `gh --jq`；需要复用 filter、组合多个输入或使用 `jq -e`
-  作为门禁时使用独立 `jq`。动态值用 `--arg`/`--argjson` 传入，不要拼接 filter；
-  对分页 API 使用 `gh api --paginate --slurp` 后再聚合。
-
-- 用 `sg`（ast-grep）搜索 Rust 的语法结构；当空格、换行或具体变量名不应影响匹配时，优先于纯文本搜索：
-
-  ```text
-  sg run -l rust -p 'use $A;' crates
-  sg run -l rust -p 'fn $NAME($$$ARGS) $$$BODY' crates
-  ```
-
-- 本地文件读取、搜索和定位优先使用 FastCtx MCP 的 `read`、`grep` 和 `glob`，传入绝对路径。它们按文件
-  实际编码读取并保留行号，避免 Windows PowerShell 默认编码造成证据误读；需要读多个文件时使用一次批量
-  `read`。只有 FastCtx 报告编码不明确时才按其候选显式传入 `encoding`，不得用 `Get-Content`、`type` 或
-  `Set-Content` 重写文件来“修复”显示问题。
-- FastCtx 的目录级 `grep`/`glob` 默认使用 `filter_mode: project` 并传入尽量窄的绝对路径；不要用
-  `filter_mode: all` 扫描仓库根目录，除非任务明确要求检查 `refer/` 或 `target/`。
-- 非必要不得使用 `Get-Content`；本地文件读取、搜索和定位直接使用 FastCtx。确需使用 PowerShell 读取时，
-  必须显式指定并核对编码，避免把编码误读当成文件内容或改写依据。
-
-先用 `eza` 看结构、`fd` 定位范围，再用 `rg` 或 `sg` 缩小目标。阅读实现时同时查看调用方、对应测试和
-相关规范，避免只根据单个匹配结果推断行为。所有搜索默认排除 `refer/` 和任意层级的 `target/`；只有
-“阅读路由”明确要求研究外部证据、依赖源码或构建产物时才进入，并遵守对应快照、版本和参考仓库规则。
-
-## Rust 开发与验证
-
-- 所有本地 checkout 都只允许 `cargo fmt --all -- --check` 和不生成 Cargo build artifact 的 diff、链接、Markdown/YAML/JSON/schema 等静态检查；不允许运行本地 `cargo check`、`cargo clippy`、`cargo build`、`cargo test`、`cargo nextest`、`cargo fuzz` 或可执行 fixture。不得用 `CARGO_TARGET_DIR`、junction、symlink 或 `subst` 绕过这条限制。完整 Rust Full Gate 统一由 `.github/workflows/full-gate.yml` 在 GitHub Actions 执行；PR/merge required gate 仍适用。
-- 本地 lane 不生成 `target/` 或其他 Cargo build artifact；若任何非构建命令意外产生 artifact，先停止并按 Worktree Cleanup 规则处理。
-- 第一个需要 Rust 门禁反馈的完整 SHA 推送到任意 branch 后，由 `.github/workflows/full-gate.yml` 自动触发 GitHub Actions；PR 仍可通过 `pull_request` 事件触发同一 workflow，`workflow_dispatch` 可用于已解析为目标 SHA 的 branch/tag ref 重跑或补充验证。每次都必须回读 run 的 `headSha`，确认与目标 SHA 完全一致。
-- full gate 使用 cargo-nextest 而不是普通 `cargo test`，并且不使用 `--release`。其 Rust 检查顺序是：
-
-  ```text
-  cargo fetch --locked
-  cargo fetch --locked --manifest-path fuzz/Cargo.toml
-  cargo metadata --locked --offline --no-deps --format-version 1
-  cargo metadata --locked --offline --manifest-path fuzz/Cargo.toml --no-deps --format-version 1
-  cargo tree --locked --offline --manifest-path fuzz/Cargo.toml -i fcs-model
-  cargo tree --locked --offline --manifest-path fuzz/Cargo.toml -i sha2
-  cargo tree --workspace --locked --offline -d
-  cargo fmt --all -- --check
-  cargo clippy --workspace --all-targets -- -D warnings
-  cargo nextest run --workspace
-  scripts/fcs5-fuzz-smoke.sh bounded   # FCS_FUZZ_RUNS=1024
-  git diff --check
-  test -z "$(git status --porcelain=v1 --untracked-files=all)"
-  ```
-
-  workflow 还必须执行 ADR 0013 固定的 locked dependency、bounded fuzz、diff 和 clean-worktree gate。
-  不得用本地结果、cache 命中、部分 job 或旧 SHA 的 run 替代它。GitHub Actions 必须在目标 SHA 的干净 checkout
-  上从头跑到尾，任一步失败即该 SHA gate 失败；修正后推送新 SHA 并重新触发。
-- 适用时，Primary audit 只接受同一 head SHA 的成功 run，并记录 workflow/run URL、run ID、event、`headSha` 和
-  conclusion。`queued`/`in_progress`、缺失、失败或 SHA 不匹配都不能写成通过；GitHub 暂时不可用时只能继续
-  不依赖远端结果的静态工作，不得 Ready 或 merge。
-- `Swatinem/rust-cache` 的 hit/miss 只影响性能，不改变命令、结论或验收。瞬时基础设施失败可以在同一 SHA
-  重跑；代码、测试或配置失败必须修正后推送新 SHA，不能回退到本地编译。新 SHA 导致旧 run 被取消时，
-  旧 run 只是过期证据，不是当前 SHA 的 gate 失败。
-- 只修改 Markdown、AGENTS、Issue/PR 模板、评论、label 或其他不参与构建且不改变 gate 执行逻辑的元数据时，Rust
-  full gate 为 non-applicable；使用 diff、链接、Markdown/YAML/JSON/schema 和相关 CLI smoke check。`.github/workflows/full-gate.yml`
-  的实现变化属于适用 gate，自动触发的 Action run 不改变该分类。
-- 修改 source parser 或 elaborator 时先补充失败测试；red 和 green 都由固定 SHA 的 Action run 证明。
-  converter、VM 和旧 bytecode 已不在活动
-  workspace。未来跨格式语义变化必须针对 canonical model、ConversionReport、
-  round-trip fixture 和 `examples/` 验证，converter 不得直接消费 source AST。
-- 交付说明必须分别列出本地检查（只允许 fmt/static，并说明未运行 Cargo build/test/lint/fuzz）和远端 full-gate evidence，以及未运行门禁及原因。不得将 `queued`、缺失、失败或 non-applicable 写成通过。
-- 使用校验脚本或外部模拟器验证解析逻辑时，先确认校验脚本与模拟器的代码逻辑一致，不能用有问题的校验脚本得出结论。
-- 遇到规范未定义的外部谱面边界时，研究阶段可以记录候选假设，但规范性实现不得发明“通用
-  语义”。Strict mode 必须失败或要求显式 semantic profile；repair 只能修复非法或矛盾输入，
-  不能替用户选择多个合法解释。只有 package/profile 明确声明、用户显式选择，或所有候选对当前
-  输入 canonical-semantic-equivalent 时，才能无询问继续；假设和潜在影响必须进入交付说明与报告设计。
-
-### 本地 worktree 路径约定
-
-- `<local-workspace-root>` 是本机统一放置 `main\` 与 `worktrees\` 的 FCS 目录，本身不是 compile lane。
-  直接位于该目录的非 main 协调 checkout 属于 legacy layout：不得编译或再承载新建 worktree，只能保留到
-  既有修改安全交付，随后按 cleanup 条件退出。
-- `<local-workspace-root>\main` 是用于 `main` 分支协调和远端验证定位的 canonical checkout；它不授予本地 Cargo 编译、lint 或测试权限。
-- `<local-workspace-root>\worktrees\<issue>-<slug>` 是非 main 实现 lane 的唯一仓库内路径；这些 lane 不得本地编译。
-- 独立 review/corrective snapshot 使用系统临时目录下的
-  `<system-temp>\fcs-review-<target>` 或 `<system-temp>\fcs-finding-<finding>-<slug>`；这些目录不编译。
-- `.worktrees`、`worktree`、随机命名的 `fcs-*` 临时实现目录和其他散落路径属于 legacy layout；新建 worktree
-  不得使用它们，现有目录按 `docs/loops/fcs5-session-pool-delivery.md` 的 cleanup 条件迁移或移除。
-- 每个保留的额外 worktree 都必须有 owner、用途、固定 base/head SHA、分支或 detached 状态和清理条件，
-  并能由 `git worktree list --porcelain` 复核。不得用 junction、symlink、`subst` 或 `CARGO_TARGET_DIR`
-  绕过路径与编译权限。
-
-## Agent skills
-
-### Issue tracker
-
-本仓库使用 GitHub Issues 记录工作契约、依赖和验收条件，使用 Pull Requests 交付修改与验证证据，使用 session-pool assignment 管理会话交接。使用 `gh` 读写 Issue/PR，使用 `jq` 处理结构化 JSON。完整流程见 `docs/agents/issue-tracker.md` 和 `docs/loops/fcs5-session-pool-delivery.md`，相关治理决定见 ADR 0011 和 ADR 0014。Issue、PR、session assignment 及其评论只能安排或证明工作，不能创造规范语义。
-
-### Triage labels
-
-使用五个 GitHub 状态 label：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human` 和 `wontfix`。一个 open Issue 同时只保留一个状态 label；`bug`、`documentation`、`enhancement`、`specification`、`conformance`、`review-finding`、`workflow` 以及 `severity:critical`、`severity:important`、`severity:minor` 是正交 label。Milestone 用于阶段或工作流分组，不替代状态 label。详见 `docs/agents/triage-labels.md`。
-
-### GitHub delivery workflow
-
-- 只读检查使用 `gh issue list/view`、`gh pr list/view/diff/checks` 和 `gh api`。创建、编辑、评论、关闭、push、review 或 merge 是外部状态变更，只在用户明确要求对应工作流时执行。
-- GitHub Issue/PR 的新标题、正文、评论和 review message 必须使用英文；已有历史消息保持 append-only，不为语言迁移改写。
-- `gh` 因 DNS、连接超时/重置、TLS 中断或 HTTP 502/503/504 等瞬时网络问题失败时，每隔 5 秒重试同一操作，首次失败后最多再试 10 次。写操作在每次重试以及稍后补同步前，必须先按稳定身份查询远程是否已生效，避免重复创建 Issue/PR、重复评论、review 或 merge。不得重试认证/权限失败、参数/校验错误、not found、合并冲突或门禁失败；应立即报告。10 次重试耗尽后，记录完整待同步 payload、稳定身份、最后错误和 `pending remote sync` 状态，继续不依赖该远端结果的安全本地工作；在下一个有意义检查点以及 handoff、PR Ready、review 或 merge 等依赖远端状态的动作前再次查询并尝试同步。待同步记录只是 transport outbox，不是第二个 tracker；不得把未确认的远端动作描述为成功。
-- 开始非机械工作前，确保有一个写明范围、权威输入、验收条件、非目标、依赖和验证方法的 Issue。大型工作用 parent/sub-issue 和 blocked-by/blocking 关系，不在一个 Issue 中堆放不可独立验收的横向任务。
-- 非机械 Issue 正文必须写明稳定的初始工作契约和一条实质性的初始 `Progress`，不得只保留初始对话或空模板。之后每个有意义检查点分别发送一条新的 Issue comment，不在正文或旧评论中累计、反复 edit。范围/决定变化、完成工作单元、出现/解除阻塞、获得验证结果、创建 PR 或交付状态变化时发送新消息；每条包含 Completed、Evidence、Decisions、Blockers 和 Next。更正旧消息时发送显式 superseding comment 并指出被替代内容，不静默覆盖历史；不需要为每个 commit 发一条。
-- 主实现从最新 `origin/main` 创建 `codex/<issue>-<slug>` 分支；一个分支和 PR 只交付一个可审查工作单元。reviewer finding 的 corrective branch 由 coordinator 分配给独立 `deliver` lane，遵守新 loop 的 fixed-snapshot/worktree 规则。不要将工作区中与 Issue 无关的改动带入提交。
-- PR 正文必须链接 Issue；只有 PR 合并即应关闭 Issue 时才使用 `Closes #<n>`，否则使用 `Refs #<n>`。正文同时记录规范/ADR/conformance/review 影响、实际验证命令、未执行门禁和剩余风险。
-- PR 不得只有空初始说明和一串 commits。正文必须含一条实质性的初始 `Progress`，说明首个可审查 change group、原因、证据、决定和剩余项；之后每次重要 push、阻塞变化和转 Ready 前分别发送新的 PR comment，使最新消息与当前 diff/commits 一致。不得把后续进度反复 edit 到正文或旧评论中；更正使用显式 superseding comment。commit message 不能替代这些进度消息。
-- Issue/PR 的 Progress 消息标题只写事件或状态，不手写 `YYYY-MM-DD` 等日历日期；时间以 GitHub 自带的 timestamp 为准。
-- push 前审查 staged diff；PR 合并前检查 `gh pr checks --required`、mergeability、Primary audit result 和未解决评论。不得用 `--admin` 绕过 branch protection，也不得为了变绿而降低测试、fixture 或 review gate。
-- merge 前分别在 Issue 和 PR 中发送新的 delivery-ready Progress comment；合并后即使 Issue 已由 `Closes` 自动关闭，也要分别发送新的 final merged checkpoint，记录合并 PR/交付结果、最终验证、未完成项与后续 Issue 链接，再确认 Issue 状态和后续 blocker。Issue/PR 的进度消息是工作流证据，不获得规范权威。
-
-#### Session-pool delivery
-
-当前交付角色、权限、并发、slot/assignment/session 生命周期、writer scope、worktree、验证和
-recovery 统一由 `docs/loops/fcs5-session-pool-delivery.md` 与 ADR 0014 定义：Rancemxn 是
-coordinator 和唯一 Ready/merge/main owner；`deliver` 是可并发的实现 writer；`reviewer`、
-`researcher` 和 `scout` 是只读角色。reviewer 不创建或实现 corrective PR，finding 由新的
-`deliver` corrective lane 处理。旧 loop 文件只保留 superseded pointer，不能作为当前执行契约。
-
-所有非机械 assignment 都必须固定 Issue、base/head SHA、branch、绝对 worktree、allowed
-paths、authority、acceptance、non-goals、validation 和输出格式。两个 deliver writer 可以并发，
-但相同文件、规范域或全局路径必须经过 coordinator 的 scope lease；session-pool 不提供文件锁。
-`deliver` 首次产生可审查 commit 时建立 draft PR；任何后续 audit/review 以精确 head SHA 绑定，
-SHA、scope、命令、依赖或 acceptance 变化会使旧 verdict 失效。
-
-本地所有 worktree 只做 fmt/static；Cargo check、Clippy、build、test、nextest、fuzz 和可执行
-fixture 统一由 GitHub Actions 执行。适用 gate、Primary audit、required checks、mergeability、
-review finding 和远端状态的具体字段见新 loop；不得把 session report 或本地结果写成远端成功。
-
-### Domain docs
-
-本仓库采用 single-context 阅读约定；读取 `docs/CONTEXT.md`，Accepted ADR 的实际位置
-始终是 `docs/decisions/`，不要创建第二套 `docs/adr/`。详见 `docs/agents/domain.md`。
-
-### Personal engineering skills
-
-本仓库只使用最小个人 skill 集合：`diagnose`、`tdd`、`zoom-out`、`grill-me`、`grill-with-docs`、`improve-codebase-architecture` 和 `agent-loop`。它们是协作流程和推理纪律，不是 FCS、FCBC、Render 或 Conversion 规范的替代品；skill 的建议与本文件、根规范、治理文件或 Accepted ADR 冲突时，必须按“资料职责、权威与冲突处理”中的流程处理，不能直接以 skill 的默认做法覆盖项目约束。
-
-#### 调用时机
-
-- 当任务明确匹配某个 skill 的描述时调用对应 skill；用户直接点名 skill 或 slash command 时，按用户指定的 skill 执行。
-- 用户报告 bug、异常、失败或性能回归并要求诊断时，使用 `diagnose`；用户要求 test-first、red-green-refactor 或 integration tests 时，使用 `tdd`。
-- 对陌生代码区域需要先了解更高层的模块、调用方与系统边界时，使用 `zoom-out`。
-- 需要对方案、决定或计划进行逐项压力测试时，使用 `grill-me`。若压力测试还应同步维护领域文档，使用 `grill-with-docs`；该 skill 必须使用 `docs/CONTEXT.md` 和 `docs/decisions/`，不得创建 `docs/adr/`。
-- 设计模块接口、边界、seam、可测试性或 AI 可导航性时，使用 `improve-codebase-architecture`；其领域术语和 ADR 阅读同样必须遵守 `docs/agents/domain.md` 的单一上下文约定。
-- 用户要求设计 agent/automation loop 的 Markdown 契约时，使用 `agent-loop`；当前交付契约写入
-  `docs/loops/fcs5-session-pool-delivery.md`，不得恢复旧 `loop.md`/`review-loop.md` 的双文件执行模型，
-  也不得执行 loop 或生成运行时机制。
-
-#### 调用边界
-
-- 简单问答、单文件的机械编辑、只读检查或与上述场景无关的任务不必强行调用个人 skill。
-- `grill-me` 和 `grill-with-docs` 会持续追问或修改领域文档，只有在用户明确要求，或任务描述已经明确要求对应流程时才调用；不要仅凭“看起来可能有帮助”启动它们。
-- 先阅读本文件及目标路径更近的 `AGENTS.md`，再按“阅读路由”读取相关规范、ADR、fixture 和现有 docs；skill 不能免除这些前置阅读。
-- skill 产出的计划、术语、假设和 issue 只能记录或安排工作，不能创造新的规范语义。凡是规范未定义的边界，记录为候选并报告影响；不得用 skill 的默认推断替代显式 semantic profile、规范修订或用户选择。
-- 任务结束时按本文件的 Rust 验证要求执行检查；若 skill 自带的验证或写作流程与仓库命令、目录职责或提交范围冲突，以本文件为准，并在交付说明中标明未执行的步骤及原因。
-
-## 依赖、库/API 文档与 tavily_hikari
-
-本仓库使用 `tavily_hikari` 查询外部库/API 信息，不再使用 Context7。当 `refer/dependencies/` 中没有与项目
-引用版本匹配的源码时，以下场景必须查询，即使用户没有明确要求：
-
-- 用户询问推荐加入哪些依赖。
-- 用户需要库或 API 文档。
-- 用户需要代码生成。
-- 用户需要安装步骤或配置步骤。
-
-`tavily_hikari` 提供 `tavily_search`、`tavily_extract`、`tavily_crawl`、`tavily_map` 和 `tavily_research`。必须显式
-使用 advanced 模式，因为服务端默认是 `basic`：`tavily_search` 传 `search_depth: "advanced"`，`tavily_extract` 和
-`tavily_crawl` 传 `extract_depth: "advanced"`。`tavily_map` 和 `tavily_research` 没有该参数，按其自身语义调用；
-`tavily_crawl`/`tavily_map` 的 `max_depth` 是爬取层数，与 advanced 模式无关，不要混用。
-
-若 `refer/dependencies/` 已有匹配源码，必须直接阅读该版本源码及其随附文档，不得再以 `tavily_hikari`
-覆盖；用户明确要求比较上游最新文档时除外，但必须区分“项目固定版本”和“上游当前版本”。没有
-本地匹配源码而使用 `tavily_hikari` 时，以其返回的当前文档和示例为依据，再结合本仓库的 Rust edition、
-workspace 结构和现有依赖作出结论。不要仅凭记忆推荐版本、API 或配置方式。
-
-如果 `tavily_hikari` 出现问题，要在回复中提醒用户；通常继续使用已有仓库信息、官方资料或其他可靠来源完成对话，不必因此中断，除非用户明确要求必须依赖 `tavily_hikari` 或要求停止。
-
-<!-- fastctx:begin -->
-
-## 本地文件查阅
-
-如需读取、搜索和查找本地文件，请优先使用 FastCtx MCP 工具——`mcp__fastctx__read`、`mcp__fastctx__grep`、`mcp__fastctx__glob`——而不是 `cat`/`Get-Content`、`rg`/`findstr`/`Select-String` 或 `dir`/`ls -R`。只读取任务需要的内容。当需要多个文件时，请在单次 `read` 调用中以 `files=[{"path": ...}, ...]` 的形式传入，而非每个文件单独调用一次。请使用绝对路径。每个结果的最后一行会显示 `Complete` 或 `Partial`——仅当出现 `Partial` 备注时，才使用其提供的精确参数继续操作。
-
-切勿将 `read_mcp_resource`、`list_mcp_resources` 或 `list_mcp_resource_templates` 指向 `fastctx` 服务：FastCtx 提供的是工具（tools），而非 MCP 资源，因此上述调用必定失败。请使用 `mcp__fastctx__read` 加绝对路径来读取本地文件——切勿使用 `file://` URI。
-
-### 批量替换
-
-使用 `mcp__fastctx__replace` 进行跨文件的机械查找与替换。它会保留每个文件的编码和换行符，支持试运行预览，并在写入前拒绝并发更改。对于生成的内容、语义重写或小型本地编辑，请使用 `apply_patch`。
-
-### 命令执行
-
-协作会话中的 Cargo、Git、GitHub CLI 和其他 shell 命令统一通过 `fastctx_run` 的登录 shell 执行；这里的 `fastctx_run` 是执行环境约束，不改变仓库脚本中的 Bash 语言、shebang 或代码块语义。
-<!-- fastctx:end -->
+个人工具、操作系统和资源限制不写入此文件。用 `git rev-parse --path-format=absolute --git-common-dir`
+定位 Git 公共目录；如其 `info/AGENTS.local.md` 存在，在首次选择本地工具或执行验证前读取。
+该文件由所有本地 worktree 共用且不受 Git 跟踪；不存在时正常工作，无需创建或安装任何工具。
+本地补充只约定环境，不改变项目语义、验收标准或任务中的明确授权。
