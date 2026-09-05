@@ -1,44 +1,25 @@
 # Domain Docs
 
-How the engineering skills should consume this repo's domain documentation when exploring the codebase.
+Use this reference when a task needs domain vocabulary, design context, or an authority decision.
+It is not a prerequisite for every file edit or repository search.
 
-## Before exploring, read these
+## Read the relevant context
 
-- **`docs/CONTEXT.md`** for the single project context.
-- **`docs/decisions/`** — read Accepted ADRs that touch the area you're about to work in. This is the
-  repository's only ADR directory; do not create a parallel `docs/adr/` tree.
+- Consult [CONTEXT.md](../CONTEXT.md) for terms used by the affected behavior.
+- Consult the owning specification clauses and related Accepted ADRs in
+  [decisions/](../decisions/README.md) when design or public behavior is affected.
+- Follow the task routes in [AGENTS.md](../../AGENTS.md) for fixtures and external-format evidence.
+  Read the needed sections; reuse context that has not changed.
 
-If any of these files don't exist, proceed silently. Don't flag their absence or suggest creating them upfront; the domain-modeling skill creates them lazily when terms or decisions are actually resolved.
+Use existing project terminology. A missing term may be a documentation gap; it does not require creating a
+new domain model or invoking a particular skill. Optional context can be absent without blocking work.
+Missing normative inputs needed to decide behavior must be reported, and only dependent work should pause.
 
-## File structure
+## Resolve authority conflicts
 
-Single-context repo:
+The repository has one ADR directory, `docs/decisions/`. Do not create a second `docs/adr/` tree.
 
-```text
-/
-├── docs/
-│   ├── CONTEXT.md
-│   ├── specifications/
-│   └── decisions/
-│       ├── 0001-single-runtime-clock.md
-│       └── 0010-stage-scoped-implementation-baselines.md
-└── crates/
-```
-
-## Use the glossary's vocabulary
-
-When your output names a domain concept, use the term as defined in `docs/CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
-
-If the concept you need isn't in the glossary yet, that signals either that you're inventing language the project doesn't use or that there's a real gap; note it for domain modeling.
-
-## Flag ADR conflicts
-
-If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
-
-> _Contradicts ADR 0009 (exact expressions by default) — reopen the affected specification before
-> implementation._
-
-An Accepted ADR constrains design direction but does not replace normative source grammar, binary layout, or
-execution semantics. If it conflicts with a current root specification, follow `AGENTS.md` and
-`docs/specifications/governance.md`: reopen and revise the affected specification and conformance evidence before
-resuming the impacted implementation baseline.
+An Accepted ADR constrains design direction; it does not replace normative grammar, binary layout, or execution
+semantics. If a substantive conflict exists, identify the exact clauses and follow
+[specification governance](../specifications/governance.md). Reopen only the affected baseline and dependencies.
+Ordinary implementation choices and documentation corrections do not require a new specification version.

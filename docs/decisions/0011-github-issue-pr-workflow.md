@@ -1,8 +1,12 @@
 # 0011：使用 GitHub Issue 与 Pull Request 交付工作
 
-状态：Accepted
+状态：Partially superseded by [ADR 0015](0015-portable-contributor-workflow.md)
 
 日期：2026-07-17
+
+2026-09-05：当前任务前置、进度维护、角色及复审范围以 ADR 0015 和
+[交付规则](../agents/issue-tracker.md) 为准。以下原决定与 amendments 保留历史语境，
+其中被取代的流程不再要求执行。
 
 ## 1. 背景
 

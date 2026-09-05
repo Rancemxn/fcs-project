@@ -1,8 +1,12 @@
 # ADR 0014: FCS5 Session-Pool Delivery Workflow
 
-状态：Accepted
+状态：Superseded by [ADR 0015](0015-portable-contributor-workflow.md)
 
 日期：2026-08-23
+
+2026-09-05：Pi 工作流及其 loop 文件已移除。以下角色、模型、工具和生命周期要求仅保留为
+历史决定，不再约束贡献者；当前流程见 [交付规则](../agents/issue-tracker.md)。
+已移除文件的原内容可从本 ADR 被取代前的 Git 历史读取。
 
 ## 1. 背景
 
