@@ -305,11 +305,11 @@ pub struct ResourceRecord {
     pub data_offset: u64,
     pub data_length: u64,
     pub data: Vec<u8>,
-    metadata: ParsedValue,
+    pub metadata: ParsedValue,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum ParsedValue {
+pub enum ParsedValue {
     Null,
     Bool(bool),
     Int(i64),

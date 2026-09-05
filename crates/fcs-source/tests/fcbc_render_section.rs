@@ -1,6 +1,10 @@
+use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use serde::de::DeserializeOwned;
+use sha2::{Digest, Sha256};
 
 #[path = "support/fcbc_reference_evaluator.rs"]
 mod fcbc_reference_evaluator;
@@ -22,7 +26,7 @@ use fcbc_reference_loader::{DescriptorKind, DistanceClassification, RuntimeValue
 use fcbc_render_reference_assets::{
     PNG_PIXELS, WEBP_PIXELS, build_test_font, encode_test_png, encode_test_webp, shape_simple_ltr,
 };
-use fcbc_render_reference_loader::{PaintData, PathCommand};
+use fcbc_render_reference_loader::{PaintData, ParsedValue, PathCommand};
 use fcbc_render_reference_writer::{
     FONT_RESOURCE_TEXT_ID, MALFORMED_RESOURCE_TEXT_ID, PNG_RESOURCE_TEXT_ID, RenderAssets,
     UNSUPPORTED_RESOURCE_TEXT_ID, WEBP_RESOURCE_TEXT_ID, resource_id, write_nonempty_render,
@@ -34,6 +38,62 @@ fn repository_root() -> PathBuf {
 
 fn render_golden_path() -> PathBuf {
     repository_root().join("docs/conformance/render/nonempty-render.hex")
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RenderGolden {
+    schema_version: u32,
+    id: String,
+    fcs_version: String,
+    fcbc_version: String,
+    execution_abi_version: String,
+    render_profile_version: String,
+    path: String,
+    expect: String,
+    decoded_length: usize,
+    sha256: String,
+    viewport_width_bits: String,
+    viewport_height_bits: String,
+    viewport_color_space: u16,
+    table_counts: [usize; 8],
+    section: Vec<GoldenSection>,
+    resource: Vec<GoldenResource>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GoldenSection {
+    r#type: u32,
+    offset: u64,
+    length: u64,
+    crc32: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GoldenResource {
+    canonical_textual_id: String,
+    id: String,
+    kind: u16,
+    media_type: String,
+    data_offset: u64,
+    data_length: u64,
+    sha256: String,
+    asset: String,
+    metadata: BTreeMap<String, toml::Value>,
+}
+
+fn load_toml<T: DeserializeOwned>(path: &Path) -> T {
+    toml::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(64);
+    for byte in Sha256::digest(bytes) {
+        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    encoded
 }
 
 fn static_fixture() -> Vec<u8> {
@@ -106,10 +166,101 @@ fn generated_fixture() -> Vec<u8> {
 }
 
 #[test]
-fn reference_writer_matches_static_render_golden_byte_for_byte() {
+fn binary_golden_matches_reference_writer_byte_for_byte() {
     let generated = generated_fixture();
     let golden = static_golden_or_dump(&render_golden_path(), &generated);
     assert_eq!(generated, golden);
+}
+
+#[test]
+fn static_render_manifest_pins_sections_resources_and_tables() {
+    let root = repository_root().join("docs/conformance/render");
+    let suite: toml::Value = load_toml(&root.join("manifest.toml"));
+    let entries = suite["binary_fixture"].as_array().unwrap();
+    assert!(!entries.is_empty());
+    for entry in entries {
+        let golden: RenderGolden = load_toml(&root.join(entry["manifest"].as_str().unwrap()));
+        assert_eq!(golden.schema_version, 1);
+        assert_eq!(golden.id, entry["id"].as_str().unwrap());
+        assert_eq!(golden.fcs_version, "5.0.0");
+        assert_eq!(golden.fcbc_version, "2.0.0");
+        assert_eq!(golden.execution_abi_version, "1.0.0");
+        assert_eq!(golden.render_profile_version, "1.0.0");
+        assert_eq!(golden.expect, "success");
+        let bytes = decode_hex_file(&root.join(&golden.path));
+        assert_eq!(bytes.len(), golden.decoded_length);
+        assert_eq!(sha256_hex(&bytes), golden.sha256);
+        let chart = fcbc_render_reference_loader::load_render(&bytes).unwrap();
+        assert_eq!(
+            format!("{:016x}", chart.viewport_width.to_bits()),
+            golden.viewport_width_bits
+        );
+        assert_eq!(
+            format!("{:016x}", chart.viewport_height.to_bits()),
+            golden.viewport_height_bits
+        );
+        assert_eq!(chart.viewport_color_space, golden.viewport_color_space);
+        assert_eq!(
+            [
+                chart.layers.len(),
+                chart.nodes.len(),
+                chart.geometries.len(),
+                chart.paths.len(),
+                chart.paints.len(),
+                chart.strokes.len(),
+                chart.clips.len(),
+                chart.glyph_runs.len()
+            ],
+            golden.table_counts,
+        );
+        assert!(golden.table_counts.iter().all(|count| *count > 0));
+        assert_eq!(golden.section.len(), chart.core.sections.len());
+        assert_eq!(
+            golden
+                .section
+                .iter()
+                .map(|section| section.r#type)
+                .collect::<Vec<_>>(),
+            (1..=14).chain(std::iter::once(20)).collect::<Vec<_>>(),
+        );
+        for (expected, actual) in golden.section.iter().zip(&chart.core.sections) {
+            assert_eq!(actual.section_type, expected.r#type);
+            assert_eq!(actual.offset, expected.offset);
+            assert_eq!(actual.length, expected.length);
+            assert_eq!(format!("{:08x}", actual.checksum), expected.crc32);
+            let payload = &bytes[actual.offset as usize..(actual.offset + actual.length) as usize];
+            assert_eq!(crc32_iso_hdlc(payload), actual.checksum);
+        }
+        assert_eq!(golden.resource.len(), chart.resources.len());
+        for (expected, actual) in golden.resource.iter().zip(&chart.resources) {
+            assert_eq!(format!("{:016x}", actual.id), expected.id);
+            assert_eq!(actual.id, resource_id(&expected.canonical_textual_id));
+            assert_eq!(actual.kind, expected.kind);
+            assert_eq!(actual.media_type, expected.media_type);
+            assert_eq!(actual.data_offset, expected.data_offset);
+            assert_eq!(actual.data_length, expected.data_length);
+            assert_eq!(actual.data.len() as u64, expected.data_length);
+            assert_eq!(sha256_hex(&actual.data), expected.sha256);
+            assert_eq!(actual.data, fs::read(root.join(&expected.asset)).unwrap());
+            let ParsedValue::Object(fields) = &actual.metadata else {
+                panic!("resource metadata must be an object");
+            };
+            let metadata: BTreeMap<_, _> = fields
+                .iter()
+                .map(|(key, value)| {
+                    let value = match value {
+                        ParsedValue::String(index) => {
+                            toml::Value::String(chart.core.strings[*index as usize].clone())
+                        }
+                        ParsedValue::Int(value) => toml::Value::Integer(*value),
+                        _ => panic!("unexpected fixture metadata value"),
+                    };
+                    (chart.core.strings[*key as usize].clone(), value)
+                })
+                .collect();
+            assert_eq!(metadata, expected.metadata);
+        }
+    }
 }
 
 fn u32_at(bytes: &[u8], offset: usize) -> u32 {
