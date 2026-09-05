@@ -742,6 +742,56 @@ render profile 1.0.0 {
 }
 
 #[test]
+fn source_geometry_owner_failures_precede_later_descriptor_execution_errors() {
+    let radius_x = "choose { when s < 1s => 1px; else => -1px; }";
+    let radius_y = "1px * (1s / (2s - s))";
+    for node in [
+        format!(
+            "ellipse shape {{ radiusX: {radius_x}; radiusY: {radius_y}; fill: solid(#FFFFFFFF); }}"
+        ),
+        format!(
+            "clipGroup shape {{ clip.kind: \"ellipse\"; clip.fillRule: \"nonzero\"; clip.radiusX: {radius_x}; clip.radiusY: {radius_y}; }}"
+        ),
+        format!(
+            "path shape {{ fillRule: \"nonzero\"; commands: [moveTo(vec2(0px, 0px)), ellipseArc(vec2(0px, 0px), {radius_x}, {radius_y}, 0rad, 0rad, 1rad, \"counterClockwise\")]; fill: solid(#FFFFFFFF); }}"
+        ),
+    ] {
+        let source = format!(
+            "#fcs 5.0.0\nformat {{ profile: renderable; }}\ntempoMap {{ 0beat -> 120bpm; }}\nrender profile 1.0.0 {{ viewport {{ width: 4px; height: 4px; }} layer main {{ pass: \"overlay\"; children {{ {node} }} }} }}"
+        );
+        for (source, expected) in [
+            (source.clone(), "render.invalid-geometry"),
+            (source.replace(radius_x, "1px"), "render.invalid-descriptor"),
+        ] {
+            let document = parse_document(&source)
+                .into_result()
+                .expect("source parses");
+            let compilation = document
+                .canonical_compilation_with_source(
+                    &source,
+                    CompileTimeLimits::default(),
+                    env!("CARGO_MANIFEST_DIR"),
+                    ResourceLimits::default(),
+                )
+                .expect("dynamic geometry compiles");
+            let bytes = write_from_compilation(&compilation).expect("FCBC writing");
+            let render = load_render(&bytes).expect("dynamic geometry loads before querying");
+            assert!(evaluate_semantic_draw_list_at(&render, 0.0).is_ok());
+            assert_eq!(
+                evaluate_semantic_draw_list_at(&render, 2.0),
+                Err(expected),
+                "{node}"
+            );
+            assert_eq!(
+                rasterize_solid_rgba8_at(&render, 2.0, 4, 4),
+                Err(expected),
+                "{node}"
+            );
+        }
+    }
+}
+
+#[test]
 fn source_exact_image_and_text_descriptors_reach_product_semantics() {
     let source = r#"#fcs 5.0.0
 format { profile: renderable; }
