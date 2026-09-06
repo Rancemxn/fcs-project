@@ -35,6 +35,7 @@ pub fn evaluate_track_set(
     }
 
     let mut selected_replace = None;
+    let mut replace_conflict = None;
     let mut add = Vec::new();
     let mut multiply = Vec::new();
 
@@ -50,9 +51,12 @@ pub fn evaluate_track_set(
             CanonicalTrackBlend::Replace => match selected_replace {
                 Some((priority, _)) if priority > track.priority() => {}
                 Some((priority, _)) if priority == track.priority() => {
-                    return Err(TrackEvaluationError::ReplaceConflict { priority });
+                    replace_conflict = Some(priority);
                 }
-                _ => selected_replace = Some((track.priority(), value)),
+                _ => {
+                    selected_replace = Some((track.priority(), value));
+                    replace_conflict = None;
+                }
             },
             CanonicalTrackBlend::Add => add.push((track.priority(), track.name(), value)),
             CanonicalTrackBlend::Multiply => {
@@ -61,6 +65,10 @@ pub fn evaluate_track_set(
         }
     }
 
+    // A higher active replace can cover a tie encountered at a lower priority.
+    if let Some(priority) = replace_conflict {
+        return Err(TrackEvaluationError::ReplaceConflict { priority });
+    }
     add.sort_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)));
     multiply.sort_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)));
 
