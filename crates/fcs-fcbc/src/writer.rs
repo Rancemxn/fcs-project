@@ -198,10 +198,12 @@ impl NativeTrackFixture {
     /// `(before-fill constant, materialized segments)` of every referenced layer.
     fn layers(&self) -> Vec<(&Constant, &[TrackSegmentFixture])> {
         match &self.kind {
-            NativeTrackKind::Single(layer) => vec![(&layer.before_constant, &layer.segments)],
+            NativeTrackKind::Single(layer) => {
+                vec![(&layer.before_constant, layer.segments.as_slice())]
+            }
             NativeTrackKind::Layered { layers, .. } => layers
                 .iter()
-                .map(|layer| (&layer.before_constant, &layer.segments))
+                .map(|layer| (&layer.before_constant, layer.segments.as_slice()))
                 .collect(),
         }
     }
@@ -2396,12 +2398,12 @@ fn native_layered_replace_fixture(
     line_id: u64,
     target: CanonicalTrackTarget,
 ) -> FcbcResult<NativeTrackFixture> {
-    fn region_winner(
-        tracks: &[&CanonicalTrack],
+    fn region_winner<'a>(
+        tracks: &[&'a CanonicalTrack],
         time: f64,
         target: CanonicalTrackTarget,
         line_id: u64,
-        winners: &mut Vec<&CanonicalTrack>,
+        winners: &mut Vec<&'a CanonicalTrack>,
     ) -> FcbcResult<Option<usize>> {
         // Mirrors evaluate_track_set's replace selection: a strictly higher
         // active priority covers a tie seen at a lower one, and only a tie at
