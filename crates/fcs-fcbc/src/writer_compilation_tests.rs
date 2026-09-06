@@ -2597,10 +2597,13 @@ fn write_from_compilation_round_trips_a_shared_piecewise_chain() {
     let base = compilation(SHARED_SUBGRAPH_NOTE_SOURCE);
     let note_id = base.chart().notes().notes()[0].id().value();
 
+    // Note property roots must be total over chartTime (the loader enforces
+    // unbounded root domains), so the chain tiles (-inf, +inf) with two
+    // pieces per level and every domain is unbounded.
     let mut descriptors = vec![
         CanonicalPropertyDescriptor::new(
             CanonicalExpressionType::Float,
-            CanonicalDescriptorDomain::new(Some(0.0), Some(2.0), true).unwrap(),
+            unbounded_descriptor_domain(),
             CanonicalDescriptorKind::Constant(CanonicalExpressionValue::Float(0.5)),
         )
         .unwrap(),
@@ -2608,13 +2611,13 @@ fn write_from_compilation_round_trips_a_shared_piecewise_chain() {
     for level in 1..=26usize {
         let child = level - 1;
         let pieces = vec![
-            CanonicalPiece::new(Some(0.0), Some(1.0), false, child).unwrap(),
-            CanonicalPiece::new(Some(1.0), Some(2.0), true, child).unwrap(),
+            CanonicalPiece::new(None, Some(1.0), false, child).unwrap(),
+            CanonicalPiece::new(Some(1.0), None, false, child).unwrap(),
         ];
         descriptors.push(
             CanonicalPropertyDescriptor::new(
                 CanonicalExpressionType::Float,
-                CanonicalDescriptorDomain::new(Some(0.0), Some(2.0), true).unwrap(),
+                unbounded_descriptor_domain(),
                 CanonicalDescriptorKind::Piecewise(pieces),
             )
             .unwrap(),
