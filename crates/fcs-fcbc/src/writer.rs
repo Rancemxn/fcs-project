@@ -2325,18 +2325,29 @@ fn native_disjoint_replace_fixture(
     line_id: u64,
     target: CanonicalTrackTarget,
 ) -> FcbcResult<NativeTrackFixture> {
-    let priority = tracks[0].priority();
     if tracks.iter().any(|track| {
-        track.priority() != priority
-            || track.fill() != CanonicalTrackFill::Base
+        track.fill() != CanonicalTrackFill::Base
             || track.extrapolate_before() != CanonicalTrackFill::Base
             || track.extrapolate_after() != CanonicalTrackFill::Base
     }) {
         return Err(FcbcError::new(
             "fcbc.unsupported-track",
             format!(
-                "native {:?} Track layering for Line {line_id} requires equal-priority base-filled replace Tracks",
+                "native {:?} Track layering for Line {line_id} requires base-filled replace Tracks",
                 target
+            ),
+        ));
+    }
+    let mut intervals = tracks
+        .iter()
+        .flat_map(|track| track.active_intervals())
+        .collect::<Vec<_>>();
+    intervals.sort_unstable_by(|left, right| left.0.total_cmp(&right.0));
+    if intervals.windows(2).any(|pair| pair[0].1 > pair[1].0) {
+        return Err(FcbcError::new(
+            "fcbc.unsupported-track",
+            format!(
+                "native {target:?} Track layering for Line {line_id} requires disjoint effective intervals"
             ),
         ));
     }
