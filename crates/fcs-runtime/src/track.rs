@@ -5,8 +5,8 @@ use std::fmt;
 
 use fcs_model::{
     CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation,
-    CanonicalTrackPiece, CanonicalTrackSet, CanonicalTrackTarget, CanonicalTrackValue,
-    CanonicalVec2, StableId,
+    CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackSet, CanonicalTrackTarget,
+    CanonicalTrackValue, CanonicalVec2, StableId,
 };
 
 use crate::{EasingError, EasingId};
@@ -84,16 +84,24 @@ pub fn evaluate_track_set(
         .ok_or(TrackEvaluationError::NonFiniteResult)
 }
 
-/// Evaluates one canonical Track at a chart time.
+/// The exact contribution form of one Track at a chart time.
+pub enum TrackContribution<'a> {
+    /// A segment interpolation; `evaluate_segment` computes its exact value.
+    Segment(&'a CanonicalTrackSegment),
+    /// A persistent point, resolved fill, or identity constant.
+    Constant(CanonicalTrackValue),
+}
+
+/// Resolves the contribution form of one canonical Track at a chart time.
 ///
 /// Returns `None` when a `base` fill leaves the Track inactive at that query. A
 /// time before every piece resolves through `extrapolateBefore`, so the FCBC
-/// native writer can probe a Track group's effective winner per chartTime region
-/// with the exact `evaluate_track_set` semantics.
-pub fn evaluate_track(
-    track: &CanonicalTrack,
+/// native writer can probe a Track group's effective composition per chartTime
+/// region with the exact `evaluate_track_set` semantics.
+pub fn evaluate_track_contribution<'a>(
+    track: &'a CanonicalTrack,
     chart_time: f64,
-) -> Result<Option<CanonicalTrackValue>, TrackEvaluationError> {
+) -> Result<Option<TrackContribution<'a>>, TrackEvaluationError> {
     let pieces = track.pieces();
     for (index, piece) in pieces.iter().enumerate() {
         match piece {
@@ -101,7 +109,7 @@ pub fn evaluate_track(
                 if chart_time >= segment.start().chart_time_seconds()
                     && chart_time < segment.end().chart_time_seconds() =>
             {
-                return evaluate_segment(segment, chart_time).map(Some);
+                return Ok(Some(TrackContribution::Segment(segment)));
             }
             CanonicalTrackPiece::Point(point) => {
                 let shadowed = pieces.iter().any(|other| {
@@ -117,7 +125,7 @@ pub fn evaluate_track(
                     && chart_time >= point.time().chart_time_seconds()
                     && next_start.is_none_or(|next| chart_time < next)
                 {
-                    return Ok(Some(point.value()));
+                    return Ok(Some(TrackContribution::Constant(point.value())));
                 }
             }
             _ => {}
@@ -144,6 +152,23 @@ pub fn evaluate_track(
         track.fill()
     };
     evaluate_fill(track, chart_time, fill, &effective)
+        .map(|value| value.map(TrackContribution::Constant))
+}
+
+/// Evaluates one canonical Track at a chart time.
+///
+/// Returns `None` when a `base` fill leaves the Track inactive at that query.
+pub fn evaluate_track(
+    track: &CanonicalTrack,
+    chart_time: f64,
+) -> Result<Option<CanonicalTrackValue>, TrackEvaluationError> {
+    match evaluate_track_contribution(track, chart_time)? {
+        Some(TrackContribution::Segment(segment)) => {
+            evaluate_segment(segment, chart_time).map(Some)
+        }
+        Some(TrackContribution::Constant(value)) => Ok(Some(value)),
+        None => Ok(None),
+    }
 }
 
 fn point_is_shadowed(piece: &CanonicalTrackPiece, pieces: &[CanonicalTrackPiece]) -> bool {
