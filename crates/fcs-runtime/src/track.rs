@@ -84,7 +84,13 @@ pub fn evaluate_track_set(
         .ok_or(TrackEvaluationError::NonFiniteResult)
 }
 
-fn evaluate_track(
+/// Evaluates one canonical Track at a chart time.
+///
+/// Returns `None` when a `base` fill leaves the Track inactive at that query. A
+/// time before every piece resolves through `extrapolateBefore`, so the FCBC
+/// native writer can probe a Track group's effective winner per chartTime region
+/// with the exact `evaluate_track_set` semantics.
+pub fn evaluate_track(
     track: &CanonicalTrack,
     chart_time: f64,
 ) -> Result<Option<CanonicalTrackValue>, TrackEvaluationError> {

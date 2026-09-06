@@ -20,7 +20,7 @@ pub use scroll::{
     EvaluatedLineScroll, LineScrollDistance, ScrollEvaluationError, evaluate_line_scroll,
     evaluate_note_distance,
 };
-pub use track::{TrackEvaluationError, evaluate_track_set};
+pub use track::{TrackEvaluationError, evaluate_track, evaluate_track_set};
 pub use transform::{
     EvaluatedLineComponents, EvaluatedLineTransform, LineTransformError, LineTransformMatrix,
     evaluate_line_transform,
