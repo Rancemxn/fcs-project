@@ -161,9 +161,52 @@ struct SyncFixture {
 struct NativeTrackFixture {
     line_id: u64,
     target: CanonicalTrackTarget,
+    kind: NativeTrackKind,
+}
+
+#[derive(Clone)]
+enum NativeTrackKind {
+    Single(NativeTrackLayer),
+    /// Highest-priority replace selection for a multi-Track group. Regions are
+    /// merged chartTime intervals in order; the first starts at negative
+    /// infinity and the last extends to positive infinity. Layers hold only
+    /// Tracks that win at least one region, so fully masked Tracks stay
+    /// unmaterialized.
+    Layered {
+        base: Constant,
+        regions: Vec<NativeRegion>,
+        layers: Vec<NativeTrackLayer>,
+    },
+}
+
+#[derive(Clone)]
+struct NativeRegion {
+    /// Ignored for the first region, which is unbounded before.
+    start: f64,
+    /// `None` selects the Line base value.
+    layer: Option<usize>,
+}
+
+#[derive(Clone)]
+struct NativeTrackLayer {
     first_time: f64,
     before_constant: Constant,
     segments: Vec<TrackSegmentFixture>,
+}
+
+impl NativeTrackFixture {
+    /// `(before-fill constant, materialized segments)` of every referenced layer.
+    fn layers(&self) -> Vec<(&Constant, &[TrackSegmentFixture])> {
+        match &self.kind {
+            NativeTrackKind::Single(layer) => {
+                vec![(&layer.before_constant, layer.segments.as_slice())]
+            }
+            NativeTrackKind::Layered { layers, .. } => layers
+                .iter()
+                .map(|layer| (&layer.before_constant, layer.segments.as_slice()))
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -827,9 +870,16 @@ fn assemble_package(
             constants.extend(note.property_constants.iter().cloned());
         }
         for track in tracks {
-            constants.push(track.before_constant.clone());
-            for segment in &track.segments {
-                constants.extend([segment.start_constant.clone(), segment.end_constant.clone()]);
+            for (before_constant, segments) in track.layers() {
+                constants.push(before_constant.clone());
+                for segment in segments {
+                    constants
+                        .extend([segment.start_constant.clone(), segment.end_constant.clone()]);
+                }
+            }
+            // Composed roots select the Line base wherever no Track is active.
+            if let NativeTrackKind::Layered { base, .. } = &track.kind {
+                constants.push(base.clone());
             }
         }
         if let Some(runtime_descriptors) = runtime_descriptors {
@@ -2218,7 +2268,7 @@ fn native_tracks(
         if group.len() == 1 {
             lowered.push(native_single_track_fixture(group[0], lines)?);
         } else {
-            lowered.push(native_disjoint_replace_fixture(
+            lowered.push(native_layered_replace_fixture(
                 &group, lines, line_id, target,
             )?);
         }
@@ -2231,6 +2281,21 @@ fn native_single_track_fixture(
     track: &CanonicalTrack,
     lines: &[LineFixture],
 ) -> FcbcResult<NativeTrackFixture> {
+    Ok(NativeTrackFixture {
+        line_id: track.owner().value(),
+        target: track.target(),
+        kind: NativeTrackKind::Single(native_track_layer(track, lines)?),
+    })
+}
+
+/// Materializes one Track as a total function over finite chartTime: segments,
+/// gap-fill points, and the `first_time`/`before_constant` pair used by the
+/// surrounding Piecewise. Reused unchanged for single-Track roots and for every
+/// retained layer of a composed replace group.
+fn native_track_layer(
+    track: &CanonicalTrack,
+    lines: &[LineFixture],
+) -> FcbcResult<NativeTrackLayer> {
     let line_id = track.owner().value();
     let target = track.target();
     let pieces = track.pieces();
@@ -2337,9 +2402,7 @@ fn native_single_track_fixture(
             .total_cmp(&right.start)
             .then_with(|| right.flags.cmp(&left.flags))
     });
-    Ok(NativeTrackFixture {
-        line_id,
-        target,
+    Ok(NativeTrackLayer {
         first_time,
         before_constant: native_track_fill_constant(
             track,
@@ -2352,42 +2415,113 @@ fn native_single_track_fixture(
     })
 }
 
-fn native_disjoint_replace_fixture(
+/// Composes a multi-Track replace group for one (Line, target) exactly.
+///
+/// Region boundaries are every Track piece time; inside an elementary region
+/// no Track's activity, fill resolution, or priority order can change, so the
+/// winner found at the region's left endpoint (or at negative infinity before
+/// the first boundary) holds for the whole region. `evaluate_track` supplies
+/// the same activity semantics the canonical `evaluate_track_set` uses, so the
+/// composed Piecewise agrees with runtime selection bit for bit. An `error`
+/// fill, an unresolved hold, or a highest-priority tie in any region rejects
+/// the write, matching runtime behavior instead of baking an approximation.
+fn native_layered_replace_fixture(
     tracks: &[&CanonicalTrack],
     lines: &[LineFixture],
     line_id: u64,
     target: CanonicalTrackTarget,
 ) -> FcbcResult<NativeTrackFixture> {
-    if tracks.iter().any(|track| {
-        track.fill() != CanonicalTrackFill::Base
-            || track.extrapolate_before() != CanonicalTrackFill::Base
-            || track.extrapolate_after() != CanonicalTrackFill::Base
-    }) {
-        return Err(FcbcError::new(
-            "fcbc.unsupported-track",
-            format!(
-                "native {:?} Track layering for Line {line_id} requires base-filled replace Tracks",
-                target
-            ),
-        ));
+    fn region_winner<'a>(
+        tracks: &[&'a CanonicalTrack],
+        time: f64,
+        target: CanonicalTrackTarget,
+        line_id: u64,
+        winners: &mut Vec<&'a CanonicalTrack>,
+    ) -> FcbcResult<Option<usize>> {
+        // Mirrors evaluate_track_set's replace selection: a strictly higher
+        // active priority covers a tie seen at a lower one, and only a tie at
+        // the highest active priority is a conflict.
+        let mut selected: Option<&CanonicalTrack> = None;
+        let mut tied = false;
+        for track in tracks {
+            let active = fcs_runtime::evaluate_track(track, time).map_err(|error| {
+                FcbcError::new(
+                    "fcbc.unsupported-track",
+                    format!(
+                        "native {:?} Track {} cannot be materialized for Line {line_id}: {error}",
+                        target,
+                        track.name()
+                    ),
+                )
+            })?;
+            if active.is_none() {
+                continue;
+            }
+            match selected {
+                None => selected = Some(track),
+                Some(top) if top.priority() == track.priority() => tied = true,
+                Some(top) if top.priority() < track.priority() => {
+                    selected = Some(track);
+                    tied = false;
+                }
+                _ => {}
+            }
+        }
+        if tied {
+            let priority = selected
+                .expect("a tie implies a selected priority")
+                .priority();
+            return Err(FcbcError::new(
+                "fcbc.unsupported-track",
+                format!(
+                    "native {:?} Track layering for Line {line_id} has effective replace Tracks \
+                     tied at priority {priority}",
+                    target
+                ),
+            ));
+        }
+        Ok(selected.map(|track| {
+            if let Some(index) = winners
+                .iter()
+                .position(|winner| std::ptr::eq(*winner, track))
+            {
+                index
+            } else {
+                winners.push(track);
+                winners.len() - 1
+            }
+        }))
     }
-    let mut intervals = tracks
-        .iter()
-        .flat_map(|track| track.active_intervals())
-        .collect::<Vec<_>>();
-    intervals.sort_unstable_by(|left, right| left.0.total_cmp(&right.0));
-    if intervals.windows(2).any(|pair| pair[0].1 > pair[1].0) {
-        return Err(FcbcError::new(
-            "fcbc.unsupported-track",
-            format!(
-                "native {target:?} Track layering for Line {line_id} requires disjoint effective intervals"
-            ),
-        ));
+
+    let mut boundaries = Vec::new();
+    for track in tracks {
+        for piece in track.pieces() {
+            boundaries.push(track_piece_time(piece));
+            if let CanonicalTrackPiece::Segment(segment) = piece {
+                boundaries.push(segment.end().chart_time_seconds());
+            }
+        }
     }
-    let fixtures = tracks
-        .iter()
-        .map(|track| native_single_track_fixture(track, lines))
-        .collect::<FcbcResult<Vec<_>>>()?;
+    boundaries.sort_by(f64::total_cmp);
+    boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
+
+    let mut winners: Vec<&CanonicalTrack> = Vec::new();
+    let mut regions: Vec<NativeRegion> = Vec::new();
+    let first = region_winner(tracks, f64::NEG_INFINITY, target, line_id, &mut winners)?;
+    regions.push(NativeRegion {
+        start: 0.0,
+        layer: first,
+    });
+    for boundary in boundaries {
+        let winner = region_winner(tracks, boundary, target, line_id, &mut winners)?;
+        if regions.last().is_none_or(|region| region.layer != winner) {
+            regions.push(NativeRegion {
+                start: boundary,
+                layer: winner,
+            });
+        }
+    }
+
     let base = native_line_base_constant(
         lines
             .iter()
@@ -2395,53 +2529,19 @@ fn native_disjoint_replace_fixture(
             .expect("validated Line owner"),
         target,
     );
-    let first_time = fixtures
-        .iter()
-        .map(|fixture| fixture.first_time)
-        .min_by(f64::total_cmp)
-        .expect("nonempty Track group");
-    let mut segments = fixtures
+    let layers = winners
         .into_iter()
-        .flat_map(|fixture| fixture.segments)
-        .collect::<Vec<_>>();
-    normalize_merged_track_segments(&mut segments, &base);
+        .map(|track| native_track_layer(track, lines))
+        .collect::<FcbcResult<Vec<_>>>()?;
     Ok(NativeTrackFixture {
         line_id,
         target,
-        first_time,
-        before_constant: base,
-        segments,
+        kind: NativeTrackKind::Layered {
+            base,
+            regions,
+            layers,
+        },
     })
-}
-
-fn normalize_merged_track_segments(segments: &mut Vec<TrackSegmentFixture>, base: &Constant) {
-    segments.sort_by(|left, right| {
-        left.start
-            .total_cmp(&right.start)
-            .then_with(|| right.flags.cmp(&left.flags))
-    });
-    let mut normalized: Vec<TrackSegmentFixture> = Vec::with_capacity(segments.len());
-    for segment in segments.drain(..) {
-        if let Some(previous) = normalized.last_mut()
-            && previous.start.to_bits() == segment.start.to_bits()
-        {
-            if segment.flags == 0 || previous.start_constant == *base {
-                *previous = segment;
-            }
-            continue;
-        }
-        normalized.push(segment);
-    }
-    if !matches!(normalized.first(), Some(segment) if segment.flags != 0) {
-        let first = normalized
-            .first()
-            .expect("merged Track has at least one segment");
-        normalized.insert(
-            0,
-            native_track_point(first.start, first.start_constant.clone()),
-        );
-    }
-    *segments = normalized;
 }
 
 #[derive(Clone, Copy)]
@@ -4046,24 +4146,87 @@ fn native_line_descriptor(
         .iter()
         .find(|track| track.line_id == line_id && track.target == target)
     {
-        let before_descriptor = intern_constant_descriptor(
-            descriptors,
-            property_type,
-            find_constant(constants, &track.before_constant),
-        );
-        let track_descriptor = intern_descriptor(
-            descriptors,
-            segment_track_descriptor(property_type, &track.segments, constants),
-        );
-        intern_descriptor(
-            descriptors,
-            piecewise_track_descriptor(
-                property_type,
-                track.first_time,
-                before_descriptor,
-                track_descriptor,
-            ),
-        )
+        match &track.kind {
+            NativeTrackKind::Single(layer) => {
+                let before_descriptor = intern_constant_descriptor(
+                    descriptors,
+                    property_type,
+                    find_constant(constants, &layer.before_constant),
+                );
+                let track_descriptor = intern_descriptor(
+                    descriptors,
+                    segment_track_descriptor(property_type, &layer.segments, constants),
+                );
+                intern_descriptor(
+                    descriptors,
+                    piecewise_track_descriptor(
+                        property_type,
+                        layer.first_time,
+                        before_descriptor,
+                        track_descriptor,
+                    ),
+                )
+            }
+            // Children are interned in root Piece order (each layer's before
+            // constant, SegmentTrack, and inner Piecewise on first reference),
+            // so descriptor allocation follows the canonical postorder walk.
+            NativeTrackKind::Layered {
+                base,
+                regions,
+                layers,
+            } => {
+                let mut layer_slots: Vec<Option<u32>> = vec![None; layers.len()];
+                let mut base_slot = None;
+                let mut payload = descriptor_common(property_type, 3, 0b11, 0.0, 0.0);
+                put_u32(&mut payload, regions.len() as u32);
+                for (index, region) in regions.iter().enumerate() {
+                    let child = match region.layer {
+                        Some(layer_index) => *layer_slots[layer_index].get_or_insert_with(|| {
+                            let layer = &layers[layer_index];
+                            let before_descriptor = intern_constant_descriptor(
+                                descriptors,
+                                property_type,
+                                find_constant(constants, &layer.before_constant),
+                            );
+                            let track_descriptor = intern_descriptor(
+                                descriptors,
+                                segment_track_descriptor(property_type, &layer.segments, constants),
+                            );
+                            intern_descriptor(
+                                descriptors,
+                                piecewise_track_descriptor(
+                                    property_type,
+                                    layer.first_time,
+                                    before_descriptor,
+                                    track_descriptor,
+                                ),
+                            )
+                        }),
+                        None => *base_slot.get_or_insert(intern_constant_descriptor(
+                            descriptors,
+                            property_type,
+                            find_constant(constants, base),
+                        )),
+                    };
+                    let start = if index == 0 { 0.0 } else { region.start };
+                    let (end, mut flags) = if index + 1 == regions.len() {
+                        (0.0, 0b100)
+                    } else {
+                        (regions[index + 1].start, 0)
+                    };
+                    if index == 0 {
+                        flags |= 0b010;
+                    }
+                    put_f64(&mut payload, start);
+                    put_f64(&mut payload, end);
+                    put_u32(&mut payload, child);
+                    put_u32(&mut payload, flags);
+                }
+                let descriptor = record(payload);
+                debug_assert_eq!(descriptor.len(), 32 + 24 * regions.len());
+                intern_descriptor(descriptors, descriptor)
+            }
+        }
     } else {
         intern_constant_descriptor(
             descriptors,
@@ -4348,9 +4511,13 @@ fn distance_section_for_lines(lines: &[LineFixture], tracks: &[NativeTrackFixtur
                 if let Some(track) = tracks.iter().find(|track| {
                     track.line_id == line.id && track.target == CanonicalTrackTarget::ScrollSpeed
                 }) {
-                    for segment in &track.segments {
-                        boundaries.push(segment.start);
-                        boundaries.push(segment.end);
+                    // Reachable SegmentTrack points/segments of every retained
+                    // layer; merged root Piece boundaries are a subset of them.
+                    for (_, segments) in track.layers() {
+                        for segment in segments {
+                            boundaries.push(segment.start);
+                            boundaries.push(segment.end);
+                        }
                     }
                 } else {
                     // The declarative non-empty fixture has no native Track graph.

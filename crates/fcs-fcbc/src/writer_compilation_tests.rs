@@ -1527,21 +1527,453 @@ lines {
             }
         }
     }
+}
 
-    // Different priorities can overlap legally in Core, but a flat SegmentTrack merge cannot
-    // encode their selection. Point coverage persists beyond its timestamp and must count too.
+/// Converts a canonical Track value to the product runtime value for
+/// bit-exact comparison with `query_descriptor` results.
+fn track_runtime_value(value: CanonicalTrackValue) -> crate::RuntimeValue {
+    match value {
+        CanonicalTrackValue::Float(value) => crate::RuntimeValue::Scalar {
+            ty: crate::ValueType::Float,
+            value,
+        },
+        CanonicalTrackValue::Angle(value) => crate::RuntimeValue::Scalar {
+            ty: crate::ValueType::Angle,
+            value,
+        },
+        CanonicalTrackValue::Vec2Float(value) => crate::RuntimeValue::Vec2 {
+            ty: crate::ValueType::Vec2Float,
+            value: [value.x(), value.y()],
+        },
+        CanonicalTrackValue::Vec2Length(value) => crate::RuntimeValue::Vec2 {
+            ty: crate::ValueType::Vec2Length,
+            value: [value.x(), value.y()],
+        },
+    }
+}
+
+/// Compiles `source`, writes it, loads it, and returns the pieces needed to
+/// bind product queries to the canonical runtime evaluation.
+fn composed_chart(
+    source: &str,
+) -> (
+    Vec<u8>,
+    crate::DecodedChart,
+    fcs_model::CanonicalTrackSet,
+    fcs_model::StableId,
+) {
+    let compilation = compilation(source);
+    let bytes =
+        write_from_compilation(&compilation).expect("composed replace Tracks must write exactly");
+    let decoded = crate::load_chart(&bytes).expect("composed replace Tracks must load");
+    let chart = compilation.chart();
+    let owner = chart
+        .tracks()
+        .tracks()
+        .first()
+        .expect("composed chart declares Tracks")
+        .owner()
+        .clone();
+    let tracks = chart.tracks().clone();
+    (bytes, decoded, tracks, owner)
+}
+
+#[test]
+fn write_from_compilation_composes_overlapping_replace_priorities() {
+    let source = |early_piece: &str, early: i64, late: i64| {
+        r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        alpha: 0.5;
+        tracks {
+            track early -> alpha: float {
+                priority: EARLY_PRIORITY;
+                segments { EARLY_PIECE }
+            }
+            track late -> alpha: float {
+                priority: LATE_PRIORITY;
+                segments { [2s, 3s): 0.5 -> 0.75 using "linear"; }
+            }
+        }
+    }
+}
+"#
+        .replace("EARLY_PIECE", early_piece)
+        .replace("EARLY_PRIORITY", &early.to_string())
+        .replace("LATE_PRIORITY", &late.to_string())
+    };
+    // Point coverage persists beyond its timestamp, so a masked Track can
+    // re-emerge after the covering Track becomes inactive.
     for early_piece in [
         "[0s, 2.5s): 0.25 -> 0.5 using \"linear\";",
         "point 0s: 0.25;",
     ] {
-        let source = source
-            .replace("EARLY_PRIORITY", "0")
-            .replace("LATE_PRIORITY", "1")
-            .replace("[0s, 1s): 0.25 -> 0.5 using \"linear\";", early_piece);
-        let error = write_from_compilation(&compile(&source))
-            .expect_err("overlapping replace composition remains a separate implementation");
-        assert_eq!(error.category(), "fcbc.unsupported-track");
+        for (early, late) in [(0, 1), (1, 0)] {
+            let (_, decoded, tracks, owner) = composed_chart(&source(early_piece, early, late));
+            let descriptor = decoded.lines.first().expect("main Line").alpha_descriptor;
+            // Region boundaries, overlap interior, gaps, the persistent point,
+            // and repeated out-of-order seeks must match the canonical
+            // evaluation bit for bit in both priority directions.
+            for time in [
+                -1.0, 0.0, 0.5, 1.999, 2.0, 2.25, 2.499, 2.5, 2.75, 2.999, 3.0, 4.0, 0.5, 2.25,
+            ] {
+                let expected = fcs_runtime::evaluate_track_set(
+                    &tracks,
+                    &owner,
+                    CanonicalTrackTarget::Alpha,
+                    time,
+                    CanonicalTrackValue::Float(0.5),
+                )
+                .expect("canonical overlap composition");
+                let actual = crate::query_descriptor(
+                    &decoded,
+                    descriptor,
+                    time,
+                    crate::EvaluationEnvironment::at_time(time),
+                )
+                .expect("composed replace Track evaluation")
+                .value;
+                assert_runtime_value_bits(actual, track_runtime_value(expected));
+            }
+        }
     }
+}
+
+#[test]
+fn write_from_compilation_composes_overlapping_replace_across_targets() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        position: vec2(1px, 2px);
+        rotation: 45deg;
+        scale: vec2(2.0, 3.0);
+        alpha: 0.25;
+        tracks {
+            track moveBase -> position: vec2<length> {
+                segments { [0s, 2s): vec2(0px, 0px) -> vec2(2px, 4px) using "linear"; }
+            }
+            track moveCover -> position: vec2<length> {
+                priority: 1;
+                segments { [1s, 3s): vec2(4px, 6px) -> vec2(8px, 10px) using "linear"; }
+            }
+            track turnBase -> rotation: angle {
+                segments { [0s, 2s): 0deg -> 90deg using "linear"; }
+            }
+            track turnCover -> rotation: angle {
+                priority: 1;
+                segments { [1s, 3s): 180deg -> 270deg using "linear"; }
+            }
+            track zoomBase -> scale: vec2<float> {
+                segments { [0s, 2s): vec2(1.0, 1.0) -> vec2(2.0, 2.0) using "linear"; }
+            }
+            track zoomCover -> scale: vec2<float> {
+                priority: 1;
+                segments { [1s, 3s): vec2(3.0, 3.0) -> vec2(4.0, 4.0) using "linear"; }
+            }
+            track fadeBase -> alpha: float {
+                segments { [0s, 2s): 0.0 -> 0.5 using "linear"; }
+            }
+            track fadeCover -> alpha: float {
+                priority: 1;
+                segments { [1s, 3s): 0.6 -> 0.8 using "linear"; }
+            }
+            track speedBase -> scrollSpeed: float {
+                segments { [0s, 2s): 1.0 -> 2.0 using "linear"; }
+            }
+            track speedCover -> scrollSpeed: float {
+                priority: 1;
+                segments { [1s, 3s): 2.5 -> 3.0 using "linear"; }
+            }
+        }
+    }
+}
+"#;
+    let (_, decoded, tracks, owner) = composed_chart(source);
+    let line = decoded.lines.first().expect("main Line");
+    let pi_four = std::f64::consts::FRAC_PI_4;
+    for (target, descriptor, base) in [
+        (
+            CanonicalTrackTarget::Position,
+            line.position_descriptor,
+            CanonicalTrackValue::Vec2Length(fcs_model::CanonicalVec2::new(1.0, 2.0).unwrap()),
+        ),
+        (
+            CanonicalTrackTarget::Rotation,
+            line.rotation_descriptor,
+            CanonicalTrackValue::Angle(pi_four),
+        ),
+        (
+            CanonicalTrackTarget::Scale,
+            line.scale_descriptor,
+            CanonicalTrackValue::Vec2Float(fcs_model::CanonicalVec2::new(2.0, 3.0).unwrap()),
+        ),
+        (
+            CanonicalTrackTarget::Alpha,
+            line.alpha_descriptor,
+            CanonicalTrackValue::Float(0.25),
+        ),
+        (
+            CanonicalTrackTarget::ScrollSpeed,
+            line.scroll_speed_descriptor,
+            CanonicalTrackValue::Float(1.0),
+        ),
+    ] {
+        for time in [-1.0, 0.0, 0.5, 1.999, 2.0, 2.5, 2.999, 3.0, 4.0, 2.5] {
+            let expected = fcs_runtime::evaluate_track_set(&tracks, &owner, target, time, base)
+                .expect("canonical composition");
+            let actual = crate::query_descriptor(
+                &decoded,
+                descriptor,
+                time,
+                crate::EvaluationEnvironment::at_time(time),
+            )
+            .expect("composed Line Track evaluation")
+            .value;
+            assert_runtime_value_bits(actual, track_runtime_value(expected));
+        }
+    }
+}
+
+#[test]
+fn write_from_compilation_composes_layered_fill_policies() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        alpha: 0.5;
+        tracks {
+            track cover -> alpha: float {
+                priority: 1;
+                fill: "zero";
+                extrapolateBefore: "base";
+                extrapolateAfter: "base";
+                segments { [0s, 1s): 0.75 -> 0.25 using "linear"; [2s, 3s): 0.3 -> 0.4 using "linear"; }
+            }
+            track under -> alpha: float {
+                fill: "base";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "base";
+                segments { [0s, 6s): 0.1 -> 0.9 using "linear"; }
+            }
+            track tail -> alpha: float {
+                priority: 2;
+                fill: "one";
+                extrapolateBefore: "base";
+                extrapolateAfter: "holdAfter";
+                segments { [10s, 11s): 0.8 -> 0.6 using "linear"; [13s, 14s): 0.2 -> 0.3 using "linear"; }
+            }
+        }
+    }
+}
+"#;
+    let (_, decoded, tracks, owner) = composed_chart(source);
+    let descriptor = decoded.lines.first().expect("main Line").alpha_descriptor;
+    // Every fill policy is exercised as a region winner or mask: holdBefore
+    // before `under`, `cover` zero-filling its interior gap over `under`,
+    // `under` re-emerging where `cover` is base-inactive, the shared base gap,
+    // `tail`'s one fill, and its trailing holdAfter.
+    for time in [
+        -1.0, 0.0, 0.5, 0.999, 1.0, 1.5, 1.999, 2.0, 2.5, 2.999, 3.0, 4.0, 5.999, 6.0, 8.0, 10.0,
+        10.5, 11.0, 12.0, 13.0, 13.5, 13.999, 14.0, 15.0, 1.5,
+    ] {
+        let expected = fcs_runtime::evaluate_track_set(
+            &tracks,
+            &owner,
+            CanonicalTrackTarget::Alpha,
+            time,
+            CanonicalTrackValue::Float(0.5),
+        )
+        .expect("canonical fill layering");
+        let actual = crate::query_descriptor(
+            &decoded,
+            descriptor,
+            time,
+            crate::EvaluationEnvironment::at_time(time),
+        )
+        .expect("composed fill layering evaluation")
+        .value;
+        assert_runtime_value_bits(actual, track_runtime_value(expected));
+    }
+}
+
+#[test]
+fn write_from_compilation_composes_layered_scroll_speed_distance() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        scrollTempoMap { 0s -> 60bpm; }
+        tracks {
+            track speedBase -> scrollSpeed: float {
+                segments { [0s, 2s): 1.0 -> 2.0 using "linear"; }
+            }
+            track speedCover -> scrollSpeed: float {
+                priority: 1;
+                segments { [1s, 3s): 2.5 -> 3.0 using "linear"; }
+            }
+        }
+    }
+}
+"#;
+    let (_, decoded, tracks, owner) = composed_chart(source);
+    let line = decoded.lines.first().expect("main Line");
+    for time in [-1.0, 0.5, 1.0, 1.5, 2.5, 3.0, 4.0, 1.5] {
+        let expected = fcs_runtime::evaluate_track_set(
+            &tracks,
+            &owner,
+            CanonicalTrackTarget::ScrollSpeed,
+            time,
+            CanonicalTrackValue::Float(1.0),
+        )
+        .expect("canonical scroll speed composition");
+        let actual = crate::query_descriptor(
+            &decoded,
+            line.scroll_speed_descriptor,
+            time,
+            crate::EvaluationEnvironment::at_time(time),
+        )
+        .expect("composed scroll speed evaluation")
+        .value;
+        assert_runtime_value_bits(actual, track_runtime_value(expected));
+    }
+    // Boundary tables must match every reachable retained descriptor: both
+    // layers' segment starts/ends plus the integration origin, deduplicated.
+    let distance = crate::query_distance(&decoded, line.distance_descriptor, 1.0)
+        .expect("composed scroll distance evaluation");
+    assert_eq!(
+        distance.classification,
+        crate::DistanceClassification::PortableEvaluable
+    );
+    assert_eq!(
+        decoded.distances[line.distance_descriptor as usize].boundaries,
+        [0.0, 1.0, 2.0, 3.0]
+    );
+}
+
+#[test]
+fn write_from_compilation_layering_preserves_declaration_order_bytes() {
+    let tracks = |first: &str, second: &str| {
+        format!(
+            r#"#fcs 5.0.0
+format {{ profile: chart; }}
+tempoMap {{ 0beat -> 120bpm; }}
+lines {{
+    line main {{
+        alpha: 0.5;
+        tracks {{
+{first}
+{second}
+        }}
+    }}
+}}
+"#
+        )
+    };
+    let low = r#"            track low -> alpha: float {
+                segments { [0s, 2s): 0.25 -> 0.5 using "linear"; }
+            }"#;
+    let high = r#"            track high -> alpha: float {
+                priority: 1;
+                segments { [1s, 3s): 0.5 -> 0.75 using "linear"; }
+            }"#;
+    assert_eq!(
+        compile(&tracks(high, low)),
+        compile(&tracks(low, high)),
+        "Track declaration order must not change the composed bytes"
+    );
+}
+
+#[test]
+fn write_from_compilation_eliminates_masked_replace_tracks() {
+    let source = |masked_value: &str| {
+        format!(
+            r#"#fcs 5.0.0
+format {{ profile: chart; }}
+tempoMap {{ 0beat -> 120bpm; }}
+lines {{
+    line main {{
+        alpha: 0.5;
+        tracks {{
+            track masked -> alpha: float {{
+                segments {{ [1s, 2s): {masked_value} -> 0.95 using "linear"; }}
+            }}
+            track cover -> alpha: float {{
+                priority: 1;
+                segments {{ [0s, 3s): 0.25 -> 0.5 using "linear"; }}
+            }}
+        }}
+    }}
+}}
+"#
+        )
+    };
+    // The masked Track never wins a region, so changing its values must not
+    // change a byte: it leaves no descriptor, segment, or constant behind.
+    assert_eq!(
+        compile(&source("0.9")),
+        compile(&source("0.8")),
+        "a fully masked replace Track must leave no descriptor or constant"
+    );
+}
+
+#[test]
+fn write_from_compilation_rejects_unresolvable_replace_layering() {
+    // An `error` fill in a gap stays an error even when another Track is
+    // active there: the canonical runtime fails on any Track's gap, and the
+    // composed total function cannot encode it.
+    let error_fill = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        alpha: 0.5;
+        tracks {
+            track cover -> alpha: float {
+                priority: 1;
+                fill: "error";
+                segments { [0s, 1s): 0.75 -> 0.5 using "linear"; [2s, 3s): 0.5 -> 0.25 using "linear"; }
+            }
+            track under -> alpha: float {
+                segments { [0s, 3s): 0.1 -> 0.9 using "linear"; }
+            }
+        }
+    }
+}
+"#;
+    let error = write_from_compilation(&compilation(error_fill))
+        .expect_err("an error fill gap must not become an approximation");
+    assert_eq!(error.category(), "fcbc.unsupported-track");
+
+    // holdBefore extrapolating after the last segment has nothing to hold
+    // from, so the trailing region has no resolvable value.
+    let unresolved_hold = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        alpha: 0.5;
+        tracks {
+            track cover -> alpha: float {
+                priority: 1;
+                extrapolateAfter: "holdBefore";
+                segments { [0s, 1s): 0.75 -> 0.5 using "linear"; }
+            }
+            track under -> alpha: float {
+                segments { [2s, 3s): 0.1 -> 0.9 using "linear"; }
+            }
+        }
+    }
+}
+"#;
+    let error = write_from_compilation(&compilation(unresolved_hold))
+        .expect_err("an unresolved hold must not become an approximation");
+    assert_eq!(error.category(), "fcbc.unsupported-track");
 }
 
 #[test]
