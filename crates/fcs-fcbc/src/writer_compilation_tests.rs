@@ -1723,9 +1723,8 @@ lines {
         ),
     ] {
         for time in [-1.0, 0.0, 0.5, 1.999, 2.0, 2.5, 2.999, 3.0, 4.0, 2.5] {
-            let expected =
-                fcs_runtime::evaluate_track_set(&tracks, &owner, target, time, base.clone())
-                    .expect("canonical composition");
+            let expected = fcs_runtime::evaluate_track_set(&tracks, &owner, target, time, base)
+                .expect("canonical composition");
             let actual = crate::query_descriptor(
                 &decoded,
                 descriptor,
