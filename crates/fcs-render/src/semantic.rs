@@ -10,7 +10,8 @@ use fcs_fcbc::{
 use crate::{
     RenderLimits,
     loader::{
-        DecodedRenderChart, GeometryData, NodeKind, PaintData, PaintRecord, PathCommand, PathRecord,
+        DecodedRenderChart, DescriptorRoot, GeometryData, NodeKind, PaintData, PaintRecord,
+        PathCommand, PathRecord, RootRule, node_descriptor_roots,
     },
 };
 
@@ -364,10 +365,14 @@ fn emit_draw_subtree(
     if !query_attachment_gate(chart, node, chart_time)? {
         return Ok(());
     }
-    let attachment = attachment.unwrap_or(query_attachment(chart, node, chart_time)?);
+    let attachment = match attachment {
+        Some(attachment) => attachment,
+        None => query_attachment(chart, node, chart_time)?,
+    };
     if !query_visibility(chart, node, chart_time, attachment.environment)? {
         return Ok(());
     }
+    let values = query_node_roots(chart, node, chart_time, attachment.environment)?;
     ancestry_key.push((node.z_order, node.document_order, node.id));
     let parent_matrix = if node.parent.is_none() {
         attachment.matrix
@@ -385,19 +390,10 @@ fn emit_draw_subtree(
     } else {
         None
     };
-    let world_matrix = multiply_matrix(
-        parent_matrix,
-        node_local_matrix(chart, node, chart_time, attachment.environment)?,
-    )?;
+    let world_matrix = multiply_matrix(parent_matrix, node_local_matrix(node, &values)?)?;
     if let Some((clip_id, geometry_ref)) = clip {
-        let geometry = geometry_evaluation(
-            chart,
-            Some(geometry_ref),
-            chart_time,
-            attachment.environment,
-            world_matrix,
-            false,
-        )?;
+        let geometry =
+            geometry_evaluation(chart, Some(geometry_ref), &values, world_matrix, false)?;
         scene.clips.insert(
             clip_id,
             EvaluatedClip {
@@ -414,8 +410,7 @@ fn emit_draw_subtree(
             let geometry = geometry_evaluation(
                 chart,
                 node.geometry_ref,
-                chart_time,
-                attachment.environment,
+                &values,
                 world_matrix,
                 node.stroke_ref.is_some(),
             )?;
@@ -431,13 +426,11 @@ fn emit_draw_subtree(
             }
             let paint = match node.fill_paint {
                 Some(index) => paint_rgba(
-                    chart,
                     chart
                         .paints
                         .get(index as usize)
                         .ok_or("render.invalid-reference")?,
-                    chart_time,
-                    attachment.environment,
+                    &values,
                 )?,
                 None => (None, None, None, None),
             };
@@ -448,28 +441,14 @@ fn emit_draw_subtree(
                         .get(index as usize)
                         .ok_or("render.invalid-reference")?;
                     let paint = paint_rgba(
-                        chart,
                         chart
                             .paints
                             .get(stroke_record.paint_ref as usize)
                             .ok_or("render.invalid-reference")?,
-                        chart_time,
-                        attachment.environment,
+                        &values,
                     )?;
-                    let width = query_scalar_in(
-                        chart,
-                        stroke_record.width_descriptor,
-                        chart_time,
-                        ValueType::Length,
-                        attachment.environment,
-                    )?;
-                    let dash_offset = query_scalar_in(
-                        chart,
-                        stroke_record.dash_offset_descriptor,
-                        chart_time,
-                        ValueType::Length,
-                        attachment.environment,
-                    )?;
+                    let width = values.scalar(stroke_record.width_descriptor)?;
+                    let dash_offset = values.scalar(stroke_record.dash_offset_descriptor)?;
                     let dash_total = stroke_record.dash.iter().sum::<f64>();
                     if !width.is_finite()
                         || width < 0.0
@@ -514,7 +493,7 @@ fn emit_draw_subtree(
         } else {
             (None, None, None, None, [0.0; 4], None, None)
         };
-    let opacity = query_opacity(chart, node, chart_time, attachment.environment)?;
+    let opacity = values.scalar(node.opacity_descriptor)?;
     let effective_opacity = inherited_opacity * opacity;
     if !effective_opacity.is_finite() {
         return Err("render.invalid-composite");
@@ -904,25 +883,163 @@ fn query_visibility(
     }
 }
 
-fn query_opacity(
+/// Values belong to one visible node, time, and attachment environment; never to a prior frame.
+struct NodeValues(BTreeMap<u32, RuntimeValue>);
+
+impl NodeValues {
+    fn scalar(&self, descriptor: u32) -> Result<f64, &'static str> {
+        match self.0.get(&descriptor) {
+            Some(RuntimeValue::Scalar { value, .. }) => Ok(*value),
+            _ => Err("render.invalid-descriptor"),
+        }
+    }
+
+    fn vec2(&self, descriptor: u32) -> Result<[f64; 2], &'static str> {
+        match self.0.get(&descriptor) {
+            Some(RuntimeValue::Vec2 { value, .. }) => Ok(*value),
+            _ => Err("render.invalid-descriptor"),
+        }
+    }
+
+    fn color(&self, descriptor: u32) -> Result<[f64; 4], &'static str> {
+        match self.0.get(&descriptor) {
+            Some(RuntimeValue::Color(value)) => Ok(*value),
+            _ => Err("render.invalid-descriptor"),
+        }
+    }
+
+    fn validate(
+        &self,
+        chart: &DecodedRenderChart,
+        root: &DescriptorRoot,
+    ) -> Result<(), &'static str> {
+        match root.rule {
+            RootRule::Any => Ok(()),
+            RootRule::NonNegative(error) => (self.scalar(root.descriptor)? >= 0.0)
+                .then_some(())
+                .ok_or(error),
+            RootRule::RectSize { origin } => {
+                let size = self.vec2(root.descriptor)?;
+                let origin = self.vec2(origin)?;
+                size.into_iter()
+                    .zip(origin)
+                    .all(|(size, origin)| size >= 0.0 && (origin + size).is_finite())
+                    .then_some(())
+                    .ok_or("render.invalid-geometry")
+            }
+            RootRule::ImageExtent { origin } => {
+                let size = self.scalar(root.descriptor)?;
+                (size >= 0.0 && (self.scalar(origin)? + size).is_finite())
+                    .then_some(())
+                    .ok_or("render.invalid-geometry")
+            }
+            RootRule::ImageSource {
+                descriptors,
+                component,
+                resource_id,
+            } => {
+                let image = chart
+                    .decoded_images
+                    .get(&resource_id)
+                    .ok_or("render.resource-not-found")?;
+                let dimension = if component.is_multiple_of(2) {
+                    image.width
+                } else {
+                    image.height
+                };
+                let value = self.scalar(root.descriptor)?;
+                let end = if component < 2 {
+                    value
+                } else {
+                    self.scalar(descriptors[component - 2])? + value
+                };
+                if value < 0.0 || !end.is_finite() || end > f64::from(dimension) {
+                    return Err("render.invalid-geometry");
+                }
+                if component == 3 {
+                    validate_source_rect(
+                        [
+                            self.scalar(descriptors[0])?,
+                            self.scalar(descriptors[1])?,
+                            self.scalar(descriptors[2])?,
+                            self.scalar(descriptors[3])?,
+                        ],
+                        image.width,
+                        image.height,
+                    )?;
+                }
+                Ok(())
+            }
+            RootRule::ArcStart {
+                end_angle,
+                direction,
+            } => validate_arc_angles(
+                self.scalar(root.descriptor)?,
+                self.scalar(end_angle)?,
+                direction,
+            ),
+            RootRule::GlyphSize => (self.scalar(root.descriptor)? > 0.0)
+                .then_some(())
+                .ok_or("render.invalid-geometry"),
+            RootRule::ColorRange => self
+                .color(root.descriptor)?
+                .iter()
+                .all(|value| (0.0..=1.0).contains(value))
+                .then_some(())
+                .ok_or("render.invalid-paint"),
+            RootRule::Opacity => (0.0..=1.0)
+                .contains(&self.scalar(root.descriptor)?)
+                .then_some(())
+                .ok_or("render.invalid-composite"),
+        }
+    }
+}
+
+fn query_node_roots(
     chart: &DecodedRenderChart,
     node: &crate::loader::NodeRecord,
     chart_time: f64,
     environment: EvaluationEnvironment,
-) -> Result<f64, &'static str> {
-    let value = query_value_in(chart, node.opacity_descriptor, chart_time, environment)?;
-    let RuntimeValue::Scalar {
-        ty: ValueType::Float,
-        value,
-    } = value
-    else {
-        return Err("render.invalid-descriptor");
-    };
-    if value.is_finite() && (0.0..=1.0).contains(&value) {
-        Ok(value)
-    } else {
-        Err("render.invalid-composite")
+) -> Result<NodeValues, &'static str> {
+    let mut roots = node_descriptor_roots(chart, node)?;
+    roots.retain(|root| root.path != "render.node.visibility");
+    // Section 14.8 makes each path/owner pair unique, so StructuralKey cannot break a tie.
+    // Decimal ordinals are compared as ASCII, including [10] before [2].
+    roots.sort_unstable_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.owner.cmp(&right.owner))
+    });
+    let mut values = NodeValues(BTreeMap::new());
+    for root in roots {
+        let value = match values.0.entry(root.descriptor) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => entry.insert(query_value_in(
+                chart,
+                root.descriptor,
+                chart_time,
+                environment,
+            )?),
+        };
+        let typed_finite = match value {
+            RuntimeValue::Bool(_) => root.expected == ValueType::Bool,
+            RuntimeValue::Scalar { ty, value } => *ty == root.expected && value.is_finite(),
+            RuntimeValue::Vec2 { ty, value } => {
+                *ty == root.expected && value.iter().all(|value| value.is_finite())
+            }
+            RuntimeValue::Color(value) => {
+                root.expected == ValueType::Color && value.iter().all(|value| value.is_finite())
+            }
+            _ => false,
+        };
+        if !typed_finite {
+            return Err("render.invalid-descriptor");
+        }
+        // Interned descriptors may have several owner fields. Validate every field even when
+        // its descriptor was already evaluated for an earlier root in this node.
+        values.validate(chart, &root)?;
     }
+    Ok(values)
 }
 
 fn query_value(
@@ -950,39 +1067,13 @@ fn query_value_in(
 }
 
 fn node_local_matrix(
-    chart: &DecodedRenderChart,
     node: &crate::loader::NodeRecord,
-    chart_time: f64,
-    environment: EvaluationEnvironment,
+    roots: &NodeValues,
 ) -> Result<[f64; 9], &'static str> {
-    let position = query_vec2_in(
-        chart,
-        node.position_descriptor,
-        chart_time,
-        ValueType::Vec2Length,
-        environment,
-    )?;
-    let origin = query_vec2_in(
-        chart,
-        node.origin_descriptor,
-        chart_time,
-        ValueType::Vec2Length,
-        environment,
-    )?;
-    let rotation = query_scalar_in(
-        chart,
-        node.rotation_descriptor,
-        chart_time,
-        ValueType::Angle,
-        environment,
-    )?;
-    let scale = query_vec2_in(
-        chart,
-        node.scale_descriptor,
-        chart_time,
-        ValueType::Vec2Float,
-        environment,
-    )?;
+    let position = roots.vec2(node.position_descriptor)?;
+    let origin = roots.vec2(node.origin_descriptor)?;
+    let rotation = roots.scalar(node.rotation_descriptor)?;
+    let scale = roots.vec2(node.scale_descriptor)?;
 
     let mut matrix = translation_matrix(position[0], position[1]);
     matrix = multiply_matrix(matrix, translation_matrix(origin[0], origin[1]))?;
@@ -1019,26 +1110,6 @@ fn query_scalar_in(
         RuntimeValue::Scalar { ty, value } if ty == expected && value.is_finite() => Ok(value),
         _ => Err("render.invalid-descriptor"),
     }
-}
-
-fn query_radius(
-    chart: &DecodedRenderChart,
-    descriptor: u32,
-    chart_time: f64,
-    environment: EvaluationEnvironment,
-) -> Result<f64, &'static str> {
-    let value = query_scalar_in(
-        chart,
-        descriptor,
-        chart_time,
-        ValueType::Length,
-        environment,
-    )?;
-    // Section 16 validates each successful root before querying the next one.
-    if value < 0.0 {
-        return Err("render.invalid-geometry");
-    }
-    Ok(value)
 }
 
 fn identity_matrix() -> [f64; 9] {
@@ -2674,47 +2745,25 @@ fn round_ties_to_even(value: f64) -> u8 {
     rounded.clamp(0.0, 255.0) as u8
 }
 
-fn paint_rgba(
-    chart: &DecodedRenderChart,
-    paint: &PaintRecord,
-    chart_time: f64,
-    environment: EvaluationEnvironment,
-) -> Result<PaintParts, &'static str> {
+fn paint_rgba(paint: &PaintRecord, roots: &NodeValues) -> Result<PaintParts, &'static str> {
     match &paint.data {
         // `colorDescriptor` is an FCBC descriptor index, not a constant-pool slot
         // (fcs-render.md sections 14.5 and 15.3); the loader already validated it as a
         // Color descriptor, so an unresolvable or wrongly-typed result is an invariant
         // violation. ImagePattern uses the same validated ResourceData binding as Image.
-        PaintData::Solid { color } => {
-            let evaluation = query_descriptor(&chart.core, *color, chart_time, environment)
-                .map_err(|_| "render.invalid-descriptor")?;
-            match evaluation.value {
-                RuntimeValue::Color(rgba) => Ok((Some(rgba), None, None, None)),
-                _ => Err("render.invalid-descriptor"),
-            }
-        }
+        PaintData::Solid { color } => Ok((Some(roots.color(*color)?), None, None, None)),
         PaintData::LinearGradient {
             start,
             end,
             spread,
             stops,
         } => {
-            let start = query_vec2_in(
-                chart,
-                *start,
-                chart_time,
-                ValueType::Vec2Length,
-                environment,
-            )?;
-            let end = query_vec2_in(chart, *end, chart_time, ValueType::Vec2Length, environment)?;
+            let start = roots.vec2(*start)?;
+            let end = roots.vec2(*end)?;
             let stops = stops
                 .iter()
                 .map(|stop| {
-                    let value =
-                        query_value_in(chart, stop.color_descriptor, chart_time, environment)?;
-                    let RuntimeValue::Color(color) = value else {
-                        return Err("render.invalid-descriptor");
-                    };
+                    let color = roots.color(stop.color_descriptor)?;
                     Ok(GradientStopDrawOp {
                         offset: stop.offset,
                         color,
@@ -2741,45 +2790,17 @@ fn paint_rgba(
             spread,
             stops,
         } => {
-            let start_center = query_vec2_in(
-                chart,
-                *start_center,
-                chart_time,
-                ValueType::Vec2Length,
-                environment,
-            )?;
-            let start_radius = query_scalar_in(
-                chart,
-                *start_radius,
-                chart_time,
-                ValueType::Length,
-                environment,
-            )?;
-            let end_center = query_vec2_in(
-                chart,
-                *end_center,
-                chart_time,
-                ValueType::Vec2Length,
-                environment,
-            )?;
-            let end_radius = query_scalar_in(
-                chart,
-                *end_radius,
-                chart_time,
-                ValueType::Length,
-                environment,
-            )?;
+            let start_center = roots.vec2(*start_center)?;
+            let start_radius = roots.scalar(*start_radius)?;
+            let end_center = roots.vec2(*end_center)?;
+            let end_radius = roots.scalar(*end_radius)?;
             if start_radius < 0.0 || end_radius < 0.0 {
                 return Err("render.invalid-paint");
             }
             let stops = stops
                 .iter()
                 .map(|stop| {
-                    let value =
-                        query_value_in(chart, stop.color_descriptor, chart_time, environment)?;
-                    let RuntimeValue::Color(color) = value else {
-                        return Err("render.invalid-descriptor");
-                    };
+                    let color = roots.color(stop.color_descriptor)?;
                     Ok(GradientStopDrawOp {
                         offset: stop.offset,
                         color,
@@ -2814,28 +2835,10 @@ fn paint_rgba(
             None,
             Some(ImagePatternDrawOp {
                 resource_id: *resource_id,
-                position: query_vec2_in(
-                    chart,
-                    *position,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?,
-                origin: query_vec2_in(
-                    chart,
-                    *origin,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?,
-                rotation: query_scalar_in(
-                    chart,
-                    *rotation,
-                    chart_time,
-                    ValueType::Angle,
-                    environment,
-                )?,
-                scale: query_vec2_in(chart, *scale, chart_time, ValueType::Vec2Float, environment)?,
+                position: roots.vec2(*position)?,
+                origin: roots.vec2(*origin)?,
+                rotation: roots.scalar(*rotation)?,
+                scale: roots.vec2(*scale)?,
                 repeat: *repeat,
                 sampling: *sampling,
             }),
@@ -3149,10 +3152,8 @@ fn flatten_curve(
 }
 
 fn evaluate_path(
-    chart: &DecodedRenderChart,
     path: &PathRecord,
-    chart_time: f64,
-    environment: EvaluationEnvironment,
+    roots: &NodeValues,
     world_matrix: [f64; 9],
 ) -> Result<(Vec<PathSubpath>, [f64; 4]), &'static str> {
     if !matches!(path.fill_rule, 1 | 2) {
@@ -3172,13 +3173,7 @@ fn evaluate_path(
                 if let Some(subpath) = active.take() {
                     subpaths.push(subpath);
                 }
-                let point = query_vec2_in(
-                    chart,
-                    *point,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?;
+                let point = roots.vec2(*point)?;
                 update_bounds(&mut bounds, point);
                 claim_path_point(&mut point_count)?;
                 active = Some(PathSubpath {
@@ -3192,27 +3187,14 @@ fn evaluate_path(
                 has_drawing = false;
             }
             PathCommand::LineTo(point) => {
-                let point = query_vec2_in(
-                    chart,
-                    *point,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?;
+                let point = roots.vec2(*point)?;
                 append_path_point(active.as_mut(), point, &mut bounds, &mut point_count)?;
                 current = point;
                 has_drawing = true;
             }
             PathCommand::QuadraticTo(control, end) => {
-                let control = query_vec2_in(
-                    chart,
-                    *control,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?;
-                let end =
-                    query_vec2_in(chart, *end, chart_time, ValueType::Vec2Length, environment)?;
+                let control = roots.vec2(*control)?;
+                let end = roots.vec2(*end)?;
                 append_curve(
                     active.as_mut(),
                     PathCurve::Quadratic {
@@ -3228,22 +3210,9 @@ fn evaluate_path(
                 has_drawing = true;
             }
             PathCommand::CubicTo(control1, control2, end) => {
-                let control1 = query_vec2_in(
-                    chart,
-                    *control1,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?;
-                let control2 = query_vec2_in(
-                    chart,
-                    *control2,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?;
-                let end =
-                    query_vec2_in(chart, *end, chart_time, ValueType::Vec2Length, environment)?;
+                let control1 = roots.vec2(*control1)?;
+                let control2 = roots.vec2(*control2)?;
+                let end = roots.vec2(*end)?;
                 append_curve(
                     active.as_mut(),
                     PathCurve::Cubic {
@@ -3266,23 +3235,10 @@ fn evaluate_path(
                 end_angle,
                 direction,
             } => {
-                let center = query_vec2_in(
-                    chart,
-                    *center,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?;
-                let radius = query_radius(chart, *radius, chart_time, environment)?;
-                let start_angle = query_scalar_in(
-                    chart,
-                    *start_angle,
-                    chart_time,
-                    ValueType::Angle,
-                    environment,
-                )?;
-                let end_angle =
-                    query_scalar_in(chart, *end_angle, chart_time, ValueType::Angle, environment)?;
+                let center = roots.vec2(*center)?;
+                let radius = roots.scalar(*radius)?;
+                let start_angle = roots.scalar(*start_angle)?;
+                let end_angle = roots.scalar(*end_angle)?;
                 validate_arc_angles(start_angle, end_angle, *direction)?;
                 let curve = PathCurve::Arc {
                     center,
@@ -3315,26 +3271,12 @@ fn evaluate_path(
                 end_angle,
                 direction,
             } => {
-                let center = query_vec2_in(
-                    chart,
-                    *center,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?;
-                let radius_x = query_radius(chart, *radius_x, chart_time, environment)?;
-                let radius_y = query_radius(chart, *radius_y, chart_time, environment)?;
-                let rotation =
-                    query_scalar_in(chart, *rotation, chart_time, ValueType::Angle, environment)?;
-                let start_angle = query_scalar_in(
-                    chart,
-                    *start_angle,
-                    chart_time,
-                    ValueType::Angle,
-                    environment,
-                )?;
-                let end_angle =
-                    query_scalar_in(chart, *end_angle, chart_time, ValueType::Angle, environment)?;
+                let center = roots.vec2(*center)?;
+                let radius_x = roots.scalar(*radius_x)?;
+                let radius_y = roots.scalar(*radius_y)?;
+                let rotation = roots.scalar(*rotation)?;
+                let start_angle = roots.scalar(*start_angle)?;
+                let end_angle = roots.scalar(*end_angle)?;
                 validate_arc_angles(start_angle, end_angle, *direction)?;
                 let curve = PathCurve::EllipseArc {
                     center,
@@ -3680,8 +3622,7 @@ struct GeometryEvaluation {
 fn geometry_evaluation(
     chart: &DecodedRenderChart,
     geometry_ref: Option<u32>,
-    chart_time: f64,
-    environment: EvaluationEnvironment,
+    roots: &NodeValues,
     world_matrix: [f64; 9],
     needs_stroke: bool,
 ) -> Result<GeometryEvaluation, &'static str> {
@@ -3699,15 +3640,8 @@ fn geometry_evaluation(
     let mut text = None;
     let (local_bounds, shape, image) = match &geometry.data {
         GeometryData::Rect { origin, size } => {
-            let [x, y] = query_vec2_in(
-                chart,
-                *origin,
-                chart_time,
-                ValueType::Vec2Length,
-                environment,
-            )?;
-            let [width, height] =
-                query_vec2_in(chart, *size, chart_time, ValueType::Vec2Length, environment)?;
+            let [x, y] = roots.vec2(*origin)?;
+            let [width, height] = roots.vec2(*size)?;
             let right = x + width;
             let bottom = y + height;
             if width < 0.0 || height < 0.0 || !right.is_finite() || !bottom.is_finite() {
@@ -3726,21 +3660,14 @@ fn geometry_evaluation(
             size,
             radii,
         } => {
-            let [x, y] = query_vec2_in(
-                chart,
-                *origin,
-                chart_time,
-                ValueType::Vec2Length,
-                environment,
-            )?;
-            let [width, height] =
-                query_vec2_in(chart, *size, chart_time, ValueType::Vec2Length, environment)?;
+            let [x, y] = roots.vec2(*origin)?;
+            let [width, height] = roots.vec2(*size)?;
             if width < 0.0 || height < 0.0 {
                 return Err("render.invalid-geometry");
             }
             let mut values = [0.0; 4];
             for (value, descriptor) in values.iter_mut().zip(radii) {
-                *value = query_radius(chart, *descriptor, chart_time, environment)?;
+                *value = roots.scalar(*descriptor)?;
             }
             let scale = rounded_rect_scale(width, height, values);
             values.iter_mut().for_each(|value| *value *= scale);
@@ -3762,14 +3689,8 @@ fn geometry_evaluation(
             )
         }
         GeometryData::Circle { center, radius } => {
-            let center = query_vec2_in(
-                chart,
-                *center,
-                chart_time,
-                ValueType::Vec2Length,
-                environment,
-            )?;
-            let radius = query_radius(chart, *radius, chart_time, environment)?;
+            let center = roots.vec2(*center)?;
+            let radius = roots.scalar(*radius)?;
             let bounds = [
                 center[0] - radius,
                 center[1] - radius,
@@ -3784,17 +3705,10 @@ fn geometry_evaluation(
             radius_y,
             rotation,
         } => {
-            let center = query_vec2_in(
-                chart,
-                *center,
-                chart_time,
-                ValueType::Vec2Length,
-                environment,
-            )?;
-            let radius_x = query_radius(chart, *radius_x, chart_time, environment)?;
-            let radius_y = query_radius(chart, *radius_y, chart_time, environment)?;
-            let rotation =
-                query_scalar_in(chart, *rotation, chart_time, ValueType::Angle, environment)?;
+            let center = roots.vec2(*center)?;
+            let radius_x = roots.scalar(*radius_x)?;
+            let radius_y = roots.scalar(*radius_y)?;
+            let rotation = roots.scalar(*rotation)?;
             let (sin, cos) = rotation.sin_cos();
             let extent_x = ((radius_x * cos).powi(2) + (radius_y * sin).powi(2)).sqrt();
             let extent_y = ((radius_x * sin).powi(2) + (radius_y * cos).powi(2)).sqrt();
@@ -3821,14 +3735,8 @@ fn geometry_evaluation(
             )
         }
         GeometryData::Line { start, end } => {
-            let start = query_vec2_in(
-                chart,
-                *start,
-                chart_time,
-                ValueType::Vec2Length,
-                environment,
-            )?;
-            let end = query_vec2_in(chart, *end, chart_time, ValueType::Vec2Length, environment)?;
+            let start = roots.vec2(*start)?;
+            let end = roots.vec2(*end)?;
             if !start
                 .iter()
                 .chain(end.iter())
@@ -3848,13 +3756,7 @@ fn geometry_evaluation(
             let closed = matches!(geometry.data, GeometryData::Polygon { .. });
             let mut values = Vec::with_capacity(points.len());
             for descriptor in points {
-                values.push(query_vec2_in(
-                    chart,
-                    *descriptor,
-                    chart_time,
-                    ValueType::Vec2Length,
-                    environment,
-                )?);
+                values.push(roots.vec2(*descriptor)?);
             }
             if values.len() < 2 {
                 return Err("render.invalid-geometry");
@@ -3880,8 +3782,7 @@ fn geometry_evaluation(
                 .paths
                 .get(*path_ref as usize)
                 .ok_or("render.invalid-reference")?;
-            let (subpaths, bounds) =
-                evaluate_path(chart, path, chart_time, environment, world_matrix)?;
+            let (subpaths, bounds) = evaluate_path(path, roots, world_matrix)?;
             (
                 bounds,
                 Some(LocalShape::Path {
@@ -3892,14 +3793,8 @@ fn geometry_evaluation(
             )
         }
         GeometryData::Text { glyph_runs, origin } => {
-            let (bounds, contours, evaluated) = evaluate_text(
-                chart,
-                glyph_runs,
-                *origin,
-                chart_time,
-                environment,
-                world_matrix,
-            )?;
+            let (bounds, contours, evaluated) =
+                evaluate_text(chart, glyph_runs, *origin, roots, world_matrix)?;
             text = Some(evaluated);
             (bounds, Some(LocalShape::Text { contours }), None)
         }
@@ -3915,13 +3810,7 @@ fn geometry_evaluation(
                 .ok_or("render.resource-not-found")?;
             let mut values = [0.0; 4];
             for (value, descriptor) in values.iter_mut().zip(destination) {
-                *value = query_scalar_in(
-                    chart,
-                    *descriptor,
-                    chart_time,
-                    ValueType::Length,
-                    environment,
-                )?;
+                *value = roots.scalar(*descriptor)?;
             }
             let [x, y, width, height] = values;
             let right = x + width;
@@ -3932,13 +3821,7 @@ fn geometry_evaluation(
             let source = if let Some(descriptors) = source {
                 let mut values = [0.0; 4];
                 for (value, descriptor) in values.iter_mut().zip(descriptors) {
-                    *value = query_scalar_in(
-                        chart,
-                        *descriptor,
-                        chart_time,
-                        ValueType::Float,
-                        environment,
-                    )?;
+                    *value = roots.scalar(*descriptor)?;
                 }
                 values
             } else {
@@ -4010,17 +3893,10 @@ fn evaluate_text(
     chart: &DecodedRenderChart,
     glyph_run_refs: &[u32],
     origin_descriptor: u32,
-    chart_time: f64,
-    environment: EvaluationEnvironment,
+    roots: &NodeValues,
     world_matrix: [f64; 9],
 ) -> Result<([f64; 4], TextContours, TextDrawOp), &'static str> {
-    let origin = query_vec2_in(
-        chart,
-        origin_descriptor,
-        chart_time,
-        ValueType::Vec2Length,
-        environment,
-    )?;
+    let origin = roots.vec2(origin_descriptor)?;
     let mut contours = Vec::new();
     let mut text = TextDrawOp {
         origin,
@@ -4031,13 +3907,7 @@ fn evaluate_text(
             .glyph_runs
             .get(*glyph_run_ref as usize)
             .ok_or("render.invalid-reference")?;
-        let size = query_scalar_in(
-            chart,
-            run.size_descriptor,
-            chart_time,
-            ValueType::Length,
-            environment,
-        )?;
+        let size = roots.scalar(run.size_descriptor)?;
         if size <= 0.0 {
             return Err("render.invalid-geometry");
         }
