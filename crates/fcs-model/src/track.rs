@@ -306,7 +306,7 @@ impl CanonicalTrack {
     /// Half-open intervals that contribute a value, including point persistence and fills.
     /// Unbounded ends use infinities; intervals are not necessarily sorted. Base/error gaps
     /// are omitted, so callers must still validate error policies for execution/portability.
-    pub fn active_intervals(&self) -> Vec<(f64, f64)> {
+    fn active_intervals(&self) -> Vec<(f64, f64)> {
         let mut intervals = Vec::new();
         let fill_is_active =
             |fill| !matches!(fill, CanonicalTrackFill::Base | CanonicalTrackFill::Error);
