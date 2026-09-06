@@ -35,6 +35,7 @@ pub fn evaluate_track_set(
     }
 
     let mut selected_replace = None;
+    let mut replace_conflict = None;
     let mut add = Vec::new();
     let mut multiply = Vec::new();
 
@@ -50,9 +51,12 @@ pub fn evaluate_track_set(
             CanonicalTrackBlend::Replace => match selected_replace {
                 Some((priority, _)) if priority > track.priority() => {}
                 Some((priority, _)) if priority == track.priority() => {
-                    return Err(TrackEvaluationError::ReplaceConflict { priority });
+                    replace_conflict = Some(priority);
                 }
-                _ => selected_replace = Some((track.priority(), value)),
+                _ => {
+                    selected_replace = Some((track.priority(), value));
+                    replace_conflict = None;
+                }
             },
             CanonicalTrackBlend::Add => add.push((track.priority(), track.name(), value)),
             CanonicalTrackBlend::Multiply => {
@@ -61,6 +65,10 @@ pub fn evaluate_track_set(
         }
     }
 
+    // A higher active replace can cover a tie encountered at a lower priority.
+    if let Some(priority) = replace_conflict {
+        return Err(TrackEvaluationError::ReplaceConflict { priority });
+    }
     add.sort_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)));
     multiply.sort_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)));
 
@@ -885,6 +893,93 @@ mod tests {
             )],
         )
         .unwrap()
+    }
+
+    #[test]
+    fn higher_replace_priority_masks_lower_priority_conflicts() {
+        let owner = owner("main");
+        for target in [
+            CanonicalTrackTarget::Alpha,
+            CanonicalTrackTarget::ScrollSpeed,
+        ] {
+            let segment = |name, priority, start, end, value| {
+                CanonicalTrack::new(
+                    owner.clone(),
+                    name,
+                    target,
+                    CanonicalTrackBlend::Replace,
+                    priority,
+                    CanonicalTrackFill::Base,
+                    CanonicalTrackFill::Base,
+                    CanonicalTrackFill::Base,
+                    vec![CanonicalTrackPiece::Segment(
+                        CanonicalTrackSegment::new(
+                            time(start),
+                            time(end),
+                            CanonicalTrackValue::Float(value),
+                            CanonicalTrackValue::Float(value),
+                            CanonicalTrackInterpolation::Step,
+                            0,
+                        )
+                        .unwrap(),
+                    )],
+                )
+                .unwrap()
+            };
+            let mut tracks = vec![
+                segment("low-a", 0, 0.0, 3.0, 0.125),
+                segment("low-b", 0, 2.0, 5.0, 0.25),
+            ];
+            assert_eq!(
+                CanonicalTrackSet::new(tracks.clone()),
+                Err(fcs_model::CanonicalTrackError::ReplaceConflict)
+            );
+            tracks.push(segment("cover", 1, 2.0, 3.0, 0.5));
+            tracks.push(point_track(
+                owner.clone(),
+                "add",
+                target,
+                CanonicalTrackBlend::Add,
+                0,
+                CanonicalTrackValue::Float(0.125),
+            ));
+            tracks.push(point_track(
+                owner.clone(),
+                "multiply",
+                target,
+                CanonicalTrackBlend::Multiply,
+                0,
+                CanonicalTrackValue::Float(0.5),
+            ));
+            for _ in 0..2 {
+                tracks.reverse();
+                let set = CanonicalTrackSet::new(tracks.clone())
+                    .expect("the higher replace covers the entire lower-priority overlap");
+                for (query, expected) in [
+                    (2.5, 0.3125),
+                    (-1.0, 1.0),
+                    (0.0, 0.125),
+                    (1.0, 0.125),
+                    (2.0, 0.3125),
+                    (3.0, 0.1875),
+                    (4.0, 0.1875),
+                    (5.0, 0.5625),
+                    (2.5, 0.3125),
+                ] {
+                    assert_eq!(
+                        evaluate_track_set(
+                            &set,
+                            &owner,
+                            target,
+                            query,
+                            CanonicalTrackValue::Float(1.0),
+                        ),
+                        Ok(CanonicalTrackValue::Float(expected)),
+                        "{target:?} at {query}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
