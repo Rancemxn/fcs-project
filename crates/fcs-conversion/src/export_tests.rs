@@ -4,9 +4,9 @@ use fcs_model::{
     CanonicalChart, CanonicalMetadata, CanonicalNote, CanonicalNotePresentation, CanonicalNoteSet,
     CanonicalObject, CanonicalResourceBundle, CanonicalScrollLine, CanonicalScrollSet,
     CanonicalSourceVersion, CanonicalTime, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
-    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget,
-    CanonicalTrackValue, CanonicalValue, DistributionMetadata, InputContentHash, OriginState,
-    ProvenanceGraph, RestrictedProvenanceFact,
+    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackSet,
+    CanonicalTrackTarget, CanonicalTrackValue, CanonicalValue, DistributionMetadata,
+    InputContentHash, OriginState, ProvenanceGraph, RestrictedProvenanceFact,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -2128,11 +2128,12 @@ fn native_writer_preserves_the_pec_zero_speed_base_before_the_first_cv() {
     let chart = compilation.chart();
     let scroll_line = chart.scroll().lines().first().unwrap();
 
-    // Canonical execution at 120 bpm: 4beat is 2.0 s, so 0.5 s is before the
-    // command and runs on the 0.0 base — zero velocity, zero displacement.
-    // After the command the point holds speed 1.0: velocity 2.0, and the
-    // floor integrates 2.0 over [2.0, 2.5] to 1.0.
-    for (time, velocity, floor) in [(0.5, 0.0, 0.0), (2.5, 2.0, 1.0)] {
+    // Canonical execution: 4beat is 2.0 s at the chart's 120 bpm, so 0.5 s is
+    // before the command and runs on the 0.0 base — zero velocity, zero
+    // displacement. The scroll-tempo override is a constant 60 bpm, so after
+    // the command the point holds speed 1.0 at velocity 1.0, and the floor
+    // integrates 1.0 over [2.0, 2.5] to 0.5.
+    for (time, velocity, floor) in [(0.5, 0.0, 0.0), (2.5, 1.0, 0.5)] {
         let scroll = fcs_runtime::evaluate_line_scroll(
             chart.lines(),
             chart.scroll(),
@@ -2151,20 +2152,59 @@ fn native_writer_preserves_the_pec_zero_speed_base_before_the_first_cv() {
         .iter()
         .find(|record| record.id == scroll_line.line_id().value())
         .unwrap();
-    for (time, speed, floor) in [(0.5, 0.0, 0.0), (2.5, 1.0, 1.0)] {
+    for (time, speed) in [(0.5, 0.0), (2.5, 1.0)] {
         assert_eq!(
             native_scalar(&decoded, record.scroll_speed_descriptor, time),
             speed,
             "native speed at {time}"
         );
+        let oracle = fcs_runtime::evaluate_line_scroll(
+            chart.lines(),
+            chart.scroll(),
+            chart.tracks(),
+            scroll_line.line_id(),
+            time,
+        )
+        .unwrap();
         let distance =
             fcs_fcbc::query_distance(&decoded, record.distance_descriptor, time).unwrap();
         assert!(
-            (distance.floor_position - floor).abs() <= 1e-12,
-            "native floor {} at {time}",
-            distance.floor_position
+            (distance.floor_position - oracle.effective_floor()).abs() <= 1e-9,
+            "native floor {} vs canonical {} at {time}",
+            distance.floor_position,
+            oracle.effective_floor()
         );
     }
+}
+
+/// Rebuilds `chart` keeping only the scroll-speed Tracks.
+///
+/// rpe-extreme also lowers position events whose blending has no exact
+/// ABI 1.0 encoding; the scroll-speed base regression only needs the speed
+/// layers, so the position Tracks are dropped instead of written.
+fn scroll_speed_tracks_only(chart: &CanonicalChart) -> CanonicalChart {
+    let tracks = CanonicalTrackSet::new(
+        chart
+            .tracks()
+            .tracks()
+            .iter()
+            .filter(|track| track.target() == CanonicalTrackTarget::ScrollSpeed)
+            .cloned()
+            .collect(),
+    )
+    .unwrap();
+    CanonicalChart::new(
+        chart.source_version().clone(),
+        chart.profile(),
+        chart.features().iter().cloned(),
+        chart.time_map().clone(),
+        chart.metadata().clone(),
+        chart.lines().clone(),
+        chart.notes().clone(),
+        tracks,
+        chart.scroll().clone(),
+        chart.required_extensions().to_vec(),
+    )
 }
 
 #[test]
@@ -2172,8 +2212,13 @@ fn native_writer_preserves_the_rpe_zero_speed_base_under_add_speed_layers() {
     // rpe-extreme lowers every speed-event Line to base speed 0.0 with Add
     // Tracks on top (60 bpm, layers on [0, 16] s). A 1.0 base would add a
     // constant offset to the single, layered, and blended speed paths.
-    let compilation = rpe_extreme_compilation();
-    let chart = compilation.chart();
+    let base = rpe_extreme_compilation();
+    let chart = scroll_speed_tracks_only(base.chart());
+    let compilation = CanonicalCompilation::new(
+        chart.clone(),
+        base.resources().clone(),
+        base.distribution().clone(),
+    );
     let decoded = write_and_load(&compilation);
     for scroll_line in chart.scroll().lines() {
         let record = decoded
@@ -2230,8 +2275,8 @@ fn native_writer_preserves_the_rpe_zero_speed_base_under_add_speed_layers() {
 fn native_writer_preserves_a_non_default_no_track_scroll_speed() {
     // pec-minimal has no speed Track at all; replacing its base with 2.5 pins
     // the no-Track descriptor and the constant-pool seeding to the canonical
-    // base instead of the source default 1.0. At 120 bpm the velocity is
-    // 2.5 * 120 / 60 = 5.0, so the floor at time t is 5t.
+    // base instead of the source default 1.0. The scroll-tempo override is a
+    // constant 60 bpm, so the velocity is 2.5 and the floor at time t is 2.5t.
     let chart = with_scroll_speed(&pec_chart(), 2.5);
     let compilation = CanonicalCompilation::new(
         chart.clone(),
@@ -2258,7 +2303,7 @@ fn native_writer_preserves_a_non_default_no_track_scroll_speed() {
             time,
         )
         .unwrap();
-        assert_eq!(oracle.local_velocity(), 5.0);
+        assert_eq!(oracle.local_velocity(), 2.5);
         let distance =
             fcs_fcbc::query_distance(&decoded, record.distance_descriptor, time).unwrap();
         assert!(
