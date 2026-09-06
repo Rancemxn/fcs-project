@@ -888,6 +888,93 @@ mod tests {
     }
 
     #[test]
+    fn higher_replace_priority_masks_lower_priority_conflicts() {
+        let owner = owner("main");
+        for target in [
+            CanonicalTrackTarget::Alpha,
+            CanonicalTrackTarget::ScrollSpeed,
+        ] {
+            let segment = |name, priority, start, end, value| {
+                CanonicalTrack::new(
+                    owner.clone(),
+                    name,
+                    target,
+                    CanonicalTrackBlend::Replace,
+                    priority,
+                    CanonicalTrackFill::Base,
+                    CanonicalTrackFill::Base,
+                    CanonicalTrackFill::Base,
+                    vec![CanonicalTrackPiece::Segment(
+                        CanonicalTrackSegment::new(
+                            time(start),
+                            time(end),
+                            CanonicalTrackValue::Float(value),
+                            CanonicalTrackValue::Float(value),
+                            CanonicalTrackInterpolation::Step,
+                            0,
+                        )
+                        .unwrap(),
+                    )],
+                )
+                .unwrap()
+            };
+            let mut tracks = vec![
+                segment("low-a", 0, 0.0, 3.0, 0.125),
+                segment("low-b", 0, 2.0, 5.0, 0.25),
+            ];
+            assert_eq!(
+                CanonicalTrackSet::new(tracks.clone()),
+                Err(fcs_model::CanonicalTrackError::ReplaceConflict)
+            );
+            tracks.push(segment("cover", 1, 2.0, 3.0, 0.5));
+            tracks.push(point_track(
+                owner.clone(),
+                "add",
+                target,
+                CanonicalTrackBlend::Add,
+                0,
+                CanonicalTrackValue::Float(0.125),
+            ));
+            tracks.push(point_track(
+                owner.clone(),
+                "multiply",
+                target,
+                CanonicalTrackBlend::Multiply,
+                0,
+                CanonicalTrackValue::Float(0.5),
+            ));
+            for _ in 0..2 {
+                tracks.reverse();
+                let set = CanonicalTrackSet::new(tracks.clone())
+                    .expect("the higher replace covers the entire lower-priority overlap");
+                for (query, expected) in [
+                    (2.5, 0.3125),
+                    (-1.0, 1.0),
+                    (0.0, 0.125),
+                    (1.0, 0.125),
+                    (2.0, 0.3125),
+                    (3.0, 0.1875),
+                    (4.0, 0.1875),
+                    (5.0, 0.5625),
+                    (2.5, 0.3125),
+                ] {
+                    assert_eq!(
+                        evaluate_track_set(
+                            &set,
+                            &owner,
+                            target,
+                            query,
+                            CanonicalTrackValue::Float(1.0),
+                        ),
+                        Ok(CanonicalTrackValue::Float(expected)),
+                        "{target:?} at {query}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn segment_point_and_half_open_boundaries_select_exact_values() {
         let owner = owner("main");
         let track = CanonicalTrack::new(
