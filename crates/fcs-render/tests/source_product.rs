@@ -795,6 +795,197 @@ fn source_geometry_owner_failures_precede_later_descriptor_execution_errors() {
 }
 
 #[test]
+fn source_render_roots_follow_canonical_order_after_visibility() {
+    let negative = "choose { when s < 1s => 1px; else => -1px; }";
+    let failure = "1px * (1s / (2s - s))";
+    let angle_failure = "1rad * (1s / (2s - s))";
+    let stops = "[stop(0.0, #FFFFFFFF), stop(1.0, #000000FF)]";
+    let radial = |start: &str, end: &str| {
+        format!("radialGradient(vec2(0px, 0px), {start}, vec2(0px, 0px), {end}, {stops}, \"pad\")")
+    };
+    let mut commands = vec!["lineTo(vec2(0px, 0px))".to_owned(); 11];
+    commands[0] = "moveTo(vec2(0px, 0px))".to_owned();
+    commands[2] = format!("arc(vec2(0px, 0px), {negative}, 0rad, 1rad, \"counterClockwise\")");
+    commands[10] = format!("arc(vec2(0px, 0px), 1px, 0rad, {angle_failure}, \"counterClockwise\")");
+    let cases = [
+        (
+            "geometry before node transform",
+            format!(
+                "circle shape {{ radius: {negative}; rotation: {angle_failure}; fill: solid(#FFFFFFFF); }}"
+            ),
+            "render.invalid-geometry",
+        ),
+        (
+            "rounded radii before size",
+            format!(
+                "roundedRect shape {{ radius: {negative}; size: vec2({failure}, 1px); fill: solid(#FFFFFFFF); }}"
+            ),
+            "render.invalid-geometry",
+        ),
+        (
+            "opacity before paint",
+            format!(
+                "rect shape {{ size: vec2(1px, 1px); opacity: choose {{ when s < 1s => 1.0; else => 2.0; }}; fill: {}; }}",
+                radial("0px", failure)
+            ),
+            "render.invalid-composite",
+        ),
+        (
+            "radial endRadius before startRadius",
+            format!(
+                "rect shape {{ size: vec2(1px, 1px); fill: {}; }}",
+                radial(failure, negative)
+            ),
+            "render.invalid-paint",
+        ),
+        (
+            "stroke paint endRadius before fill startRadius",
+            format!(
+                "circle shape {{ radius: 1px; fill: {}; stroke: {}; width: 1px; }}",
+                radial(failure, "2px"),
+                radial("0px", negative)
+            ),
+            "render.invalid-paint",
+        ),
+        (
+            "fill paint endRadius before stroke startRadius",
+            format!(
+                "circle shape {{ radius: 1px; fill: {}; stroke: {}; width: 1px; }}",
+                radial("0px", negative),
+                radial(failure, "2px")
+            ),
+            "render.invalid-paint",
+        ),
+        (
+            "Path endAngle before radius",
+            format!(
+                "path shape {{ fillRule: \"nonzero\"; commands: [moveTo(vec2(0px, 0px)), arc(vec2(0px, 0px), {negative}, 0rad, {angle_failure}, \"counterClockwise\")]; fill: solid(#FFFFFFFF); }}"
+            ),
+            "render.invalid-descriptor",
+        ),
+        (
+            "Path ordinals sort as ASCII",
+            format!(
+                "path shape {{ fillRule: \"nonzero\"; commands: [{}]; fill: solid(#FFFFFFFF); }}",
+                commands.join(", ")
+            ),
+            "render.invalid-descriptor",
+        ),
+        (
+            "Path direction before stroke query",
+            format!(
+                "path shape {{ fillRule: \"nonzero\"; commands: [moveTo(vec2(0px, 0px)), arc(vec2(0px, 0px), 1px, choose {{ when s < 1s => 0rad; else => 2rad; }}, 1rad, \"counterClockwise\")]; stroke: solid(#FFFFFFFF); width: {failure}; }}"
+            ),
+            "render.invalid-geometry",
+        ),
+        (
+            "glyph size before node opacity",
+            format!(
+                "text shape {{ content: \"A\"; font: @primary; size: {negative}; opacity: 1s / (2s - s); fill: solid(#FFFFFFFF); }}"
+            ),
+            "render.invalid-geometry",
+        ),
+    ];
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/conformance/render");
+    for (case, node, expected) in cases {
+        for gate in ["", "visibility: false;", "active: [0s, 1s);"] {
+            let node = node.replacen('{', &format!("{{ {gate}"), 1);
+            let source = format!(
+                "#fcs 5.0.0\nformat {{ profile: renderable; }}\nresources {{ font primary {{ source: \"assets/fcs-test-font.ttf\"; mediaType: \"font/ttf\"; }} }}\ntempoMap {{ 0beat -> 120bpm; }}\nrender profile 1.0.0 {{ viewport {{ width: 4px; height: 4px; }} layer main {{ pass: \"overlay\"; children {{ {node} }} }} }}"
+            );
+            let document = parse_document(&source).into_result().expect(case);
+            let compilation = document
+                .canonical_compilation_with_source(
+                    &source,
+                    CompileTimeLimits::default(),
+                    &workspace,
+                    ResourceLimits::default(),
+                )
+                .unwrap_or_else(|diagnostics| panic!("{case}: {diagnostics:?}"));
+            let bytes = write_from_compilation(&compilation).expect(case);
+            let render = load_render(&bytes).expect(case);
+            assert!(
+                evaluate_semantic_draw_list_at(&render, 0.0).is_ok(),
+                "{case}"
+            );
+            if gate.is_empty() {
+                assert_eq!(
+                    evaluate_semantic_draw_list_at(&render, 2.0),
+                    Err(expected),
+                    "{case}"
+                );
+                assert_eq!(
+                    rasterize_solid_rgba8_at(&render, 2.0, 4, 4),
+                    Err(expected),
+                    "{case}"
+                );
+            } else {
+                assert_eq!(
+                    evaluate_semantic_draw_list_at(&render, 2.0),
+                    Ok(Vec::new()),
+                    "{case}: {gate}"
+                );
+                assert_eq!(
+                    rasterize_solid_rgba8_at(&render, 2.0, 4, 4),
+                    Ok(vec![0; 64]),
+                    "{case}: {gate}"
+                );
+            }
+            assert!(
+                evaluate_semantic_draw_list_at(&render, 0.0).is_ok(),
+                "{case}"
+            );
+        }
+    }
+}
+
+#[test]
+fn source_render_shared_root_paths_follow_owner_stable_ids() {
+    let mut owner_orders = [false; 2];
+    for ordinal in 0..16 {
+        let source = format!(
+            "#fcs 5.0.0\nformat {{ profile: renderable; }}\ntempoMap {{ 0beat -> 120bpm; }}\nrender profile 1.0.0 {{ viewport {{ width: 4px; height: 4px; }} layer main {{ pass: \"overlay\"; children {{ circle shape{ordinal} {{ radius: 1px; fill: radialGradient(vec2(0px, 0px), 0px, vec2(0px, 0px), choose {{ when s < 1s => 1px; else => -1px; }}, [stop(0.0, #FFFFFFFF), stop(1.0, #000000FF)], \"pad\"); stroke: radialGradient(vec2(0px, 0px), 0px, vec2(0px, 0px), 1px * (1s / (2s - s)), [stop(0.0, #FFFFFFFF), stop(1.0, #000000FF)], \"pad\"); width: 1px; }} }} }} }}"
+        );
+        let document = parse_document(&source)
+            .into_result()
+            .expect("source parses");
+        let compilation = document
+            .canonical_compilation_with_source(
+                &source,
+                CompileTimeLimits::default(),
+                env!("CARGO_MANIFEST_DIR"),
+                ResourceLimits::default(),
+            )
+            .expect("both paints lower");
+        let bytes = write_from_compilation(&compilation).expect("FCBC writing");
+        let render = load_render(&bytes).expect("both paints load");
+        let node = &render.nodes[0];
+        let fill = &render.paints[node.fill_paint.expect("fill") as usize];
+        let stroke = &render.strokes[node.stroke_ref.expect("stroke") as usize];
+        let stroke_paint = &render.paints[stroke.paint_ref as usize];
+        let fill_first = fill.id < stroke_paint.id;
+        owner_orders[usize::from(fill_first)] = true;
+        let expected = if fill_first {
+            "render.invalid-paint"
+        } else {
+            "render.invalid-descriptor"
+        };
+        assert_eq!(
+            evaluate_semantic_draw_list_at(&render, 2.0),
+            Err(expected),
+            "paint owner IDs {}, {}",
+            fill.id,
+            stroke_paint.id
+        );
+        assert_eq!(rasterize_solid_rgba8_at(&render, 2.0, 4, 4), Err(expected));
+        if owner_orders == [true; 2] {
+            break;
+        }
+    }
+    assert_eq!(owner_orders, [true; 2], "exercise both stable-ID orders");
+}
+
+#[test]
 fn source_exact_image_and_text_descriptors_reach_product_semantics() {
     let source = r#"#fcs 5.0.0
 format { profile: renderable; }
