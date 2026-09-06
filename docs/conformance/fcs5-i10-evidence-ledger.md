@@ -182,6 +182,15 @@ highest-priority ties still reject. Corrective head
 [34010485421](https://github.com/Rancemxn/fcs-project/actions/runs/34010485421). Native
 Add/Multiply blend composition remains outside this correction.
 
+PR [#628](https://github.com/Rancemxn/fcs-project/pull/628) composes Replace/Add/Multiply blend
+groups exactly for float and vec2-float targets. Each elementary region encodes one Expression
+DAG over EnvS whose node arithmetic mirrors `evaluate_track_set` operation for operation; unit-typed
+targets and cubicBezier segments inside a blend stay governed rejections rather than
+approximations. Corrective head `3d3fc006745cf04e5e89a4eddc9ec457800c7c0a` passed pull_request
+Full Gate [34012881942](https://github.com/Rancemxn/fcs-project/actions/runs/34012881942); merged
+main `a3ed884b31787c7d8483560b97aed88b87611932` passed push Full Gate
+[34013094165](https://github.com/Rancemxn/fcs-project/actions/runs/34013094165).
+
 ## Verified implementation residuals
 
 The requirement audit found concrete product gaps beyond the historical pending-review statements.
@@ -191,7 +200,7 @@ They remain within #296/#9 and prevent an implementation or RC completion claim:
 |---|---|---|
 | Render 3.2 and Core 6.3–6.8 | `lower_render_scene` and `RenderLowerer::lower_node` require every child to be `RenderItem::Node`; `phase2_schema` has no RenderNode constructor schema. | Expand compile-time `if`, templates, `with`, and generators with the shared Core budgets before canonical lowering. The RenderNode constructor kind/ID spelling still needs an explicit specification decision. |
 | Render 2 and 12 | The parser retains `RenderBodyItem::Tracks`, but the source Render lowerer never consumes it. | Lower each permitted Render Track to exact descriptors, validate its target and composition, and prove time-varying product results. |
-| Core 9 and FCBC 13 | `write_from_compilation_with_profile` always calls `native_tracks`; it rejects non-replace blends. Multiple replace Tracks compose exactly through highest-priority region selection, overlapping intervals, layered fill/extrapolation policies, and persistent points (PR #626). | Complete exact Add/Multiply Track blend assembly through the product writer and runtime, including supported canonical charts produced by conversion. |
+| Core 9 and FCBC 13 | `write_from_compilation_with_profile` composes replace groups and Replace/Add/Multiply blends exactly for float and vec2-float targets (PR #626, PR #628). Position/Rotation blends and Bezier segments inside a blend stay governed rejections. | Extend exact blend composition to unit-typed targets through a governed ABI decision, integrate Expression scroll-speed descriptors for distance, and cover supported canonical charts produced by conversion. |
 
 ## Matrix reconciliation
 
