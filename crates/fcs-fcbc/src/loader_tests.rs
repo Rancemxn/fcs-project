@@ -221,6 +221,90 @@ mod validator_recursion_tests {
         );
         assert_eq!(order.len(), expressions.len());
     }
+
+    /// `expressions[0]` is an ENV S leaf and `expressions[i]` adds `i - 1`
+    /// twice, so every node after the leaf shares its operand sub-DAG.
+    fn halving_expression_chain(length: usize) -> Vec<ExpressionNode> {
+        let mut expressions = vec![node(2, [NULL_INDEX; 3], 0)];
+        for index in 1..length {
+            let child = index as u32 - 1;
+            expressions.push(node(20, [child, child, NULL_INDEX], 2));
+        }
+        expressions
+    }
+
+    #[test]
+    fn shared_subgraph_keys_stay_bounded() {
+        // The recursive structural key of node 26 in this chain passed
+        // 1.6 GB; the flat key embeds operand indices instead of operand
+        // sub-DAGs, so it stays a bounded size at any sharing depth.
+        let expressions = halving_expression_chain(27);
+        for index in 0..expressions.len() {
+            let key = expression_structural_key(index as u32, &expressions).unwrap();
+            assert!(key.len() < 32, "key of node {index} grew to {}", key.len());
+        }
+    }
+
+    #[test]
+    fn shared_subgraphs_within_the_limit_are_accepted() {
+        // A shared halving chain inside the limits keeps its dependency bits;
+        // with n = 26 the recursive walk re-evaluated node 1 about 2^25
+        // times, the memoized facts walk visits each node once.
+        let expressions = halving_expression_chain(27);
+        let root = expressions.len() as u32 - 1;
+        assert_eq!(
+            expression_environment_dependencies(root, &expressions, 0),
+            Ok(ENV_S)
+        );
+    }
+
+    #[test]
+    fn shared_expression_subgraph_depth_is_checked_through_the_longest_path() {
+        // The root adds a 700-deep chain (entered first) and a 1200-deep
+        // chain whose lower levels are shared with the shallow branch, so no
+        // first-expansion passes the depth guard; the deep chain's longest
+        // path from the root is 1201 edges, which the recursive walk reached
+        // by re-walking the shared levels on every occurrence.
+        let mut expressions = backward_expression_chain(1201, 2);
+        expressions.push(node(20, [700, 1200, NULL_INDEX], 2));
+        let root = expressions.len() as u32 - 1;
+        assert_eq!(
+            expression_environment_dependencies(root, &expressions, 0),
+            Err("fcbc.limit-exceeded")
+        );
+    }
+
+    #[test]
+    fn shared_descriptor_subgraph_depth_is_checked_through_the_longest_path() {
+        // Same shape on the descriptor side: the root's first piece reaches
+        // into the middle of the chain, so the deep branch's first expansion
+        // is cut short by the done-skip and only the longest-path facts
+        // surface the over-limit occurrence.
+        let mut descriptors = backward_descriptor_chain(1201);
+        descriptors.push(descriptor(DescriptorKind::Piecewise(vec![
+            Piece {
+                start: 0.0,
+                end: 1.0,
+                descriptor_index: 700,
+                flags: 0,
+            },
+            Piece {
+                start: 1.0,
+                end: 2.0,
+                descriptor_index: 1200,
+                flags: 1,
+            },
+        ])));
+        let root = descriptors.len() as u32 - 1;
+        assert_eq!(
+            descriptor_environment_dependencies(root, &descriptors, &[], 0),
+            Err("fcbc.limit-exceeded")
+        );
+        assert_eq!(
+            validate_descriptor_env_p_context(root, &descriptors, &[]),
+            Err("fcbc.limit-exceeded")
+        );
+    }
 }
 
 mod tempo_revalidation_tests {

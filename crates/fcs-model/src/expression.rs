@@ -1,6 +1,25 @@
+use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::Beat;
+
+/// Assigns one identity number per structurally distinct key.
+///
+/// Callers build keys that reference already-interned identity numbers
+/// instead of re-embedding subtree keys, so a shared sub-DAG costs one
+/// bounded-size intern per node rather than growing the key exponentially
+/// with the sharing depth.
+#[derive(Debug, Default)]
+pub(crate) struct StructuralInterner {
+    identities: BTreeMap<Vec<u8>, u32>,
+}
+
+impl StructuralInterner {
+    pub(crate) fn intern(&mut self, key: Vec<u8>) -> u32 {
+        let next = self.identities.len() as u32;
+        *self.identities.entry(key).or_insert(next)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CanonicalExpressionType {
@@ -343,31 +362,39 @@ impl CanonicalExpressionDag {
         values
     }
 
-    pub(crate) fn append_structural_key(&self, output: &mut Vec<u8>) {
-        self.append_node_key(self.root, output);
-    }
-
-    fn append_node_key(&self, index: usize, output: &mut Vec<u8>) {
-        let node = &self.nodes[index];
-        output.push(node.opcode as u8);
-        node.result_type.append_structural_key(output);
-        output.extend_from_slice(&node.immediate.to_le_bytes());
-        match &node.constant {
-            Some(value) => {
-                output.push(1);
-                append_key(output, |key| value.append_structural_key(key));
-            }
-            None => output.push(0),
-        }
-        for operand in node.operands {
-            match operand {
-                Some(operand) => {
-                    output.push(1);
-                    append_key(output, |key| self.append_node_key(operand, key));
+    /// Structural identity of this DAG inside `interner`.
+    ///
+    /// Nodes are interned bottom-up (validation forces every operand below
+    /// its own node), with operands referenced by their identity numbers, so
+    /// each key stays bounded and the walk is linear in node count. The root
+    /// node's identity identifies the whole DAG and is shared by structurally
+    /// equal sub-DAGs across every table computed with the same interner.
+    pub(crate) fn structural_identity(&self, interner: &mut StructuralInterner) -> u32 {
+        let mut identities = vec![0u32; self.nodes.len()];
+        for (index, node) in self.nodes.iter().enumerate() {
+            let mut key = Vec::new();
+            key.push(node.opcode as u8);
+            node.result_type.append_structural_key(&mut key);
+            key.extend_from_slice(&node.immediate.to_le_bytes());
+            match &node.constant {
+                Some(value) => {
+                    key.push(1);
+                    append_key(&mut key, |key| value.append_structural_key(key));
                 }
-                None => output.push(0),
+                None => key.push(0),
             }
+            for operand in node.operands {
+                match operand {
+                    Some(operand) => {
+                        key.push(1);
+                        key.extend_from_slice(&identities[operand].to_le_bytes());
+                    }
+                    None => key.push(0),
+                }
+            }
+            identities[index] = interner.intern(key);
         }
+        identities[self.root]
     }
 
     fn validate(&self) -> Result<(), CanonicalExpressionError> {
