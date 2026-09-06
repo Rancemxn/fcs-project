@@ -2136,3 +2136,360 @@ lines {{
         );
     }
 }
+
+#[test]
+fn write_from_compilation_composes_add_multiply_blends_exactly() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        alpha: 0.5;
+        tracks {
+            track shift -> alpha: float {
+                blend: "add";
+                fill: "zero";
+                extrapolateBefore: "zero";
+                extrapolateAfter: "zero";
+                segments { [0s, 2s): 0.1 -> 0.3 using "linear"; }
+            }
+            track swing -> alpha: float {
+                blend: "add";
+                priority: -1;
+                fill: "zero";
+                extrapolateBefore: "zero";
+                extrapolateAfter: "zero";
+                segments { [1s, 3s): 0.2 -> 0.6 using "linear"; }
+            }
+            track gate -> alpha: float {
+                blend: "multiply";
+                fill: "one";
+                extrapolateBefore: "one";
+                extrapolateAfter: "one";
+                segments { [2s, 4s): 1.0 -> 0.5 using "linear"; }
+            }
+        }
+    }
+}
+"#;
+    let (_, decoded, tracks, owner) = composed_chart(source);
+    let descriptor = decoded.lines.first().expect("main Line").alpha_descriptor;
+    // Overlapping Adds, an overlapping Multiply, fills before/between/after,
+    // boundaries, and repeated seeks must match the canonical fold bit for bit.
+    for time in [
+        -1.0, 0.0, 0.5, 0.999, 1.0, 1.5, 1.999, 2.0, 2.5, 2.999, 3.0, 3.5, 3.999, 4.0, 5.0, 2.5,
+    ] {
+        let expected = fcs_runtime::evaluate_track_set(
+            &tracks,
+            &owner,
+            CanonicalTrackTarget::Alpha,
+            time,
+            CanonicalTrackValue::Float(0.5),
+        )
+        .expect("canonical blend fold");
+        let actual = crate::query_descriptor(
+            &decoded,
+            descriptor,
+            time,
+            crate::EvaluationEnvironment::at_time(time),
+        )
+        .expect("blended Track evaluation")
+        .value;
+        assert_runtime_value_bits(actual, track_runtime_value(expected));
+    }
+}
+
+#[test]
+fn write_from_compilation_composes_replace_with_add() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        alpha: 0.5;
+        tracks {
+            track cover -> alpha: float {
+                priority: 2;
+                fill: "base";
+                extrapolateBefore: "base";
+                extrapolateAfter: "base";
+                segments { [0s, 1s): 0.75 -> 0.25 using "linear"; }
+            }
+            track pulse -> alpha: float {
+                blend: "add";
+                fill: "zero";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "zero";
+                segments { [0s, 3s): 0.05 -> 0.35 using "linear"; }
+            }
+        }
+    }
+}
+"#;
+    let (_, decoded, tracks, owner) = composed_chart(source);
+    let descriptor = decoded.lines.first().expect("main Line").alpha_descriptor;
+    // The replace winner covers [0,1); the Add's holdBefore fill resolves
+    // before its first segment; the shared base gap opens between 1s and 3s
+    // where the cover is base-inactive; the Add ends at 3s and drops to zero.
+    for time in [-1.0, 0.0, 0.5, 0.999, 1.0, 1.5, 2.999, 3.0, 4.0, 1.5] {
+        let expected = fcs_runtime::evaluate_track_set(
+            &tracks,
+            &owner,
+            CanonicalTrackTarget::Alpha,
+            time,
+            CanonicalTrackValue::Float(0.5),
+        )
+        .expect("canonical replace + add fold");
+        let actual = crate::query_descriptor(
+            &decoded,
+            descriptor,
+            time,
+            crate::EvaluationEnvironment::at_time(time),
+        )
+        .expect("replace + add evaluation")
+        .value;
+        assert_runtime_value_bits(actual, track_runtime_value(expected));
+    }
+}
+
+#[test]
+fn write_from_compilation_composes_scale_vector_blends() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        scale: vec2(2.0, 3.0);
+        tracks {
+            track grow -> scale: vec2<float> {
+                blend: "add";
+                fill: "zero";
+                extrapolateBefore: "zero";
+                extrapolateAfter: "zero";
+                segments { [0s, 2s): vec2(0.5, -0.5) -> vec2(1.5, 0.5) using "linear"; }
+            }
+            track shrink -> scale: vec2<float> {
+                blend: "multiply";
+                fill: "one";
+                extrapolateBefore: "one";
+                extrapolateAfter: "one";
+                segments { [1s, 3s): vec2(0.9, 1.1) -> vec2(0.5, 0.7) using "linear"; }
+            }
+        }
+    }
+}
+"#;
+    let (_, decoded, tracks, owner) = composed_chart(source);
+    let descriptor = decoded.lines.first().expect("main Line").scale_descriptor;
+    for time in [-1.0, 0.0, 0.5, 1.5, 2.5, 3.0, 4.0, 1.5] {
+        let expected = fcs_runtime::evaluate_track_set(
+            &tracks,
+            &owner,
+            CanonicalTrackTarget::Scale,
+            time,
+            CanonicalTrackValue::Vec2Float(fcs_model::CanonicalVec2::new(2.0, 3.0).unwrap()),
+        )
+        .expect("canonical vec2 blend fold");
+        let actual = crate::query_descriptor(
+            &decoded,
+            descriptor,
+            time,
+            crate::EvaluationEnvironment::at_time(time),
+        )
+        .expect("vec2 blended Track evaluation")
+        .value;
+        assert_runtime_value_bits(actual, track_runtime_value(expected));
+    }
+}
+
+#[test]
+fn write_from_compilation_composes_scroll_speed_blend_distance() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        scrollTempoMap { 0s -> 60bpm; }
+        tracks {
+            track boost -> scrollSpeed: float {
+                blend: "add";
+                fill: "zero";
+                extrapolateBefore: "zero";
+                extrapolateAfter: "zero";
+                segments { [0s, 2s): 0.5 -> 1.0 using "linear"; }
+            }
+        }
+    }
+}
+"#;
+    let (_, decoded, tracks, owner) = composed_chart(source);
+    let line = decoded.lines.first().expect("main Line");
+    for time in [-1.0, 0.0, 1.0, 2.0, 3.0, 1.0] {
+        let expected = fcs_runtime::evaluate_track_set(
+            &tracks,
+            &owner,
+            CanonicalTrackTarget::ScrollSpeed,
+            time,
+            CanonicalTrackValue::Float(1.0),
+        )
+        .expect("canonical scroll speed blend");
+        let actual = crate::query_descriptor(
+            &decoded,
+            line.scroll_speed_descriptor,
+            time,
+            crate::EvaluationEnvironment::at_time(time),
+        )
+        .expect("blended scroll speed evaluation")
+        .value;
+        assert_runtime_value_bits(actual, track_runtime_value(expected));
+    }
+    let distance = crate::query_distance(&decoded, line.distance_descriptor, 1.0)
+        .expect("blended scroll distance evaluation");
+    assert_eq!(
+        distance.classification,
+        crate::DistanceClassification::PortableEvaluable
+    );
+    assert_eq!(
+        decoded.distances[line.distance_descriptor as usize].boundaries,
+        [0.0, 2.0]
+    );
+}
+
+#[test]
+fn write_from_compilation_blend_order_is_byte_stable() {
+    let body = |first: &str, second: &str| {
+        format!(
+            r#"#fcs 5.0.0
+format {{ profile: chart; }}
+tempoMap {{ 0beat -> 120bpm; }}
+lines {{
+    line main {{
+        alpha: 0.5;
+        tracks {{
+{first}
+{second}
+        }}
+    }}
+}}
+"#
+        )
+    };
+    let add = r#"            track shift -> alpha: float {
+                blend: "add";
+                fill: "zero";
+                extrapolateBefore: "zero";
+                extrapolateAfter: "zero";
+                segments { [0s, 2s): 0.1 -> 0.3 using "linear"; }
+            }"#;
+    let multiply = r#"            track gate -> alpha: float {
+                blend: "multiply";
+                fill: "one";
+                extrapolateBefore: "one";
+                extrapolateAfter: "one";
+                segments { [1s, 3s): 1.0 -> 0.5 using "linear"; }
+            }"#;
+    assert_eq!(
+        compile(&body(add, multiply)),
+        compile(&body(multiply, add)),
+        "blend declaration order must not change the composed bytes"
+    );
+}
+
+#[test]
+fn write_from_compilation_rejects_unexpressible_blends() {
+    // Position blends have no exact ABI 1.0 encoding (Mul has no U row).
+    let position = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        tracks {
+            track shift -> position: vec2<length> {
+                blend: "add";
+                fill: "zero";
+                extrapolateBefore: "zero";
+                extrapolateAfter: "zero";
+                segments { [0s, 2s): vec2(1px, 1px) -> vec2(2px, 2px) using "linear"; }
+            }
+        }
+    }
+}
+"#;
+    let error = write_from_compilation(&compilation(position))
+        .expect_err("unit-typed blend has no exact ABI encoding");
+    assert_eq!(error.category(), "fcbc.unsupported-track");
+
+    // cubicBezier progress has no exact Expression opcode.
+    let bezier = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        alpha: 0.5;
+        tracks {
+            track shift -> alpha: float {
+                blend: "add";
+                fill: "zero";
+                extrapolateBefore: "zero";
+                extrapolateAfter: "zero";
+                segments { [0s, 2s): 0.1 -> 0.3 using cubicBezier(0.25, 0.1, 0.25, 1.0); }
+            }
+        }
+    }
+}
+"#;
+    let error = write_from_compilation(&compilation(bezier))
+        .expect_err("cubicBezier blend progress has no exact opcode");
+    assert_eq!(error.category(), "fcbc.unsupported-track");
+}
+
+#[test]
+fn write_from_compilation_composes_step_segment_blends() {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        alpha: 0.5;
+        tracks {
+            track step -> alpha: float {
+                blend: "add";
+                fill: "zero";
+                extrapolateBefore: "zero";
+                extrapolateAfter: "zero";
+                segments { [0s, 2s): 0.25 -> 0.75 using "step"; }
+            }
+            track linear -> alpha: float {
+                blend: "add";
+                priority: -1;
+                fill: "zero";
+                extrapolateBefore: "zero";
+                extrapolateAfter: "zero";
+                segments { [0s, 3s): 0.1 -> 0.4 using "linear"; }
+            }
+        }
+    }
+}
+"#;
+    let (_, decoded, tracks, owner) = composed_chart(source);
+    let descriptor = decoded.lines.first().expect("main Line").alpha_descriptor;
+    for time in [-1.0, 0.0, 0.5, 1.999, 2.0, 2.5, 3.0, 4.0, 1.0] {
+        let expected = fcs_runtime::evaluate_track_set(
+            &tracks,
+            &owner,
+            CanonicalTrackTarget::Alpha,
+            time,
+            CanonicalTrackValue::Float(0.5),
+        )
+        .expect("canonical step blend fold");
+        let actual = crate::query_descriptor(
+            &decoded,
+            descriptor,
+            time,
+            crate::EvaluationEnvironment::at_time(time),
+        )
+        .expect("step blended Track evaluation")
+        .value;
+        assert_runtime_value_bits(actual, track_runtime_value(expected));
+    }
+}
