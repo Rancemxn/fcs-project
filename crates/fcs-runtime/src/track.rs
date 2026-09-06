@@ -5,8 +5,8 @@ use std::fmt;
 
 use fcs_model::{
     CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation,
-    CanonicalTrackPiece, CanonicalTrackSet, CanonicalTrackTarget, CanonicalTrackValue,
-    CanonicalVec2, StableId,
+    CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackSet, CanonicalTrackTarget,
+    CanonicalTrackValue, CanonicalVec2, StableId,
 };
 
 use crate::{EasingError, EasingId};
