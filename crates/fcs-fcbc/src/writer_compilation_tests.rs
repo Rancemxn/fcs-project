@@ -1454,46 +1454,94 @@ lines {
         alpha: 0.5;
         tracks {
             track early -> alpha: float {
+                priority: EARLY_PRIORITY;
                 segments { [0s, 1s): 0.25 -> 0.5 using "linear"; }
             }
             track late -> alpha: float {
+                priority: LATE_PRIORITY;
                 segments { [2s, 3s): 0.5 -> 0.75 using "linear"; }
             }
         }
     }
 }
 "#;
-    let document = parse_document(source).into_result().unwrap();
-    let compilation = document
-        .canonical_compilation(
-            CompileTimeLimits::default(),
-            workspace.path(),
-            ResourceLimits::default(),
-        )
-        .unwrap();
+    let compile = |source: &str| {
+        parse_document(source)
+            .into_result()
+            .unwrap()
+            .canonical_compilation(
+                CompileTimeLimits::default(),
+                workspace.path(),
+                ResourceLimits::default(),
+            )
+            .unwrap()
+    };
+    for adjacent in [false, true] {
+        let source = if adjacent {
+            source.replace("[2s, 3s)", "[1s, 2s)")
+        } else {
+            source.to_owned()
+        };
+        let mut equal_priority_bytes = None;
+        for (early, late) in [(0, 0), (5, -2), (-2, 5)] {
+            let source = source
+                .replace("EARLY_PRIORITY", &early.to_string())
+                .replace("LATE_PRIORITY", &late.to_string());
+            let bytes = write_from_compilation(&compile(&source))
+                .expect("disjoint priorities do not affect the composed property");
+            if let Some(reference) = &equal_priority_bytes {
+                assert_eq!(&bytes, reference);
+            } else {
+                equal_priority_bytes = Some(bytes.clone());
+            }
+            let decoded = crate::load_chart(&bytes).expect("disjoint replace Tracks must load");
+            let descriptor = decoded.lines.first().expect("main Line").alpha_descriptor;
+            let late_start = if adjacent { 1.0 } else { 2.0 };
+            for (time, expected) in [
+                (-1.0, 0.5),
+                (0.0, 0.25),
+                (0.5, 0.375),
+                (1.0, 0.5),
+                (1.5, if adjacent { 0.625 } else { 0.5 }),
+                (late_start, 0.5),
+                (late_start + 0.5, 0.625),
+                (late_start + 1.0, 0.5),
+                (4.0, 0.5),
+                (0.5, 0.375),
+            ] {
+                let actual = crate::query_descriptor(
+                    &decoded,
+                    descriptor,
+                    time,
+                    crate::EvaluationEnvironment::at_time(time),
+                )
+                .expect("disjoint replace Track evaluation")
+                .value;
+                assert_runtime_value_bits(
+                    actual,
+                    crate::RuntimeValue::Scalar {
+                        ty: crate::ValueType::Float,
+                        value: expected,
+                    },
+                );
+            }
+        }
+    }
 
-    let bytes = write_from_compilation(&compilation).unwrap();
-    let decoded = crate::load_chart(&bytes).expect("disjoint replace Tracks must load");
-    let descriptor = decoded.lines.first().expect("main Line").alpha_descriptor;
-    let evaluate = |time| {
-        crate::query_descriptor(
-            &decoded,
-            descriptor,
-            time,
-            crate::EvaluationEnvironment::at_time(time),
-        )
-        .expect("disjoint replace Track evaluation")
-        .value
-    };
-    let alpha = |value| crate::RuntimeValue::Scalar {
-        ty: crate::ValueType::Float,
-        value,
-    };
-    assert_runtime_value_bits(evaluate(-1.0), alpha(0.5));
-    assert_runtime_value_bits(evaluate(0.5), alpha(0.375));
-    assert_runtime_value_bits(evaluate(1.5), alpha(0.5));
-    assert_runtime_value_bits(evaluate(2.5), alpha(0.625));
-    assert_runtime_value_bits(evaluate(4.0), alpha(0.5));
+    // Different priorities can overlap legally in Core, but a flat SegmentTrack merge cannot
+    // encode their selection. Point coverage persists beyond its timestamp and must count too.
+    for early_piece in [
+        "[0s, 2.5s): 0.25 -> 0.5 using \"linear\";",
+        "point 0s: 0.25;",
+    ] {
+        let source = source
+            .replace("EARLY_PRIORITY", "0")
+            .replace("LATE_PRIORITY", "1")
+            .replace("[0s, 1s): 0.25 -> 0.5 using \"linear\";", early_piece);
+        let error = write_from_compilation(&compile(&source))
+            .expect_err("overlapping replace composition remains a separate implementation");
+        assert_eq!(error.category(), "fcbc.unsupported-track");
+    }
 }
 
 #[test]
