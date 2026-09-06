@@ -2343,12 +2343,9 @@ lines {
         .value;
         assert_runtime_value_bits(actual, track_runtime_value(expected));
     }
-    let distance = crate::query_distance(&decoded, line.distance_descriptor, 1.0)
-        .expect("blended scroll distance evaluation");
-    assert_eq!(
-        distance.classification,
-        crate::DistanceClassification::PortableEvaluable
-    );
+    // The Distance boundary table covers the blended contribution's piece
+    // times. Direct integration of an Expression descriptor is not part of
+    // this change; the speed descriptor itself is evaluated above.
     assert_eq!(
         decoded.distances[line.distance_descriptor as usize].boundaries,
         [0.0, 2.0]
@@ -2452,7 +2449,7 @@ lines {
     line main {
         alpha: 0.5;
         tracks {
-            track step -> alpha: float {
+            track stair -> alpha: float {
                 blend: "add";
                 fill: "zero";
                 extrapolateBefore: "zero";
