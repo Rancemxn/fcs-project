@@ -2072,7 +2072,14 @@ fn descriptor_environment_dependencies(
                         let child = piece.descriptor_index as usize;
                         bits |= dependencies[child];
                         from_pieces = from_pieces.max(piece_longest[child] + 1);
-                        from_expressions = from_expressions.max(expression_longest[child] + 1);
+                        // A piece hop extends an expression path only when the
+                        // child actually reaches an expression: the recursive
+                        // walk applied the expression limit at real Expression
+                        // occurrences, so a pure Piecewise chain must not count
+                        // its hops against it.
+                        if expression_longest[child] > 0 {
+                            from_expressions = from_expressions.max(expression_longest[child] + 1);
+                        }
                     }
                 }
                 DescriptorKind::Expression(root) => {
@@ -2229,7 +2236,12 @@ pub fn validate_descriptor_env_p_context(
                     for piece in pieces {
                         let child = piece.descriptor_index as usize;
                         from_pieces = from_pieces.max(piece_longest[child] + 1);
-                        from_expressions = from_expressions.max(expression_longest[child] + 1);
+                        // Same rule as the dependency walk: piece hops count
+                        // toward the expression limit only beneath a real
+                        // expression occurrence.
+                        if expression_longest[child] > 0 {
+                            from_expressions = from_expressions.max(expression_longest[child] + 1);
+                        }
                     }
                 }
                 DescriptorKind::Expression(expression_root) => {

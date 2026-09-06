@@ -305,6 +305,27 @@ mod validator_recursion_tests {
             Err("fcbc.limit-exceeded")
         );
     }
+
+    #[test]
+    fn piece_hops_do_not_count_against_the_expression_limit() {
+        // A chart with no expressions at all (the track-boundaries fixture
+        // shape: a Piecewise over SegmentTrack children) must stay accepted;
+        // the expression limit applies at real Expression occurrences only.
+        let mut descriptors = vec![descriptor(DescriptorKind::SegmentTrack(Vec::new()))];
+        for _ in 1..30 {
+            let child = descriptors.len() as u32 - 1;
+            descriptors.push(piecewise_to(child));
+        }
+        let root = descriptors.len() as u32 - 1;
+        assert_eq!(
+            descriptor_environment_dependencies(root, &descriptors, &[], 0),
+            Ok(0)
+        );
+        assert_eq!(
+            validate_descriptor_env_p_context(root, &descriptors, &[]),
+            Ok(())
+        );
+    }
 }
 
 mod tempo_revalidation_tests {
