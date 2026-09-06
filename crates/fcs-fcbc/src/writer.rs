@@ -106,6 +106,7 @@ struct LineFixture {
     scroll_tempo_descriptor: u32,
     speed_descriptor: u32,
     scroll_tempo: Vec<ScrollTempoPointFixture>,
+    scroll_speed: f64,
     evaluable_speed: bool,
     floor_scale: f64,
     integration_origin: f64,
@@ -382,6 +383,7 @@ pub fn write_nonempty_execution() -> Vec<u8> {
                 time: 0.0,
                 bpm: 60.0,
             }],
+            scroll_speed: 1.0,
             evaluable_speed: false,
             floor_scale: 1.0,
             integration_origin: 0.0,
@@ -411,6 +413,7 @@ pub fn write_nonempty_execution() -> Vec<u8> {
                 time: 0.0,
                 bpm: 60.0,
             }],
+            scroll_speed: 1.0,
             evaluable_speed: true,
             floor_scale: 1.0,
             integration_origin: 0.0,
@@ -564,6 +567,10 @@ pub fn write_from_compilation_with_profile(
                     })
                     .collect(),
                 evaluable_speed: false,
+                // Core section 10 makes the canonical scroll speed the Line's
+                // Track base, so imported zero or non-unit bases must survive
+                // the round trip instead of collapsing to the source default.
+                scroll_speed: scroll.speed(),
                 floor_scale: base.floor_scale(),
                 integration_origin: base.integration_origin(),
                 initial_floor: base.initial_floor_position(),
@@ -866,12 +873,6 @@ fn assemble_package(
                 })
             })
         });
-    let needs_default_scroll_speed = matches!(execution_graph, ExecutionGraph::Native { .. })
-        && lines.iter().any(|line| {
-            !tracks.iter().any(|track| {
-                track.line_id == line.id && track.target == CanonicalTrackTarget::ScrollSpeed
-            })
-        });
     let mut constants = match execution_graph {
         ExecutionGraph::Fixture => fixture_constants(),
         ExecutionGraph::Native { .. } => {
@@ -879,8 +880,14 @@ fn assemble_package(
             if needs_visibility_constants {
                 constants.extend([bool_constant(false), bool_constant(true)]);
             }
-            if needs_default_scroll_speed {
-                constants.push(float_constant(1.0));
+            // Every Line without a native speed Track falls back to its own
+            // canonical base speed constant, not to a shared source default.
+            for line in &lines {
+                if !tracks.iter().any(|track| {
+                    track.line_id == line.id && track.target == CanonicalTrackTarget::ScrollSpeed
+                }) {
+                    constants.push(float_constant(line.scroll_speed));
+                }
             }
             constants
         }
@@ -2606,7 +2613,7 @@ fn native_blended_fixture(
         .expect("validated Line owner");
     let base = match target {
         CanonicalTrackTarget::Alpha => CanonicalTrackValue::Float(line.alpha),
-        CanonicalTrackTarget::ScrollSpeed => CanonicalTrackValue::Float(1.0),
+        CanonicalTrackTarget::ScrollSpeed => CanonicalTrackValue::Float(line.scroll_speed),
         CanonicalTrackTarget::Scale => CanonicalTrackValue::Vec2Float(
             fcs_model::CanonicalVec2::new(line.scale[0], line.scale[1]).map_err(|_| {
                 FcbcError::new(
@@ -3135,7 +3142,7 @@ fn native_line_base_constant(line: &LineFixture, target: CanonicalTrackTarget) -
         CanonicalTrackTarget::Rotation => scalar_constant(8, line.rotation),
         CanonicalTrackTarget::Scale => vec2_constant(3, line.scale),
         CanonicalTrackTarget::Alpha => float_constant(line.alpha),
-        CanonicalTrackTarget::ScrollSpeed => float_constant(1.0),
+        CanonicalTrackTarget::ScrollSpeed => float_constant(line.scroll_speed),
     }
 }
 
@@ -4318,7 +4325,7 @@ fn native_tracks_section(
             line.id,
             CanonicalTrackTarget::ScrollSpeed,
             TY_FLOAT,
-            &float_constant(1.0),
+            &float_constant(line.scroll_speed),
         )?;
         line.evaluable_speed = tracks.iter().any(|track| {
             track.line_id == line.id && track.target == CanonicalTrackTarget::ScrollSpeed
