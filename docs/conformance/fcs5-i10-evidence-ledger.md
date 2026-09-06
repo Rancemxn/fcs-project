@@ -11,7 +11,7 @@ surfaces. It records evidence scope, not a Frozen or final I10 claim. Local Rust
 tests are not run under the repository workflow; historical rows retain their
 delivery-head evidence, while the current combined checkpoint is bound below.
 
-The current combined Render/I10 checkpoint passed GitHub Actions Full Gate run
+The earlier combined Render/I10 checkpoint passed GitHub Actions Full Gate run
 [33323697402](https://github.com/Rancemxn/fcs-project/actions/runs/33323697402), job
 `99289989436`, event `push`, on exact head
 `48c252b36b5d04fb2cee17ca3067a15f999e4885`. The run completed the locked
@@ -95,6 +95,43 @@ heads then exposed an `Option` API compile error in run 33323172823, obsolete de
 all ten bounded fuzz targets. This closes this descriptor checkpoint only; the matrix partial rows,
 full cross-domain audit, independent joint review, and five-domain re-freeze remain open.
 
+### Render descriptor root and radius correction
+
+`source_product::source_exact_image_and_text_descriptors_reach_product_semantics` now checks the
+exact section 14.8 root paths and geometry owners: Image uses
+`render.geometry.destinationDescriptors[i]` and `render.geometry.sourceDescriptors[i]`, and Text
+uses `render.geometry.originDescriptor`. Source lowering previously used different path spellings,
+which are inputs to canonical descriptor ordering, not interchangeable labels.
+
+`source_product::source_geometry_owner_failures_precede_later_descriptor_execution_errors` sends
+Ellipse, ellipse Clip, Arc, and EllipseArc source through canonical compilation, FCBC writing/loading,
+semantic evaluation, and raster evaluation. A successfully evaluated negative radius now fails
+immediately as `render.invalid-geometry`, before a later descriptor can fail. Replacing that radius
+with a valid value preserves `render.invalid-descriptor` for the later execution failure. The shared
+radius query also serves Circle and RoundedRect geometry.
+
+The diagnostic head `33f00b961fdfe0faf85fbe9eb50aa0cabc31f40d` failed push Full Gate run
+[34000075548](https://github.com/Rancemxn/fcs-project/actions/runs/34000075548) on the error-category
+assertion. Head `f08681b740362a5f98f0c75f548a22b2a945ebb5` failed push run
+[34000455805](https://github.com/Rancemxn/fcs-project/actions/runs/34000455805) on both the root-path
+assertion and the error-category assertion. Corrective head
+`c648e5b6973a93c31159d105f4b1428e4d08a92a` passed push Full Gate run
+[34000586323](https://github.com/Rancemxn/fcs-project/actions/runs/34000586323), job `101398615834`,
+including all 931 nextest cases and all ten bounded fuzz targets at 1024 runs each. This proves the
+two corrections and the exercised corpus, not closure of the implementation residuals below.
+
+## Verified implementation residuals
+
+The requirement audit found concrete product gaps beyond the historical pending-review statements.
+They remain within #296/#9 and prevent an implementation or RC completion claim:
+
+| Authority | Current implementation evidence | Required closure |
+|---|---|---|
+| Render 3.2 and Core 6.3–6.8 | `lower_render_scene` and `RenderLowerer::lower_node` require every child to be `RenderItem::Node`; `phase2_schema` has no RenderNode constructor schema. | Expand compile-time `if`, templates, `with`, and generators with the shared Core budgets before canonical lowering. The RenderNode constructor kind/ID spelling still needs an explicit specification decision. |
+| Render 2 and 12 | The parser retains `RenderBodyItem::Tracks`, but the source Render lowerer never consumes it. | Lower each permitted Render Track to exact descriptors, validate its target and composition, and prove time-varying product results. |
+| Core 9 and FCBC 13 | `write_from_compilation_with_profile` always calls `native_tracks`; it rejects non-replace blends, and `native_disjoint_replace_fixture` accepts only equal-priority, base-filled replace groups. | Complete exact Track blend/priority/fill assembly through the product writer and runtime, including supported canonical charts produced by conversion. |
+| Render 3.3, 14.8 and 16 | Radius validation now occurs at its successful root, but `emit_draw_subtree`, `geometry_evaluation`, `evaluate_path`, and `paint_rgba` still require a complete cross-field canonical-order audit. | Bind competing query failures to canonical direct-root order across all owners while preserving active/Note/visibility gates. |
+
 ## Matrix reconciliation
 
 The current matrix contains no data row with `blocked-by-I<n>` status. Every
@@ -116,15 +153,14 @@ reconciliation records evidence coverage and does not promote a row to
 | `fcs.md` 15.1–15.3 | Source parse boundary; Source canonical boundary; Normative source examples and grammar | Fidelity/repair/Render semantics remain in the final #296/#9 gate; Appendix A is bound to the manifest and focused elaboration/canonical plus CLI canonical/Core-load evidence; Full Gate run 30729340879 on head e0140f7ca15cc21620ef3ad8e44b4ece03a346c2 success. |
 | `fcs.md` 17 | Canonical compilation and FCBC handoff; Artifact and metadata agreement | Product subset is covered; complete cross-domain closure remains open in the final #296/#9 gate. The exact-head Full Gate passed (run 30729340879 on head e0140f7ca15cc21620ef3ad8e44b4ece03a346c2). |
 | `fcs.md` 18 | All source-stage rows; Runtime properties; Fuzz smoke | Domain runners and bounded targets are implemented; runtime/property/fuzz evidence passed on the final SHA (run 30729340879 on head e0140f7ca15cc21620ef3ad8e44b4ece03a346c2). |
-| `fcbc.md` all | FCBC goldens; FCBC mutations; Runtime ABI execution | Product and mutation surfaces are covered; the exact-head Full Gate passed (run 30729340879 on head e0140f7ca15cc21620ef3ad8e44b4ece03a346c2) and final cross-domain review remains pending. |
+| `fcbc.md` all | FCBC goldens; FCBC mutations; Runtime ABI execution | The recorded corpus passed run 30729340879 on head e0140f7ca15cc21620ef3ad8e44b4ece03a346c2. The verified native Track blend/priority/fill handoff gaps above keep this row partial; final cross-domain review also remains pending. |
 | `fcs-render.md` all | Render source and canonical product paths; Render semantic and raster domain; Render resource and limit boundaries | The current combined Render delta passed exact-head Full Gate run 33323697402 on head `48c252b36b5d04fb2cee17ca3067a15f999e4885`; broader writer/resource/conformance audit and final #296/#9 review/re-freeze gates remain open. |
 | `fcs-conversion.md` all | Conversion registries and six public fixtures; Conversion export and semantic reparse; Conversion report, authorization, and hard limits | Remaining conversion-stage and cross-domain closure remains partial within the final #296/#9 gate; exact-head Full Gate run 30729340879 on head e0140f7ca15cc21620ef3ad8e44b4ece03a346c2 passed. |
 | I10.1–I10.5 | Six public CLI commands; CLI product fixture delta; Artifact and metadata agreement | Bounded artifact contract is implemented and unpublished; all 32 canonical fixtures now execute through CLI `check`, with exact-head Full Gate run 30729340879 on e0140f7ca15cc21620ef3ad8e44b4ece03a346c2; final cross-domain audit, joint review, and re-freeze remain open under #296/#9; #452 and #489 are completed delivery units. |
 
 ## Remaining I10 gates
 
-This ledger does not close I10. The current combined SHA passed GitHub Full Gate run
-33323697402 on head `48c252b36b5d04fb2cee17ca3067a15f999e4885`, but the remaining acceptance gates are the final
-cross-domain execution audit, independent joint review, and five-domain
-Frozen/re-freeze evidence. Issues #296 and #9 remain open until those gates are
-independently evidenced.
+This ledger does not close I10. Successful Full Gate runs prove the corpus exercised at their own
+SHAs. The verified implementation residuals above must be closed before the final cross-domain
+execution audit, independent joint review, and five-domain Frozen/re-freeze evidence. Issues #296
+and #9 remain open until those requirements are independently evidenced.
