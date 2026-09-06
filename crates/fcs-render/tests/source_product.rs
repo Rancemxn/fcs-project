@@ -755,6 +755,9 @@ fn source_geometry_owner_failures_precede_later_descriptor_execution_errors() {
         format!(
             "path shape {{ fillRule: \"nonzero\"; commands: [moveTo(vec2(0px, 0px)), ellipseArc(vec2(0px, 0px), {radius_x}, {radius_y}, 0rad, 0rad, 1rad, \"counterClockwise\")]; fill: solid(#FFFFFFFF); }}"
         ),
+        format!(
+            "path shape {{ fillRule: \"nonzero\"; commands: [moveTo(vec2(0px, 0px)), arc(vec2(0px, 0px), {radius_x}, 1rad * (1s / (2s - s)), 1rad, \"counterClockwise\")]; fill: solid(#FFFFFFFF); }}"
+        ),
     ] {
         let source = format!(
             "#fcs 5.0.0\nformat {{ profile: renderable; }}\ntempoMap {{ 0beat -> 120bpm; }}\nrender profile 1.0.0 {{ viewport {{ width: 4px; height: 4px; }} layer main {{ pass: \"overlay\"; children {{ {node} }} }} }}"
@@ -882,6 +885,27 @@ render profile 1.0.0 {
         .chart()
         .render()
         .expect("canonical Render scene");
+    for geometry in scene.geometries() {
+        let expected: Vec<String> = match geometry.data() {
+            CanonicalRenderGeometryData::Image { .. } => ["destination", "source"]
+                .into_iter()
+                .flat_map(|name| {
+                    (0..4).map(move |index| format!("render.geometry.{name}Descriptors[{index}]"))
+                })
+                .collect(),
+            CanonicalRenderGeometryData::Text { .. } => {
+                vec!["render.geometry.originDescriptor".to_owned()]
+            }
+            _ => continue,
+        };
+        let actual = descriptors
+            .roots()
+            .iter()
+            .filter(|root| root.owner() == geometry.id().value())
+            .map(|root| root.target_path().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected, "Render section 14.8 root spellings");
+    }
     let image_geometry = scene
         .geometries()
         .iter()
