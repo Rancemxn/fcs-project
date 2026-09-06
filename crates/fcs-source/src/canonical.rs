@@ -1662,35 +1662,25 @@ impl<'a> RenderLowerer<'a> {
                 source,
                 ..
             } => {
-                for (name, descriptor) in [
-                    ("x", destination[0]),
-                    ("y", destination[1]),
-                    ("width", destination[2]),
-                    ("height", destination[3]),
-                ] {
+                for (index, descriptor) in destination.iter().enumerate() {
                     self.add_descriptor_root(
-                        &format!("render.geometry.destination.{name}"),
+                        &format!("render.geometry.destinationDescriptors[{index}]"),
                         owner,
-                        descriptor,
+                        *descriptor,
                     );
                 }
                 if let Some(source) = source {
-                    for (name, descriptor) in [
-                        ("x", source[0]),
-                        ("y", source[1]),
-                        ("width", source[2]),
-                        ("height", source[3]),
-                    ] {
+                    for (index, descriptor) in source.iter().enumerate() {
                         self.add_descriptor_root(
-                            &format!("render.geometry.source.{name}"),
+                            &format!("render.geometry.sourceDescriptors[{index}]"),
                             owner,
-                            descriptor,
+                            *descriptor,
                         );
                     }
                 }
             }
             CanonicalRenderGeometryData::Text { origin, .. } => {
-                self.add_descriptor_root("render.geometry.origin", owner, *origin);
+                self.add_descriptor_root("render.geometry.originDescriptor", owner, *origin);
             }
             _ => {}
         }

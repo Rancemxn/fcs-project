@@ -152,11 +152,11 @@ render profile 1.0.0 {
     assert_eq!(*sampling, CanonicalImageSampling::Nearest);
     let roots = chart.descriptors().expect("Render descriptors").roots();
     assert!(roots.iter().any(|root| {
-        root.target_path() == "render.geometry.destination.width"
+        root.target_path() == "render.geometry.destinationDescriptors[2]"
             && root.owner() == scene.geometries()[0].id().value()
     }));
     assert!(roots.iter().any(|root| {
-        root.target_path() == "render.geometry.source.height"
+        root.target_path() == "render.geometry.sourceDescriptors[3]"
             && root.owner() == scene.geometries()[0].id().value()
     }));
 }
@@ -307,7 +307,7 @@ render profile 1.0.0 {
         .expect("Render descriptors")
         .roots();
     assert!(roots.iter().any(|root| {
-        root.target_path() == "render.geometry.origin"
+        root.target_path() == "render.geometry.originDescriptor"
             && root.owner() == scene.geometries()[0].id().value()
     }));
     assert!(roots.iter().any(|root| {

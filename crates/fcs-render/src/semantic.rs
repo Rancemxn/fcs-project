@@ -1021,6 +1021,26 @@ fn query_scalar_in(
     }
 }
 
+fn query_radius(
+    chart: &DecodedRenderChart,
+    descriptor: u32,
+    chart_time: f64,
+    environment: EvaluationEnvironment,
+) -> Result<f64, &'static str> {
+    let value = query_scalar_in(
+        chart,
+        descriptor,
+        chart_time,
+        ValueType::Length,
+        environment,
+    )?;
+    // Section 16 validates each successful root before querying the next one.
+    if value < 0.0 {
+        return Err("render.invalid-geometry");
+    }
+    Ok(value)
+}
+
 fn identity_matrix() -> [f64; 9] {
     [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
 }
@@ -3253,8 +3273,7 @@ fn evaluate_path(
                     ValueType::Vec2Length,
                     environment,
                 )?;
-                let radius =
-                    query_scalar_in(chart, *radius, chart_time, ValueType::Length, environment)?;
+                let radius = query_radius(chart, *radius, chart_time, environment)?;
                 let start_angle = query_scalar_in(
                     chart,
                     *start_angle,
@@ -3264,7 +3283,7 @@ fn evaluate_path(
                 )?;
                 let end_angle =
                     query_scalar_in(chart, *end_angle, chart_time, ValueType::Angle, environment)?;
-                validate_arc_angles(start_angle, end_angle, *direction, radius)?;
+                validate_arc_angles(start_angle, end_angle, *direction)?;
                 let curve = PathCurve::Arc {
                     center,
                     radius,
@@ -3303,10 +3322,8 @@ fn evaluate_path(
                     ValueType::Vec2Length,
                     environment,
                 )?;
-                let radius_x =
-                    query_scalar_in(chart, *radius_x, chart_time, ValueType::Length, environment)?;
-                let radius_y =
-                    query_scalar_in(chart, *radius_y, chart_time, ValueType::Length, environment)?;
+                let radius_x = query_radius(chart, *radius_x, chart_time, environment)?;
+                let radius_y = query_radius(chart, *radius_y, chart_time, environment)?;
                 let rotation =
                     query_scalar_in(chart, *rotation, chart_time, ValueType::Angle, environment)?;
                 let start_angle = query_scalar_in(
@@ -3318,10 +3335,7 @@ fn evaluate_path(
                 )?;
                 let end_angle =
                     query_scalar_in(chart, *end_angle, chart_time, ValueType::Angle, environment)?;
-                if radius_x < 0.0 || radius_y < 0.0 {
-                    return Err("render.invalid-geometry");
-                }
-                validate_arc_angles(start_angle, end_angle, *direction, radius_x.max(radius_y))?;
+                validate_arc_angles(start_angle, end_angle, *direction)?;
                 let curve = PathCurve::EllipseArc {
                     center,
                     radius_x,
@@ -3555,11 +3569,9 @@ fn validate_arc_angles(
     start_angle: f64,
     end_angle: f64,
     direction: u16,
-    radius: f64,
 ) -> Result<(), &'static str> {
     let sweep = end_angle - start_angle;
     if !matches!(direction, 1 | 2)
-        || radius < 0.0
         || !sweep.is_finite()
         || (direction == 1 && sweep > 0.0)
         || (direction == 2 && sweep < 0.0)
@@ -3728,16 +3740,7 @@ fn geometry_evaluation(
             }
             let mut values = [0.0; 4];
             for (value, descriptor) in values.iter_mut().zip(radii) {
-                *value = query_scalar_in(
-                    chart,
-                    *descriptor,
-                    chart_time,
-                    ValueType::Length,
-                    environment,
-                )?;
-                if *value < 0.0 {
-                    return Err("render.invalid-geometry");
-                }
+                *value = query_radius(chart, *descriptor, chart_time, environment)?;
             }
             let scale = rounded_rect_scale(width, height, values);
             values.iter_mut().for_each(|value| *value *= scale);
@@ -3766,11 +3769,7 @@ fn geometry_evaluation(
                 ValueType::Vec2Length,
                 environment,
             )?;
-            let radius =
-                query_scalar_in(chart, *radius, chart_time, ValueType::Length, environment)?;
-            if radius < 0.0 {
-                return Err("render.invalid-geometry");
-            }
+            let radius = query_radius(chart, *radius, chart_time, environment)?;
             let bounds = [
                 center[0] - radius,
                 center[1] - radius,
@@ -3792,15 +3791,10 @@ fn geometry_evaluation(
                 ValueType::Vec2Length,
                 environment,
             )?;
-            let radius_x =
-                query_scalar_in(chart, *radius_x, chart_time, ValueType::Length, environment)?;
-            let radius_y =
-                query_scalar_in(chart, *radius_y, chart_time, ValueType::Length, environment)?;
+            let radius_x = query_radius(chart, *radius_x, chart_time, environment)?;
+            let radius_y = query_radius(chart, *radius_y, chart_time, environment)?;
             let rotation =
                 query_scalar_in(chart, *rotation, chart_time, ValueType::Angle, environment)?;
-            if radius_x < 0.0 || radius_y < 0.0 {
-                return Err("render.invalid-geometry");
-            }
             let (sin, cos) = rotation.sin_cos();
             let extent_x = ((radius_x * cos).powi(2) + (radius_y * sin).powi(2)).sqrt();
             let extent_y = ((radius_x * sin).powi(2) + (radius_y * cos).powi(2)).sqrt();
