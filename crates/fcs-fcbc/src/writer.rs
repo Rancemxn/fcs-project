@@ -2628,9 +2628,7 @@ fn native_blended_fixture(
 
     let mut expressions = Vec::new();
     let mut regions = Vec::new();
-    let mut probe = |time: f64,
-                     expressions: &mut Vec<CanonicalExpressionDag>|
-     -> FcbcResult<usize> {
+    let probe = |time: f64, expressions: &mut Vec<CanonicalExpressionDag>| -> FcbcResult<usize> {
         let expression = blended_region_expression(tracks, &replaces, time, base, target, line_id)?;
         expressions.push(expression);
         Ok(expressions.len() - 1)
@@ -4653,6 +4651,7 @@ fn native_note_visibility_descriptor(
     intern_descriptor(descriptors, record(payload))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn native_line_descriptor(
     descriptors: &mut Vec<Vec<u8>>,
     constants: &[Constant],
