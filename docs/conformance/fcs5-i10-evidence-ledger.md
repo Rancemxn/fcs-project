@@ -170,6 +170,18 @@ push Full Gate [34005791775](https://github.com/Rancemxn/fcs-project/actions/run
 job `101412596436`, with 911 nextest cases, zero skipped, and ten fuzz targets at 1024 runs each.
 These bounded corrections do not complete exact native Track composition.
 
+PR [#626](https://github.com/Rancemxn/fcs-project/pull/626) composes overlapping replace groups
+exactly. The writer partitions chartTime into elementary regions from every Track piece time,
+selects the highest active priority per region through the product `evaluate_track`, and encodes
+the selection as a Piecewise whose pieces reference per-winner total-function layers or the Line
+base constant. Fully masked Tracks leave no bytes; error fills, unresolved holds, and
+highest-priority ties still reject. Corrective head
+`38e33804b17618ea6487318d6165ba9e7369c783` passed pull_request Full Gate
+[34010283580](https://github.com/Rancemxn/fcs-project/actions/runs/34010283580); merged main
+`4969deb940b920ee1716fe5dd876816ab94f1a16` passed push Full Gate
+[34010485421](https://github.com/Rancemxn/fcs-project/actions/runs/34010485421). Native
+Add/Multiply blend composition remains outside this correction.
+
 ## Verified implementation residuals
 
 The requirement audit found concrete product gaps beyond the historical pending-review statements.
@@ -179,7 +191,7 @@ They remain within #296/#9 and prevent an implementation or RC completion claim:
 |---|---|---|
 | Render 3.2 and Core 6.3–6.8 | `lower_render_scene` and `RenderLowerer::lower_node` require every child to be `RenderItem::Node`; `phase2_schema` has no RenderNode constructor schema. | Expand compile-time `if`, templates, `with`, and generators with the shared Core budgets before canonical lowering. The RenderNode constructor kind/ID spelling still needs an explicit specification decision. |
 | Render 2 and 12 | The parser retains `RenderBodyItem::Tracks`, but the source Render lowerer never consumes it. | Lower each permitted Render Track to exact descriptors, validate its target and composition, and prove time-varying product results. |
-| Core 9 and FCBC 13 | `write_from_compilation_with_profile` always calls `native_tracks`; it rejects non-replace blends. Multiple replace Tracks now accept differing priorities when their effective intervals are disjoint and all fill/extrapolation policies are base; overlapping selection and non-base layered fills remain unsupported. | Complete exact Track blend/priority/fill assembly through the product writer and runtime, including supported canonical charts produced by conversion. |
+| Core 9 and FCBC 13 | `write_from_compilation_with_profile` always calls `native_tracks`; it rejects non-replace blends. Multiple replace Tracks compose exactly through highest-priority region selection, overlapping intervals, layered fill/extrapolation policies, and persistent points (PR #626). | Complete exact Add/Multiply Track blend assembly through the product writer and runtime, including supported canonical charts produced by conversion. |
 
 ## Matrix reconciliation
 
