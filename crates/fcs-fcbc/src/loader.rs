@@ -2706,25 +2706,23 @@ fn validate_canonical_reachability(
         return Err("fcbc.invalid-track");
     }
 
-    let mut node_keys = Vec::with_capacity(expressions.len());
+    // Structural keys embed table indices instead of recursively embedding
+    // subtree keys: on a shared sub-DAG the recursive form grows exponentially
+    // with the sharing depth (FCBC section 17 bounds file-controlled work
+    // before large allocations). Since every operand and Piecewise child must
+    // reference an earlier entry, the index names a subtree the earlier table
+    // entries fully determine, so equality of the flat keys matches equality
+    // of the recursive ones.
     let mut unique_node_keys = BTreeSet::new();
     for index in 0..expressions.len() {
-        let key = expression_structural_key(index as u32, expressions, &mut node_keys)?;
+        let key = expression_structural_key(index as u32, expressions)?;
         if !unique_node_keys.insert(key) {
             return Err("fcbc.invalid-expression");
         }
     }
-    let mut descriptor_keys = Vec::with_capacity(descriptors.len());
     let mut unique_descriptor_keys = BTreeSet::new();
     for index in 0..descriptors.len() {
-        let key = descriptor_structural_key(
-            index as u32,
-            descriptors,
-            expressions,
-            constants,
-            &mut descriptor_keys,
-            &mut node_keys,
-        )?;
+        let key = descriptor_structural_key(index as u32, descriptors, expressions, constants)?;
         if !unique_descriptor_keys.insert(key) {
             return Err("fcbc.invalid-track");
         }
@@ -2843,6 +2841,17 @@ pub fn validate_descriptor_environment_for_target(
 // chain length is file-controlled, so the table-sized cycle guards fire far
 // deeper than any native stack survives. The guards and their categories are
 // unchanged - they still bound cyclic references, not well-formed depth.
+//
+// The walks are also DAG-aware: a node completes once (facts memo), so shared
+// subgraphs are re-walked a bounded number of times instead of once per
+// occurrence. Because a completed node's guards no longer re-run on every
+// occurrence, each walk additionally records the longest downward path per
+// node and checks it against the same limits at the end. For acyclic graphs
+// that is exactly the deepest occurrence depth the recursive walk would have
+// reached, so accepted charts stay accepted and rejected charts stay rejected
+// with the same category; only the error chosen when a chart violates both a
+// length limit and the depth limit at once can shift from the length error to
+// `fcbc.limit-exceeded`.
 
 fn descriptor_environment_dependencies(
     index: u32,
@@ -2850,78 +2859,14 @@ fn descriptor_environment_dependencies(
     expressions: &[ExpressionNode],
     depth: usize,
 ) -> Result<u8, &'static str> {
-    let mut dependencies = 0;
-    let mut stack = vec![(index, depth)];
-    while let Some((index, depth)) = stack.pop() {
-        if depth > MAX_VALIDATOR_DEPTH {
-            return Err("fcbc.limit-exceeded");
-        }
-        if depth > descriptors.len() + expressions.len() {
-            return Err("fcbc.invalid-expression");
-        }
-        let descriptor = descriptors
-            .get(index as usize)
-            .ok_or("fcbc.dangling-reference")?;
-        match &descriptor.kind {
-            DescriptorKind::Constant(_) | DescriptorKind::SegmentTrack(_) => {}
-            DescriptorKind::Piecewise(pieces) => {
-                for piece in pieces.iter().rev() {
-                    stack.push((piece.descriptor_index, depth + 1));
-                }
-            }
-            DescriptorKind::Expression(root) => {
-                dependencies |= expression_environment_dependencies(*root, expressions, depth + 1)?;
-            }
-        }
-    }
-    Ok(dependencies)
-}
-
-fn expression_environment_dependencies(
-    index: u32,
-    expressions: &[ExpressionNode],
-    depth: usize,
-) -> Result<u8, &'static str> {
-    let mut dependencies = 0;
-    let mut stack = vec![(index, depth)];
-    while let Some((index, depth)) = stack.pop() {
-        if depth > MAX_VALIDATOR_DEPTH {
-            return Err("fcbc.limit-exceeded");
-        }
-        if depth > expressions.len() {
-            return Err("fcbc.invalid-expression");
-        }
-        let node = expressions
-            .get(index as usize)
-            .ok_or("fcbc.invalid-expression")?;
-        dependencies |= match node.opcode {
-            2 => ENV_S,
-            3 => ENV_B,
-            4 => ENV_Q,
-            5 => ENV_D,
-            _ => 0,
-        };
-        for operand in node.operands[..node.arity as usize].iter().rev() {
-            stack.push((*operand, depth + 1));
-        }
-    }
-    Ok(dependencies)
-}
-
-pub fn validate_descriptor_env_p_context(
-    root: u32,
-    descriptors: &[PropertyDescriptor],
-    expressions: &[ExpressionNode],
-) -> Result<(), &'static str> {
-    fn visit_descriptor(
-        index: u32,
-        descriptors: &[PropertyDescriptor],
-        expressions: &[ExpressionNode],
-        has_piece_context: bool,
-        depth: usize,
-    ) -> Result<(), &'static str> {
-        let mut stack = vec![(index, has_piece_context, depth)];
-        while let Some((index, has_piece_context, depth)) = stack.pop() {
+    let mut expression_facts: Vec<Option<(u8, usize)>> = vec![None; expressions.len()];
+    let mut dependencies = vec![0u8; descriptors.len()];
+    let mut piece_longest = vec![0usize; descriptors.len()];
+    let mut expression_longest = vec![0usize; descriptors.len()];
+    let mut completed = vec![false; descriptors.len()];
+    let mut stack = vec![(index, depth, false)];
+    while let Some((index, depth, combine)) = stack.pop() {
+        if !combine {
             if depth > MAX_VALIDATOR_DEPTH {
                 return Err("fcbc.limit-exceeded");
             }
@@ -2931,59 +2876,330 @@ pub fn validate_descriptor_env_p_context(
             let descriptor = descriptors
                 .get(index as usize)
                 .ok_or("fcbc.dangling-reference")?;
+            if let DescriptorKind::Expression(root) = &descriptor.kind {
+                // The depth check runs on every occurrence, exactly as the
+                // recursive walk entered the expression subgraph once per
+                // occurrence; only the subgraph walk itself is memoized.
+                let (_, root_longest) =
+                    expression_dependency_facts(*root, expressions, &mut expression_facts)?;
+                let deepest = depth + 1 + root_longest;
+                if deepest > MAX_VALIDATOR_DEPTH {
+                    return Err("fcbc.limit-exceeded");
+                }
+                if deepest > expressions.len() {
+                    return Err("fcbc.invalid-expression");
+                }
+            }
+            if completed[index as usize] {
+                continue;
+            }
+            stack.push((index, depth, true));
+            if let DescriptorKind::Piecewise(pieces) = &descriptor.kind {
+                for piece in pieces.iter().rev() {
+                    stack.push((piece.descriptor_index, depth + 1, false));
+                }
+            }
+        } else {
+            let descriptor = &descriptors[index as usize];
+            let mut bits = 0;
+            let mut from_pieces = 0;
+            let mut from_expressions = 0;
             match &descriptor.kind {
                 DescriptorKind::Constant(_) | DescriptorKind::SegmentTrack(_) => {}
                 DescriptorKind::Piecewise(pieces) => {
-                    for piece in pieces.iter().rev() {
-                        stack.push((piece.descriptor_index, true, depth + 1));
+                    for piece in pieces {
+                        let child = piece.descriptor_index as usize;
+                        bits |= dependencies[child];
+                        from_pieces = from_pieces.max(piece_longest[child] + 1);
+                        // A piece hop extends an expression path only when the
+                        // child actually reaches an expression: the recursive
+                        // walk applied the expression limit at real Expression
+                        // occurrences, so a pure Piecewise chain must not count
+                        // its hops against it.
+                        if expression_longest[child] > 0 {
+                            from_expressions = from_expressions.max(expression_longest[child] + 1);
+                        }
                     }
                 }
                 DescriptorKind::Expression(root) => {
-                    visit_expression(*root, expressions, has_piece_context, depth + 1)?;
+                    let (root_bits, root_longest) =
+                        expression_dependency_facts(*root, expressions, &mut expression_facts)?;
+                    bits |= root_bits;
+                    from_expressions = from_expressions.max(root_longest + 1);
                 }
             }
+            dependencies[index as usize] = bits;
+            piece_longest[index as usize] = from_pieces;
+            expression_longest[index as usize] = from_expressions;
+            completed[index as usize] = true;
         }
-        Ok(())
     }
+    let start = index as usize;
+    let descriptor_deepest = depth + piece_longest[start];
+    let expression_deepest = depth + expression_longest[start];
+    if descriptor_deepest.max(expression_deepest) > MAX_VALIDATOR_DEPTH {
+        return Err("fcbc.limit-exceeded");
+    }
+    if expression_deepest > expressions.len() {
+        return Err("fcbc.invalid-expression");
+    }
+    if descriptor_deepest > descriptors.len() + expressions.len() {
+        return Err("fcbc.invalid-expression");
+    }
+    Ok(dependencies[start])
+}
 
-    fn visit_expression(
-        index: u32,
-        expressions: &[ExpressionNode],
-        has_piece_context: bool,
-        depth: usize,
-    ) -> Result<(), &'static str> {
-        let mut stack = vec![(index, depth)];
-        while let Some((index, depth)) = stack.pop() {
+/// Dependency bits and longest downward path (in edges) of the expression
+/// subgraph rooted at `index`. Both facts are structural, independent of the
+/// depth the subgraph is entered at, so `cache` is shared across every
+/// occurrence that references the same root. The internal guards keep the
+/// walk terminating on cyclic subgraphs (whose entries can never complete).
+fn expression_dependency_facts(
+    index: u32,
+    expressions: &[ExpressionNode],
+    cache: &mut [Option<(u8, usize)>],
+) -> Result<(u8, usize), &'static str> {
+    if index as usize >= expressions.len() {
+        return Err("fcbc.invalid-expression");
+    }
+    if let Some(facts) = cache[index as usize] {
+        return Ok(facts);
+    }
+    let mut dependencies = vec![0u8; expressions.len()];
+    let mut longest = vec![0usize; expressions.len()];
+    let mut completed = vec![false; expressions.len()];
+    let mut stack = vec![(index, 0usize, false)];
+    while let Some((index, depth, combine)) = stack.pop() {
+        if !combine {
+            if index as usize >= expressions.len() {
+                return Err("fcbc.invalid-expression");
+            }
+            if let Some(facts) = cache[index as usize] {
+                let (bits, node_longest) = facts;
+                dependencies[index as usize] = bits;
+                longest[index as usize] = node_longest;
+                continue;
+            }
+            if completed[index as usize] {
+                continue;
+            }
+            if depth > MAX_VALIDATOR_DEPTH {
+                return Err("fcbc.limit-exceeded");
+            }
+            if depth > expressions.len() {
+                return Err("fcbc.invalid-expression");
+            }
+            let node = &expressions[index as usize];
+            stack.push((index, depth, true));
+            for operand in node.operands[..node.arity as usize].iter().rev() {
+                stack.push((*operand, depth + 1, false));
+            }
+        } else {
+            let node = &expressions[index as usize];
+            let mut bits = match node.opcode {
+                2 => ENV_S,
+                3 => ENV_B,
+                4 => ENV_Q,
+                5 => ENV_D,
+                _ => 0,
+            };
+            let mut node_longest = 0;
+            for operand in &node.operands[..node.arity as usize] {
+                bits |= dependencies[*operand as usize];
+                node_longest = node_longest.max(longest[*operand as usize] + 1);
+            }
+            dependencies[index as usize] = bits;
+            longest[index as usize] = node_longest;
+            completed[index as usize] = true;
+            cache[index as usize] = Some((bits, node_longest));
+        }
+    }
+    Ok((dependencies[index as usize], longest[index as usize]))
+}
+
+/// Depth-checked entry for the expression dependency walk, kept for the
+/// validator tests: the production walks enter subgraphs at per-occurrence
+/// depths through `expression_dependency_facts` directly.
+#[cfg(test)]
+fn expression_environment_dependencies(
+    index: u32,
+    expressions: &[ExpressionNode],
+    depth: usize,
+) -> Result<u8, &'static str> {
+    let mut cache = vec![None; expressions.len()];
+    let (dependencies, longest) = expression_dependency_facts(index, expressions, &mut cache)?;
+    if depth + longest > MAX_VALIDATOR_DEPTH {
+        return Err("fcbc.limit-exceeded");
+    }
+    if depth + longest > expressions.len() {
+        return Err("fcbc.invalid-expression");
+    }
+    Ok(dependencies)
+}
+
+pub fn validate_descriptor_env_p_context(
+    root: u32,
+    descriptors: &[PropertyDescriptor],
+    expressions: &[ExpressionNode],
+) -> Result<(), &'static str> {
+    // Facts and completion are tracked per piece-context bit: a descriptor or
+    // expression can be valid inside a Piecewise piece yet invalid outside.
+    let mut expression_facts = vec![[None; 2]; expressions.len()];
+    let mut completed = vec![[false; 2]; descriptors.len()];
+    let mut piece_longest = vec![0usize; descriptors.len()];
+    let mut expression_longest = vec![0usize; descriptors.len()];
+    let mut stack = vec![(root, false, 0usize, false)];
+    while let Some((index, has_piece_context, depth, combine)) = stack.pop() {
+        if !combine {
+            if depth > MAX_VALIDATOR_DEPTH {
+                return Err("fcbc.limit-exceeded");
+            }
+            if depth > descriptors.len() + expressions.len() {
+                return Err("fcbc.invalid-expression");
+            }
+            let descriptor = descriptors
+                .get(index as usize)
+                .ok_or("fcbc.dangling-reference")?;
+            if let DescriptorKind::Expression(expression_root) = &descriptor.kind {
+                let root_longest = expression_context_facts(
+                    *expression_root,
+                    has_piece_context,
+                    expressions,
+                    &mut expression_facts,
+                )?;
+                let deepest = depth + 1 + root_longest;
+                if deepest > MAX_VALIDATOR_DEPTH {
+                    return Err("fcbc.limit-exceeded");
+                }
+                if deepest > expressions.len() + 1 {
+                    return Err("fcbc.invalid-expression");
+                }
+            }
+            let context = usize::from(has_piece_context);
+            if completed[index as usize][context] {
+                continue;
+            }
+            stack.push((index, has_piece_context, depth, true));
+            if let DescriptorKind::Piecewise(pieces) = &descriptor.kind {
+                for piece in pieces.iter().rev() {
+                    stack.push((piece.descriptor_index, true, depth + 1, false));
+                }
+            }
+        } else {
+            let descriptor = &descriptors[index as usize];
+            let mut from_pieces = 0;
+            let mut from_expressions = 0;
+            match &descriptor.kind {
+                DescriptorKind::Constant(_) | DescriptorKind::SegmentTrack(_) => {}
+                DescriptorKind::Piecewise(pieces) => {
+                    for piece in pieces {
+                        let child = piece.descriptor_index as usize;
+                        from_pieces = from_pieces.max(piece_longest[child] + 1);
+                        // Same rule as the dependency walk: piece hops count
+                        // toward the expression limit only beneath a real
+                        // expression occurrence.
+                        if expression_longest[child] > 0 {
+                            from_expressions = from_expressions.max(expression_longest[child] + 1);
+                        }
+                    }
+                }
+                DescriptorKind::Expression(expression_root) => {
+                    let root_longest = expression_context_facts(
+                        *expression_root,
+                        has_piece_context,
+                        expressions,
+                        &mut expression_facts,
+                    )?;
+                    from_expressions = from_expressions.max(root_longest + 1);
+                }
+            }
+            piece_longest[index as usize] = from_pieces;
+            expression_longest[index as usize] = from_expressions;
+            let context = usize::from(has_piece_context);
+            completed[index as usize][context] = true;
+        }
+    }
+    let start = root as usize;
+    let descriptor_deepest = piece_longest[start];
+    let expression_deepest = expression_longest[start];
+    if descriptor_deepest.max(expression_deepest) > MAX_VALIDATOR_DEPTH {
+        return Err("fcbc.limit-exceeded");
+    }
+    if expression_deepest > expressions.len() + 1 {
+        return Err("fcbc.invalid-expression");
+    }
+    if descriptor_deepest > descriptors.len() + expressions.len() {
+        return Err("fcbc.invalid-expression");
+    }
+    Ok(())
+}
+
+/// Longest downward path (in edges) of the expression subgraph rooted at
+/// `index` under the given piece context, provided the subgraph is valid
+/// there: an EnvP reference outside a Piecewise errors exactly as the
+/// per-occurrence walk did. The facts are structural, so `cache` is shared
+/// across occurrences; the internal guards keep cyclic subgraphs terminating.
+fn expression_context_facts(
+    index: u32,
+    has_piece_context: bool,
+    expressions: &[ExpressionNode],
+    cache: &mut [[Option<usize>; 2]],
+) -> Result<usize, &'static str> {
+    if index as usize >= expressions.len() {
+        return Err("fcbc.invalid-expression");
+    }
+    let context = usize::from(has_piece_context);
+    if let Some(node_longest) = cache[index as usize][context] {
+        return Ok(node_longest);
+    }
+    let mut longest = vec![0usize; expressions.len()];
+    let mut completed = vec![[false; 2]; expressions.len()];
+    let mut stack = vec![(index, has_piece_context, 0usize, false)];
+    while let Some((index, has_piece_context, depth, combine)) = stack.pop() {
+        let context = usize::from(has_piece_context);
+        if !combine {
+            if index as usize >= expressions.len() {
+                return Err("fcbc.invalid-expression");
+            }
+            if let Some(node_longest) = cache[index as usize][context] {
+                longest[index as usize] = node_longest;
+                continue;
+            }
+            if completed[index as usize][context] {
+                continue;
+            }
             if depth > MAX_VALIDATOR_DEPTH {
                 return Err("fcbc.limit-exceeded");
             }
             if depth > expressions.len() + 1 {
                 return Err("fcbc.invalid-expression");
             }
-            let node = expressions
-                .get(index as usize)
-                .ok_or("fcbc.invalid-expression")?;
+            let node = &expressions[index as usize];
             if node.opcode == 6 && !has_piece_context {
                 return Err("fcbc.invalid-expression");
             }
+            stack.push((index, has_piece_context, depth, true));
             for operand in node.operands[..node.arity as usize].iter().rev() {
-                stack.push((*operand, depth + 1));
+                stack.push((*operand, has_piece_context, depth + 1, false));
             }
+        } else {
+            let node = &expressions[index as usize];
+            let mut node_longest = 0;
+            for operand in &node.operands[..node.arity as usize] {
+                node_longest = node_longest.max(longest[*operand as usize] + 1);
+            }
+            longest[index as usize] = node_longest;
+            completed[index as usize][context] = true;
+            cache[index as usize][context] = Some(node_longest);
         }
-        Ok(())
     }
-
-    visit_descriptor(root, descriptors, expressions, false, 0)
+    Ok(longest[index as usize])
 }
 
 fn expression_structural_key(
     index: u32,
     expressions: &[ExpressionNode],
-    memo: &mut Vec<Vec<u8>>,
 ) -> Result<Vec<u8>, &'static str> {
-    if let Some(key) = memo.get(index as usize) {
-        return Ok(key.clone());
-    }
     let node = expressions
         .get(index as usize)
         .ok_or("fcbc.invalid-expression")?;
@@ -2992,14 +3208,15 @@ fn expression_structural_key(
     key.push(node.result_type as u8);
     key.push(node.arity);
     key.extend_from_slice(&node.immediate.to_le_bytes());
+    // Operands are embedded as indices: each must reference an earlier entry,
+    // which the earlier table entries fully determine, so equal flat keys
+    // mean equal recursive keys without re-embedding the operand sub-DAG.
     for operand in &node.operands[..node.arity as usize] {
-        let operand_key = expression_structural_key(*operand, expressions, memo)?;
-        push_key_bytes(&mut key, &operand_key);
+        if *operand >= index {
+            return Err("fcbc.invalid-expression");
+        }
+        key.extend_from_slice(&operand.to_le_bytes());
     }
-    if memo.len() != index as usize {
-        return Err("fcbc.invalid-expression");
-    }
-    memo.push(key.clone());
     Ok(key)
 }
 
@@ -3008,12 +3225,7 @@ fn descriptor_structural_key(
     descriptors: &[PropertyDescriptor],
     expressions: &[ExpressionNode],
     constants: &[RuntimeValue],
-    memo: &mut Vec<Vec<u8>>,
-    node_memo: &mut Vec<Vec<u8>>,
 ) -> Result<Vec<u8>, &'static str> {
-    if let Some(key) = memo.get(index as usize) {
-        return Ok(key.clone());
-    }
     let descriptor = descriptors
         .get(index as usize)
         .ok_or("fcbc.invalid-track")?;
@@ -3060,27 +3272,22 @@ fn descriptor_structural_key(
                 key.extend_from_slice(&piece.start.to_bits().to_le_bytes());
                 key.extend_from_slice(&piece.end.to_bits().to_le_bytes());
                 key.extend_from_slice(&piece.flags.to_le_bytes());
-                let child_key = descriptor_structural_key(
-                    piece.descriptor_index,
-                    descriptors,
-                    expressions,
-                    constants,
-                    memo,
-                    node_memo,
-                )?;
-                push_key_bytes(&mut key, &child_key);
+                // The child descriptor is embedded as an index for the same
+                // reason as expression operands above.
+                if piece.descriptor_index >= index {
+                    return Err("fcbc.invalid-track");
+                }
+                key.extend_from_slice(&piece.descriptor_index.to_le_bytes());
             }
         }
         DescriptorKind::Expression(root) => {
             key.push(4);
-            let root_key = expression_structural_key(*root, expressions, node_memo)?;
-            push_key_bytes(&mut key, &root_key);
+            if *root as usize >= expressions.len() {
+                return Err("fcbc.invalid-expression");
+            }
+            key.extend_from_slice(&root.to_le_bytes());
         }
     }
-    if memo.len() != index as usize {
-        return Err("fcbc.invalid-track");
-    }
-    memo.push(key.clone());
     Ok(key)
 }
 

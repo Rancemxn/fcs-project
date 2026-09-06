@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use crate::expression::StructuralInterner;
 use crate::{
     CanonicalExpressionDag, CanonicalExpressionEnvironment, CanonicalExpressionType,
     CanonicalExpressionValue,
@@ -263,28 +264,27 @@ impl CanonicalDescriptorTable {
         }
         validate_descriptors(&descriptors, &roots)?;
 
-        let keys = descriptors
-            .iter()
-            .enumerate()
-            .map(|(index, _)| descriptor_key(index, &descriptors))
-            .collect::<Result<Vec<_>, _>>()?;
+        // (target_path, owner) pairs are unique by the check above, so the
+        // first two sort keys always decide the order; no structural
+        // tie-break is reachable.
         let mut roots = roots;
         roots.sort_by(|left, right| {
             left.target_path
                 .as_bytes()
                 .cmp(right.target_path.as_bytes())
                 .then_with(|| left.owner.cmp(&right.owner))
-                .then_with(|| keys[left.descriptor].cmp(&keys[right.descriptor]))
         });
 
+        let mut interner = StructuralInterner::default();
+        let identities = descriptor_identities(&descriptors, &mut interner);
         let mut mapped = vec![None; descriptors.len()];
-        let mut interned = BTreeMap::<Vec<u8>, usize>::new();
+        let mut interned = BTreeMap::<u32, usize>::new();
         let mut canonical = Vec::new();
         for root in &mut roots {
             root.descriptor = emit_descriptor(
                 root.descriptor,
                 &descriptors,
-                &keys,
+                &identities,
                 &mut mapped,
                 &mut interned,
                 &mut canonical,
@@ -312,9 +312,9 @@ impl CanonicalDescriptorTable {
 fn emit_descriptor(
     index: usize,
     descriptors: &[CanonicalPropertyDescriptor],
-    keys: &[Vec<u8>],
+    identities: &[u32],
     mapped: &mut [Option<usize>],
-    interned: &mut BTreeMap<Vec<u8>, usize>,
+    interned: &mut BTreeMap<u32, usize>,
     canonical: &mut Vec<CanonicalPropertyDescriptor>,
 ) -> usize {
     if let Some(index) = mapped[index] {
@@ -327,7 +327,7 @@ fn emit_descriptor(
                 piece.descriptor = emit_descriptor(
                     piece.descriptor,
                     descriptors,
-                    keys,
+                    identities,
                     mapped,
                     interned,
                     canonical,
@@ -343,7 +343,7 @@ fn emit_descriptor(
         }
     };
     let original_index = index;
-    let canonical_index = if let Some(existing) = interned.get(&keys[original_index]) {
+    let canonical_index = if let Some(existing) = interned.get(&identities[original_index]) {
         *existing
     } else {
         let descriptor = CanonicalPropertyDescriptor {
@@ -353,7 +353,7 @@ fn emit_descriptor(
         };
         let index = canonical.len();
         canonical.push(descriptor);
-        interned.insert(keys[original_index].clone(), index);
+        interned.insert(identities[original_index], index);
         index
     };
     mapped[original_index] = Some(canonical_index);
@@ -504,54 +504,74 @@ fn validate_environment(
     Ok(())
 }
 
-fn descriptor_key(
-    index: usize,
+/// Structural identity per descriptor, assigned through `interner`.
+///
+/// Keys reference child descriptors and expression DAGs by their identity
+/// numbers instead of re-embedding their keys, so sharing costs one
+/// bounded-size intern per descriptor (FCBC section 17 bounds
+/// file-controlled work; a shared sub-DAG made the recursive form grow the
+/// key exponentially). `validate_descriptors` has already run, so piece
+/// children always combine before their parent and cycles cannot occur.
+// ponytail: each Expression descriptor re-derives its DAG identity, so the
+// worst case is O(descriptors x largest DAG); revisit if tables with
+// thousands of expression descriptors show up.
+fn descriptor_identities(
     descriptors: &[CanonicalPropertyDescriptor],
-) -> Result<Vec<u8>, CanonicalDescriptorError> {
-    fn visit(
-        index: usize,
-        descriptors: &[CanonicalPropertyDescriptor],
-        marks: &mut [Visit],
-        keys: &mut [Option<Vec<u8>>],
-    ) -> Result<Vec<u8>, CanonicalDescriptorError> {
-        if let Some(key) = &keys[index] {
-            return Ok(key.clone());
+    interner: &mut StructuralInterner,
+) -> Vec<u32> {
+    let mut identities: Vec<Option<u32>> = vec![None; descriptors.len()];
+    let mut stack = Vec::new();
+    for start in 0..descriptors.len() {
+        if identities[start].is_some() {
+            continue;
         }
-        if matches!(marks[index], Visit::Visiting) {
-            return Err(CanonicalDescriptorError::DescriptorCycle { descriptor: index });
-        }
-        marks[index] = Visit::Visiting;
-        let descriptor = &descriptors[index];
-        let mut key = Vec::new();
-        descriptor.property_type.append_structural_key(&mut key);
-        append_domain_key(&mut key, descriptor.domain);
-        match descriptor.kind() {
-            CanonicalDescriptorKind::Constant(value) => {
-                key.push(0);
-                value.append_structural_key(&mut key);
-            }
-            CanonicalDescriptorKind::Expression(expression) => {
-                key.push(1);
-                expression.append_structural_key(&mut key);
-            }
-            CanonicalDescriptorKind::Piecewise(pieces) => {
-                key.push(2);
-                key.extend_from_slice(&(pieces.len() as u32).to_le_bytes());
-                for piece in pieces {
-                    append_piece_key(&mut key, *piece);
-                    let child = visit(piece.descriptor, descriptors, marks, keys)?;
-                    append_bytes(&mut key, &child);
+        stack.push((start, false));
+        while let Some((index, combine)) = stack.pop() {
+            if combine {
+                let descriptor = &descriptors[index];
+                let mut key = Vec::new();
+                descriptor.property_type.append_structural_key(&mut key);
+                append_domain_key(&mut key, descriptor.domain);
+                match descriptor.kind() {
+                    CanonicalDescriptorKind::Constant(value) => {
+                        key.push(0);
+                        value.append_structural_key(&mut key);
+                    }
+                    CanonicalDescriptorKind::Expression(expression) => {
+                        key.push(1);
+                        key.extend_from_slice(
+                            &expression.structural_identity(interner).to_le_bytes(),
+                        );
+                    }
+                    CanonicalDescriptorKind::Piecewise(pieces) => {
+                        key.push(2);
+                        key.extend_from_slice(&(pieces.len() as u32).to_le_bytes());
+                        for piece in pieces {
+                            append_piece_key(&mut key, *piece);
+                            let child = identities[piece.descriptor]
+                                .expect("children combine first; cycles are pre-rejected");
+                            key.extend_from_slice(&child.to_le_bytes());
+                        }
+                    }
+                }
+                identities[index] = Some(interner.intern(key));
+            } else {
+                if identities[index].is_some() {
+                    continue;
+                }
+                stack.push((index, true));
+                if let CanonicalDescriptorKind::Piecewise(pieces) = &descriptors[index].kind {
+                    for piece in pieces.iter().rev() {
+                        stack.push((piece.descriptor, false));
+                    }
                 }
             }
         }
-        marks[index] = Visit::Done;
-        keys[index] = Some(key.clone());
-        Ok(key)
     }
-
-    let mut marks = vec![Visit::Unvisited; descriptors.len()];
-    let mut keys = vec![None; descriptors.len()];
-    visit(index, descriptors, &mut marks, &mut keys)
+    identities
+        .into_iter()
+        .map(|identity| identity.expect("the outer loop walks every descriptor"))
+        .collect()
 }
 
 fn append_domain_key(output: &mut Vec<u8>, domain: CanonicalDescriptorDomain) {
@@ -574,11 +594,6 @@ fn append_endpoint(output: &mut Vec<u8>, endpoint: Option<f64>) {
         }
         None => output.push(0),
     }
-}
-
-fn append_bytes(output: &mut Vec<u8>, bytes: &[u8]) {
-    output.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
-    output.extend_from_slice(bytes);
 }
 
 fn validate_domain(
@@ -818,5 +833,98 @@ mod tests {
             CanonicalDescriptorTable::new(vec![descriptor], vec![root("line.alpha", 0)]),
             Err(CanonicalDescriptorError::EnvPWithoutPiece { descriptor: 0 })
         ));
+    }
+
+    /// `nodes[0]` is a constant leaf and `nodes[i]` adds the same node twice,
+    /// so the recursive structural key doubled on every level.
+    fn shared_operand_dag(levels: usize) -> CanonicalExpressionDag {
+        let mut nodes = vec![CanonicalExpressionNode::new(
+            CanonicalExpressionOpcode::Constant,
+            CanonicalExpressionType::Float,
+            [None; 3],
+            Some(CanonicalExpressionValue::Float(1.0)),
+            0,
+        )];
+        for index in 1..levels {
+            nodes.push(CanonicalExpressionNode::new(
+                CanonicalExpressionOpcode::Add,
+                CanonicalExpressionType::Float,
+                [Some(index - 1), Some(index - 1), None],
+                None,
+                0,
+            ));
+        }
+        CanonicalExpressionDag::new(nodes, levels - 1).unwrap()
+    }
+
+    /// `descriptors[0]` is a constant and `descriptors[i]` is a Piecewise
+    /// whose two pieces both reference `i - 1`, doubling the recursive
+    /// structural key of the child on every level.
+    fn shared_piecewise_chain(levels: usize) -> Vec<CanonicalPropertyDescriptor> {
+        let mut descriptors = vec![constant(0.5, domain(Some(0.0), Some(2.0), true))];
+        while descriptors.len() < levels {
+            let child = descriptors.len() - 1;
+            let pieces = vec![
+                CanonicalPiece::new(Some(0.0), Some(1.0), false, child).unwrap(),
+                CanonicalPiece::new(Some(1.0), Some(2.0), true, child).unwrap(),
+            ];
+            descriptors.push(
+                CanonicalPropertyDescriptor::new(
+                    CanonicalExpressionType::Float,
+                    domain(Some(0.0), Some(2.0), true),
+                    CanonicalDescriptorKind::Piecewise(pieces),
+                )
+                .unwrap(),
+            );
+        }
+        descriptors
+    }
+
+    #[test]
+    fn shared_expression_subgraphs_fold_across_descriptors() {
+        // Two structurally equal DAGs built independently intern to the same
+        // identity, so descriptors embedding them fold into one entry.
+        let descriptor = |expression: CanonicalExpressionDag| {
+            CanonicalPropertyDescriptor::new(
+                CanonicalExpressionType::Float,
+                domain(None, None, false),
+                CanonicalDescriptorKind::Expression(expression),
+            )
+            .unwrap()
+        };
+        let table = CanonicalDescriptorTable::new(
+            vec![
+                descriptor(shared_operand_dag(4)),
+                descriptor(shared_operand_dag(4)),
+            ],
+            vec![root("line.alpha", 0), root("line.beta", 1)],
+        )
+        .unwrap();
+        assert_eq!(table.descriptors().len(), 1);
+        assert_eq!(table.roots()[0].descriptor(), table.roots()[1].descriptor());
+    }
+
+    #[test]
+    fn shared_subgraphs_do_not_explode_the_structural_keys() {
+        // A 26-level chain that references each level twice used to grow the
+        // recursive key past 1.6 GB; identity interning keeps every key a
+        // bounded size, so the table builds in linear time and the 27
+        // structurally distinct descriptors survive intact.
+        let table =
+            CanonicalDescriptorTable::new(shared_piecewise_chain(27), vec![root("line.alpha", 26)])
+                .unwrap();
+        assert_eq!(table.descriptors().len(), 27);
+
+        // The same holds for a shared-operand expression DAG of the same
+        // depth embedded in one descriptor.
+        let descriptor = CanonicalPropertyDescriptor::new(
+            CanonicalExpressionType::Float,
+            domain(None, None, false),
+            CanonicalDescriptorKind::Expression(shared_operand_dag(27)),
+        )
+        .unwrap();
+        let table =
+            CanonicalDescriptorTable::new(vec![descriptor], vec![root("line.alpha", 0)]).unwrap();
+        assert_eq!(table.descriptors().len(), 1);
     }
 }
