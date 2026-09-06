@@ -149,6 +149,27 @@ with all 933 nextest cases, zero skipped, and all ten bounded fuzz targets at 10
 This closes the identified direct-root traversal defect; final cross-domain conformance and review
 remain governed by #296/#9.
 
+### Core and native FCBC Replace Track corrections
+
+PR [#622](https://github.com/Rancemxn/fcs-project/pull/622) corrects runtime priority selection:
+a conflict among lower-priority replace Tracks is discarded when a higher active Track wins.
+`higher_replace_priority_masks_lower_priority_conflicts` exercises Alpha and ScrollSpeed,
+half-open boundaries, input reordering, repeated seeks, and the subsequent Add/Multiply operations.
+Corrective head `e8ed6aff728cd117a5d39c3bf7603ae3701b45b2` passed push Full Gate
+[34004713924](https://github.com/Rancemxn/fcs-project/actions/runs/34004713924); merged main
+`66fb34f9f8b044791c6350e71d404b91bf3b23ad` passed
+[34005044336](https://github.com/Rancemxn/fcs-project/actions/runs/34005044336).
+
+PR [#624](https://github.com/Rancemxn/fcs-project/pull/624) allows native writing of disjoint
+base-filled replace Tracks with differing priorities. The writer reuses canonical active intervals,
+including persistent points, before its unchanged exact merge. The expanded
+`write_from_compilation_merges_disjoint_replace_tracks` checks byte-identical output for three
+priority orderings, exact product queries for separated/adjacent intervals, and rejection of segment
+and persistent-point overlaps. Corrective head `02374d5ae6f18e589d7e4a9accf44cc9302acd05` passed
+push Full Gate [34005791775](https://github.com/Rancemxn/fcs-project/actions/runs/34005791775),
+job `101412596436`, with 911 nextest cases, zero skipped, and ten fuzz targets at 1024 runs each.
+These bounded corrections do not complete exact native Track composition.
+
 ## Verified implementation residuals
 
 The requirement audit found concrete product gaps beyond the historical pending-review statements.
@@ -158,7 +179,7 @@ They remain within #296/#9 and prevent an implementation or RC completion claim:
 |---|---|---|
 | Render 3.2 and Core 6.3–6.8 | `lower_render_scene` and `RenderLowerer::lower_node` require every child to be `RenderItem::Node`; `phase2_schema` has no RenderNode constructor schema. | Expand compile-time `if`, templates, `with`, and generators with the shared Core budgets before canonical lowering. The RenderNode constructor kind/ID spelling still needs an explicit specification decision. |
 | Render 2 and 12 | The parser retains `RenderBodyItem::Tracks`, but the source Render lowerer never consumes it. | Lower each permitted Render Track to exact descriptors, validate its target and composition, and prove time-varying product results. |
-| Core 9 and FCBC 13 | `write_from_compilation_with_profile` always calls `native_tracks`; it rejects non-replace blends, and `native_disjoint_replace_fixture` accepts only equal-priority, base-filled replace groups. | Complete exact Track blend/priority/fill assembly through the product writer and runtime, including supported canonical charts produced by conversion. |
+| Core 9 and FCBC 13 | `write_from_compilation_with_profile` always calls `native_tracks`; it rejects non-replace blends. Multiple replace Tracks now accept differing priorities when their effective intervals are disjoint and all fill/extrapolation policies are base; overlapping selection and non-base layered fills remain unsupported. | Complete exact Track blend/priority/fill assembly through the product writer and runtime, including supported canonical charts produced by conversion. |
 
 ## Matrix reconciliation
 
