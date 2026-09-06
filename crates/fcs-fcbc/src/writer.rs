@@ -2607,7 +2607,14 @@ fn native_blended_fixture(
     let base = match target {
         CanonicalTrackTarget::Alpha => CanonicalTrackValue::Float(line.alpha),
         CanonicalTrackTarget::ScrollSpeed => CanonicalTrackValue::Float(1.0),
-        CanonicalTrackTarget::Scale => CanonicalTrackValue::Vec2Float(line.scale),
+        CanonicalTrackTarget::Scale => CanonicalTrackValue::Vec2Float(
+            fcs_model::CanonicalVec2::new(line.scale[0], line.scale[1]).map_err(|_| {
+                FcbcError::new(
+                    "fcbc.unsupported-track",
+                    format!("Line {line_id} scale base is not finite"),
+                )
+            })?,
+        ),
         CanonicalTrackTarget::Position | CanonicalTrackTarget::Rotation => {
             unreachable!("unit-typed blending rejects above")
         }
