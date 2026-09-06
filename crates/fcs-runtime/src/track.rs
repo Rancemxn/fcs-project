@@ -217,7 +217,7 @@ fn evaluate_fill(
                 CanonicalTrackPiece::Segment(segment)
                     if segment.end().chart_time_seconds() <= chart_time =>
                 {
-                    Some(segment.end_value())
+                    Some(segment.end_limit())
                 }
                 _ => None,
             })
@@ -1175,6 +1175,63 @@ mod tests {
                 track: "error".to_owned()
             })
         );
+    }
+
+    #[test]
+    fn hold_after_resolves_step_from_the_segment_end_limit() {
+        // FCS section 9.3 resolves holdAfter from the previous segment's end
+        // limit, and 9.4 makes a step hold its start value throughout, so a
+        // step 0.25 -> 0.75 holds 0.25 after the segment and across the gap,
+        // never 0.75.
+        let owner = owner("main");
+        let track = CanonicalTrack::new(
+            owner.clone(),
+            "step-hold",
+            CanonicalTrackTarget::Alpha,
+            CanonicalTrackBlend::Replace,
+            0,
+            CanonicalTrackFill::HoldAfter,
+            CanonicalTrackFill::HoldBefore,
+            CanonicalTrackFill::HoldAfter,
+            vec![
+                CanonicalTrackPiece::Segment(
+                    CanonicalTrackSegment::new(
+                        time(0.0),
+                        time(1.0),
+                        CanonicalTrackValue::Float(0.25),
+                        CanonicalTrackValue::Float(0.75),
+                        CanonicalTrackInterpolation::Step,
+                        0,
+                    )
+                    .unwrap(),
+                ),
+                CanonicalTrackPiece::Segment(
+                    CanonicalTrackSegment::new(
+                        time(2.0),
+                        time(3.0),
+                        CanonicalTrackValue::Float(0.5),
+                        CanonicalTrackValue::Float(0.5),
+                        CanonicalTrackInterpolation::Step,
+                        1,
+                    )
+                    .unwrap(),
+                ),
+            ],
+        )
+        .unwrap();
+        let tracks = CanonicalTrackSet::new(vec![track]).unwrap();
+        for (query, expected) in [(0.5, 0.25), (1.0, 0.25), (1.5, 0.25), (5.0, 0.5)] {
+            assert_eq!(
+                evaluate_track_set(
+                    &tracks,
+                    &owner,
+                    CanonicalTrackTarget::Alpha,
+                    query,
+                    CanonicalTrackValue::Float(1.0),
+                ),
+                Ok(CanonicalTrackValue::Float(expected))
+            );
+        }
     }
 
     #[test]

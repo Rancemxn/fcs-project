@@ -3103,7 +3103,7 @@ fn native_track_fill_constant(
                 NativeFillInterval::After => pieces.len(),
             };
             pieces[..end].iter().rev().find_map(|piece| match piece {
-                CanonicalTrackPiece::Segment(segment) => Some(segment.end_value()),
+                CanonicalTrackPiece::Segment(segment) => Some(segment.end_limit()),
                 CanonicalTrackPiece::Point(_) => None,
             })
         }

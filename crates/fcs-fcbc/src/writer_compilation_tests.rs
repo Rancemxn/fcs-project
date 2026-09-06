@@ -2658,3 +2658,62 @@ fn write_from_compilation_round_trips_a_shared_piecewise_chain() {
         );
     }
 }
+
+#[test]
+fn write_from_compilation_resolves_step_hold_after_from_the_end_limit() {
+    // FCS section 9.3/9.4: step's end limit is its start value, so both the
+    // internal gap fill and the trailing extrapolation hold 0.25 after a
+    // step 0.25 -> 0.75, through the native write/load/query path.
+    let workspace = tempdir().unwrap();
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        alpha: 1.0;
+        tracks {
+            track step-hold -> alpha: float {
+                fill: "holdAfter";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "holdAfter";
+                segments {
+                    [0s, 1s): 0.25 -> 0.75 using "step";
+                    [2s, 3s): 0.5 -> 0.5 using "step";
+                }
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source).into_result().unwrap();
+    let compilation = document
+        .canonical_compilation(
+            CompileTimeLimits::default(),
+            workspace.path(),
+            ResourceLimits::default(),
+        )
+        .unwrap();
+
+    let bytes = write_from_compilation(&compilation).unwrap();
+    let decoded = crate::load_chart(&bytes).expect("step holdAfter Track must load");
+    let descriptor = decoded.lines.first().expect("main Line").alpha_descriptor;
+    let evaluate = |time| {
+        crate::query_descriptor(
+            &decoded,
+            descriptor,
+            time,
+            crate::EvaluationEnvironment::at_time(time),
+        )
+        .expect("step holdAfter evaluation")
+        .value
+    };
+    let alpha = |value| crate::RuntimeValue::Scalar {
+        ty: crate::ValueType::Float,
+        value,
+    };
+    // Interior, exact end, internal gap, and trailing extrapolation.
+    assert_runtime_value_bits(evaluate(0.5), alpha(0.25));
+    assert_runtime_value_bits(evaluate(1.0), alpha(0.25));
+    assert_runtime_value_bits(evaluate(1.5), alpha(0.25));
+    assert_runtime_value_bits(evaluate(3.5), alpha(0.5));
+}
