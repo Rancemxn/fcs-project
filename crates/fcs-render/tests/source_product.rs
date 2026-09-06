@@ -799,6 +799,7 @@ fn source_render_roots_follow_canonical_order_after_visibility() {
     let negative = "choose { when s < 1s => 1px; else => -1px; }";
     let failure = "1px * (1s / (2s - s))";
     let angle_failure = "1rad * (1s / (2s - s))";
+    let stroke_style = "cap: \"butt\"; join: \"miter\"; miterLimit: 4.0; dash: [];";
     let stops = "[stop(0.0, #FFFFFFFF), stop(1.0, #000000FF)]";
     let radial = |start: &str, end: &str| {
         format!("radialGradient(vec2(0px, 0px), {start}, vec2(0px, 0px), {end}, {stops}, \"pad\")")
@@ -841,7 +842,7 @@ fn source_render_roots_follow_canonical_order_after_visibility() {
         (
             "stroke paint endRadius before fill startRadius",
             format!(
-                "circle shape {{ radius: 1px; fill: {}; stroke: {}; width: 1px; }}",
+                "circle shape {{ radius: 1px; fill: {}; stroke: {}; width: 1px; dashOffset: 0px; {stroke_style} }}",
                 radial(failure, "2px"),
                 radial("0px", negative)
             ),
@@ -850,7 +851,7 @@ fn source_render_roots_follow_canonical_order_after_visibility() {
         (
             "fill paint endRadius before stroke startRadius",
             format!(
-                "circle shape {{ radius: 1px; fill: {}; stroke: {}; width: 1px; }}",
+                "circle shape {{ radius: 1px; fill: {}; stroke: {}; width: 1px; dashOffset: 0px; {stroke_style} }}",
                 radial("0px", negative),
                 radial(failure, "2px")
             ),
@@ -874,7 +875,7 @@ fn source_render_roots_follow_canonical_order_after_visibility() {
         (
             "Path direction before stroke query",
             format!(
-                "path shape {{ fillRule: \"nonzero\"; commands: [moveTo(vec2(0px, 0px)), arc(vec2(0px, 0px), 1px, choose {{ when s < 1s => 0rad; else => 2rad; }}, 1rad, \"counterClockwise\")]; stroke: solid(#FFFFFFFF); width: {failure}; }}"
+                "path shape {{ fillRule: \"nonzero\"; commands: [moveTo(vec2(0px, 0px)), arc(vec2(0px, 0px), 1px, choose {{ when s < 1s => 0rad; else => 2rad; }}, 1rad, \"counterClockwise\")]; stroke: solid(#FFFFFFFF); width: {failure}; dashOffset: 0px; {stroke_style} }}"
             ),
             "render.invalid-geometry",
         ),
@@ -885,13 +886,56 @@ fn source_render_roots_follow_canonical_order_after_visibility() {
             ),
             "render.invalid-geometry",
         ),
+        (
+            "Clip geometry before node opacity",
+            format!(
+                "clipGroup shape {{ clip.kind: \"circle\"; clip.fillRule: \"nonzero\"; clip.radius: {negative}; opacity: 1s / (2s - s); }}"
+            ),
+            "render.invalid-geometry",
+        ),
+        (
+            "Image destination before node transform",
+            format!(
+                "image shape {{ resource: @sprite; destination.origin: vec2(0px, 0px); destination.size: vec2({negative}, 1px); rotation: {angle_failure}; }}"
+            ),
+            "render.invalid-geometry",
+        ),
+        (
+            "Image source origin before source size",
+            "image shape { resource: @sprite; destination.origin: vec2(0px, 0px); destination.size: vec2(1px, 1px); sourceRect.origin: choose { when s < 1s => vec2(0.0, 0.0); else => vec2(-1.0, 0.0); }; sourceRect.size: vec2(1s / (2s - s), 1.0); }".to_owned(),
+            "render.invalid-geometry",
+        ),
+        (
+            "Image source bounds before source size",
+            "image shape { resource: @sprite; destination.origin: vec2(0px, 0px); destination.size: vec2(1px, 1px); sourceRect.origin: choose { when s < 1s => vec2(0.0, 0.0); else => vec2(3.0, 0.0); }; sourceRect.size: vec2(1s / (2s - s), 1.0); }".to_owned(),
+            "render.invalid-geometry",
+        ),
+        (
+            "Image texel-center constraint before opacity",
+            "image shape { resource: @sprite; destination.origin: vec2(0px, 0px); destination.size: vec2(1px, 1px); sourceRect.origin: choose { when s < 1s => vec2(0.0, 0.0); else => vec2(0.1, 0.1); }; sourceRect.size: choose { when s < 1s => vec2(1.0, 1.0); else => vec2(0.1, 0.1); }; opacity: 1s / (2s - s); }".to_owned(),
+            "render.invalid-geometry",
+        ),
+        (
+            "interned origin still validates size",
+            format!(
+                "rect shape {{ origin: vec2({negative}, 1px); size: vec2({negative}, 1px); fill: solid(#FFFFFFFF); }}"
+            ),
+            "render.invalid-geometry",
+        ),
+        (
+            "interned dashOffset still validates width",
+            format!(
+                "line shape {{ start: vec2(0px, 0px); end: vec2(1px, 0px); stroke: solid(#FFFFFFFF); width: {negative}; dashOffset: {negative}; {stroke_style} }}"
+            ),
+            "render.invalid-stroke",
+        ),
     ];
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/conformance/render");
     for (case, node, expected) in cases {
         for gate in ["", "visibility: false;", "active: [0s, 1s);"] {
             let node = node.replacen('{', &format!("{{ {gate}"), 1);
             let source = format!(
-                "#fcs 5.0.0\nformat {{ profile: renderable; }}\nresources {{ font primary {{ source: \"assets/fcs-test-font.ttf\"; mediaType: \"font/ttf\"; }} }}\ntempoMap {{ 0beat -> 120bpm; }}\nrender profile 1.0.0 {{ viewport {{ width: 4px; height: 4px; }} layer main {{ pass: \"overlay\"; children {{ {node} }} }} }}"
+                "#fcs 5.0.0\nformat {{ profile: renderable; }}\nresources {{ font primary {{ source: \"assets/fcs-test-font.ttf\"; mediaType: \"font/ttf\"; }} image sprite {{ source: \"assets/fcs-test-rgba8.png\"; mediaType: \"image/png\"; colorSpace: \"srgb\"; alpha: \"straight\"; sampling: \"nearest\"; }} }}\ntempoMap {{ 0beat -> 120bpm; }}\nrender profile 1.0.0 {{ viewport {{ width: 4px; height: 4px; }} layer main {{ pass: \"overlay\"; children {{ {node} }} }} }}"
             );
             let document = parse_document(&source).into_result().expect(case);
             let compilation = document
@@ -904,6 +948,17 @@ fn source_render_roots_follow_canonical_order_after_visibility() {
                 .unwrap_or_else(|diagnostics| panic!("{case}: {diagnostics:?}"));
             let bytes = write_from_compilation(&compilation).expect(case);
             let render = load_render(&bytes).expect(case);
+            if case == "interned origin still validates size" {
+                let GeometryData::Rect { origin, size } = render.geometries[0].data else {
+                    panic!("Rect geometry");
+                };
+                assert_eq!(origin, size);
+            } else if case == "interned dashOffset still validates width" {
+                assert_eq!(
+                    render.strokes[0].dash_offset_descriptor,
+                    render.strokes[0].width_descriptor
+                );
+            }
             assert!(
                 evaluate_semantic_draw_list_at(&render, 0.0).is_ok(),
                 "{case}"
@@ -942,9 +997,11 @@ fn source_render_roots_follow_canonical_order_after_visibility() {
 #[test]
 fn source_render_shared_root_paths_follow_owner_stable_ids() {
     let mut owner_orders = [false; 2];
+    let stroke_style =
+        "cap: \"butt\"; join: \"miter\"; miterLimit: 4.0; dash: []; dashOffset: 0px;";
     for ordinal in 0..16 {
         let source = format!(
-            "#fcs 5.0.0\nformat {{ profile: renderable; }}\ntempoMap {{ 0beat -> 120bpm; }}\nrender profile 1.0.0 {{ viewport {{ width: 4px; height: 4px; }} layer main {{ pass: \"overlay\"; children {{ circle shape{ordinal} {{ radius: 1px; fill: radialGradient(vec2(0px, 0px), 0px, vec2(0px, 0px), choose {{ when s < 1s => 1px; else => -1px; }}, [stop(0.0, #FFFFFFFF), stop(1.0, #000000FF)], \"pad\"); stroke: radialGradient(vec2(0px, 0px), 0px, vec2(0px, 0px), 1px * (1s / (2s - s)), [stop(0.0, #FFFFFFFF), stop(1.0, #000000FF)], \"pad\"); width: 1px; }} }} }} }}"
+            "#fcs 5.0.0\nformat {{ profile: renderable; }}\ntempoMap {{ 0beat -> 120bpm; }}\nrender profile 1.0.0 {{ viewport {{ width: 4px; height: 4px; }} layer main {{ pass: \"overlay\"; children {{ circle shape{ordinal} {{ radius: 1px; fill: radialGradient(vec2(0px, 0px), 0px, vec2(0px, 0px), choose {{ when s < 1s => 1px; else => -1px; }}, [stop(0.0, #FFFFFFFF), stop(1.0, #000000FF)], \"pad\"); stroke: radialGradient(vec2(0px, 0px), 0px, vec2(0px, 0px), 1px * (1s / (2s - s)), [stop(0.0, #FFFFFFFF), stop(1.0, #000000FF)], \"pad\"); width: 1px; {stroke_style} }} }} }} }}"
         );
         let document = parse_document(&source)
             .into_result()
