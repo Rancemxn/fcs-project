@@ -1,10 +1,10 @@
 use fcs_model::{
     CanonicalChart, CanonicalCompilation, CanonicalContributor, CanonicalCredit,
     CanonicalCreditRole, CanonicalDescriptorKind, CanonicalDescriptorTable, CanonicalExpressionDag,
-    CanonicalExpressionOpcode, CanonicalExpressionType, CanonicalExpressionValue,
-    CanonicalGradientSpread, CanonicalJudgeShape, CanonicalNoteKind, CanonicalNoteScorePolicy,
-    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalPathCommand,
-    CanonicalProfile, CanonicalProfileFeature, CanonicalRenderGeometryData,
+    CanonicalExpressionNode, CanonicalExpressionOpcode, CanonicalExpressionType,
+    CanonicalExpressionValue, CanonicalGradientSpread, CanonicalJudgeShape, CanonicalNoteKind,
+    CanonicalNoteScorePolicy, CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject,
+    CanonicalPathCommand, CanonicalProfile, CanonicalProfileFeature, CanonicalRenderGeometryData,
     CanonicalRenderPaintData, CanonicalRenderScene, CanonicalRequiredExtension,
     CanonicalResourceKind, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
     CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget,
@@ -177,6 +177,24 @@ enum NativeTrackKind {
         regions: Vec<NativeRegion>,
         layers: Vec<NativeTrackLayer>,
     },
+    /// Replace/Add/Multiply blend composition. Regions are elementary
+    /// chartTime intervals in order; each references an exact Expression DAG
+    /// over EnvS that mirrors the canonical blend order and per-operation
+    /// rounding. `scroll_boundaries` carries every group piece time for the
+    /// Distance boundary table.
+    Blended {
+        property_type: u8,
+        regions: Vec<BlendedRegion>,
+        expressions: Vec<CanonicalExpressionDag>,
+        scroll_boundaries: Vec<f64>,
+    },
+}
+
+#[derive(Clone)]
+struct BlendedRegion {
+    /// Ignored for the first region, which is unbounded before.
+    start: f64,
+    expression: usize,
 }
 
 #[derive(Clone)]
@@ -205,6 +223,23 @@ impl NativeTrackFixture {
                 .iter()
                 .map(|layer| (&layer.before_constant, layer.segments.as_slice()))
                 .collect(),
+            NativeTrackKind::Blended { .. } => Vec::new(),
+        }
+    }
+
+    /// Finite times the Distance boundary table must cover for this Track's
+    /// reachable descriptors, excluding the integration origin.
+    fn distance_boundaries(&self) -> Vec<f64> {
+        match &self.kind {
+            NativeTrackKind::Single(_) | NativeTrackKind::Layered { .. } => self
+                .layers()
+                .into_iter()
+                .flat_map(|(_, segments)| segments.iter())
+                .flat_map(|segment| [segment.start, segment.end])
+                .collect(),
+            NativeTrackKind::Blended {
+                scroll_boundaries, ..
+            } => scroll_boundaries.clone(),
         }
     }
 }
@@ -880,6 +915,16 @@ fn assemble_package(
             // Composed roots select the Line base wherever no Track is active.
             if let NativeTrackKind::Layered { base, .. } = &track.kind {
                 constants.push(base.clone());
+            }
+            // Blend expressions reference their node constants directly.
+            if let NativeTrackKind::Blended { expressions, .. } = &track.kind {
+                for expression in expressions {
+                    for node in expression.nodes() {
+                        if let Some(value) = node.constant() {
+                            constants.push(canonical_expression_constant(value)?);
+                        }
+                    }
+                }
             }
         }
         if let Some(runtime_descriptors) = runtime_descriptors {
@@ -2247,16 +2292,6 @@ fn native_tracks(
                 format!("Track {} references missing Line {line_id}", track.name()),
             ));
         }
-        if track.blend() != CanonicalTrackBlend::Replace {
-            return Err(FcbcError::new(
-                "fcbc.unsupported-track",
-                format!(
-                    "native {:?} Track {} requires replace blend",
-                    track.target(),
-                    track.name()
-                ),
-            ));
-        }
         grouped
             .entry((line_id, track.target()))
             .or_default()
@@ -2265,12 +2300,17 @@ fn native_tracks(
 
     let mut lowered = Vec::new();
     for ((line_id, target), group) in grouped {
-        if group.len() == 1 {
+        let all_replace = group
+            .iter()
+            .all(|track| track.blend() == CanonicalTrackBlend::Replace);
+        if all_replace && group.len() == 1 {
             lowered.push(native_single_track_fixture(group[0], lines)?);
-        } else {
+        } else if all_replace {
             lowered.push(native_layered_replace_fixture(
                 &group, lines, line_id, target,
             )?);
+        } else {
+            lowered.push(native_blended_fixture(&group, lines, line_id, target)?);
         }
     }
     lowered.sort_by_key(|track| (track.line_id, track.target));
@@ -2415,6 +2455,74 @@ fn native_track_layer(
     })
 }
 
+/// Highest active replace Track at `time`.
+///
+/// Mirrors `evaluate_track_set`'s replace selection: a strictly higher active
+/// priority covers a tie seen at a lower one, and only a tie at the highest
+/// active priority is a conflict.
+fn select_replace_winner<'a>(
+    tracks: &[&'a CanonicalTrack],
+    time: f64,
+    target: CanonicalTrackTarget,
+    line_id: u64,
+) -> FcbcResult<Option<&'a CanonicalTrack>> {
+    let mut selected: Option<&CanonicalTrack> = None;
+    let mut tied = false;
+    for track in tracks {
+        let active = fcs_runtime::evaluate_track(track, time).map_err(|error| {
+            FcbcError::new(
+                "fcbc.unsupported-track",
+                format!(
+                    "native {:?} Track {} cannot be materialized for Line {line_id}: {error}",
+                    target,
+                    track.name()
+                ),
+            )
+        })?;
+        if active.is_none() {
+            continue;
+        }
+        match selected {
+            None => selected = Some(track),
+            Some(top) if top.priority() == track.priority() => tied = true,
+            Some(top) if top.priority() < track.priority() => {
+                selected = Some(track);
+                tied = false;
+            }
+            _ => {}
+        }
+    }
+    if tied {
+        let priority = selected
+            .expect("a tie implies a selected priority")
+            .priority();
+        return Err(FcbcError::new(
+            "fcbc.unsupported-track",
+            format!(
+                "native {:?} Track layering for Line {line_id} has effective replace Tracks \
+                 tied at priority {priority}",
+                target
+            ),
+        ));
+    }
+    Ok(selected)
+}
+
+fn region_boundaries(tracks: &[&CanonicalTrack]) -> Vec<f64> {
+    let mut boundaries = Vec::new();
+    for track in tracks {
+        for piece in track.pieces() {
+            boundaries.push(track_piece_time(piece));
+            if let CanonicalTrackPiece::Segment(segment) = piece {
+                boundaries.push(segment.end().chart_time_seconds());
+            }
+        }
+    }
+    boundaries.sort_by(f64::total_cmp);
+    boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
+    boundaries
+}
+
 /// Composes a multi-Track replace group for one (Line, target) exactly.
 ///
 /// Region boundaries are every Track piece time; inside an elementary region
@@ -2438,72 +2546,22 @@ fn native_layered_replace_fixture(
         line_id: u64,
         winners: &mut Vec<&'a CanonicalTrack>,
     ) -> FcbcResult<Option<usize>> {
-        // Mirrors evaluate_track_set's replace selection: a strictly higher
-        // active priority covers a tie seen at a lower one, and only a tie at
-        // the highest active priority is a conflict.
-        let mut selected: Option<&CanonicalTrack> = None;
-        let mut tied = false;
-        for track in tracks {
-            let active = fcs_runtime::evaluate_track(track, time).map_err(|error| {
-                FcbcError::new(
-                    "fcbc.unsupported-track",
-                    format!(
-                        "native {:?} Track {} cannot be materialized for Line {line_id}: {error}",
-                        target,
-                        track.name()
-                    ),
-                )
-            })?;
-            if active.is_none() {
-                continue;
-            }
-            match selected {
-                None => selected = Some(track),
-                Some(top) if top.priority() == track.priority() => tied = true,
-                Some(top) if top.priority() < track.priority() => {
-                    selected = Some(track);
-                    tied = false;
+        Ok(
+            select_replace_winner(tracks, time, target, line_id)?.map(|track| {
+                if let Some(index) = winners
+                    .iter()
+                    .position(|winner| std::ptr::eq(*winner, track))
+                {
+                    index
+                } else {
+                    winners.push(track);
+                    winners.len() - 1
                 }
-                _ => {}
-            }
-        }
-        if tied {
-            let priority = selected
-                .expect("a tie implies a selected priority")
-                .priority();
-            return Err(FcbcError::new(
-                "fcbc.unsupported-track",
-                format!(
-                    "native {:?} Track layering for Line {line_id} has effective replace Tracks \
-                     tied at priority {priority}",
-                    target
-                ),
-            ));
-        }
-        Ok(selected.map(|track| {
-            if let Some(index) = winners
-                .iter()
-                .position(|winner| std::ptr::eq(*winner, track))
-            {
-                index
-            } else {
-                winners.push(track);
-                winners.len() - 1
-            }
-        }))
+            }),
+        )
     }
 
-    let mut boundaries = Vec::new();
-    for track in tracks {
-        for piece in track.pieces() {
-            boundaries.push(track_piece_time(piece));
-            if let CanonicalTrackPiece::Segment(segment) = piece {
-                boundaries.push(segment.end().chart_time_seconds());
-            }
-        }
-    }
-    boundaries.sort_by(f64::total_cmp);
-    boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
+    let boundaries = region_boundaries(tracks);
 
     let mut winners: Vec<&CanonicalTrack> = Vec::new();
     let mut regions: Vec<NativeRegion> = Vec::new();
@@ -2542,6 +2600,494 @@ fn native_layered_replace_fixture(
             layers,
         },
     })
+}
+
+/// Composes a Replace/Add/Multiply Track group for one (Line, target) exactly.
+///
+/// Each elementary region's value is one Expression DAG over EnvS whose node
+/// arithmetic mirrors `evaluate_track`/`evaluate_track_set` operation for
+/// operation: the segment `Sub → Div → Clamp → Easing` progress, the
+/// `start + (end-start)*p'` interpolation, and the
+/// base → replace → Adds → Multiplies fold. Every binary64 operation rounds
+/// once in both lanes, so the product query and the canonical runtime agree
+/// bit for bit. Contributions that ABI 1.0 cannot express exactly — unit-typed
+/// targets (no `Mul` row for U×float) and cubicBezier segments inside a blend
+/// (no Expression opcode for the correctly rounded Bezier solve) — reject the
+/// write instead of approximating.
+fn native_blended_fixture(
+    tracks: &[&CanonicalTrack],
+    lines: &[LineFixture],
+    line_id: u64,
+    target: CanonicalTrackTarget,
+) -> FcbcResult<NativeTrackFixture> {
+    let property_type = match target {
+        CanonicalTrackTarget::Alpha | CanonicalTrackTarget::ScrollSpeed => TY_FLOAT,
+        CanonicalTrackTarget::Scale => TY_VEC2_FLOAT,
+        CanonicalTrackTarget::Position | CanonicalTrackTarget::Rotation => {
+            return Err(FcbcError::new(
+                "fcbc.unsupported-track",
+                format!(
+                    "native {:?} Track blending for Line {line_id} has no exact ABI 1.0 encoding",
+                    target
+                ),
+            ));
+        }
+    };
+    let line = lines
+        .iter()
+        .find(|line| line.id == line_id)
+        .expect("validated Line owner");
+    let base = match target {
+        CanonicalTrackTarget::Alpha => CanonicalTrackValue::Float(line.alpha),
+        CanonicalTrackTarget::ScrollSpeed => CanonicalTrackValue::Float(1.0),
+        CanonicalTrackTarget::Scale => CanonicalTrackValue::Vec2Float(
+            fcs_model::CanonicalVec2::new(line.scale[0], line.scale[1]).map_err(|_| {
+                FcbcError::new(
+                    "fcbc.unsupported-track",
+                    format!("Line {line_id} scale base is not finite"),
+                )
+            })?,
+        ),
+        CanonicalTrackTarget::Position | CanonicalTrackTarget::Rotation => {
+            unreachable!("unit-typed blending rejects above")
+        }
+    };
+    let replaces: Vec<&CanonicalTrack> = tracks
+        .iter()
+        .copied()
+        .filter(|track| track.blend() == CanonicalTrackBlend::Replace)
+        .collect();
+    let boundaries = region_boundaries(tracks);
+
+    let mut expressions = Vec::new();
+    let mut regions = Vec::new();
+    let probe = |time: f64, expressions: &mut Vec<CanonicalExpressionDag>| -> FcbcResult<usize> {
+        let expression = blended_region_expression(tracks, &replaces, time, base, target, line_id)?;
+        expressions.push(expression);
+        Ok(expressions.len() - 1)
+    };
+    let first = probe(f64::NEG_INFINITY, &mut expressions)?;
+    regions.push(BlendedRegion {
+        start: 0.0,
+        expression: first,
+    });
+    for boundary in &boundaries {
+        let expression = probe(*boundary, &mut expressions)?;
+        regions.push(BlendedRegion {
+            start: *boundary,
+            expression,
+        });
+    }
+    Ok(NativeTrackFixture {
+        line_id,
+        target,
+        kind: NativeTrackKind::Blended {
+            property_type,
+            regions,
+            expressions,
+            scroll_boundaries: boundaries,
+        },
+    })
+}
+
+/// Builds one region's exact blend Expression DAG. `time` is the region's left
+/// endpoint, or negative infinity for the unbounded-before region.
+fn blended_region_expression(
+    tracks: &[&CanonicalTrack],
+    replaces: &[&CanonicalTrack],
+    time: f64,
+    base: CanonicalTrackValue,
+    target: CanonicalTrackTarget,
+    line_id: u64,
+) -> FcbcResult<CanonicalExpressionDag> {
+    let mut builder = BlendExpressionBuilder::default();
+    let mut value = match select_replace_winner(replaces, time, target, line_id)? {
+        Some(track) => {
+            let contribution =
+                fcs_runtime::evaluate_track_contribution(track, time).map_err(|error| {
+                    FcbcError::new(
+                        "fcbc.unsupported-track",
+                        format!(
+                            "native {:?} Track {} cannot be materialized for Line {line_id}: \
+                             {error}",
+                            target,
+                            track.name()
+                        ),
+                    )
+                })?;
+            // A selected replace Track is active by construction.
+            builder.contribution(
+                contribution.expect("selected replace Track is active"),
+                target,
+            )?
+        }
+        None => builder.constant_value(base),
+    };
+    for operation in [CanonicalTrackBlend::Add, CanonicalTrackBlend::Multiply] {
+        // The group preserves the canonical (priority, name) order of the
+        // surrounding TrackSet, matching evaluate_track_set's fold order.
+        for track in tracks.iter().filter(|track| track.blend() == operation) {
+            let Some(contribution) = fcs_runtime::evaluate_track_contribution(track, time)
+                .map_err(|error| {
+                    FcbcError::new(
+                        "fcbc.unsupported-track",
+                        format!(
+                            "native {:?} Track {} cannot be materialized for Line {line_id}: \
+                             {error}",
+                            target,
+                            track.name()
+                        ),
+                    )
+                })?
+            else {
+                continue;
+            };
+            let operand = builder.contribution(contribution, target)?;
+            value = match operation {
+                CanonicalTrackBlend::Add => builder.add(value, operand),
+                CanonicalTrackBlend::Multiply => builder.multiply(value, operand),
+                CanonicalTrackBlend::Replace => {
+                    unreachable!("replace Tracks are selected above")
+                }
+            };
+        }
+    }
+    let root = builder.root(value);
+    CanonicalExpressionDag::new(builder.nodes, root)
+        .map_err(|error| FcbcError::new("fcbc.unsupported-track", error.to_string()))
+}
+
+/// One region's composed value: a float node for scalar targets, a vec2-float
+/// node for Scale.
+#[derive(Clone, Copy)]
+enum BlendValue {
+    Scalar(usize),
+    Vec2(usize),
+}
+
+/// Appends exact float/vec2-float expression nodes in topological order.
+#[derive(Default)]
+struct BlendExpressionBuilder {
+    nodes: Vec<CanonicalExpressionNode>,
+}
+
+impl BlendExpressionBuilder {
+    fn push(&mut self, node: CanonicalExpressionNode) -> usize {
+        self.nodes.push(node);
+        self.nodes.len() - 1
+    }
+
+    fn float_constant(&mut self, value: f64) -> usize {
+        self.push(CanonicalExpressionNode::new(
+            CanonicalExpressionOpcode::Constant,
+            CanonicalExpressionType::Float,
+            [None, None, None],
+            Some(CanonicalExpressionValue::Float(value)),
+            0,
+        ))
+    }
+
+    fn time_constant(&mut self, value: f64) -> usize {
+        self.push(CanonicalExpressionNode::new(
+            CanonicalExpressionOpcode::Constant,
+            CanonicalExpressionType::Time,
+            [None, None, None],
+            Some(CanonicalExpressionValue::Time(value)),
+            0,
+        ))
+    }
+
+    fn env_s(&mut self) -> usize {
+        self.push(CanonicalExpressionNode::new(
+            CanonicalExpressionOpcode::EnvS,
+            CanonicalExpressionType::Time,
+            [None, None, None],
+            None,
+            0,
+        ))
+    }
+
+    fn binary(
+        &mut self,
+        opcode: CanonicalExpressionOpcode,
+        left: usize,
+        right: usize,
+        result: CanonicalExpressionType,
+    ) -> usize {
+        self.push(CanonicalExpressionNode::new(
+            opcode,
+            result,
+            [Some(left), Some(right), None],
+            None,
+            0,
+        ))
+    }
+
+    /// `Clamp(value, 0.0, 1.0)` — mirrors `clamp_progress`.
+    fn clamp01(&mut self, value: usize) -> usize {
+        let low = self.float_constant(0.0);
+        let high = self.float_constant(1.0);
+        self.push(CanonicalExpressionNode::new(
+            CanonicalExpressionOpcode::Clamp,
+            CanonicalExpressionType::Float,
+            [Some(value), Some(low), Some(high)],
+            None,
+            0,
+        ))
+    }
+
+    fn easing(&mut self, id: u16, progress: usize) -> usize {
+        self.push(CanonicalExpressionNode::new(
+            CanonicalExpressionOpcode::Easing,
+            CanonicalExpressionType::Float,
+            [Some(progress), None, None],
+            None,
+            id as u32,
+        ))
+    }
+
+    fn vec2(&mut self, x: usize, y: usize) -> usize {
+        self.push(CanonicalExpressionNode::new(
+            CanonicalExpressionOpcode::Vec2,
+            CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Float)),
+            [Some(x), Some(y), None],
+            None,
+            0,
+        ))
+    }
+
+    fn component(&mut self, value: usize, y: bool) -> usize {
+        self.push(CanonicalExpressionNode::new(
+            if y {
+                CanonicalExpressionOpcode::Vec2Y
+            } else {
+                CanonicalExpressionOpcode::Vec2X
+            },
+            CanonicalExpressionType::Float,
+            [Some(value), None, None],
+            None,
+            0,
+        ))
+    }
+
+    /// A constant contribution: point value, resolved fill, identity, or base.
+    fn constant_value(&mut self, value: CanonicalTrackValue) -> BlendValue {
+        match value {
+            CanonicalTrackValue::Float(value) => BlendValue::Scalar(self.float_constant(value)),
+            CanonicalTrackValue::Vec2Float(value) => {
+                let x = self.float_constant(value.x());
+                let y = self.float_constant(value.y());
+                BlendValue::Vec2(self.vec2(x, y))
+            }
+            // Angle/Vec2Length blending rejects at fixture entry.
+            CanonicalTrackValue::Angle(_) | CanonicalTrackValue::Vec2Length(_) => {
+                unreachable!("unit-typed blend contributions reject at fixture entry")
+            }
+        }
+    }
+
+    /// One Track contribution at the region's left endpoint.
+    fn contribution(
+        &mut self,
+        contribution: fcs_runtime::TrackContribution<'_>,
+        target: CanonicalTrackTarget,
+    ) -> FcbcResult<BlendValue> {
+        match contribution {
+            fcs_runtime::TrackContribution::Constant(value) => Ok(self.constant_value(value)),
+            fcs_runtime::TrackContribution::Segment(segment) => self.segment(segment, target),
+        }
+    }
+
+    /// Segment interpolation, mirroring `evaluate_segment` and `interpolate`
+    /// operation for operation: `p = (s - start) / (end - start)`, clamped,
+    /// eased, then `start + (end - start) * p'` per component.
+    fn segment(
+        &mut self,
+        segment: &CanonicalTrackSegment,
+        target: CanonicalTrackTarget,
+    ) -> FcbcResult<BlendValue> {
+        let interpolation = segment.interpolation();
+        if matches!(interpolation, CanonicalTrackInterpolation::CubicBezier(_)) {
+            // No Expression opcode computes the correctly rounded Bezier solve,
+            // so blending a Bezier segment cannot stay exact.
+            return Err(FcbcError::new(
+                "fcbc.unsupported-track",
+                "native blended Track segments require step, linear, or Core easing",
+            ));
+        }
+        let (start, end) = (
+            segment.start().chart_time_seconds(),
+            segment.end().chart_time_seconds(),
+        );
+        let progress = if matches!(interpolation, CanonicalTrackInterpolation::Step) {
+            None
+        } else {
+            let env_s = self.env_s();
+            let start_time = self.time_constant(start);
+            let end_time = self.time_constant(end);
+            // numerator, denominator, and progress each round once, exactly as
+            // evaluate_segment does; the two Sub(end,start) uses are identical.
+            let numerator = self.binary(
+                CanonicalExpressionOpcode::Sub,
+                env_s,
+                start_time,
+                CanonicalExpressionType::Time,
+            );
+            let denominator = self.binary(
+                CanonicalExpressionOpcode::Sub,
+                end_time,
+                start_time,
+                CanonicalExpressionType::Time,
+            );
+            let division = self.binary(
+                CanonicalExpressionOpcode::Div,
+                numerator,
+                denominator,
+                CanonicalExpressionType::Float,
+            );
+            let clamped = self.clamp01(division);
+            Some(match interpolation {
+                CanonicalTrackInterpolation::Easing(name) => {
+                    let id = EasingId::ALL
+                        .into_iter()
+                        .find(|easing| easing.name() == name.as_str())
+                        .map(EasingId::abi_id)
+                        .ok_or_else(|| {
+                            FcbcError::new("fcbc.invalid-track", format!("unknown easing {name}"))
+                        })?;
+                    self.easing(id, clamped)
+                }
+                _ => clamped,
+            })
+        };
+        let scalar = |builder: &mut Self,
+                      start: CanonicalTrackValue,
+                      end: CanonicalTrackValue|
+         -> FcbcResult<usize> {
+            let (CanonicalTrackValue::Float(start), CanonicalTrackValue::Float(end)) = (start, end)
+            else {
+                return Err(FcbcError::new(
+                    "fcbc.unsupported-track",
+                    "blended segments must carry float values",
+                ));
+            };
+            let start_constant = builder.float_constant(start);
+            let Some(progress) = progress else {
+                // Step segments hold their start value.
+                return Ok(start_constant);
+            };
+            let end_constant = builder.float_constant(end);
+            let delta = builder.binary(
+                CanonicalExpressionOpcode::Sub,
+                end_constant,
+                start_constant,
+                CanonicalExpressionType::Float,
+            );
+            let scaled = builder.binary(
+                CanonicalExpressionOpcode::Mul,
+                delta,
+                progress,
+                CanonicalExpressionType::Float,
+            );
+            Ok(builder.binary(
+                CanonicalExpressionOpcode::Add,
+                start_constant,
+                scaled,
+                CanonicalExpressionType::Float,
+            ))
+        };
+        Ok(match target {
+            CanonicalTrackTarget::Alpha | CanonicalTrackTarget::ScrollSpeed => {
+                BlendValue::Scalar(scalar(self, segment.start_value(), segment.end_value())?)
+            }
+            CanonicalTrackTarget::Scale => {
+                let (CanonicalTrackValue::Vec2Float(start), CanonicalTrackValue::Vec2Float(end)) =
+                    (segment.start_value(), segment.end_value())
+                else {
+                    return Err(FcbcError::new(
+                        "fcbc.unsupported-track",
+                        "Scale blend segments must carry vec2<float> values",
+                    ));
+                };
+                let x = scalar(
+                    self,
+                    CanonicalTrackValue::Float(start.x()),
+                    CanonicalTrackValue::Float(end.x()),
+                )?;
+                let y = scalar(
+                    self,
+                    CanonicalTrackValue::Float(start.y()),
+                    CanonicalTrackValue::Float(end.y()),
+                )?;
+                BlendValue::Vec2(self.vec2(x, y))
+            }
+            CanonicalTrackTarget::Position | CanonicalTrackTarget::Rotation => {
+                unreachable!("unit-typed blend contributions reject at fixture entry")
+            }
+        })
+    }
+
+    /// `Add` on both lanes: a single node for floats and same-typed vectors.
+    fn add(&mut self, left: BlendValue, right: BlendValue) -> BlendValue {
+        match (left, right) {
+            (BlendValue::Scalar(left), BlendValue::Scalar(right)) => {
+                BlendValue::Scalar(self.binary(
+                    CanonicalExpressionOpcode::Add,
+                    left,
+                    right,
+                    CanonicalExpressionType::Float,
+                ))
+            }
+            (BlendValue::Vec2(left), BlendValue::Vec2(right)) => BlendValue::Vec2(self.binary(
+                CanonicalExpressionOpcode::Add,
+                left,
+                right,
+                CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Float)),
+            )),
+            _ => unreachable!("blend operands share the target's value shape"),
+        }
+    }
+
+    /// `Mul` on both lanes: the ABI has no vector row, so vector multiplies
+    /// decompose into component Muls, matching `combine_vec` exactly.
+    fn multiply(&mut self, left: BlendValue, right: BlendValue) -> BlendValue {
+        match (left, right) {
+            (BlendValue::Scalar(left), BlendValue::Scalar(right)) => {
+                BlendValue::Scalar(self.binary(
+                    CanonicalExpressionOpcode::Mul,
+                    left,
+                    right,
+                    CanonicalExpressionType::Float,
+                ))
+            }
+            (BlendValue::Vec2(left), BlendValue::Vec2(right)) => {
+                let x = self.component(left, false);
+                let right_x = self.component(right, false);
+                let x = self.binary(
+                    CanonicalExpressionOpcode::Mul,
+                    x,
+                    right_x,
+                    CanonicalExpressionType::Float,
+                );
+                let y = self.component(left, true);
+                let right_y = self.component(right, true);
+                let y = self.binary(
+                    CanonicalExpressionOpcode::Mul,
+                    y,
+                    right_y,
+                    CanonicalExpressionType::Float,
+                );
+                BlendValue::Vec2(self.vec2(x, y))
+            }
+            _ => unreachable!("blend operands share the target's value shape"),
+        }
+    }
+
+    fn root(&self, value: BlendValue) -> usize {
+        match value {
+            BlendValue::Scalar(node) | BlendValue::Vec2(node) => node,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -3752,56 +4298,61 @@ fn native_tracks_section(
         line.alpha_descriptor = native_line_descriptor(
             &mut descriptors,
             constants,
+            &mut expressions,
             tracks,
             line.id,
             CanonicalTrackTarget::Alpha,
             TY_FLOAT,
             &float_constant(line.alpha),
-        );
+        )?;
     }
     for line in lines.iter_mut() {
         line.position_descriptor = native_line_descriptor(
             &mut descriptors,
             constants,
+            &mut expressions,
             tracks,
             line.id,
             CanonicalTrackTarget::Position,
             TY_VEC2_LENGTH,
             &vec2_constant(7, line.position),
-        );
+        )?;
     }
     for line in lines.iter_mut() {
         line.rotation_descriptor = native_line_descriptor(
             &mut descriptors,
             constants,
+            &mut expressions,
             tracks,
             line.id,
             CanonicalTrackTarget::Rotation,
             TY_ANGLE,
             &scalar_constant(8, line.rotation),
-        );
+        )?;
     }
     for line in lines.iter_mut() {
         line.scale_descriptor = native_line_descriptor(
             &mut descriptors,
             constants,
+            &mut expressions,
             tracks,
             line.id,
             CanonicalTrackTarget::Scale,
             TY_VEC2_FLOAT,
             &vec2_constant(3, line.scale),
-        );
+        )?;
     }
     for line in lines.iter_mut() {
         line.speed_descriptor = native_line_descriptor(
             &mut descriptors,
             constants,
+            &mut expressions,
             tracks,
             line.id,
             CanonicalTrackTarget::ScrollSpeed,
             TY_FLOAT,
             &float_constant(1.0),
-        );
+        )?;
         line.evaluable_speed = tracks.iter().any(|track| {
             track.line_id == line.id && track.target == CanonicalTrackTarget::ScrollSpeed
         });
@@ -4133,15 +4684,17 @@ fn native_note_visibility_descriptor(
     intern_descriptor(descriptors, record(payload))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn native_line_descriptor(
     descriptors: &mut Vec<Vec<u8>>,
     constants: &[Constant],
+    expressions: &mut NativeExpressionPool,
     tracks: &[NativeTrackFixture],
     line_id: u64,
     target: CanonicalTrackTarget,
     property_type: u8,
     base_constant: &Constant,
-) -> u32 {
+) -> FcbcResult<u32> {
     if let Some(track) = tracks
         .iter()
         .find(|track| track.line_id == line_id && track.target == target)
@@ -4157,7 +4710,7 @@ fn native_line_descriptor(
                     descriptors,
                     segment_track_descriptor(property_type, &layer.segments, constants),
                 );
-                intern_descriptor(
+                Ok(intern_descriptor(
                     descriptors,
                     piecewise_track_descriptor(
                         property_type,
@@ -4165,7 +4718,7 @@ fn native_line_descriptor(
                         before_descriptor,
                         track_descriptor,
                     ),
-                )
+                ))
             }
             // Children are interned in root Piece order (each layer's before
             // constant, SegmentTrack, and inner Piecewise on first reference),
@@ -4224,15 +4777,48 @@ fn native_line_descriptor(
                 }
                 let descriptor = record(payload);
                 debug_assert_eq!(descriptor.len(), 32 + 24 * regions.len());
-                intern_descriptor(descriptors, descriptor)
+                Ok(intern_descriptor(descriptors, descriptor))
+            }
+            // Children are emitted in root Piece order, so expression nodes and
+            // descriptors follow the canonical traversal.
+            NativeTrackKind::Blended {
+                property_type: blend_type,
+                regions,
+                expressions: dags,
+                ..
+            } => {
+                debug_assert_eq!(*blend_type, property_type);
+                let mut payload = descriptor_common(property_type, 3, 0b11, 0.0, 0.0);
+                put_u32(&mut payload, regions.len() as u32);
+                for (index, region) in regions.iter().enumerate() {
+                    let root = expressions.emit(&dags[region.expression], constants)?;
+                    let child =
+                        intern_descriptor(descriptors, expression_descriptor(property_type, root));
+                    let start = if index == 0 { 0.0 } else { region.start };
+                    let (end, mut flags) = if index + 1 == regions.len() {
+                        (0.0, 0b100)
+                    } else {
+                        (regions[index + 1].start, 0)
+                    };
+                    if index == 0 {
+                        flags |= 0b010;
+                    }
+                    put_f64(&mut payload, start);
+                    put_f64(&mut payload, end);
+                    put_u32(&mut payload, child);
+                    put_u32(&mut payload, flags);
+                }
+                let descriptor = record(payload);
+                debug_assert_eq!(descriptor.len(), 32 + 24 * regions.len());
+                Ok(intern_descriptor(descriptors, descriptor))
             }
         }
     } else {
-        intern_constant_descriptor(
+        Ok(intern_constant_descriptor(
             descriptors,
             property_type,
             find_constant(constants, base_constant),
-        )
+        ))
     }
 }
 
@@ -4511,14 +5097,10 @@ fn distance_section_for_lines(lines: &[LineFixture], tracks: &[NativeTrackFixtur
                 if let Some(track) = tracks.iter().find(|track| {
                     track.line_id == line.id && track.target == CanonicalTrackTarget::ScrollSpeed
                 }) {
-                    // Reachable SegmentTrack points/segments of every retained
-                    // layer; merged root Piece boundaries are a subset of them.
-                    for (_, segments) in track.layers() {
-                        for segment in segments {
-                            boundaries.push(segment.start);
-                            boundaries.push(segment.end);
-                        }
-                    }
+                    // Every reachable SegmentTrack point/segment of retained
+                    // layers or blended contributions; merged root Piece
+                    // boundaries are a subset of them.
+                    boundaries.extend(track.distance_boundaries());
                 } else {
                     // The declarative non-empty fixture has no native Track graph.
                     boundaries.push(2.0);
