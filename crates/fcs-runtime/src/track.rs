@@ -1210,7 +1210,7 @@ mod tests {
                         time(2.0),
                         time(3.0),
                         CanonicalTrackValue::Float(0.5),
-                        CanonicalTrackValue::Float(0.5),
+                        CanonicalTrackValue::Float(0.875),
                         CanonicalTrackInterpolation::Step,
                         1,
                     )
@@ -1220,7 +1220,13 @@ mod tests {
         )
         .unwrap();
         let tracks = CanonicalTrackSet::new(vec![track]).unwrap();
-        for (query, expected) in [(0.5, 0.25), (1.0, 0.25), (1.5, 0.25), (5.0, 0.5)] {
+        for (query, expected) in [
+            (0.5, 0.25),
+            (1.0, 0.25),
+            (1.5, 0.25),
+            (3.0, 0.5),
+            (5.0, 0.5),
+        ] {
             assert_eq!(
                 evaluate_track_set(
                     &tracks,
