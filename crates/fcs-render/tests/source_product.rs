@@ -2369,9 +2369,10 @@ const SOURCE_RENDER_TRACK_NODES: &str = r#"            circle fadeNode {
                     track grow -> scale: vec2<float> {
                         blend: "replace";
                         fill: "base";
+                        extrapolateBefore: "one";
                         segments {
                             [0s, 1s): vec2(0.5, 0.75) -> vec2(1.5, 1.25) using "linear";
-                            [1s, 3s): vec2(1.5, 1.25) -> vec2(2.0, 2.5) using "easeOutQuad";
+                            [2s, 3s): vec2(1.5, 1.25) -> vec2(2.0, 2.5) using "easeOutQuad";
                         }
                     }
                 }
@@ -2587,7 +2588,7 @@ fn source_render_node_tracks_bind_bit_exact_to_track_evaluation() {
     let grow = baseline_track(
         CanonicalTrackTarget::Scale,
         CanonicalTrackFill::Base,
-        CanonicalTrackFill::Base,
+        CanonicalTrackFill::One,
         CanonicalTrackFill::Base,
         vec![
             vec2_segment(
@@ -2599,7 +2600,7 @@ fn source_render_node_tracks_bind_bit_exact_to_track_evaluation() {
                 0,
             ),
             vec2_segment(
-                1.0,
+                2.0,
                 3.0,
                 [1.5, 1.25],
                 [2.0, 2.5],
