@@ -1353,7 +1353,7 @@ mod tests {
                     arity: operands
                         .iter()
                         .filter(|operand| **operand != u32::MAX)
-                        .count() as u16,
+                        .count() as u8,
                     immediate: 0,
                 });
                 node
