@@ -3775,6 +3775,7 @@ impl<'a> RenderLowerer<'a> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_render_scene(
     scene: &crate::ast::RenderScene,
     document: &Document,
