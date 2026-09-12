@@ -596,9 +596,9 @@ fn segment_track_payload_offset(container: &ValidatedContainer, bytes: &[u8]) ->
 /// Locates the Float constant whose payload is `value`, walking the pool's
 /// self-describing records (tag u8, reserved u8/u16, payload length u32,
 /// payload, zero padding to an 8-byte boundary). Returns its pool index and
-/// the absolute file offset of its 8-byte value payload. Asserts that the
-/// chart's Float constants are exactly `0.0` and `1.0` so the signed-zero
-/// mutation's bit flip keeps the pool's ascending order.
+/// the absolute file offset of its 8-byte value payload. Asserts the Float
+/// constants so the signed-zero mutation's bit flip keeps the pool's
+/// ascending byte order.
 fn float_constant(container: &ValidatedContainer, bytes: &[u8], value: f64) -> (usize, usize) {
     let payload = container
         .section_payload(bytes, CONSTANT_POOL)
@@ -625,8 +625,8 @@ fn float_constant(container: &ValidatedContainer, bytes: &[u8], value: f64) -> (
     }
     assert_eq!(
         floats,
-        vec![0.0, 1.0],
-        "the signed-zero mutation assumes a two-float pool"
+        vec![0.0, 120.0, 1.0],
+        "the signed-zero mutation assumes this three-float pool"
     );
     found.unwrap_or_else(|| panic!("Float constant {value} not in the pool"))
 }
@@ -689,27 +689,28 @@ fn segment_track_coverage_mutations_reject_with_invalid_track() {
         "same-time point/segment value disagreement must reject"
     );
 
-    // signed-zero point endpoints: the 1.0 Float constant's payload becomes
-    // -0.0 (still ascending after 0.0 in the pool's byte order), and the
-    // point at 0 keeps +0.0 as its start constant while its end constant is
-    // repointed to the -0.0 entry. Numerically equal, bitwise distinct.
-    let (one, one_payload) = float_constant(&container, &base, 1.0);
+    // signed-zero point endpoints: the tempo-derived 120.0 Float constant's
+    // payload becomes -0.0 (still ascending in the pool's byte order between
+    // 0.0 and 1.0), and the point at 0 keeps +0.0 as its start constant while
+    // its end constant is repointed to the -0.0 entry. Numerically equal,
+    // bitwise distinct.
+    let (bpm, bpm_payload) = float_constant(&container, &base, 120.0);
     let (zero, _) = float_constant(&container, &base, 0.0);
-    assert!(one > zero);
+    assert_ne!(bpm, zero);
     let mut signed_zero = base.clone();
     corrupt_payload(
         &mut signed_zero,
         &container,
         CONSTANT_POOL,
-        one_payload - payload_range(&container, CONSTANT_POOL).start,
-        &[0x00, 0x80],
+        bpm_payload - payload_range(&container, CONSTANT_POOL).start,
+        &(-0.0f64).to_bits().to_le_bytes(),
     );
     corrupt_payload(
         &mut signed_zero,
         &container,
         TRACKS,
         segment_field(0, 28),
-        &one.to_le_bytes(),
+        &bpm.to_le_bytes(),
     );
     assert_eq!(
         load_chart(&signed_zero).unwrap_err(),
