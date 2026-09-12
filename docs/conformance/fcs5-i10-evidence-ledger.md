@@ -191,6 +191,29 @@ Full Gate [34012881942](https://github.com/Rancemxn/fcs-project/actions/runs/340
 main `a3ed884b31787c7d8483560b97aed88b87611932` passed push Full Gate
 [34013094165](https://github.com/Rancemxn/fcs-project/actions/runs/34013094165).
 
+### Render node Track lowering
+
+PR [#642](https://github.com/Rancemxn/fcs-project/pull/642) lowers Render node `opacity` and
+`scale` Tracks into exact Piecewise descriptors composed over the node's compile-time base.
+Region boundaries are every Track piece time plus segment end; each elementary region probes
+`evaluate_track_contribution` at its left endpoint, so fill resolution, shadowed points, and
+holds stay bit-identical to the Core 9.2 runtime, and segment regions encode one Expression
+DAG through the shared `fcs_runtime::TrackExpressionBuilder` (the FCBC writer's private
+duplicate is deleted). The product binding test compares `query_descriptor` against
+`evaluate_track` by `.to_bits()` at every region boundary, one midpoint per region, and both
+outside-domain sides, covering linear/easing/step/point pieces with base, holdBefore,
+holdAfter, zero, and one fills. Non-replace blends, multi-Track targets,
+position/origin/rotation, cubicBezier, error fills, unresolved holds, generators, dynamic
+bases, and layer-owned tracks stay governed rejections. Corrective head
+`1347d6408416dd07843b051323c4f02df2c76ea1` passed pull_request Full Gate
+[34693747057](https://github.com/Rancemxn/fcs-project/actions/runs/34693747057). The first merged main
+`8850a13e61e65d8958cc0cb1609b0bc853f4b4b5` failed its push Full Gate
+[34693941624](https://github.com/Rancemxn/fcs-project/actions/runs/34693941624): the #642 import cleanup
+exposed that #638's `writer_compilation_tests.rs` had relied on `use super::*` for
+`CanonicalExpressionNode`. PR [#643](https://github.com/Rancemxn/fcs-project/pull/643) added the direct
+import, and merged main `8561a8176bd1c9d099d95f950f86cb26656836ea` passed push Full Gate
+[34694369633](https://github.com/Rancemxn/fcs-project/actions/runs/34694369633).
+
 ## Verified implementation residuals
 
 The requirement audit found concrete product gaps beyond the historical pending-review statements.
@@ -199,7 +222,7 @@ They remain within #296/#9 and prevent an implementation or RC completion claim:
 | Authority | Current implementation evidence | Required closure |
 |---|---|---|
 | Render 3.2 and Core 6.3–6.8 | `lower_render_scene` and `RenderLowerer::lower_node` require every child to be `RenderItem::Node`; `phase2_schema` has no RenderNode constructor schema. | Expand compile-time `if`, templates, `with`, and generators with the shared Core budgets before canonical lowering. The RenderNode constructor kind/ID spelling still needs an explicit specification decision. |
-| Render 2 and 12 | The parser retains `RenderBodyItem::Tracks`, but the source Render lowerer never consumes it. | Lower each permitted Render Track to exact descriptors, validate its target and composition, and prove time-varying product results. |
+| Render 2 and 12 | Render node opacity and scale Tracks lower to exact Piecewise descriptors bit-identical to `evaluate_track` (PR #642). Position/origin/rotation targets, non-replace blends, cubicBezier, error fills, unresolved holds, generators, multi-Track targets, and dynamic bases stay governed rejections; layer-owned tracks are rejected. | Extend exact lowering to the remaining governed target set through the follow-up ABI decisions. |
 | Core 9 and FCBC 13 | `write_from_compilation_with_profile` composes replace groups and Replace/Add/Multiply blends exactly for float and vec2-float targets (PR #626, PR #628). Position/Rotation blends and Bezier segments inside a blend stay governed rejections. | Extend exact blend composition to unit-typed targets through a governed ABI decision, integrate Expression scroll-speed descriptors for distance, and cover supported canonical charts produced by conversion. |
 
 ## Matrix reconciliation
