@@ -2516,7 +2516,7 @@ fn unbounded_descriptor_domain() -> CanonicalDescriptorDomain {
 #[test]
 fn nested_piecewise_with_one_expression_round_trips_and_evaluates() {
     let base = compilation(SHARED_SUBGRAPH_NOTE_SOURCE);
-    let line_id = base.chart().lines().lines().next().unwrap().id().value();
+    let note_id = base.chart().notes().notes()[0].id().value();
     let expression = CanonicalExpressionDag::new(
         vec![CanonicalExpressionNode::new(
             CanonicalExpressionOpcode::EnvQ,
@@ -2550,7 +2550,7 @@ fn nested_piecewise_with_one_expression_round_trips_and_evaluates() {
     }
     let table = CanonicalDescriptorTable::new(
         descriptors,
-        vec![CanonicalDescriptorRoot::new("line.alpha", line_id, 2).unwrap()],
+        vec![CanonicalDescriptorRoot::new("note.presentation.alpha", note_id, 2).unwrap()],
     )
     .unwrap();
     let compilation = CanonicalCompilation::new(
@@ -2563,7 +2563,7 @@ fn nested_piecewise_with_one_expression_round_trips_and_evaluates() {
     assert_eq!(decoded.expressions.len(), 1);
     let result = crate::query_descriptor(
         &decoded,
-        decoded.lines[0].alpha_descriptor,
+        decoded.notes[0].property_descriptors[4],
         0.0,
         crate::EvaluationEnvironment {
             q: 0.375,
