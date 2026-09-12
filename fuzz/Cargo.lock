@@ -229,6 +229,7 @@ version = "5.0.0"
 dependencies = [
  "chumsky",
  "fcs-model",
+ "fcs-runtime",
  "ttf-parser",
 ]
 
