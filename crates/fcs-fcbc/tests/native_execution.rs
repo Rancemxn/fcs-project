@@ -421,6 +421,71 @@ lines { line main {
 }
 
 #[test]
+fn native_integer_vector_predicates_preserve_values() {
+    // Issue #648: `vec2<int>` values survive a native write -> load -> query
+    // round trip in exact i64 form. Binary64 storage collided 2^53 + 1 with
+    // 2^53 (making the first predicate true instead of false) and lost the
+    // truncating integer division (making the second false instead of true).
+    // Alpha is float, so each predicate drives a `choose`. The canonical
+    // evaluator already keeps i64 components, so it must agree with the
+    // native result on the same compiled DAG.
+    for (predicate, expected) in [
+        (
+            "choose { when vec2(choose { when s >= 0s => 9007199254740993; else => 0; }, 0) \
+             == vec2(9007199254740992, 0) => 1.0; else => 0.0; }",
+            0.0,
+        ),
+        (
+            "choose { when (vec2(choose { when s >= 0s => 5; else => 1; }, 7) / 2) \
+             == vec2(2, 3) => 1.0; else => 0.0; }",
+            1.0,
+        ),
+    ] {
+        let compilation = compilation(&tap_source(&format!("presentation.alpha: {predicate};")));
+        let decoded = load_chart(&write_from_compilation(&compilation).unwrap()).unwrap();
+        let native = evaluate(&decoded, decoded.notes[0].property_descriptors[4], 0.25);
+        assert_eq!(native, float(expected), "{predicate}");
+
+        let table = compilation
+            .chart()
+            .descriptors()
+            .expect("dynamic presentation must produce a descriptor table");
+        let root = table
+            .roots()
+            .iter()
+            .find(|root| root.target_path() == "note.presentation.alpha")
+            .expect("root for note.presentation.alpha");
+        let CanonicalDescriptorKind::Expression(expression) =
+            table.descriptor(root.descriptor()).unwrap().kind()
+        else {
+            panic!("note.presentation.alpha must stay an expression DAG");
+        };
+        let canonical = fcs_runtime::evaluate_expression(
+            expression,
+            fcs_runtime::ExpressionEnvironment::new(0.25, 0.5, 0.0, 0.0).unwrap(),
+        )
+        .unwrap();
+        assert_native_matches_canonical(native, canonical);
+    }
+
+    // `choose` stays lazy for integer vectors: the unselected branch would
+    // overflow i64 and must not be evaluated. The overflow subexpression
+    // depends on `s`, so the lowerer retains it instead of folding it away.
+    let lazy = compile(&tap_source(
+        "presentation.alpha: choose { \
+         when (choose { when s < 0s => vec2(9223372036854775807, 0) \
+         + vec2(choose { when s >= 0s => 1; else => 0; }, 0); \
+         else => vec2(0, 0); }).x == 0 => 0.0; \
+         else => 1.0; };",
+    ));
+    let decoded = load_chart(&lazy).unwrap();
+    assert_eq!(
+        evaluate(&decoded, decoded.notes[0].property_descriptors[4], 0.25),
+        float(0.0)
+    );
+}
+
+#[test]
 fn native_unit_integer_scaling_matches_canonical_evaluator() {
     // Every permitted U,int / int,U combination across time, beat, length,
     // and angle must agree with the canonical evaluator on the same compiled
