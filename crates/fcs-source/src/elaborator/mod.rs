@@ -317,6 +317,26 @@ pub(crate) fn evaluate_metadata_expression(
     .map_err(ElaboratorError::into_diagnostic)
 }
 
+/// Expands one Render node Track declaration in the shared compile-time
+/// environment. Line Tracks expand through `expand_tracks` per Line entity;
+/// Render nodes own their Track declarations per node body, so the Render
+/// lowering resolves each declaration directly.
+pub(crate) fn expand_render_track(
+    document: &Document,
+    owner: &str,
+    track: &crate::ast::TrackDeclaration,
+) -> Result<crate::ast::ExpandedTrack, Diagnostic> {
+    let context = CompileTimeContext::new(CompileTimeLimits::default());
+    tracks::expand_track(
+        document,
+        &crate::schema::phase2_schema(),
+        &context,
+        owner,
+        track,
+    )
+    .map_err(ElaboratorError::into_diagnostic)
+}
+
 fn elaborate_inner(
     document: &Document,
     schema: &ConstructionSchema,

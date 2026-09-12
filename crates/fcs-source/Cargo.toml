@@ -8,11 +8,11 @@ description = "FCS source parser and compile-time elaborator"
 [dependencies]
 chumsky.workspace = true
 fcs-model = { path = "../fcs-model" }
+fcs-runtime = { path = "../fcs-runtime" }
 ttf-parser = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 crc.workspace = true
-fcs-runtime = { path = "../fcs-runtime" }
 image = { workspace = true, features = ["png", "webp"] }
 proptest.workspace = true
 serde.workspace = true

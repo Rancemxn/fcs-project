@@ -10,7 +10,7 @@ mod fcbc_render_reference_assets;
 #[allow(dead_code)]
 mod fcbc_render_reference_loader;
 
-use fcs_fcbc::write_from_compilation;
+use fcs_fcbc::{EvaluationEnvironment, RuntimeValue, query_descriptor, write_from_compilation};
 use fcs_model::{
     CanonicalArcDirection, CanonicalCompilation, CanonicalDescriptorKind,
     CanonicalExpressionEnvironment, CanonicalExpressionType, CanonicalGlyphRun,
@@ -18,16 +18,19 @@ use fcs_model::{
     CanonicalRenderFillRule, CanonicalRenderGeometry, CanonicalRenderGeometryData,
     CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
     CanonicalRenderPaintData, CanonicalRenderPath, CanonicalRenderScene, CanonicalRenderSceneSpec,
-    CanonicalRenderStroke, CanonicalStrokeCap, CanonicalStrokeJoin, CanonicalTextualId, EntityKind,
-    StableIdRegistry,
+    CanonicalRenderStroke, CanonicalStrokeCap, CanonicalStrokeJoin, CanonicalTextualId,
+    CanonicalTime, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
+    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackPoint, CanonicalTrackSegment,
+    CanonicalTrackTarget, CanonicalTrackValue, CanonicalVec2, EntityKind, StableIdRegistry,
 };
+use fcs_runtime::evaluate_track;
 use fcs_source::ResourceLimits;
 use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
 
 use fcs_render::{
-    GeometryData, NodeKind, PaintData, evaluate_semantic_draw_list_at, load_render,
-    rasterize_solid_rgba8_at,
+    DecodedRenderChart, GeometryData, NodeKind, PaintData, evaluate_semantic_draw_list_at,
+    load_render, rasterize_solid_rgba8_at,
 };
 
 fn u32_at(bytes: &[u8], offset: usize) -> u32 {
@@ -2318,4 +2321,551 @@ fn canonical_text_writer_rejects_missing_or_non_font_resources() {
             .expect_err("invalid GlyphRun font resource must fail closed");
         assert_eq!(error.category(), category);
     }
+}
+
+/// The #629 Track binding fixture: three nodes whose opacity/scale Tracks
+/// cover linear, easing, step, a point, a gap, and every fill the exact
+/// lowering supports.
+const SOURCE_RENDER_TRACK_NODES: &str = r#"            circle fadeNode {
+                center: vec2(0px, 0px);
+                radius: 5px;
+                fill: solid(#FFFFFFFF);
+                opacity: 0.8;
+                tracks {
+                    track fade -> opacity: float {
+                        blend: "replace";
+                        fill: "base";
+                        extrapolateBefore: "holdBefore";
+                        extrapolateAfter: "holdAfter";
+                        segments {
+                            [0s, 1s): 0.9 -> 0.2 using "linear";
+                            [2s, 3s): 0.2 -> 0.95 using "easeInSine";
+                        }
+                    }
+                }
+            }
+            circle stepsNode {
+                center: vec2(0px, 0px);
+                radius: 5px;
+                fill: solid(#FFFFFFFF);
+                tracks {
+                    track steps -> opacity: float {
+                        blend: "replace";
+                        fill: "zero";
+                        extrapolateBefore: "base";
+                        segments {
+                            [1s, 2s): 0.3 -> 0.7 using "step";
+                            point 2.5s: 0.5;
+                        }
+                    }
+                }
+            }
+            circle growNode {
+                center: vec2(0px, 0px);
+                radius: 5px;
+                fill: solid(#FFFFFFFF);
+                scale: vec2(0.5, 0.75);
+                tracks {
+                    track grow -> scale: vec2<float> {
+                        blend: "replace";
+                        fill: "base";
+                        segments {
+                            [0s, 1s): vec2(0.5, 0.75) -> vec2(1.5, 1.25) using "linear";
+                            [1s, 3s): vec2(1.5, 1.25) -> vec2(2.0, 2.5) using "easeOutQuad";
+                        }
+                    }
+                }
+            }
+"#;
+
+fn lower_source_render(children: &str) -> Result<CanonicalCompilation, String> {
+    let source = format!(
+        r#"#fcs 5.0.0
+format {{ profile: renderable; }}
+tempoMap {{ 0beat -> 120bpm; }}
+render profile 1.0.0 {{
+    viewport {{ width: 16px; height: 16px; }}
+    layer main {{
+        pass: "overlay";
+        children {{
+{children}        }}
+    }}
+}}
+"#
+    );
+    let document = parse_document(&source)
+        .into_result()
+        .expect("source Render scene parses");
+    document
+        .canonical_compilation_with_source(
+            &source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .map_err(|diagnostics| format!("{diagnostics:?}"))
+}
+
+fn chart_time(seconds: f64) -> CanonicalTime {
+    CanonicalTime::from_chart_time_seconds(seconds).expect("finite chart time")
+}
+
+fn baseline_track(
+    target: CanonicalTrackTarget,
+    fill: CanonicalTrackFill,
+    extrapolate_before: CanonicalTrackFill,
+    extrapolate_after: CanonicalTrackFill,
+    pieces: Vec<CanonicalTrackPiece>,
+) -> CanonicalTrack {
+    let owner = StableIdRegistry::new()
+        .insert(
+            EntityKind::Line,
+            CanonicalTextualId::explicit("render-track-baseline").expect("baseline textual ID"),
+        )
+        .expect("baseline owner stable ID");
+    CanonicalTrack::new(
+        owner,
+        "baseline",
+        target,
+        CanonicalTrackBlend::Replace,
+        0,
+        fill,
+        extrapolate_before,
+        extrapolate_after,
+        pieces,
+    )
+    .expect("hand-built baseline Track")
+}
+
+fn scalar_segment(
+    start: f64,
+    end: f64,
+    start_value: f64,
+    end_value: f64,
+    interpolation: CanonicalTrackInterpolation,
+    document_order: u64,
+) -> CanonicalTrackPiece {
+    CanonicalTrackPiece::Segment(
+        CanonicalTrackSegment::new(
+            chart_time(start),
+            chart_time(end),
+            CanonicalTrackValue::Float(start_value),
+            CanonicalTrackValue::Float(end_value),
+            interpolation,
+            document_order,
+        )
+        .expect("hand-built segment"),
+    )
+}
+
+fn vec2_segment(
+    start: f64,
+    end: f64,
+    start_value: [f64; 2],
+    end_value: [f64; 2],
+    interpolation: CanonicalTrackInterpolation,
+    document_order: u64,
+) -> CanonicalTrackPiece {
+    let value = |components: [f64; 2]| {
+        CanonicalTrackValue::Vec2Float(
+            CanonicalVec2::new(components[0], components[1]).expect("finite vec2"),
+        )
+    };
+    CanonicalTrackPiece::Segment(
+        CanonicalTrackSegment::new(
+            chart_time(start),
+            chart_time(end),
+            value(start_value),
+            value(end_value),
+            interpolation,
+            document_order,
+        )
+        .expect("hand-built segment"),
+    )
+}
+
+fn scalar_point(time: f64, value: f64, document_order: u64) -> CanonicalTrackPiece {
+    CanonicalTrackPiece::Point(
+        CanonicalTrackPoint::new(
+            chart_time(time),
+            CanonicalTrackValue::Float(value),
+            document_order,
+        )
+        .expect("hand-built point"),
+    )
+}
+
+/// The Core runtime's answer for one Track at one time; `None` is the `base`
+/// fill leaving the Track inactive, so the composed value is the node base.
+fn track_scalar_at(track: &CanonicalTrack, time: f64, base: f64) -> f64 {
+    match evaluate_track(track, time).expect("baseline Track evaluation") {
+        Some(CanonicalTrackValue::Float(value)) => value,
+        Some(_) => panic!("opacity baseline must evaluate to a float"),
+        None => base,
+    }
+}
+
+fn track_vec2_at(track: &CanonicalTrack, time: f64, base: [f64; 2]) -> [f64; 2] {
+    match evaluate_track(track, time).expect("baseline Track evaluation") {
+        Some(CanonicalTrackValue::Vec2Float(value)) => [value.x(), value.y()],
+        Some(_) => panic!("scale baseline must evaluate to a vec2"),
+        None => base,
+    }
+}
+
+fn descriptor_scalar_at(render: &DecodedRenderChart, descriptor: u32, time: f64) -> f64 {
+    let evaluation = query_descriptor(
+        &render.core,
+        descriptor,
+        time,
+        EvaluationEnvironment::at_time(time),
+    )
+    .expect("Track descriptor query");
+    let RuntimeValue::Scalar { value, .. } = evaluation.value else {
+        panic!("opacity Track descriptor must query a scalar");
+    };
+    value
+}
+
+fn descriptor_vec2_at(render: &DecodedRenderChart, descriptor: u32, time: f64) -> [f64; 2] {
+    let evaluation = query_descriptor(
+        &render.core,
+        descriptor,
+        time,
+        EvaluationEnvironment::at_time(time),
+    )
+    .expect("Track descriptor query");
+    let RuntimeValue::Vec2 { value, .. } = evaluation.value else {
+        panic!("scale Track descriptor must query a vec2");
+    };
+    value
+}
+
+#[test]
+fn source_render_node_tracks_bind_bit_exact_to_track_evaluation() {
+    let compilation = lower_source_render(SOURCE_RENDER_TRACK_NODES)
+        .expect("source Render node Tracks must lower");
+    let bytes = write_from_compilation(&compilation).expect("source Render Tracks FCBC writing");
+    let render = load_render(&bytes).expect("source Render Tracks product loader");
+    assert_eq!(render.nodes.len(), 3);
+    // The composed Track descriptors also compose end to end through the
+    // semantic layer.
+    assert_eq!(
+        evaluate_semantic_draw_list_at(&render, 0.5)
+            .expect("Track-composited semantic draw list")
+            .len(),
+        3
+    );
+
+    let fade = baseline_track(
+        CanonicalTrackTarget::Alpha,
+        CanonicalTrackFill::Base,
+        CanonicalTrackFill::HoldBefore,
+        CanonicalTrackFill::HoldAfter,
+        vec![
+            scalar_segment(0.0, 1.0, 0.9, 0.2, CanonicalTrackInterpolation::Linear, 0),
+            scalar_segment(
+                2.0,
+                3.0,
+                0.2,
+                0.95,
+                CanonicalTrackInterpolation::Easing("easeInSine".to_owned()),
+                1,
+            ),
+        ],
+    );
+    let steps = baseline_track(
+        CanonicalTrackTarget::Alpha,
+        CanonicalTrackFill::Zero,
+        CanonicalTrackFill::Base,
+        CanonicalTrackFill::Zero,
+        vec![
+            scalar_segment(1.0, 2.0, 0.3, 0.7, CanonicalTrackInterpolation::Step, 0),
+            scalar_point(2.5, 0.5, 1),
+        ],
+    );
+    let grow = baseline_track(
+        CanonicalTrackTarget::Scale,
+        CanonicalTrackFill::Base,
+        CanonicalTrackFill::Base,
+        CanonicalTrackFill::Base,
+        vec![
+            vec2_segment(
+                0.0,
+                1.0,
+                [0.5, 0.75],
+                [1.5, 1.25],
+                CanonicalTrackInterpolation::Linear,
+                0,
+            ),
+            vec2_segment(
+                1.0,
+                3.0,
+                [1.5, 1.25],
+                [2.0, 2.5],
+                CanonicalTrackInterpolation::Easing("easeOutQuad".to_owned()),
+                1,
+            ),
+        ],
+    );
+
+    // Every region boundary, one midpoint per region, and both outside-domain
+    // sides, compared bit for bit against the Core runtime Track evaluation.
+    for time in [
+        -1.0, 0.0, 0.25, 0.5, 1.0, 1.5, 2.0, 2.2, 2.5, 2.75, 3.0, 4.0,
+    ] {
+        let expected = track_scalar_at(&fade, time, 0.8);
+        let actual = descriptor_scalar_at(&render, render.nodes[0].opacity_descriptor, time);
+        assert_eq!(
+            expected.to_bits(),
+            actual.to_bits(),
+            "fade Track opacity at {time}s"
+        );
+
+        let expected = track_scalar_at(&steps, time, 1.0);
+        let actual = descriptor_scalar_at(&render, render.nodes[1].opacity_descriptor, time);
+        assert_eq!(
+            expected.to_bits(),
+            actual.to_bits(),
+            "steps Track opacity at {time}s"
+        );
+
+        let expected = track_vec2_at(&grow, time, [0.5, 0.75]);
+        let actual = descriptor_vec2_at(&render, render.nodes[2].scale_descriptor, time);
+        assert_eq!(
+            (expected[0].to_bits(), expected[1].to_bits()),
+            (actual[0].to_bits(), actual[1].to_bits()),
+            "grow Track scale at {time}s"
+        );
+    }
+}
+
+/// A chart that also carries a core descriptor table (a Note runtime
+/// expression) must merge the Render Track descriptors without losing or
+/// rewiring either side: canonical emission reorders and interns the merged
+/// table, so the node records must follow the constructor's index mapping,
+/// not input positions.
+#[test]
+fn source_render_node_tracks_merge_with_core_note_descriptors() {
+    let source = format!(
+        r#"#fcs 5.0.0
+format {{ profile: renderable; }}
+tempoMap {{ 0beat -> 120bpm; }}
+lines {{ line main {{}} }}
+collections {{
+    notes {{
+        tap {{
+            id: "mixed-note";
+            line: @main;
+            gameplay.time: 2beat;
+            presentation.alpha: choose {{
+                when d < 100px => 0.5 + 0.5 * sin(s / 1s);
+                else => 0.25;
+            }};
+        }};
+    }}
+}}
+render profile 1.0.0 {{
+    viewport {{ width: 16px; height: 16px; }}
+    layer main {{
+        pass: "overlay";
+        children {{
+{children}        }}
+    }}
+}}
+"#,
+        children = SOURCE_RENDER_TRACK_NODES
+    );
+    let document = parse_document(&source)
+        .into_result()
+        .expect("mixed source parses");
+    let compilation = document
+        .canonical_compilation_with_source(
+            &source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .map_err(|diagnostics| format!("{diagnostics:?}"))
+        .expect("mixed source must lower");
+    let table = compilation
+        .chart()
+        .descriptors()
+        .expect("the Note runtime expression lowers a core descriptor table");
+    assert!(
+        table
+            .roots()
+            .iter()
+            .any(|root| root.target_path() == "note.presentation.alpha"),
+        "the core Note root must survive the merge"
+    );
+    assert!(
+        table
+            .roots()
+            .iter()
+            .any(|root| root.target_path() == "render.node.opacity"),
+        "the Render node roots must be merged in"
+    );
+
+    let bytes = write_from_compilation(&compilation).expect("mixed FCBC writing");
+    let render = load_render(&bytes).expect("mixed product loader");
+    assert_eq!(render.nodes.len(), 3);
+    let fade = baseline_track(
+        CanonicalTrackTarget::Alpha,
+        CanonicalTrackFill::Base,
+        CanonicalTrackFill::HoldBefore,
+        CanonicalTrackFill::HoldAfter,
+        vec![
+            scalar_segment(0.0, 1.0, 0.9, 0.2, CanonicalTrackInterpolation::Linear, 0),
+            scalar_segment(
+                2.0,
+                3.0,
+                0.2,
+                0.95,
+                CanonicalTrackInterpolation::Easing("easeInSine".to_owned()),
+                1,
+            ),
+        ],
+    );
+    for time in [-1.0, 0.0, 0.5, 1.0, 1.5, 2.5, 3.0, 4.0] {
+        let expected = track_scalar_at(&fade, time, 0.8);
+        let actual = descriptor_scalar_at(&render, render.nodes[0].opacity_descriptor, time);
+        assert_eq!(
+            expected.to_bits(),
+            actual.to_bits(),
+            "fade Track opacity at {time}s with core descriptors merged"
+        );
+    }
+}
+
+#[test]
+fn source_render_node_track_governed_cases_reject() {
+    let node = |tracks: &str| {
+        format!(
+            "            circle node {{\n                center: vec2(0px, 0px);\n                \
+             radius: 5px;\n                fill: solid(#FFFFFFFF);\n{tracks}            }}\n"
+        )
+    };
+    let cases: &[(&str, String, &str)] = &[
+        (
+            "blend add",
+            node(
+                r#"tracks { track fade -> opacity: float { blend: "add"; segments { [0s, 1s): 0.9 -> 0.2 using "linear"; } } }"#,
+            ),
+            "must blend replace",
+        ),
+        (
+            "blend multiply",
+            node(
+                r#"tracks { track fade -> opacity: float { blend: "multiply"; segments { [0s, 1s): 0.9 -> 0.2 using "linear"; } } }"#,
+            ),
+            "must blend replace",
+        ),
+        (
+            "duplicate target",
+            node(
+                r#"tracks { track first -> opacity: float { segments { [0s, 1s): 0.9 -> 0.2 using "linear"; } } track second -> opacity: float { segments { [2s, 3s): 0.9 -> 0.2 using "linear"; } } }"#,
+            ),
+            "declared more than once",
+        ),
+        (
+            "position target",
+            node(
+                r#"tracks { track slide -> position: vec2<length> { segments { [0s, 1s): vec2(0px, 0px) -> vec2(1px, 1px) using "linear"; } } }"#,
+            ),
+            "no exact ABI 1.0 expression encoding",
+        ),
+        (
+            "rotation target",
+            node(
+                r#"tracks { track spin -> rotation: angle { segments { [0s, 1s): 0deg -> 90deg using "linear"; } } }"#,
+            ),
+            "no exact ABI 1.0 expression encoding",
+        ),
+        (
+            "cubic Bezier interpolation",
+            node(
+                r#"tracks { track fade -> opacity: float { segments { [0s, 1s): 0.9 -> 0.2 using cubicBezier(0.42, 0.0, 0.58, 1.0); } } }"#,
+            ),
+            "cubic Bezier interpolation",
+        ),
+        (
+            "error fill",
+            node(
+                r#"tracks { track fade -> opacity: float { fill: "error"; segments { [0s, 1s): 0.9 -> 0.2 using "linear"; } } }"#,
+            ),
+            "error fill",
+        ),
+        (
+            "generator",
+            node(
+                r#"tracks { track fade -> opacity: float { segments { generate i: int in 0..<1 step 1 { emit segment { start: 0s; end: 1s; startValue: 0.9; endValue: 0.2; interpolation: "linear"; }; } } } }"#,
+            ),
+            "cannot use generators",
+        ),
+        (
+            "unknown target",
+            node(
+                r#"tracks { track blur -> blur: float { segments { [0s, 1s): 0.9 -> 0.2 using "linear"; } } }"#,
+            ),
+            "is not a Track target",
+        ),
+        (
+            "dynamic opacity base",
+            format!(
+                "            circle node {{\n                center: vec2(0px, 0px);\n                \
+                 radius: 5px;\n                fill: solid(#FFFFFFFF);\n                opacity: \
+                 choose {{ when s < 1s => 1.0; else => 0.0; }};\n{}            }}\n",
+                r#"tracks { track fade -> opacity: float { segments { [0s, 1s): 0.9 -> 0.2 using "linear"; } } }"#
+            ),
+            "compile-time base",
+        ),
+    ];
+
+    for (case, children, needle) in cases {
+        let error = lower_source_render(children)
+            .expect_err(&format!("{case} must be rejected at Render Track lowering"));
+        assert!(error.contains(*needle), "{case}: {error}");
+    }
+}
+
+#[test]
+fn source_render_layer_tracks_are_rejected() {
+    let source = r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 16px; height: 16px; }
+    layer main {
+        pass: "overlay";
+        tracks {
+            track fade -> opacity: float {
+                segments {
+                    [0s, 1s): 0.9 -> 0.2 using "linear";
+                }
+            }
+        }
+        children {
+            circle node {
+                center: vec2(0px, 0px);
+                radius: 5px;
+                fill: solid(#FFFFFFFF);
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source)
+        .into_result()
+        .expect("layer-tracks source parses");
+    let error = document
+        .canonical_compilation_with_source(
+            source,
+            CompileTimeLimits::default(),
+            env!("CARGO_MANIFEST_DIR"),
+            ResourceLimits::default(),
+        )
+        .map_err(|diagnostics| format!("{diagnostics:?}"))
+        .expect_err("Render layer tracks must be rejected");
+    assert!(error.contains("Render layers cannot own tracks"), "{error}");
 }
