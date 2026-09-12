@@ -1320,6 +1320,37 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
 }
 
 #[test]
+fn relative_source_filenames_resolve_resources_from_the_current_directory() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixtures = root.join("docs/conformance/fcs5/source/valid");
+    let output_dir = tempfile::tempdir().unwrap();
+    let mut compiled = Vec::new();
+    for (index, source) in ["note-policies.fcs", "./note-policies.fcs"]
+        .into_iter()
+        .enumerate()
+    {
+        let output_path = output_dir.path().join(format!("{index}.fcbc"));
+        for command in ["check", "compile"] {
+            let mut process = bin();
+            process.current_dir(&fixtures).arg(command).arg(source);
+            if command == "compile" {
+                process.arg("--output").arg(&output_path);
+            }
+            let output = process.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{command} {source}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let bytes = fs::read(output_path).unwrap();
+        fcs_fcbc::load_chart(&bytes).unwrap();
+        compiled.push(bytes);
+    }
+    assert_eq!(compiled[0], compiled[1]);
+}
+
+#[test]
 fn compile_uses_explicit_resource_resolver_root() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let fixtures = root.join("docs/conformance/fcs5/source/valid");
@@ -1333,6 +1364,17 @@ fn compile_uses_explicit_resource_resolver_root() {
     .unwrap();
     let source = source_dir.path().join("chart.fcs");
     fs::copy(fixtures.join("note-policies.fcs"), &source).unwrap();
+    let check = bin()
+        .current_dir(source_dir.path())
+        .args(["check", "chart.fcs", "--resolver-root"])
+        .arg(resolver_dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        check.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&check.stderr)
+    );
     let out = source_dir.path().join("out.fcbc");
     let output = bin()
         .arg("compile")
