@@ -2237,7 +2237,7 @@ impl<'a> RenderLowerer<'a> {
             &node.items,
             "origin",
             zero_length_vec(),
-            |value| Ok::<_, Diagnostic>(value),
+            Ok::<_, Diagnostic>,
         )?;
         let origin = self.descriptor(origin_value)?;
         let rotation = self.descriptor(TypedValue::Angle(render_body_value_or(
