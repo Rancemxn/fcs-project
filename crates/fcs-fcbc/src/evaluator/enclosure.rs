@@ -904,7 +904,11 @@ mod tests {
             }
             for (model, opcode, easing) in models {
                 for x in [-1.0, -0.5, 0.0, 0.5, 1.0] {
-                    let time = start * 0.5 + end * 0.5 + (end - start) * 0.5 * x;
+                    let time =
+                        (start * 0.5 + end * 0.5 + (end - start) * 0.5 * x).clamp(start, end);
+                    let normalized = (Bounds::point(time)
+                        - (Bounds::point(start) + Bounds::point(end)) * Bounds::point(0.5))
+                        / ((Bounds::point(end) - Bounds::point(start)) * Bounds::point(0.5));
                     let expected = if let Some(easing) = easing {
                         fcs_runtime::evaluate_easing(easing, time).unwrap()
                     } else {
@@ -923,7 +927,7 @@ mod tests {
                         .into_iter()
                         .rev()
                         .fold(Bounds::ZERO, |value, coefficient| {
-                            value * Bounds::point(x) + coefficient
+                            value * normalized + coefficient
                         })
                         + model.remainder;
                     assert!(
@@ -940,6 +944,9 @@ mod tests {
                 let model = math.bezier(controls, input).unwrap();
                 for x in [-0.5, 0.0, 0.5] {
                     let time = start * 0.5 + end * 0.5 + (end - start) * 0.5 * x;
+                    let normalized = (Bounds::point(time)
+                        - (Bounds::point(start) + Bounds::point(end)) * Bounds::point(0.5))
+                        / ((Bounds::point(end) - Bounds::point(start)) * Bounds::point(0.5));
                     let expected =
                         fcs_runtime::evaluate_cubic_bezier_progress(controls, time).unwrap();
                     let bound = model
@@ -947,7 +954,7 @@ mod tests {
                         .into_iter()
                         .rev()
                         .fold(Bounds::ZERO, |value, coefficient| {
-                            value * Bounds::point(x) + coefficient
+                            value * normalized + coefficient
                         })
                         + model.remainder;
                     assert!(

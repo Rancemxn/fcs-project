@@ -345,6 +345,70 @@ render profile 1.0.0 {
 }
 
 #[test]
+fn note_attachment_seeks_native_eased_and_bezier_scroll_distance() {
+    for (interpolation, at_one, at_two) in [
+        ("\"easeInQuad\"", 13.0 / 12.0, 8.0 / 3.0),
+        ("cubicBezier(0.25, 0.0, 0.75, 1.0)", 77.0 / 64.0, 3.0),
+    ] {
+        let source = format!(
+            r#"#fcs 5.0.0
+format {{ profile: renderable; }}
+tempoMap {{ 0beat -> 120bpm; }}
+lines {{ line main {{
+    floorScale: 1px;
+    scrollTempoMap {{ 0s -> 60bpm; }}
+    tracks {{ track speed -> scrollSpeed: float {{
+        extrapolateBefore: "holdBefore";
+        extrapolateAfter: "holdAfter";
+        segments {{ [0s, 2s): 1.0 -> 2.0 using {interpolation}; }}
+    }} }}
+}} }}
+collections {{ notes {{ tap {{ id: "distance-note"; line: @main; gameplay.time: 2s; }}; }} }}
+render profile 1.0.0 {{
+    viewport {{ width: 16px; height: 16px; }}
+    layer main {{ pass: "overlay"; children {{
+        circle marker {{ center: vec2(0px, 0px); radius: 1px; fill: solid(#FFFFFFFF); }}
+    }} }}
+}}
+"#
+        );
+        let document = parse_document(&source).into_result().unwrap();
+        let compilation = document
+            .canonical_compilation_with_source(
+                &source,
+                CompileTimeLimits::default(),
+                env!("CARGO_MANIFEST_DIR"),
+                ResourceLimits::default(),
+            )
+            .unwrap();
+        let bytes = write_from_compilation(&compilation).unwrap();
+        let note = fcs_fcbc::load_chart(&bytes).unwrap().notes[0].id;
+        // The current source Render subset supplies the geometry; bind its
+        // supported binary Note attachment and validate through the loader.
+        let bytes = mutate_render_section(bytes, |section| {
+            let node = node_record_offset(section);
+            section[node + 36..node + 38].copy_from_slice(&4u16.to_le_bytes());
+            section[node + 40..node + 48].copy_from_slice(&note.to_le_bytes());
+        });
+        let chart = load_render(&bytes).unwrap();
+        for (time, expected) in [
+            (1.0, at_two - at_one),
+            (-1.0, at_two + 1.0),
+            (2.0, 0.0),
+            (1.0, at_two - at_one),
+        ] {
+            let draws = evaluate_semantic_draw_list_at(&chart, time).unwrap();
+            assert_eq!(draws.len(), 1);
+            assert!(
+                (draws[0].world_matrix[5] - expected).abs() <= 4.656_612_873_077_393e-10,
+                "{interpolation} at {time}: {:?}",
+                draws[0].world_matrix
+            );
+        }
+    }
+}
+
+#[test]
 fn canonical_line_stroke_writer_reaches_product_render_loader() {
     let compilation = canonical_line_stroke_compilation();
     let scene = compilation.chart().render().expect("canonical Line scene");

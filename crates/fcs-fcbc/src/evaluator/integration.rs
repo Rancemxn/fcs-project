@@ -20,6 +20,17 @@ pub(super) fn distance(
     time: f64,
 ) -> Result<DistanceEvaluation, &'static str> {
     let mut query = Query::new(chart, line.scroll_tempo_descriptor, &descriptor.boundaries)?;
+    // A query endpoint can start a different half-open piece. Check its policy
+    // even though a point has no integral mass.
+    query
+        .panel(
+            Some((line.scroll_speed_descriptor, line.line_flags & 1 != 0)),
+            time,
+            time,
+            0,
+        )?
+        .bound
+        .ok_or(EXECUTION_ERROR)?;
     let bound = query.integrate(
         Some((line.scroll_speed_descriptor, line.line_flags & 1 != 0)),
         descriptor.integration_origin,
@@ -344,13 +355,26 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
             .integrate(None, 0.0, middle, 0.0, COORDINATE_ERROR)
             .ok()?;
         let tempo = self.tempo?;
-        let value = Taylor::enclosed(center)
+        let mut value = Taylor::enclosed(center)
             .real_add(
                 tempo
                     .primitive(self.start, self.end)
                     .scale(Bounds::point(1.0) / Bounds::point(60.0)),
             )
             .rounded();
+        // Positive local tempo and q(0)=0 prove the sign independently of
+        // coefficient roundoff, including the endpoint q(0) itself.
+        if self.start >= 0.0 {
+            value = value.with_bound(Bounds {
+                lo: 0.0,
+                hi: f64::INFINITY,
+            });
+        } else if self.end <= 0.0 {
+            value = value.with_bound(Bounds {
+                lo: f64::NEG_INFINITY,
+                hi: 0.0,
+            });
+        }
         self.coordinate = Some(value);
         Some(value)
     }
@@ -382,7 +406,14 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
                 // half-open piece at the right endpoint has zero integral mass.
                 let piece = pieces.iter().find(|piece| {
                     (piece.flags & 0b010 != 0 || piece.start <= self.start)
-                        && (piece.flags & 0b100 != 0 || piece.end >= self.end)
+                        && (piece.flags & 0b100 != 0
+                            || if self.start == self.end {
+                                self.start < piece.end
+                                    || (piece.flags & 1 != 0
+                                        && self.start.to_bits() == piece.end.to_bits())
+                            } else {
+                                piece.end >= self.end
+                            })
                 })?;
                 let progress = match (piece.flags & 0b010 != 0, piece.flags & 0b100 != 0) {
                     (false, false) => (self.time - Taylor::constant(piece.start))
@@ -394,7 +425,13 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
             }
             DescriptorKind::SegmentTrack(segments) => {
                 if let Some(segment) = segments.iter().find(|segment| {
-                    segment.flags & 1 == 0 && segment.start <= self.start && segment.end >= self.end
+                    segment.flags & 1 == 0
+                        && segment.start <= self.start
+                        && if self.start == self.end {
+                            self.start < segment.end
+                        } else {
+                            segment.end >= self.end
+                        }
                 }) {
                     let start = self
                         .query
@@ -885,4 +922,213 @@ fn integer_operation(opcode: u16, values: &[Value]) -> Option<Value> {
     } else {
         Value::Integer { lo, hi }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Domain, ExpressionNode, PropertyDescriptor, TempoPoint};
+
+    fn node(
+        chart: &mut DecodedChart,
+        opcode: u16,
+        result_type: ValueType,
+        operands: &[u32],
+    ) -> u32 {
+        let index = chart.expressions.len() as u32;
+        let mut refs = [u32::MAX; 3];
+        refs[..operands.len()].copy_from_slice(operands);
+        chart.expressions.push(ExpressionNode {
+            opcode,
+            result_type,
+            operands: refs,
+            arity: operands.len() as u8,
+            immediate: 0,
+        });
+        index
+    }
+
+    fn constant(chart: &mut DecodedChart, ty: ValueType, value: f64) -> u32 {
+        let immediate = chart.constants.len() as u32;
+        chart.constants.push(RuntimeValue::Scalar { ty, value });
+        let index = node(chart, 1, ty, &[]);
+        chart.expressions[index as usize].immediate = immediate;
+        index
+    }
+
+    fn bind_speed(chart: &mut DecodedChart, root: u32, boundaries: &[f64]) -> u32 {
+        let speed = chart.descriptors.len() as u32;
+        chart.descriptors.push(PropertyDescriptor {
+            property_type: ValueType::Float,
+            domain: Domain {
+                start: 0.0,
+                end: 0.0,
+                unbounded_before: true,
+                unbounded_after: true,
+            },
+            kind: DescriptorKind::Expression(root),
+        });
+        chart.lines[0].scroll_speed_descriptor = speed;
+        chart.lines[0].integration_origin = 0.0;
+        chart.lines[0].initial_floor_position = 0.0;
+        let index = chart.lines[0].distance_descriptor;
+        let distance = &mut chart.distances[index as usize];
+        distance.scroll_speed_descriptor = speed;
+        distance.integration_origin = 0.0;
+        distance.initial_floor_position = 0.0;
+        distance.classification = DistanceClassification::PortableEvaluable;
+        distance.boundaries = boundaries.to_vec();
+        index
+    }
+
+    fn chart() -> DecodedChart {
+        let mut chart = crate::load_chart(&crate::write_nonempty_execution()).unwrap();
+        let constant = chart.constants.len() as u32;
+        chart.constants.push(RuntimeValue::Scalar {
+            ty: ValueType::Float,
+            value: 60.0,
+        });
+        let tempo = chart.lines[0].scroll_tempo_descriptor as usize;
+        chart.descriptors[tempo].kind = DescriptorKind::Constant(constant);
+        chart
+    }
+
+    #[test]
+    fn continuous_predicates_enclose_a_narrow_pulse_and_preserve_short_circuiting() {
+        let mut chart = chart();
+        let time = node(&mut chart, 2, ValueType::Time, &[]);
+        let lower = constant(&mut chart, ValueType::Time, 0.314_159);
+        let upper = constant(&mut chart, ValueType::Time, 0.314_160);
+        let after = node(&mut chart, 35, ValueType::Bool, &[time, lower]);
+        let before = node(&mut chart, 32, ValueType::Bool, &[time, upper]);
+        let inside = node(&mut chart, 36, ValueType::Bool, &[after, before]);
+        let high = constant(&mut chart, ValueType::Float, 1000.0);
+        let base = constant(&mut chart, ValueType::Float, 1.0);
+        let speed = node(&mut chart, 70, ValueType::Float, &[inside, high, base]);
+        let index = bind_speed(&mut chart, speed, &[0.0]);
+        let result = query_distance(&chart, index, 1.0).unwrap();
+        let expected = 1.0 + 999.0 * (0.314_160 - 0.314_159);
+        assert!((result.floor_position - expected).abs() <= ABSOLUTE_ERROR);
+        assert_eq!(chart.distances[index as usize].boundaries, [0.0]);
+
+        let zero = constant(&mut chart, ValueType::Time, 0.0);
+        let negative_time = node(&mut chart, 32, ValueType::Bool, &[time, zero]);
+        let negative = constant(&mut chart, ValueType::Float, -1.0);
+        let invalid = node(&mut chart, 47, ValueType::Float, &[negative]);
+        let root = node(
+            &mut chart,
+            70,
+            ValueType::Float,
+            &[negative_time, invalid, base],
+        );
+        let index = bind_speed(&mut chart, root, &[0.0]);
+        let result = query_distance(&chart, index, 1.0).unwrap();
+        assert!((result.floor_position - 1.0).abs() <= ABSOLUTE_ERROR);
+        assert!(!result.visited_nodes.contains(&invalid));
+        assert_eq!(query_distance(&chart, index, -1.0), Err(EXECUTION_ERROR));
+    }
+
+    #[test]
+    fn speed_uses_line_local_q_global_beat_boundaries_and_local_reverse_policy() {
+        let mut chart = chart();
+        chart.tempo_points = vec![
+            TempoPoint {
+                beat_numerator: 0,
+                beat_denominator: 1,
+                chart_time: 0.0,
+                bpm: 120.0,
+                source_order: 0,
+            },
+            TempoPoint {
+                beat_numerator: 4,
+                beat_denominator: 1,
+                chart_time: 2.0,
+                bpm: 240.0,
+                source_order: 1,
+            },
+        ];
+        let first = chart.constants.len() as u32;
+        chart
+            .constants
+            .extend([60.0, 120.0].map(|value| RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value,
+            }));
+        chart.descriptors[chart.lines[0].scroll_tempo_descriptor as usize].kind =
+            DescriptorKind::SegmentTrack(vec![
+                Segment {
+                    start: 0.0,
+                    end: 0.0,
+                    flags: 1,
+                    interpolation: 1,
+                    easing: 0,
+                    start_constant: first,
+                    end_constant: first,
+                    bezier: [0.0; 4],
+                },
+                Segment {
+                    start: 1.0,
+                    end: 1.0,
+                    flags: 1,
+                    interpolation: 1,
+                    easing: 0,
+                    start_constant: first + 1,
+                    end_constant: first + 1,
+                    bezier: [0.0; 4],
+                },
+            ]);
+        let q = node(&mut chart, 4, ValueType::Float, &[]);
+        let beat = node(&mut chart, 3, ValueType::Beat, &[]);
+        let raw_beat = node(&mut chart, 63, ValueType::Float, &[beat]);
+        let speed = node(&mut chart, 20, ValueType::Float, &[q, raw_beat]);
+        let index = bind_speed(&mut chart, speed, &[0.0, 1.0, 2.0]);
+        chart.lines[0].line_flags = 1;
+        for (time, expected) in [
+            (3.0, 31.5),
+            (1.0, 1.5),
+            (-1.0, 1.5),
+            (2.0, 11.5),
+            (3.0, 31.5),
+        ] {
+            let actual = query_distance(&chart, index, time).unwrap();
+            assert!(
+                (actual.floor_position - expected).abs() <= ABSOLUTE_ERROR,
+                "at {time}: {} != {expected}",
+                actual.floor_position
+            );
+        }
+        chart.lines[0].line_flags = 0;
+        assert!(query_distance(&chart, index, 1.0).is_ok());
+        assert_eq!(query_distance(&chart, index, -1.0), Err(EXECUTION_ERROR));
+    }
+
+    #[test]
+    fn every_boundary_and_nested_query_charges_the_same_finite_budget() {
+        let mut chart = chart();
+        let q = node(&mut chart, 4, ValueType::Float, &[]);
+        let zero = constant(&mut chart, ValueType::Float, 0.0);
+        let mut root = q;
+        for _ in 0..100 {
+            root = node(&mut chart, 20, ValueType::Float, &[root, zero]);
+        }
+        let boundaries: Vec<_> = (0..=400).map(f64::from).collect();
+        let distance = bind_speed(&mut chart, root, &boundaries);
+        assert_eq!(
+            query_distance(&chart, distance, 400.0),
+            Err(EXECUTION_ERROR)
+        );
+        let line = &chart.lines[0];
+        let mut query = Query::new(&chart, line.scroll_tempo_descriptor, &boundaries).unwrap();
+        assert_eq!(
+            query.integrate(
+                Some((line.scroll_speed_descriptor, false)),
+                0.0,
+                400.0,
+                0.0,
+                ABSOLUTE_ERROR
+            ),
+            Err(EXECUTION_ERROR)
+        );
+        assert_eq!(query.evaluations, MAX_INTEGRATION_EVALUATIONS);
+    }
 }

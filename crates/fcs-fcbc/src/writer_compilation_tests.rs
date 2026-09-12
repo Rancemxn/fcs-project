@@ -2375,6 +2375,7 @@ fn native_eased_and_bezier_scroll_speeds_support_direct_distance_queries() {
     for (interpolation, at_one, at_two) in [
         ("\"easeInQuad\"", 13.0 / 12.0, 8.0 / 3.0),
         ("cubicBezier(0.0, 0.0, 1.0, 1.0)", 1.25, 3.0),
+        ("cubicBezier(0.25, 0.0, 0.75, 1.0)", 77.0 / 64.0, 3.0),
     ] {
         let source = format!(
             r#"#fcs 5.0.0
@@ -2393,7 +2394,9 @@ lines {{ line main {{
         let (_, decoded, _, _) = composed_chart(&source);
         let distance = decoded.lines[0].distance_descriptor;
         // easeInQuad integrates 1 + t^2/4; the Bezier has x(u) == y(u),
-        // so it integrates 1 + t/2. Both use constant endpoint holds.
+        // so it integrates 1 + t/2. For the non-linear Bezier, integrate
+        // Y(u)*X'(u) over u=[0,1/2] to get 13/128; symmetry gives its full
+        // area 1/2. All three use constant endpoint holds.
         for (time, expected) in [
             (-1.0, -1.0),
             (0.0, 0.0),
