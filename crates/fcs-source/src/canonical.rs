@@ -28,10 +28,10 @@ use fcs_model::{
 use fcs_runtime::{TrackContribution, TrackExpressionBuilder, evaluate_track_contribution};
 
 use crate::ast::{
-    Definition, Document, DocumentProfile, ExtensionRequirement, FieldPath, MetaBlock,
-    OrderedObject, ProfileFeature, RenderBodyItem, RenderItem, ResourceKind, SchemaField,
-    SchemaValue, SourceExpression, SourceLiteral, SourceSpan, SyncBlock, TopLevelBlockKind,
-    TrackDeclaration, TrackSegmentItem, Type, TypedValue,
+    Definition, DefinitionsBlock, Document, DocumentProfile, ExtensionRequirement, FieldPath,
+    MetaBlock, OrderedObject, ProfileFeature, RenderBodyItem, RenderItem, ResourceKind,
+    SchemaField, SchemaValue, SourceExpression, SourceLiteral, SourceSpan, SyncBlock,
+    TopLevelBlockKind, TrackDeclaration, TrackSegmentItem, Type, TypedValue,
 };
 use crate::custom::CustomValueLimits;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLabel, DiagnosticStage};
