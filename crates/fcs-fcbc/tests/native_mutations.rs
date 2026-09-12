@@ -588,7 +588,7 @@ fn segment_track_payload_offset(container: &ValidatedContainer, bytes: &[u8]) ->
                 return cursor + 8;
             }
         }
-        cursor += record_size as usize;
+        cursor += record_size;
     }
     panic!("alpha SegmentTrack descriptor not found");
 }
