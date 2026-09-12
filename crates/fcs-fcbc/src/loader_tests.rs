@@ -326,6 +326,68 @@ mod validator_recursion_tests {
             Ok(())
         );
     }
+
+    #[test]
+    fn nested_piecewise_expression_depth_is_independent_of_expression_table_length() {
+        let mut descriptors = backward_descriptor_chain(3);
+        descriptors[0] = descriptor(DescriptorKind::Expression(0));
+        let expression = ExpressionNode {
+            result_type: ValueType::Float,
+            ..node(4, [NULL_INDEX; 3], 0)
+        };
+        for count in [1, 8] {
+            let expressions = vec![expression.clone(); count];
+            assert_eq!(
+                validate_descriptor_environment_for_target(
+                    "line.alpha",
+                    2,
+                    &descriptors,
+                    &expressions
+                ),
+                Ok(())
+            );
+            assert_eq!(
+                validate_descriptor_env_p_context(2, &descriptors, &expressions),
+                Ok(())
+            );
+        }
+
+        descriptors[0] = piecewise_to(2);
+        assert_eq!(
+            validate_descriptor_environment_for_target("line.alpha", 2, &descriptors, &[]),
+            Err("fcbc.invalid-expression")
+        );
+        assert_eq!(
+            validate_descriptor_env_p_context(2, &descriptors, &[]),
+            Err("fcbc.invalid-expression")
+        );
+    }
+
+    #[test]
+    fn mixed_descriptor_expression_paths_keep_the_combined_depth_budget() {
+        let mut expressions = backward_expression_chain(MAX_VALIDATOR_DEPTH / 2, 4);
+        for expression in &mut expressions {
+            expression.result_type = ValueType::Float;
+        }
+        for (extra, expected) in [(0, Ok(())), (1, Err("fcbc.limit-exceeded"))] {
+            let mut descriptors = backward_descriptor_chain(MAX_VALIDATOR_DEPTH / 2 + 1 + extra);
+            descriptors[0] = descriptor(DescriptorKind::Expression(expressions.len() as u32 - 1));
+            let root = descriptors.len() as u32 - 1;
+            assert_eq!(
+                validate_descriptor_environment_for_target(
+                    "line.alpha",
+                    root,
+                    &descriptors,
+                    &expressions
+                ),
+                expected
+            );
+            assert_eq!(
+                validate_descriptor_env_p_context(root, &descriptors, &expressions),
+                expected
+            );
+        }
+    }
 }
 
 mod tempo_revalidation_tests {

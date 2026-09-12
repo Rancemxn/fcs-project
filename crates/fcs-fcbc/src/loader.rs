@@ -2837,21 +2837,9 @@ pub fn validate_descriptor_environment_for_target(
         .ok_or("fcbc.invalid-expression")
 }
 
-// The depth-guarded walks below keep their own stacks instead of recursing:
-// chain length is file-controlled, so the table-sized cycle guards fire far
-// deeper than any native stack survives. The guards and their categories are
-// unchanged - they still bound cyclic references, not well-formed depth.
-//
-// The walks are also DAG-aware: a node completes once (facts memo), so shared
-// subgraphs are re-walked a bounded number of times instead of once per
-// occurrence. Because a completed node's guards no longer re-run on every
-// occurrence, each walk additionally records the longest downward path per
-// node and checks it against the same limits at the end. For acyclic graphs
-// that is exactly the deepest occurrence depth the recursive walk would have
-// reached, so accepted charts stay accepted and rejected charts stay rejected
-// with the same category; only the error chosen when a chart violates both a
-// length limit and the depth limit at once can shift from the length error to
-// `fcbc.limit-exceeded`.
+// Iterative, memoized walks bound each table's cycle depth separately. Longest
+// paths also retain the combined descriptor/expression depth budget, including
+// paths through a shared subgraph that completed on a shallower occurrence.
 
 fn descriptor_environment_dependencies(
     index: u32,
@@ -2870,24 +2858,20 @@ fn descriptor_environment_dependencies(
             if depth > MAX_VALIDATOR_DEPTH {
                 return Err("fcbc.limit-exceeded");
             }
-            if depth > descriptors.len() + expressions.len() {
+            if depth > descriptors.len() {
                 return Err("fcbc.invalid-expression");
             }
             let descriptor = descriptors
                 .get(index as usize)
                 .ok_or("fcbc.dangling-reference")?;
             if let DescriptorKind::Expression(root) = &descriptor.kind {
-                // The depth check runs on every occurrence, exactly as the
-                // recursive walk entered the expression subgraph once per
-                // occurrence; only the subgraph walk itself is memoized.
+                // The combined budget includes descriptor hops; expression
+                // cycle checks use only the expression subgraph's own depth.
                 let (_, root_longest) =
                     expression_dependency_facts(*root, expressions, &mut expression_facts)?;
                 let deepest = depth + 1 + root_longest;
                 if deepest > MAX_VALIDATOR_DEPTH {
                     return Err("fcbc.limit-exceeded");
-                }
-                if deepest > expressions.len() {
-                    return Err("fcbc.invalid-expression");
                 }
             }
             if completed[index as usize] {
@@ -2911,11 +2895,7 @@ fn descriptor_environment_dependencies(
                         let child = piece.descriptor_index as usize;
                         bits |= dependencies[child];
                         from_pieces = from_pieces.max(piece_longest[child] + 1);
-                        // A piece hop extends an expression path only when the
-                        // child actually reaches an expression: the recursive
-                        // walk applied the expression limit at real Expression
-                        // occurrences, so a pure Piecewise chain must not count
-                        // its hops against it.
+                        // Extend the combined path only if it reaches an expression.
                         if expression_longest[child] > 0 {
                             from_expressions = from_expressions.max(expression_longest[child] + 1);
                         }
@@ -2940,10 +2920,7 @@ fn descriptor_environment_dependencies(
     if descriptor_deepest.max(expression_deepest) > MAX_VALIDATOR_DEPTH {
         return Err("fcbc.limit-exceeded");
     }
-    if expression_deepest > expressions.len() {
-        return Err("fcbc.invalid-expression");
-    }
-    if descriptor_deepest > descriptors.len() + expressions.len() {
+    if descriptor_deepest > descriptors.len() {
         return Err("fcbc.invalid-expression");
     }
     Ok(dependencies[start])
@@ -3054,7 +3031,7 @@ pub fn validate_descriptor_env_p_context(
             if depth > MAX_VALIDATOR_DEPTH {
                 return Err("fcbc.limit-exceeded");
             }
-            if depth > descriptors.len() + expressions.len() {
+            if depth > descriptors.len() {
                 return Err("fcbc.invalid-expression");
             }
             let descriptor = descriptors
@@ -3070,9 +3047,6 @@ pub fn validate_descriptor_env_p_context(
                 let deepest = depth + 1 + root_longest;
                 if deepest > MAX_VALIDATOR_DEPTH {
                     return Err("fcbc.limit-exceeded");
-                }
-                if deepest > expressions.len() + 1 {
-                    return Err("fcbc.invalid-expression");
                 }
             }
             let context = usize::from(has_piece_context);
@@ -3095,9 +3069,6 @@ pub fn validate_descriptor_env_p_context(
                     for piece in pieces {
                         let child = piece.descriptor_index as usize;
                         from_pieces = from_pieces.max(piece_longest[child] + 1);
-                        // Same rule as the dependency walk: piece hops count
-                        // toward the expression limit only beneath a real
-                        // expression occurrence.
                         if expression_longest[child] > 0 {
                             from_expressions = from_expressions.max(expression_longest[child] + 1);
                         }
@@ -3125,10 +3096,7 @@ pub fn validate_descriptor_env_p_context(
     if descriptor_deepest.max(expression_deepest) > MAX_VALIDATOR_DEPTH {
         return Err("fcbc.limit-exceeded");
     }
-    if expression_deepest > expressions.len() + 1 {
-        return Err("fcbc.invalid-expression");
-    }
-    if descriptor_deepest > descriptors.len() + expressions.len() {
+    if descriptor_deepest > descriptors.len() {
         return Err("fcbc.invalid-expression");
     }
     Ok(())
@@ -3645,7 +3613,7 @@ const MAX_CUSTOM_VALUE_DEPTH: usize = 32;
 /// The descriptor/expression validation depth is a loader resource budget,
 /// separate from table-sized cycle guards. A deeper graph is rejected before
 /// the explicit validation stack can grow without bound.
-const MAX_VALIDATOR_DEPTH: usize = 1024;
+pub(crate) const MAX_VALIDATOR_DEPTH: usize = 1024;
 
 fn decode_value(value: &ParsedValue, strings: &[String]) -> Result<DecodedValue, &'static str> {
     match value.tag {

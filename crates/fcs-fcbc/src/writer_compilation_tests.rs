@@ -2514,6 +2514,74 @@ fn unbounded_descriptor_domain() -> CanonicalDescriptorDomain {
 }
 
 #[test]
+fn nested_piecewise_with_one_expression_round_trips_and_evaluates() {
+    let base = compilation(SHARED_SUBGRAPH_NOTE_SOURCE);
+    let line_id = base.chart().lines().lines().next().unwrap().id().value();
+    let expression = CanonicalExpressionDag::new(
+        vec![CanonicalExpressionNode::new(
+            CanonicalExpressionOpcode::EnvQ,
+            CanonicalExpressionType::Float,
+            [None; 3],
+            None,
+            0,
+        )],
+        0,
+    )
+    .unwrap();
+    let mut descriptors = vec![
+        CanonicalPropertyDescriptor::new(
+            CanonicalExpressionType::Float,
+            unbounded_descriptor_domain(),
+            CanonicalDescriptorKind::Expression(expression),
+        )
+        .unwrap(),
+    ];
+    for index in 1..=2 {
+        descriptors.push(
+            CanonicalPropertyDescriptor::new(
+                CanonicalExpressionType::Float,
+                unbounded_descriptor_domain(),
+                CanonicalDescriptorKind::Piecewise(vec![
+                    CanonicalPiece::new(None, None, false, index - 1).unwrap(),
+                ]),
+            )
+            .unwrap(),
+        );
+    }
+    let table = CanonicalDescriptorTable::new(
+        descriptors,
+        vec![CanonicalDescriptorRoot::new("line.alpha", line_id, 2).unwrap()],
+    )
+    .unwrap();
+    let compilation = CanonicalCompilation::new(
+        base.chart().clone().with_descriptors(table),
+        base.resources().clone(),
+        base.distribution().clone(),
+    );
+    let bytes = write_from_compilation(&compilation).unwrap();
+    let decoded = crate::load_chart(&bytes).unwrap();
+    assert_eq!(decoded.expressions.len(), 1);
+    let result = crate::query_descriptor(
+        &decoded,
+        decoded.lines[0].alpha_descriptor,
+        0.0,
+        crate::EvaluationEnvironment {
+            q: 0.375,
+            ..crate::EvaluationEnvironment::at_time(0.0)
+        },
+    )
+    .unwrap();
+    assert_runtime_value_bits(
+        result.value,
+        crate::RuntimeValue::Scalar {
+            ty: crate::ValueType::Float,
+            value: 0.375,
+        },
+    );
+    assert_eq!(result.visited_nodes, vec![0]);
+}
+
+#[test]
 fn write_from_compilation_round_trips_a_shared_expression_dag() {
     // Node i adds node i - 1 twice: the tree-shaped re-evaluation the old
     // unbounded pipeline performed doubles on every level, so this payload
