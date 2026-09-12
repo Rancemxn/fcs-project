@@ -1006,7 +1006,9 @@ fn a_topology_only_render_change_is_a_mismatch() {
         .iter()
         .map(ComparisonMismatch::selector)
         .collect();
-    assert_eq!(selectors, ["render.scene.nodes"]);
+    // The two-root form lists both nodes in the layer roots; the root-and-child
+    // form lists only the root, so the layer record differs alongside the nodes.
+    assert_eq!(selectors, ["render.scene.layers", "render.scene.nodes"]);
 }
 
 #[test]
