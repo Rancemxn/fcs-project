@@ -2438,7 +2438,8 @@ fn validate_segments(
             return Err("fcbc.invalid-track");
         }
         let is_point = segment.flags & 1 != 0;
-        if let Some(previous) = prior {
+        let previous = prior;
+        if let Some(previous) = previous {
             match previous.start.total_cmp(&segment.start) {
                 std::cmp::Ordering::Greater => return Err("fcbc.invalid-track"),
                 std::cmp::Ordering::Equal if previous.flags & 1 == 0 || is_point => {
@@ -2459,12 +2460,34 @@ fn validate_segments(
         {
             return Err("fcbc.invalid-track");
         }
+        if let Some(previous) = previous {
+            if previous.flags & 1 == 0 {
+                // Section 13.1: an ordinary segment stops at its end, and the
+                // next entry must pick up exactly there, or the interval
+                // between the two has no defined value. A point stretches
+                // forward to the next entry, so only an ordinary predecessor
+                // can leave a gap.
+                if segment.start.to_bits() != previous.end.to_bits() {
+                    return Err("fcbc.invalid-track");
+                }
+            } else if previous.start.to_bits() == segment.start.to_bits() {
+                // Same-time point before an ordinary segment: the boundary
+                // values must agree bitwise, so the ABI never invents which
+                // one a query at the boundary returns.
+                let point_value = constants
+                    .get(previous.start_constant as usize)
+                    .ok_or("fcbc.dangling-reference")?;
+                if !runtime_values_bitwise_equal(point_value, start) {
+                    return Err("fcbc.invalid-track");
+                }
+            }
+        }
         if is_point {
             if segment.start.to_bits() != segment.end.to_bits()
                 || segment.interpolation != 1
                 || segment.easing != 0
                 || segment.bezier.iter().any(|value| value.to_bits() != 0)
-                || start != end
+                || !runtime_values_bitwise_equal(start, end)
             {
                 return Err("fcbc.invalid-track");
             }
@@ -4017,6 +4040,30 @@ fn runtime_value_type(value: &RuntimeValue) -> Option<ValueType> {
         RuntimeValue::Color(_) => Some(ValueType::Color),
         RuntimeValue::Vec2 { ty, .. } => Some(*ty),
         RuntimeValue::ResourceRef(_) | RuntimeValue::ContributorRef(_) => None,
+    }
+}
+
+/// Bitwise value equality: `+0.0` and `-0.0` are distinct, unlike `PartialEq`.
+/// Floats compare by bit pattern, colors and vectors componentwise.
+fn runtime_values_bitwise_equal(left: &RuntimeValue, right: &RuntimeValue) -> bool {
+    let component_bits = |left: &[f64], right: &[f64]| {
+        left.iter()
+            .zip(right)
+            .all(|(left, right)| left.to_bits() == right.to_bits())
+    };
+    match (left, right) {
+        (RuntimeValue::Bool(left), RuntimeValue::Bool(right)) => left == right,
+        (RuntimeValue::Int(left), RuntimeValue::Int(right)) => left == right,
+        (RuntimeValue::Scalar { value: left, .. }, RuntimeValue::Scalar { value: right, .. }) => {
+            component_bits(&[*left], &[*right])
+        }
+        (RuntimeValue::Color(left), RuntimeValue::Color(right)) => component_bits(left, right),
+        (RuntimeValue::Vec2 { value: left, .. }, RuntimeValue::Vec2 { value: right, .. }) => {
+            component_bits(left, right)
+        }
+        (RuntimeValue::ResourceRef(left), RuntimeValue::ResourceRef(right)) => left == right,
+        (RuntimeValue::ContributorRef(left), RuntimeValue::ContributorRef(right)) => left == right,
+        _ => false,
     }
 }
 
