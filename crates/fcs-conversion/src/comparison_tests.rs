@@ -1,14 +1,17 @@
 use super::*;
 use fcs_model::{
-    AudioOffset, Beat, CanonicalBundledResource, CanonicalChartScrollTempoPoint, CanonicalColor,
-    CanonicalCompilation, CanonicalJudgeShape, CanonicalLineBase, CanonicalLineGraph,
-    CanonicalLineInherit, CanonicalMetadata, CanonicalNote, CanonicalNoteGameplay,
-    CanonicalNoteKind, CanonicalNotePresentation, CanonicalNoteScorePolicy, CanonicalNoteSet,
-    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalPreview,
-    CanonicalProfile, CanonicalResource, CanonicalResourceBundle, CanonicalResourceKind,
-    CanonicalScrollCoordinate, CanonicalScrollLine, CanonicalScrollSet, CanonicalScrollTempo,
-    CanonicalSourceVersion, CanonicalSync, CanonicalTextualId, CanonicalTime, CanonicalTrackSet,
-    CanonicalValue, CanonicalVec2, ChartTimeMap, DistributionMetadata, EntityKind, StableId,
+    AudioOffset, Beat, CanonicalActiveInterval, CanonicalBundledResource,
+    CanonicalChartScrollTempoPoint, CanonicalColor, CanonicalCompilation, CanonicalJudgeShape,
+    CanonicalLineBase, CanonicalLineGraph, CanonicalLineInherit, CanonicalMetadata, CanonicalNote,
+    CanonicalNoteGameplay, CanonicalNoteKind, CanonicalNotePresentation, CanonicalNoteScorePolicy,
+    CanonicalNoteSet, CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject,
+    CanonicalPreview, CanonicalProfile, CanonicalRenderAttachment, CanonicalRenderColorSpace,
+    CanonicalRenderComposite, CanonicalRenderLayer, CanonicalRenderNode, CanonicalRenderNodeKind,
+    CanonicalRenderNodeSpec, CanonicalRenderPass, CanonicalRenderScene, CanonicalRenderSceneSpec,
+    CanonicalResource, CanonicalResourceBundle, CanonicalResourceKind, CanonicalScrollCoordinate,
+    CanonicalScrollLine, CanonicalScrollSet, CanonicalScrollTempo, CanonicalSourceVersion,
+    CanonicalSync, CanonicalTextualId, CanonicalTime, CanonicalTrackSet, CanonicalValue,
+    CanonicalVec2, CanonicalViewport, ChartTimeMap, DistributionMetadata, EntityKind, StableId,
     StableIdRegistry, TempoPoint,
 };
 
@@ -810,4 +813,240 @@ fn mismatch_sink_bounds_owned_items_at_report_limit() {
     assert_eq!(observed, MAX_REPORT_ENTRIES + 1);
     assert_eq!(items[0].field(), "field[0]");
     assert_eq!(items[MAX_REPORT_ENTRIES - 1].field(), "field[1023]");
+}
+
+// --- Render scene comparison (#632) ---
+
+fn render_group_node(
+    id: StableId,
+    parent: Option<usize>,
+    active: CanonicalActiveInterval,
+) -> CanonicalRenderNodeSpec {
+    CanonicalRenderNodeSpec {
+        id,
+        kind: CanonicalRenderNodeKind::Group,
+        parent,
+        layer: 0,
+        document_order: 0,
+        z_order: 0,
+        attachment: CanonicalRenderAttachment::World,
+        active,
+        isolate: false,
+        follow_hidden_attachment: false,
+        position: 0,
+        origin: 0,
+        rotation: 0,
+        scale: 0,
+        opacity: 0,
+        visibility: 0,
+        geometry: None,
+        fill_paint: None,
+        stroke: None,
+        clip: None,
+        composite: CanonicalRenderComposite::SourceOver,
+    }
+}
+
+fn render_scene(
+    viewport: (f64, f64),
+    roots: Vec<usize>,
+    nodes: Vec<CanonicalRenderNodeSpec>,
+) -> CanonicalRenderScene {
+    let mut registry = StableIdRegistry::new();
+    let layer_id = registry
+        .insert(
+            EntityKind::RenderLayer,
+            CanonicalTextualId::explicit("layer/main").unwrap(),
+        )
+        .unwrap();
+    CanonicalRenderScene::new(CanonicalRenderSceneSpec {
+        viewport: CanonicalViewport::new(
+            viewport.0,
+            viewport.1,
+            CanonicalRenderColorSpace::LinearSrgb,
+        )
+        .unwrap(),
+        layers: vec![
+            CanonicalRenderLayer::new(layer_id, CanonicalRenderPass::Overlay, 0, 0, roots).unwrap(),
+        ],
+        nodes: nodes
+            .into_iter()
+            .map(|spec| CanonicalRenderNode::new(spec).unwrap())
+            .collect(),
+        geometries: Vec::new(),
+        paths: Vec::new(),
+        paints: Vec::new(),
+        strokes: Vec::new(),
+        clips: Vec::new(),
+        glyph_runs: Vec::new(),
+    })
+    .unwrap()
+}
+
+fn one_node_scene(viewport: (f64, f64), active: CanonicalActiveInterval) -> CanonicalRenderScene {
+    let mut registry = StableIdRegistry::new();
+    let node_id = registry
+        .insert(
+            EntityKind::RenderNode,
+            CanonicalTextualId::explicit("layer/main/a").unwrap(),
+        )
+        .unwrap();
+    render_scene(
+        viewport,
+        vec![0],
+        vec![render_group_node(node_id, None, active)],
+    )
+}
+
+fn chart_with_render(scene: CanonicalRenderScene) -> CanonicalChart {
+    chart_with_notes(Vec::new()).with_render(scene)
+}
+
+fn compilation_with_render(scene: CanonicalRenderScene) -> CanonicalCompilation {
+    CanonicalCompilation::new(
+        chart_with_render(scene),
+        CanonicalResourceBundle::new(Vec::new()).unwrap(),
+        DistributionMetadata::empty(),
+    )
+}
+
+#[test]
+fn identical_render_scenes_compare_equivalent() {
+    let expected = chart_with_render(one_node_scene(
+        (4.0, 4.0),
+        CanonicalActiveInterval::unbounded(),
+    ));
+    let actual = chart_with_render(one_node_scene(
+        (4.0, 4.0),
+        CanonicalActiveInterval::unbounded(),
+    ));
+    let comparison = compare_canonical_charts(&expected, &actual);
+    assert!(comparison.is_equivalent(), "{:?}", comparison.mismatches());
+}
+
+#[test]
+fn a_viewport_only_render_change_is_a_mismatch() {
+    let expected = chart_with_render(one_node_scene(
+        (4.0, 4.0),
+        CanonicalActiveInterval::unbounded(),
+    ));
+    let actual = chart_with_render(one_node_scene(
+        (8.0, 4.0),
+        CanonicalActiveInterval::unbounded(),
+    ));
+    let comparison = compare_canonical_charts(&expected, &actual);
+    assert!(!comparison.is_equivalent());
+    let selectors: Vec<&str> = comparison
+        .mismatches()
+        .iter()
+        .map(ComparisonMismatch::selector)
+        .collect();
+    assert_eq!(selectors, ["render.scene.viewport"]);
+}
+
+#[test]
+fn an_active_interval_only_render_change_is_a_mismatch() {
+    let expected = chart_with_render(one_node_scene(
+        (4.0, 4.0),
+        CanonicalActiveInterval::unbounded(),
+    ));
+    let actual = chart_with_render(one_node_scene(
+        (4.0, 4.0),
+        CanonicalActiveInterval::bounded(0.0, 1.0).unwrap(),
+    ));
+    let comparison = compare_canonical_charts(&expected, &actual);
+    assert!(!comparison.is_equivalent());
+    let selectors: Vec<&str> = comparison
+        .mismatches()
+        .iter()
+        .map(ComparisonMismatch::selector)
+        .collect();
+    assert_eq!(selectors, ["render.scene.nodes"]);
+}
+
+#[test]
+fn a_topology_only_render_change_is_a_mismatch() {
+    let mut registry = StableIdRegistry::new();
+    let root_id = registry
+        .insert(
+            EntityKind::RenderNode,
+            CanonicalTextualId::explicit("layer/main/a").unwrap(),
+        )
+        .unwrap();
+    let child_id = registry
+        .insert(
+            EntityKind::RenderNode,
+            CanonicalTextualId::explicit("layer/main/b").unwrap(),
+        )
+        .unwrap();
+    let unbounded = CanonicalActiveInterval::unbounded();
+    let two_roots = render_scene(
+        (4.0, 4.0),
+        vec![0, 1],
+        vec![
+            render_group_node(root_id.clone(), None, unbounded),
+            render_group_node(child_id.clone(), None, unbounded),
+        ],
+    );
+    let root_and_child = render_scene(
+        (4.0, 4.0),
+        vec![0],
+        vec![
+            render_group_node(root_id, None, unbounded),
+            render_group_node(child_id, Some(0), unbounded),
+        ],
+    );
+    let comparison = compare_canonical_charts(
+        &chart_with_render(two_roots),
+        &chart_with_render(root_and_child),
+    );
+    assert!(!comparison.is_equivalent());
+    let selectors: Vec<&str> = comparison
+        .mismatches()
+        .iter()
+        .map(ComparisonMismatch::selector)
+        .collect();
+    assert_eq!(selectors, ["render.scene.nodes"]);
+}
+
+#[test]
+fn render_scene_presence_is_structural_and_undropable() {
+    let with_scene = chart_with_render(one_node_scene(
+        (4.0, 4.0),
+        CanonicalActiveInterval::unbounded(),
+    ));
+    let without_scene = chart_with_notes(Vec::new());
+    let comparison = compare_canonical_charts_with_budgets(
+        &with_scene,
+        &without_scene,
+        &BTreeMap::new(),
+        &["render.scene".to_owned()],
+    );
+    assert!(!comparison.is_equivalent());
+    let selectors: Vec<&str> = comparison
+        .mismatches()
+        .iter()
+        .map(ComparisonMismatch::selector)
+        .collect();
+    assert_eq!(selectors, ["render.scene.presence"]);
+}
+
+#[test]
+fn render_scene_changes_reach_the_compilation_entry_point() {
+    let expected = compilation_with_render(one_node_scene(
+        (4.0, 4.0),
+        CanonicalActiveInterval::unbounded(),
+    ));
+    let actual = compilation_with_render(one_node_scene(
+        (8.0, 4.0),
+        CanonicalActiveInterval::unbounded(),
+    ));
+    let comparison = compare_canonical_compilations(&expected, &actual);
+    assert!(!comparison.is_equivalent());
+    let selectors: Vec<&str> = comparison
+        .mismatches()
+        .iter()
+        .map(ComparisonMismatch::selector)
+        .collect();
+    assert_eq!(selectors, ["render.scene.viewport"]);
 }
