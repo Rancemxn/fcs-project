@@ -11,6 +11,7 @@ mod easing;
 mod expression;
 mod scroll;
 mod track;
+mod track_expression;
 mod transform;
 
 pub use descriptor::{DescriptorEvaluationError, evaluate_descriptor};
@@ -24,6 +25,7 @@ pub use track::{
     TrackContribution, TrackEvaluationError, evaluate_track, evaluate_track_contribution,
     evaluate_track_set,
 };
+pub use track_expression::{TrackExpressionBuilder, TrackExpressionError, TrackExpressionValue};
 pub use transform::{
     EvaluatedLineComponents, EvaluatedLineTransform, LineTransformError, LineTransformMatrix,
     evaluate_line_transform,
