@@ -1526,7 +1526,7 @@ impl<'a> RenderLowerer<'a> {
                     let dag = builder
                         .finish(root)
                         .map_err(|error| render_error(error.to_string(), span))?;
-                    let index = self.descriptors.len();
+                    let descriptor_index = self.descriptors.len();
                     self.descriptors.push(
                         CanonicalPropertyDescriptor::new(
                             property_type.clone(),
@@ -1536,10 +1536,12 @@ impl<'a> RenderLowerer<'a> {
                         )
                         .map_err(|error| render_error(error.to_string(), span))?,
                     );
-                    index
+                    descriptor_index
                 }
             };
-            let end = (index < boundaries.len()).then_some(boundaries[index]);
+            // `then_some` evaluates eagerly, so the last region's absent end
+            // must go through the lazy `then` to skip the bounds check.
+            let end = (index < boundaries.len()).then(|| boundaries[index]);
             pieces.push(
                 CanonicalPiece::new(start, end, false, child)
                     .map_err(|error| render_error(error.to_string(), span))?,
