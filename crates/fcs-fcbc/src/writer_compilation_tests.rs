@@ -2,7 +2,8 @@ use super::*;
 use std::fs;
 
 use fcs_model::{
-    CanonicalDescriptorDomain, CanonicalDescriptorRoot, CanonicalPiece, CanonicalPropertyDescriptor,
+    CanonicalDescriptorDomain, CanonicalDescriptorRoot, CanonicalExpressionNode, CanonicalPiece,
+    CanonicalPropertyDescriptor,
 };
 use fcs_source::ResourceLimits;
 use fcs_source::elaborator::CompileTimeLimits;

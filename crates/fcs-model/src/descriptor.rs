@@ -237,6 +237,22 @@ impl CanonicalDescriptorTable {
         descriptors: Vec<CanonicalPropertyDescriptor>,
         roots: Vec<CanonicalDescriptorRoot>,
     ) -> Result<Self, CanonicalDescriptorError> {
+        Self::with_index_mapping(descriptors, roots).map(|(table, _)| table)
+    }
+
+    /// Builds the table and reports where each input descriptor landed in the
+    /// canonical order.
+    ///
+    /// Canonical emission reorders children ahead of their parents and
+    /// structural interning can merge equal inputs into one entry, so an
+    /// input index does not identify its output position. Callers that hold
+    /// references into the input order (scene records, merged tables) use
+    /// this mapping instead of searching by equality, which cannot see
+    /// through the renumbered Piecewise children.
+    pub fn with_index_mapping(
+        descriptors: Vec<CanonicalPropertyDescriptor>,
+        roots: Vec<CanonicalDescriptorRoot>,
+    ) -> Result<(Self, Vec<usize>), CanonicalDescriptorError> {
         if descriptors.is_empty() {
             return Err(CanonicalDescriptorError::EmptyTable);
         }
@@ -290,10 +306,17 @@ impl CanonicalDescriptorTable {
                 &mut canonical,
             );
         }
-        Ok(Self {
-            descriptors: canonical,
-            roots,
-        })
+        let mapping = mapped
+            .into_iter()
+            .map(|index| index.expect("validated descriptors are all root-reachable"))
+            .collect();
+        Ok((
+            Self {
+                descriptors: canonical,
+                roots,
+            },
+            mapping,
+        ))
     }
 
     pub fn descriptors(&self) -> &[CanonicalPropertyDescriptor] {
@@ -808,6 +831,37 @@ mod tests {
         )
         .unwrap();
         assert_eq!(signed_zero.descriptors().len(), 2);
+    }
+
+    #[test]
+    fn index_mapping_reports_canonical_positions() {
+        // The duplicate constant interns onto the first entry, and the parent
+        // emits after its children, so input positions differ from canonical
+        // positions. Piecewise children renumber, which equality searches
+        // cannot see through.
+        let child = constant(2.0, domain(None, None, false));
+        let duplicate = constant(2.0, domain(None, None, false));
+        let parent = CanonicalPropertyDescriptor::new(
+            CanonicalExpressionType::Float,
+            domain(None, None, false),
+            CanonicalDescriptorKind::Piecewise(vec![
+                CanonicalPiece::new(None, Some(1.0), false, 0).unwrap(),
+                CanonicalPiece::new(Some(1.0), None, false, 1).unwrap(),
+            ]),
+        )
+        .unwrap();
+        let (table, mapping) = CanonicalDescriptorTable::with_index_mapping(
+            vec![child, duplicate, parent],
+            vec![root("line.alpha", 2)],
+        )
+        .unwrap();
+        assert_eq!(mapping, vec![0, 0, 1]);
+        assert_eq!(table.descriptors().len(), 2);
+        let CanonicalDescriptorKind::Piecewise(pieces) = table.descriptors()[1].kind() else {
+            panic!("the parent must stay Piecewise");
+        };
+        assert_eq!(pieces[0].descriptor(), 0);
+        assert_eq!(pieces[1].descriptor(), 0);
     }
 
     #[test]

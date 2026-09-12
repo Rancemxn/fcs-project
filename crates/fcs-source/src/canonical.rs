@@ -11,24 +11,27 @@ use fcs_model::{
     CanonicalExpressionType, CanonicalExpressionValue, CanonicalGlyphPlacement, CanonicalGlyphRun,
     CanonicalGradientSpread, CanonicalGradientStop, CanonicalImageRepeat, CanonicalImageSampling,
     CanonicalLineGraph, CanonicalMetadata, CanonicalNoteSet, CanonicalObject, CanonicalObjectEntry,
-    CanonicalPathCommand, CanonicalPatternTransform, CanonicalPreview, CanonicalProfile,
-    CanonicalProfileFeature, CanonicalPropertyDescriptor, CanonicalRenderAttachment,
-    CanonicalRenderClip, CanonicalRenderColorSpace, CanonicalRenderComposite,
-    CanonicalRenderFillRule, CanonicalRenderGeometry, CanonicalRenderGeometryData,
-    CanonicalRenderLayer, CanonicalRenderNode, CanonicalRenderNodeKind, CanonicalRenderNodeSpec,
-    CanonicalRenderPaint, CanonicalRenderPaintData, CanonicalRenderPass, CanonicalRenderPath,
-    CanonicalRenderScene, CanonicalRenderSceneSpec, CanonicalRenderStroke,
-    CanonicalRequiredExtension, CanonicalResource, CanonicalResourceBundle, CanonicalResourceKind,
-    CanonicalSourceVersion, CanonicalStrokeCap, CanonicalStrokeJoin, CanonicalSync,
-    CanonicalTextualId, CanonicalValue, CanonicalValueType, CanonicalViewport, ChartTimeMap,
-    DeclaredSha256, DistributionMetadata, EntityKind, StableId, StableIdRegistry,
+    CanonicalPathCommand, CanonicalPatternTransform, CanonicalPiece, CanonicalPreview,
+    CanonicalProfile, CanonicalProfileFeature, CanonicalPropertyDescriptor,
+    CanonicalRenderAttachment, CanonicalRenderClip, CanonicalRenderColorSpace,
+    CanonicalRenderComposite, CanonicalRenderFillRule, CanonicalRenderGeometry,
+    CanonicalRenderGeometryData, CanonicalRenderLayer, CanonicalRenderNode,
+    CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
+    CanonicalRenderPaintData, CanonicalRenderPass, CanonicalRenderPath, CanonicalRenderScene,
+    CanonicalRenderSceneSpec, CanonicalRenderStroke, CanonicalRequiredExtension, CanonicalResource,
+    CanonicalResourceBundle, CanonicalResourceKind, CanonicalSourceVersion, CanonicalStrokeCap,
+    CanonicalStrokeJoin, CanonicalSync, CanonicalTextualId, CanonicalTrack, CanonicalTrackBlend,
+    CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackTarget,
+    CanonicalTrackValue, CanonicalValue, CanonicalValueType, CanonicalVec2, CanonicalViewport,
+    ChartTimeMap, DeclaredSha256, DistributionMetadata, EntityKind, StableId, StableIdRegistry,
 };
+use fcs_runtime::{TrackContribution, TrackExpressionBuilder, evaluate_track_contribution};
 
 use crate::ast::{
-    Definition, DefinitionsBlock, Document, DocumentProfile, ExtensionRequirement, FieldPath,
-    MetaBlock, OrderedObject, ProfileFeature, RenderBodyItem, RenderItem, ResourceKind,
-    SchemaField, SchemaValue, SourceExpression, SourceLiteral, SourceSpan, SyncBlock,
-    TopLevelBlockKind, TypedValue,
+    Definition, Document, DocumentProfile, ExtensionRequirement, FieldPath, MetaBlock,
+    OrderedObject, ProfileFeature, RenderBodyItem, RenderItem, ResourceKind, SchemaField,
+    SchemaValue, SourceExpression, SourceLiteral, SourceSpan, SyncBlock, TopLevelBlockKind,
+    TrackDeclaration, TrackSegmentItem, Type, TypedValue,
 };
 use crate::custom::CustomValueLimits;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLabel, DiagnosticStage};
@@ -166,6 +169,7 @@ impl Document {
         let scene = crate::parser::parse_render_scene(source, block).into_result()?;
         let (mut render, render_descriptors) = lower_render_scene(
             &scene,
+            self,
             chart.metadata().resources(),
             resource_bundle,
             chart.time_map(),
@@ -278,46 +282,36 @@ fn merge_render_descriptors(
     let (mut descriptors, mut roots) = core
         .map(|table| (table.descriptors().to_vec(), table.roots().to_vec()))
         .unwrap_or_default();
-    if core.is_some() {
-        let offset = descriptors.len();
-        roots.extend(
-            render
-                .roots()
-                .iter()
-                .map(|root| {
-                    CanonicalDescriptorRoot::new(
-                        root.target_path().to_owned(),
-                        root.owner(),
-                        root.descriptor() + offset,
-                    )
-                    .map_err(|error| render_error(format!("{error:?}"), span))
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| vec![error])?,
-        );
-        descriptors.extend(render.descriptors().iter().cloned());
-    } else {
-        descriptors = render.descriptors().to_vec();
-        roots = render.roots().to_vec();
-    }
-    let merged = CanonicalDescriptorTable::new(descriptors, roots)
+    let offset = descriptors.len();
+    roots.extend(
+        render
+            .roots()
+            .iter()
+            .map(|root| {
+                CanonicalDescriptorRoot::new(
+                    root.target_path().to_owned(),
+                    root.owner(),
+                    root.descriptor() + offset,
+                )
+                .map_err(|error| render_error(format!("{error:?}"), span))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| vec![error])?,
+    );
+    // Piecewise children address the Render table's own indices, so every
+    // child reference must move with the appended descriptors.
+    descriptors.extend(
+        render
+            .descriptors()
+            .iter()
+            .map(|descriptor| offset_piecewise_children(descriptor, offset)),
+    );
+    let (merged, input_mapping) = CanonicalDescriptorTable::with_index_mapping(descriptors, roots)
         .map_err(|error| vec![render_error(format!("{error:?}"), span)])?;
-    let mapping = render
-        .descriptors()
-        .iter()
-        .map(|descriptor| {
-            merged
-                .descriptors()
-                .iter()
-                .position(|candidate| candidate == descriptor)
-                .ok_or_else(|| {
-                    vec![render_error(
-                        "Render descriptor was lost during merge",
-                        span,
-                    )]
-                })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    // Canonical emission reorders and interns the appended descriptors, so
+    // the Render index mapping comes from the constructor's own input
+    // positions; the render table's descriptors are the trailing inputs.
+    let mapping = input_mapping[offset..].to_vec();
     Ok((merged, mapping))
 }
 
@@ -354,6 +348,36 @@ fn render_resource_error(
     span: SourceSpan,
 ) -> Diagnostic {
     Diagnostic::new(code, DiagnosticStage::Canonical, message, span)
+}
+
+/// Rebases one Render descriptor's direct Piecewise child references by the
+/// merge offset. Children of children are rebased when their own descriptor
+/// is rebased, so one pass over the table suffices.
+fn offset_piecewise_children(
+    descriptor: &CanonicalPropertyDescriptor,
+    offset: usize,
+) -> CanonicalPropertyDescriptor {
+    let CanonicalDescriptorKind::Piecewise(pieces) = descriptor.kind() else {
+        return descriptor.clone();
+    };
+    let pieces = pieces
+        .iter()
+        .map(|piece| {
+            CanonicalPiece::new(
+                piece.start(),
+                piece.end(),
+                piece.end_inclusive(),
+                piece.descriptor() + offset,
+            )
+            .expect("a validated piece stays valid under an index shift")
+        })
+        .collect();
+    CanonicalPropertyDescriptor::new(
+        descriptor.property_type().clone(),
+        descriptor.domain(),
+        CanonicalDescriptorKind::Piecewise(pieces),
+    )
+    .expect("a validated descriptor stays valid under an index shift")
 }
 
 fn render_field<'a>(fields: &'a [SchemaField], path: &str) -> Option<&'a SchemaField> {
@@ -767,6 +791,92 @@ fn render_attachment(
             expression.span(),
         )),
     }
+}
+
+/// The Render node Track targets lowered exactly in this unit.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum RenderTrackTarget {
+    Opacity,
+    Scale,
+}
+
+impl RenderTrackTarget {
+    fn spelling(self) -> &'static str {
+        match self {
+            Self::Opacity => "opacity",
+            Self::Scale => "scale",
+        }
+    }
+
+    /// The `CanonicalTrackTarget` whose value semantics carry this property:
+    /// Line `Alpha` carries float, Line `Scale` carries vec2-float.
+    const fn carrier(self) -> CanonicalTrackTarget {
+        match self {
+            Self::Opacity => CanonicalTrackTarget::Alpha,
+            Self::Scale => CanonicalTrackTarget::Scale,
+        }
+    }
+
+    fn property_type(self) -> CanonicalExpressionType {
+        match self {
+            Self::Opacity => CanonicalExpressionType::Float,
+            Self::Scale => CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Float)),
+        }
+    }
+
+    fn expected_type(self) -> Type {
+        match self {
+            Self::Opacity => Type::Float,
+            Self::Scale => Type::Vec2(Box::new(Type::Float)),
+        }
+    }
+}
+
+/// Resolves one Render node Track declaration's target. `position`/`origin`
+/// (vec2-length) and `rotation` (angle) have value types the ABI 1.0
+/// expression set cannot encode exactly for interpolation, so they reject
+/// instead of approximating.
+fn render_track_target(track: &TrackDeclaration) -> Result<RenderTrackTarget, Diagnostic> {
+    let target = track.target.segments.join(".");
+    match target.as_str() {
+        "opacity" => Ok(RenderTrackTarget::Opacity),
+        "scale" => Ok(RenderTrackTarget::Scale),
+        "position" | "origin" | "rotation" => Err(render_error(
+            format!(
+                "Render Track target {target} has no exact ABI 1.0 expression encoding; only \
+                 opacity and scale Tracks lower"
+            ),
+            track.target.span,
+        )),
+        _ => Err(render_error(
+            format!("Render field {target} is not a Track target"),
+            track.target.span,
+        )),
+    }
+}
+
+/// Render node Tracks reject generators in this unit.
+fn reject_track_generators(items: &[TrackSegmentItem]) -> Result<(), Diagnostic> {
+    for item in items {
+        match item {
+            TrackSegmentItem::Generator(generator) => {
+                return Err(render_error(
+                    "Render node Tracks cannot use generators",
+                    generator.span,
+                ));
+            }
+            TrackSegmentItem::Conditional {
+                then_items,
+                else_items,
+                ..
+            } => {
+                reject_track_generators(then_items)?;
+                reject_track_generators(else_items)?;
+            }
+            TrackSegmentItem::DirectSegment(_) | TrackSegmentItem::DirectPoint(_) => {}
+        }
+    }
+    Ok(())
 }
 
 fn render_length(value: TypedValue, span: SourceSpan) -> Result<f64, Diagnostic> {
@@ -1251,6 +1361,7 @@ fn forbidden_text_scalar(scalar: char) -> bool {
 }
 
 struct RenderLowerer<'a> {
+    document: &'a Document,
     resources: &'a BTreeMap<String, CanonicalResource>,
     resource_bundle: Option<&'a CanonicalResourceBundle>,
     time_map: &'a ChartTimeMap,
@@ -1271,6 +1382,7 @@ struct RenderLowerer<'a> {
 
 impl<'a> RenderLowerer<'a> {
     fn new(
+        document: &'a Document,
         resources: &'a BTreeMap<String, CanonicalResource>,
         resource_bundle: Option<&'a CanonicalResourceBundle>,
         time_map: &'a ChartTimeMap,
@@ -1278,6 +1390,7 @@ impl<'a> RenderLowerer<'a> {
         span: SourceSpan,
     ) -> Self {
         Self {
+            document,
             resources,
             resource_bundle,
             time_map,
@@ -1609,6 +1722,318 @@ impl<'a> RenderLowerer<'a> {
         {
             self.add_descriptor_root(path, owner, descriptor);
         }
+    }
+
+    /// Lowers one node's `tracks` blocks into composed descriptors keyed by
+    /// the node property they animate. Exactly one `replace`-blend Track per
+    /// target composes over the node's static value; every other combination
+    /// rejects with a static diagnostic instead of dropping the Track.
+    fn lower_node_tracks(
+        &mut self,
+        node: &crate::ast::RenderNodeDeclaration,
+        node_path: &str,
+    ) -> Result<BTreeMap<RenderTrackTarget, usize>, Diagnostic> {
+        let mut slots = BTreeMap::new();
+        let mut declared: Vec<(RenderTrackTarget, &TrackDeclaration)> = Vec::new();
+        for item in &node.items {
+            let RenderBodyItem::Tracks(block) = item else {
+                continue;
+            };
+            for track in &block.tracks {
+                let target = render_track_target(track)?;
+                if declared.iter().any(|(existing, _)| *existing == target) {
+                    return Err(render_error(
+                        format!(
+                            "Render node Track target {} is declared more than once; multi-Track \
+                             composition is a follow-up unit",
+                            target.spelling()
+                        ),
+                        track.span,
+                    ));
+                }
+                reject_track_generators(&track.segments.items)?;
+                declared.push((target, track));
+            }
+        }
+        for (target, track) in declared {
+            let expanded = crate::elaborator::expand_render_track(self.document, node_path, track)?;
+            // The carrier Track is a probe vehicle only: CanonicalTrack
+            // requires a Line-namespace owner, and the composed descriptor
+            // never references the carrier.
+            let owner = render_stable_id(
+                &mut self.registry,
+                EntityKind::Line,
+                format!("{node_path}/tracks/{}", track.name),
+                track.name_span,
+            )?;
+            let carrier = crate::track::lower_expanded_track_with_target(
+                &expanded,
+                owner,
+                target.carrier(),
+                &target.expected_type(),
+                self.time_map,
+            )?;
+            if carrier.blend() != CanonicalTrackBlend::Replace {
+                return Err(render_error(
+                    format!(
+                        "Render node Track {} must blend replace; add and multiply composition \
+                         is a follow-up unit",
+                        track.name
+                    ),
+                    track.span,
+                ));
+            }
+            if matches!(carrier.fill(), CanonicalTrackFill::Error)
+                || matches!(carrier.extrapolate_before(), CanonicalTrackFill::Error)
+                || matches!(carrier.extrapolate_after(), CanonicalTrackFill::Error)
+            {
+                return Err(render_error(
+                    format!(
+                        "Render node Track {} declares an error fill, which has no exact \
+                         descriptor encoding",
+                        track.name
+                    ),
+                    track.span,
+                ));
+            }
+            if carrier.pieces().iter().any(|piece| {
+                matches!(
+                    piece,
+                    CanonicalTrackPiece::Segment(segment)
+                        if matches!(
+                            segment.interpolation(),
+                            CanonicalTrackInterpolation::CubicBezier(_)
+                        )
+                )
+            }) {
+                return Err(render_error(
+                    format!(
+                        "Render node Track {} uses cubic Bezier interpolation, which has no \
+                         exact expression opcode",
+                        track.name
+                    ),
+                    track.span,
+                ));
+            }
+            let base = self.node_track_base(node, target)?;
+            let descriptor = self.composed_track_descriptor(&carrier, base, target, track.span)?;
+            slots.insert(target, descriptor);
+        }
+        Ok(slots)
+    }
+
+    /// The static base a Render node Track composes over: the node's own
+    /// field value, which must be compile-time when a Track targets it.
+    fn node_track_base(
+        &self,
+        node: &crate::ast::RenderNodeDeclaration,
+        target: RenderTrackTarget,
+    ) -> Result<CanonicalTrackValue, Diagnostic> {
+        match target {
+            RenderTrackTarget::Opacity => {
+                let opacity = match render_body_field(&node.items, "opacity") {
+                    Some(field) => {
+                        let SchemaValue::Expression(expression) = &field.value else {
+                            return Err(render_error(
+                                "Render field must be a compile-time expression",
+                                field.span,
+                            ));
+                        };
+                        match crate::elaborator::evaluate_metadata_expression(
+                            expression,
+                            self.document.definitions.as_ref(),
+                        ) {
+                            Ok(value) => {
+                                let opacity = render_float(value, field.span)?;
+                                if !(0.0..=1.0).contains(&opacity) {
+                                    return Err(render_error(
+                                        "Render opacity must be within [0, 1]",
+                                        field.span,
+                                    ));
+                                }
+                                opacity
+                            }
+                            Err(error) => {
+                                let definitions = self.document.definitions.as_ref();
+                                let dag =
+                                    crate::expression::lower_runtime_expression_with_resolver(
+                                        expression,
+                                        |candidate| {
+                                            crate::elaborator::evaluate_metadata_expression(
+                                                candidate,
+                                                definitions,
+                                            )
+                                            .ok()
+                                        },
+                                    )?;
+                                if dag.required_environment().is_empty() {
+                                    return Err(error);
+                                }
+                                return Err(render_error(
+                                    "Render opacity Tracks require a compile-time base; a \
+                                     dynamic opacity expression cannot be a Track base",
+                                    field.span,
+                                ));
+                            }
+                        }
+                    }
+                    None => 1.0,
+                };
+                Ok(CanonicalTrackValue::Float(opacity))
+            }
+            RenderTrackTarget::Scale => {
+                let value = render_body_value_or(
+                    &node.items,
+                    "scale",
+                    TypedValue::vec2(TypedValue::Float(1.0), TypedValue::Float(1.0))
+                        .expect("homogeneous float vector"),
+                    self.definitions,
+                    Ok::<_, Diagnostic>,
+                )?;
+                let TypedValue::Vec2(x, y) = value else {
+                    return Err(render_error("Render scale must be vec2<float>", node.span));
+                };
+                let (TypedValue::Float(x), TypedValue::Float(y)) = (&*x, &*y) else {
+                    return Err(render_error("Render scale must be vec2<float>", node.span));
+                };
+                CanonicalVec2::new(*x, *y)
+                    .map(CanonicalTrackValue::Vec2Float)
+                    .map_err(|_| render_error("Render scale must be finite", node.span))
+            }
+        }
+    }
+
+    /// Composes one replace Track over its base into an exact Piecewise
+    /// descriptor.
+    ///
+    /// Region boundaries are every Track piece time plus segment end; within
+    /// an elementary region the contribution form cannot change, so the
+    /// contribution found at the region's left endpoint (`f64::NEG_INFINITY`
+    /// before the first boundary) holds for the region. The probe reuses
+    /// `evaluate_track_contribution`, so fill resolution, shadowed points,
+    /// and holds stay bit-identical to the Core 9.2 runtime by construction.
+    fn composed_track_descriptor(
+        &mut self,
+        carrier: &CanonicalTrack,
+        base: CanonicalTrackValue,
+        target: RenderTrackTarget,
+        span: SourceSpan,
+    ) -> Result<usize, Diagnostic> {
+        let property_type = target.property_type();
+        let mut boundaries = Vec::new();
+        for piece in carrier.pieces() {
+            boundaries.push(match piece {
+                CanonicalTrackPiece::Segment(segment) => segment.start().chart_time_seconds(),
+                CanonicalTrackPiece::Point(point) => point.time().chart_time_seconds(),
+            });
+            if let CanonicalTrackPiece::Segment(segment) = piece {
+                boundaries.push(segment.end().chart_time_seconds());
+            }
+        }
+        boundaries.sort_by(f64::total_cmp);
+        boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
+
+        let mut probe_times = vec![f64::NEG_INFINITY];
+        probe_times.extend_from_slice(&boundaries);
+        let mut pieces = Vec::new();
+        let mut start: Option<f64> = None;
+        for (index, time) in probe_times.into_iter().enumerate() {
+            let contribution = evaluate_track_contribution(carrier, time).map_err(|error| {
+                render_error(
+                    format!(
+                        "Render node Track {} cannot be composed exactly: {error}",
+                        carrier.name()
+                    ),
+                    span,
+                )
+            })?;
+            let child = match contribution {
+                None => self.track_constant_child(base, target, span)?,
+                Some(TrackContribution::Constant(value)) => {
+                    self.track_constant_child(value, target, span)?
+                }
+                Some(TrackContribution::Segment(segment)) => {
+                    let mut builder = TrackExpressionBuilder::new();
+                    let value = builder
+                        .contribution(TrackContribution::Segment(segment), target.carrier())
+                        .map_err(|error| render_error(error.to_string(), span))?;
+                    let root = builder.root(value);
+                    let dag = builder
+                        .finish(root)
+                        .map_err(|error| render_error(error.to_string(), span))?;
+                    let descriptor_index = self.descriptors.len();
+                    self.descriptors.push(
+                        CanonicalPropertyDescriptor::new(
+                            property_type.clone(),
+                            CanonicalDescriptorDomain::new(None, None, false)
+                                .expect("unbounded domain"),
+                            CanonicalDescriptorKind::Expression(dag),
+                        )
+                        .map_err(|error| render_error(error.to_string(), span))?,
+                    );
+                    descriptor_index
+                }
+            };
+            // `then_some` evaluates eagerly, so the last region's absent end
+            // must go through the lazy `then` to skip the bounds check.
+            let end = (index < boundaries.len()).then(|| boundaries[index]);
+            pieces.push(
+                CanonicalPiece::new(start, end, false, child)
+                    .map_err(|error| render_error(error.to_string(), span))?,
+            );
+            start = end;
+        }
+        let index = self.descriptors.len();
+        self.descriptors.push(
+            CanonicalPropertyDescriptor::new(
+                property_type,
+                CanonicalDescriptorDomain::new(None, None, false).expect("unbounded domain"),
+                CanonicalDescriptorKind::Piecewise(pieces),
+            )
+            .map_err(|error| render_error(error.to_string(), span))?,
+        );
+        Ok(index)
+    }
+
+    /// One constant Piecewise child: a point value, resolved fill, or base.
+    fn track_constant_child(
+        &mut self,
+        value: CanonicalTrackValue,
+        target: RenderTrackTarget,
+        span: SourceSpan,
+    ) -> Result<usize, Diagnostic> {
+        let (property_type, constant) = match value {
+            CanonicalTrackValue::Float(value) => (
+                CanonicalExpressionType::Float,
+                CanonicalExpressionValue::Float(value),
+            ),
+            CanonicalTrackValue::Vec2Float(value) => (
+                CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Float)),
+                CanonicalExpressionValue::Vec2(
+                    Box::new(CanonicalExpressionValue::Float(value.x())),
+                    Box::new(CanonicalExpressionValue::Float(value.y())),
+                ),
+            ),
+            CanonicalTrackValue::Angle(_) | CanonicalTrackValue::Vec2Length(_) => {
+                return Err(render_error(
+                    format!(
+                        "Render node Track target {} cannot carry unit-typed values",
+                        target.spelling()
+                    ),
+                    span,
+                ));
+            }
+        };
+        let index = self.descriptors.len();
+        self.descriptors.push(
+            CanonicalPropertyDescriptor::new(
+                property_type,
+                CanonicalDescriptorDomain::new(None, None, false).expect("unbounded domain"),
+                CanonicalDescriptorKind::Constant(constant),
+            )
+            .map_err(|error| render_error(error.to_string(), span))?,
+        );
+        Ok(index)
     }
 
     fn add_geometry_roots(&mut self, geometry: &CanonicalRenderGeometry) {
@@ -2939,9 +3364,13 @@ impl<'a> RenderLowerer<'a> {
             }
             None => self.descriptor(TypedValue::Angle(0.0))?,
         };
-        let scale = match render_body_field(&node.items, "scale") {
-            Some(field) => self.field_descriptor(field, vector_float())?.0,
-            None => self.descriptor(one_float_vec())?,
+        let node_tracks = self.lower_node_tracks(node, node_path)?;
+        let scale = match node_tracks.get(&RenderTrackTarget::Scale) {
+            Some(&index) => index,
+            None => match render_body_field(&node.items, "scale") {
+                Some(field) => self.field_descriptor(field, vector_float())?.0,
+                None => self.descriptor(one_float_vec())?,
+            },
         };
         let pattern = if node.kind == CanonicalRenderNodeKind::ClipGroup {
             None
@@ -2956,9 +3385,12 @@ impl<'a> RenderLowerer<'a> {
                 },
             )?
         };
-        let opacity = match render_body_field(&node.items, "opacity") {
-            Some(field) => self.dynamic_opacity_descriptor(field)?,
-            None => self.descriptor(TypedValue::Float(1.0))?,
+        let opacity = match node_tracks.get(&RenderTrackTarget::Opacity) {
+            Some(&index) => index,
+            None => match render_body_field(&node.items, "opacity") {
+                Some(field) => self.dynamic_opacity_descriptor(field)?,
+                None => self.descriptor(TypedValue::Float(1.0))?,
+            },
         };
         let visibility = match render_body_field(&node.items, "visibility") {
             Some(field) => {
@@ -3345,6 +3777,7 @@ impl<'a> RenderLowerer<'a> {
 
 fn lower_render_scene(
     scene: &crate::ast::RenderScene,
+    document: &Document,
     resources: &BTreeMap<String, CanonicalResource>,
     resource_bundle: Option<&CanonicalResourceBundle>,
     time_map: &ChartTimeMap,
@@ -3378,10 +3811,27 @@ fn lower_render_scene(
                 ));
             }
         };
-        let mut lowerer =
-            RenderLowerer::new(resources, resource_bundle, time_map, definitions, span);
+        let mut lowerer = RenderLowerer::new(
+            document,
+            resources,
+            resource_bundle,
+            time_map,
+            definitions,
+            span,
+        );
         let mut layers = Vec::new();
         for (layer_index, layer) in scene.layers.iter().enumerate() {
+            if let Some(tracks) = layer.items.iter().find_map(|item| match item {
+                RenderBodyItem::Tracks(tracks) => Some(tracks),
+                _ => None,
+            }) {
+                // Render section 3.1: a Layer owns no transform, opacity, or
+                // visibility, so it has nothing for a Track to animate.
+                return Err(render_error(
+                    "Render layers cannot own tracks; layers carry no animatable properties",
+                    tracks.span,
+                ));
+            }
             let pass = render_body_field(&layer.items, "pass")
                 .ok_or_else(|| render_error("Render layer requires pass", layer.span))
                 .and_then(|field| render_string(render_value(field, definitions)?, field.span))
@@ -3446,19 +3896,9 @@ fn lower_render_scene(
                     .map_err(|error| render_error(format!("{error:?}"), span))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let local_descriptors = lowerer.descriptors.clone();
-        let table = CanonicalDescriptorTable::new(lowerer.descriptors, descriptor_roots)
-            .map_err(|error| render_error(format!("{error:?}"), span))?;
-        let mapping = local_descriptors
-            .iter()
-            .map(|descriptor| {
-                table
-                    .descriptors()
-                    .iter()
-                    .position(|candidate| candidate == descriptor)
-                    .ok_or_else(|| render_error("descriptor interning lost a Render value", span))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let (table, mapping) =
+            CanonicalDescriptorTable::with_index_mapping(lowerer.descriptors, descriptor_roots)
+                .map_err(|error| render_error(format!("{error:?}"), span))?;
         let mut render = CanonicalRenderScene::new(CanonicalRenderSceneSpec {
             viewport: CanonicalViewport::new(viewport_width, viewport_height, color_space)
                 .map_err(|error| render_error(format!("{error:?}"), span))?,

@@ -1,16 +1,16 @@
 use fcs_model::{
     CanonicalChart, CanonicalCompilation, CanonicalContributor, CanonicalCredit,
     CanonicalCreditRole, CanonicalDescriptorKind, CanonicalDescriptorTable, CanonicalExpressionDag,
-    CanonicalExpressionNode, CanonicalExpressionOpcode, CanonicalExpressionType,
-    CanonicalExpressionValue, CanonicalGradientSpread, CanonicalJudgeShape, CanonicalNoteKind,
-    CanonicalNoteScorePolicy, CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject,
-    CanonicalPathCommand, CanonicalProfile, CanonicalProfileFeature, CanonicalRenderGeometryData,
+    CanonicalExpressionOpcode, CanonicalExpressionType, CanonicalExpressionValue,
+    CanonicalGradientSpread, CanonicalJudgeShape, CanonicalNoteKind, CanonicalNoteScorePolicy,
+    CanonicalNoteSide, CanonicalNoteSoundPolicy, CanonicalObject, CanonicalPathCommand,
+    CanonicalProfile, CanonicalProfileFeature, CanonicalRenderGeometryData,
     CanonicalRenderPaintData, CanonicalRenderScene, CanonicalRequiredExtension,
     CanonicalResourceKind, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
     CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget,
     CanonicalTrackValue, CanonicalValue, CanonicalValueType, DistributionMetadata,
 };
-use fcs_runtime::EasingId;
+use fcs_runtime::{EasingId, TrackExpressionBuilder, TrackExpressionError};
 use sha2::{Digest, Sha256};
 
 use crate::container::ContainerProfile;
@@ -2707,7 +2707,7 @@ fn blended_region_expression(
     target: CanonicalTrackTarget,
     line_id: u64,
 ) -> FcbcResult<CanonicalExpressionDag> {
-    let mut builder = BlendExpressionBuilder::default();
+    let mut builder = TrackExpressionBuilder::new();
     let mut value = match select_replace_winner(replaces, time, target, line_id)? {
         Some(track) => {
             let contribution =
@@ -2723,12 +2723,16 @@ fn blended_region_expression(
                     )
                 })?;
             // A selected replace Track is active by construction.
-            builder.contribution(
-                contribution.expect("selected replace Track is active"),
-                target,
-            )?
+            builder
+                .contribution(
+                    contribution.expect("selected replace Track is active"),
+                    target,
+                )
+                .map_err(track_expression_error)?
         }
-        None => builder.constant_value(base),
+        None => builder
+            .constant_value(base, target)
+            .map_err(track_expression_error)?,
     };
     for operation in [CanonicalTrackBlend::Add, CanonicalTrackBlend::Multiply] {
         // The group preserves the canonical (priority, name) order of the
@@ -2749,7 +2753,9 @@ fn blended_region_expression(
             else {
                 continue;
             };
-            let operand = builder.contribution(contribution, target)?;
+            let operand = builder
+                .contribution(contribution, target)
+                .map_err(track_expression_error)?;
             value = match operation {
                 CanonicalTrackBlend::Add => builder.add(value, operand),
                 CanonicalTrackBlend::Multiply => builder.multiply(value, operand),
@@ -2760,341 +2766,13 @@ fn blended_region_expression(
         }
     }
     let root = builder.root(value);
-    CanonicalExpressionDag::new(builder.nodes, root)
+    builder
+        .finish(root)
         .map_err(|error| FcbcError::new("fcbc.unsupported-track", error.to_string()))
 }
 
-/// One region's composed value: a float node for scalar targets, a vec2-float
-/// node for Scale.
-#[derive(Clone, Copy)]
-enum BlendValue {
-    Scalar(usize),
-    Vec2(usize),
-}
-
-/// Appends exact float/vec2-float expression nodes in topological order.
-#[derive(Default)]
-struct BlendExpressionBuilder {
-    nodes: Vec<CanonicalExpressionNode>,
-}
-
-impl BlendExpressionBuilder {
-    fn push(&mut self, node: CanonicalExpressionNode) -> usize {
-        self.nodes.push(node);
-        self.nodes.len() - 1
-    }
-
-    fn float_constant(&mut self, value: f64) -> usize {
-        self.push(CanonicalExpressionNode::new(
-            CanonicalExpressionOpcode::Constant,
-            CanonicalExpressionType::Float,
-            [None, None, None],
-            Some(CanonicalExpressionValue::Float(value)),
-            0,
-        ))
-    }
-
-    fn time_constant(&mut self, value: f64) -> usize {
-        self.push(CanonicalExpressionNode::new(
-            CanonicalExpressionOpcode::Constant,
-            CanonicalExpressionType::Time,
-            [None, None, None],
-            Some(CanonicalExpressionValue::Time(value)),
-            0,
-        ))
-    }
-
-    fn env_s(&mut self) -> usize {
-        self.push(CanonicalExpressionNode::new(
-            CanonicalExpressionOpcode::EnvS,
-            CanonicalExpressionType::Time,
-            [None, None, None],
-            None,
-            0,
-        ))
-    }
-
-    fn binary(
-        &mut self,
-        opcode: CanonicalExpressionOpcode,
-        left: usize,
-        right: usize,
-        result: CanonicalExpressionType,
-    ) -> usize {
-        self.push(CanonicalExpressionNode::new(
-            opcode,
-            result,
-            [Some(left), Some(right), None],
-            None,
-            0,
-        ))
-    }
-
-    /// `Clamp(value, 0.0, 1.0)` — mirrors `clamp_progress`.
-    fn clamp01(&mut self, value: usize) -> usize {
-        let low = self.float_constant(0.0);
-        let high = self.float_constant(1.0);
-        self.push(CanonicalExpressionNode::new(
-            CanonicalExpressionOpcode::Clamp,
-            CanonicalExpressionType::Float,
-            [Some(value), Some(low), Some(high)],
-            None,
-            0,
-        ))
-    }
-
-    fn easing(&mut self, id: u16, progress: usize) -> usize {
-        self.push(CanonicalExpressionNode::new(
-            CanonicalExpressionOpcode::Easing,
-            CanonicalExpressionType::Float,
-            [Some(progress), None, None],
-            None,
-            id as u32,
-        ))
-    }
-
-    fn vec2(&mut self, x: usize, y: usize) -> usize {
-        self.push(CanonicalExpressionNode::new(
-            CanonicalExpressionOpcode::Vec2,
-            CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Float)),
-            [Some(x), Some(y), None],
-            None,
-            0,
-        ))
-    }
-
-    fn component(&mut self, value: usize, y: bool) -> usize {
-        self.push(CanonicalExpressionNode::new(
-            if y {
-                CanonicalExpressionOpcode::Vec2Y
-            } else {
-                CanonicalExpressionOpcode::Vec2X
-            },
-            CanonicalExpressionType::Float,
-            [Some(value), None, None],
-            None,
-            0,
-        ))
-    }
-
-    /// A constant contribution: point value, resolved fill, identity, or base.
-    fn constant_value(&mut self, value: CanonicalTrackValue) -> BlendValue {
-        match value {
-            CanonicalTrackValue::Float(value) => BlendValue::Scalar(self.float_constant(value)),
-            CanonicalTrackValue::Vec2Float(value) => {
-                let x = self.float_constant(value.x());
-                let y = self.float_constant(value.y());
-                BlendValue::Vec2(self.vec2(x, y))
-            }
-            // Angle/Vec2Length blending rejects at fixture entry.
-            CanonicalTrackValue::Angle(_) | CanonicalTrackValue::Vec2Length(_) => {
-                unreachable!("unit-typed blend contributions reject at fixture entry")
-            }
-        }
-    }
-
-    /// One Track contribution at the region's left endpoint.
-    fn contribution(
-        &mut self,
-        contribution: fcs_runtime::TrackContribution<'_>,
-        target: CanonicalTrackTarget,
-    ) -> FcbcResult<BlendValue> {
-        match contribution {
-            fcs_runtime::TrackContribution::Constant(value) => Ok(self.constant_value(value)),
-            fcs_runtime::TrackContribution::Segment(segment) => self.segment(segment, target),
-        }
-    }
-
-    /// Segment interpolation, mirroring `evaluate_segment` and `interpolate`
-    /// operation for operation: `p = (s - start) / (end - start)`, clamped,
-    /// eased, then `start + (end - start) * p'` per component.
-    fn segment(
-        &mut self,
-        segment: &CanonicalTrackSegment,
-        target: CanonicalTrackTarget,
-    ) -> FcbcResult<BlendValue> {
-        let interpolation = segment.interpolation();
-        if matches!(interpolation, CanonicalTrackInterpolation::CubicBezier(_)) {
-            // No Expression opcode computes the correctly rounded Bezier solve,
-            // so blending a Bezier segment cannot stay exact.
-            return Err(FcbcError::new(
-                "fcbc.unsupported-track",
-                "native blended Track segments require step, linear, or Core easing",
-            ));
-        }
-        let (start, end) = (
-            segment.start().chart_time_seconds(),
-            segment.end().chart_time_seconds(),
-        );
-        let progress = if matches!(interpolation, CanonicalTrackInterpolation::Step) {
-            None
-        } else {
-            let env_s = self.env_s();
-            let start_time = self.time_constant(start);
-            let end_time = self.time_constant(end);
-            // numerator, denominator, and progress each round once, exactly as
-            // evaluate_segment does; the two Sub(end,start) uses are identical.
-            let numerator = self.binary(
-                CanonicalExpressionOpcode::Sub,
-                env_s,
-                start_time,
-                CanonicalExpressionType::Time,
-            );
-            let denominator = self.binary(
-                CanonicalExpressionOpcode::Sub,
-                end_time,
-                start_time,
-                CanonicalExpressionType::Time,
-            );
-            let division = self.binary(
-                CanonicalExpressionOpcode::Div,
-                numerator,
-                denominator,
-                CanonicalExpressionType::Float,
-            );
-            let clamped = self.clamp01(division);
-            Some(match interpolation {
-                CanonicalTrackInterpolation::Easing(name) => {
-                    let id = EasingId::ALL
-                        .into_iter()
-                        .find(|easing| easing.name() == name.as_str())
-                        .map(EasingId::abi_id)
-                        .ok_or_else(|| {
-                            FcbcError::new("fcbc.invalid-track", format!("unknown easing {name}"))
-                        })?;
-                    self.easing(id, clamped)
-                }
-                _ => clamped,
-            })
-        };
-        let scalar = |builder: &mut Self,
-                      start: CanonicalTrackValue,
-                      end: CanonicalTrackValue|
-         -> FcbcResult<usize> {
-            let (CanonicalTrackValue::Float(start), CanonicalTrackValue::Float(end)) = (start, end)
-            else {
-                return Err(FcbcError::new(
-                    "fcbc.unsupported-track",
-                    "blended segments must carry float values",
-                ));
-            };
-            let start_constant = builder.float_constant(start);
-            let Some(progress) = progress else {
-                // Step segments hold their start value.
-                return Ok(start_constant);
-            };
-            let end_constant = builder.float_constant(end);
-            let delta = builder.binary(
-                CanonicalExpressionOpcode::Sub,
-                end_constant,
-                start_constant,
-                CanonicalExpressionType::Float,
-            );
-            let scaled = builder.binary(
-                CanonicalExpressionOpcode::Mul,
-                delta,
-                progress,
-                CanonicalExpressionType::Float,
-            );
-            Ok(builder.binary(
-                CanonicalExpressionOpcode::Add,
-                start_constant,
-                scaled,
-                CanonicalExpressionType::Float,
-            ))
-        };
-        Ok(match target {
-            CanonicalTrackTarget::Alpha | CanonicalTrackTarget::ScrollSpeed => {
-                BlendValue::Scalar(scalar(self, segment.start_value(), segment.end_value())?)
-            }
-            CanonicalTrackTarget::Scale => {
-                let (CanonicalTrackValue::Vec2Float(start), CanonicalTrackValue::Vec2Float(end)) =
-                    (segment.start_value(), segment.end_value())
-                else {
-                    return Err(FcbcError::new(
-                        "fcbc.unsupported-track",
-                        "Scale blend segments must carry vec2<float> values",
-                    ));
-                };
-                let x = scalar(
-                    self,
-                    CanonicalTrackValue::Float(start.x()),
-                    CanonicalTrackValue::Float(end.x()),
-                )?;
-                let y = scalar(
-                    self,
-                    CanonicalTrackValue::Float(start.y()),
-                    CanonicalTrackValue::Float(end.y()),
-                )?;
-                BlendValue::Vec2(self.vec2(x, y))
-            }
-            CanonicalTrackTarget::Position | CanonicalTrackTarget::Rotation => {
-                unreachable!("unit-typed blend contributions reject at fixture entry")
-            }
-        })
-    }
-
-    /// `Add` on both lanes: a single node for floats and same-typed vectors.
-    fn add(&mut self, left: BlendValue, right: BlendValue) -> BlendValue {
-        match (left, right) {
-            (BlendValue::Scalar(left), BlendValue::Scalar(right)) => {
-                BlendValue::Scalar(self.binary(
-                    CanonicalExpressionOpcode::Add,
-                    left,
-                    right,
-                    CanonicalExpressionType::Float,
-                ))
-            }
-            (BlendValue::Vec2(left), BlendValue::Vec2(right)) => BlendValue::Vec2(self.binary(
-                CanonicalExpressionOpcode::Add,
-                left,
-                right,
-                CanonicalExpressionType::Vec2(Box::new(CanonicalExpressionType::Float)),
-            )),
-            _ => unreachable!("blend operands share the target's value shape"),
-        }
-    }
-
-    /// `Mul` on both lanes: the ABI has no vector row, so vector multiplies
-    /// decompose into component Muls, matching `combine_vec` exactly.
-    fn multiply(&mut self, left: BlendValue, right: BlendValue) -> BlendValue {
-        match (left, right) {
-            (BlendValue::Scalar(left), BlendValue::Scalar(right)) => {
-                BlendValue::Scalar(self.binary(
-                    CanonicalExpressionOpcode::Mul,
-                    left,
-                    right,
-                    CanonicalExpressionType::Float,
-                ))
-            }
-            (BlendValue::Vec2(left), BlendValue::Vec2(right)) => {
-                let x = self.component(left, false);
-                let right_x = self.component(right, false);
-                let x = self.binary(
-                    CanonicalExpressionOpcode::Mul,
-                    x,
-                    right_x,
-                    CanonicalExpressionType::Float,
-                );
-                let y = self.component(left, true);
-                let right_y = self.component(right, true);
-                let y = self.binary(
-                    CanonicalExpressionOpcode::Mul,
-                    y,
-                    right_y,
-                    CanonicalExpressionType::Float,
-                );
-                BlendValue::Vec2(self.vec2(x, y))
-            }
-            _ => unreachable!("blend operands share the target's value shape"),
-        }
-    }
-
-    fn root(&self, value: BlendValue) -> usize {
-        match value {
-            BlendValue::Scalar(node) | BlendValue::Vec2(node) => node,
-        }
-    }
+fn track_expression_error(error: TrackExpressionError) -> FcbcError {
+    FcbcError::new("fcbc.unsupported-track", error.to_string())
 }
 
 #[derive(Clone, Copy)]

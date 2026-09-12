@@ -368,7 +368,7 @@ fn validate_schema_interpolation(
     }
 }
 
-fn expand_track(
+pub(crate) fn expand_track(
     document: &Document,
     schema: &ConstructionSchema,
     context: &CompileTimeContext,
