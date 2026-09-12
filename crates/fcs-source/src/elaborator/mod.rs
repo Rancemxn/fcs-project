@@ -329,7 +329,7 @@ pub(crate) fn expand_render_track(
     let context = CompileTimeContext::new(CompileTimeLimits::default());
     tracks::expand_track(
         document,
-        &crate::schema::phase2_schema(),
+        crate::schema::phase2_schema(),
         &context,
         owner,
         track,

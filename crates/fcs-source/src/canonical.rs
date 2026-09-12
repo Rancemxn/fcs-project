@@ -1513,7 +1513,7 @@ impl<'a> RenderLowerer<'a> {
                 )
             })?;
             let child = match contribution {
-                None => self.track_constant_child(base.clone(), target, span)?,
+                None => self.track_constant_child(base, target, span)?,
                 Some(TrackContribution::Constant(value)) => {
                     self.track_constant_child(value, target, span)?
                 }
