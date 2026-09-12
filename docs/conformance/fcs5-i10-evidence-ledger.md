@@ -240,6 +240,31 @@ superseded by the #645 merge covering the same tree; merged main
 `2da1a27fc9461250d07c8f936518877c76217b89` passed push Full Gate
 [34698973832](https://github.com/Rancemxn/fcs-project/actions/runs/34698973832).
 
+### FCBC SegmentTrack coverage and point boundary invariants
+
+PR [#645](https://github.com/Rancemxn/fcs-project/pull/645) enforces the section 13.1 SegmentTrack
+domain coverage invariants at the FCBC loader. An ordinary segment must end exactly where the
+next entry begins, so no chart-time interval inside the domain lacks a defined value; a point
+preceding an ordinary segment at the same time must agree bitwise (floats by bit pattern,
+colors and vectors componentwise, `+0.0` distinct from `-0.0`); and a point's start and end
+constants must be bitwise equal. The evaluator's point hold no longer revives across an
+interval an ordinary segment left uncovered
+(`a_point_cannot_be_revived_across_an_uncovered_interval`). The canonical layer already enforced
+same-time value agreement (`validate_pieces` `ReplaceConflict`), the writer gap-fills holes
+with points at the ordinary's end, and shadowed points reuse the segment's start value, so
+legitimate writer output stays accepted.
+`native_mutations::segment_track_coverage_mutations_reject_with_invalid_track` corrupts
+TRACKS and CONSTANT_POOL bytes to prove each rejection category fires in the loaded container.
+Diagnostic heads `af18540cc47e2cde41980beb9f329f05fdda2492` (Clippy) and
+`9c93ef915943c37283a0fabee9a7317d30ff3181` (signed-zero constant-pool assertion) failed
+pull_request Full Gates
+[34698421457](https://github.com/Rancemxn/fcs-project/actions/runs/34698421457) and
+[34698540597](https://github.com/Rancemxn/fcs-project/actions/runs/34698540597). Corrective head
+`84cabf25dab7c4e1a40a07e4d867312c4b6b0995` passed pull_request Full Gate
+[34698755112](https://github.com/Rancemxn/fcs-project/actions/runs/34698755112); merged main
+`2da1a27fc9461250d07c8f936518877c76217b89` passed push Full Gate
+[34698973832](https://github.com/Rancemxn/fcs-project/actions/runs/34698973832).
+
 ## Verified implementation residuals
 
 The requirement audit found concrete product gaps beyond the historical pending-review statements.
