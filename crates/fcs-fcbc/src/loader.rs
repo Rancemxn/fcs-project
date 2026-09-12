@@ -565,7 +565,14 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
     validate_descriptors(&descriptors, &constants, &expressions)?;
     validate_lines(&lines, &descriptors, &constants, &distances)?;
     validate_notes(&notes, &lines, &descriptors, &resources)?;
-    validate_distances(&distances, &lines, &descriptors, &constants)?;
+    validate_distances(
+        &distances,
+        &lines,
+        &descriptors,
+        &constants,
+        &expressions,
+        &tempo_points,
+    )?;
     validate_canonical_reachability(
         &descriptors,
         &expressions,
@@ -2004,7 +2011,7 @@ fn parse_notes(
     Ok(notes)
 }
 
-fn parse_tracks(bytes: &[u8]) -> Result<Vec<PropertyDescriptor>, &'static str> {
+pub(crate) fn parse_tracks(bytes: &[u8]) -> Result<Vec<PropertyDescriptor>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
     let count = limited_count(cursor.u32()?)?;
     let mut descriptors = Vec::new();
@@ -2071,7 +2078,7 @@ fn parse_tracks(bytes: &[u8]) -> Result<Vec<PropertyDescriptor>, &'static str> {
     Ok(descriptors)
 }
 
-fn parse_expressions(bytes: &[u8]) -> Result<Vec<ExpressionNode>, &'static str> {
+pub(crate) fn parse_expressions(bytes: &[u8]) -> Result<Vec<ExpressionNode>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-expression");
     let count = limited_count(cursor.u32()?)?;
     let mut expressions = Vec::new();
@@ -3465,9 +3472,12 @@ fn validate_distances(
     lines: &[LineRecord],
     descriptors: &[PropertyDescriptor],
     constants: &[RuntimeValue],
+    expressions: &[ExpressionNode],
+    tempo_points: &[TempoPoint],
 ) -> Result<(), &'static str> {
     let mut line_ids = BTreeSet::new();
     let mut prior_line_id = None;
+    let tempo_times: Vec<_> = tempo_points.iter().map(|point| point.chart_time).collect();
     for distance in distances {
         if distance.line_id == 0
             || !line_ids.insert(distance.line_id)
@@ -3538,6 +3548,8 @@ fn validate_distances(
             line.scroll_speed_descriptor,
             line.scroll_tempo_descriptor,
             descriptors,
+            expressions,
+            &tempo_times,
         )?;
         if distance.boundaries.len() != expected_boundaries.len()
             || distance
@@ -3583,11 +3595,13 @@ fn validate_distances(
     Ok(())
 }
 
-fn expected_distance_boundaries(
+pub(crate) fn expected_distance_boundaries(
     integration_origin: f64,
     speed_descriptor: u32,
     tempo_descriptor: u32,
     descriptors: &[PropertyDescriptor],
+    expressions: &[ExpressionNode],
+    tempo_times: &[f64],
 ) -> Result<Vec<f64>, &'static str> {
     fn collect(
         index: u32,
@@ -3628,6 +3642,12 @@ fn expected_distance_boundaries(
     let mut boundaries = vec![integration_origin];
     collect(speed_descriptor, descriptors, &mut seen, &mut boundaries)?;
     collect(tempo_descriptor, descriptors, &mut seen, &mut boundaries)?;
+    let dependencies =
+        descriptor_environment_dependencies(speed_descriptor, descriptors, expressions, 0)?
+            | descriptor_environment_dependencies(tempo_descriptor, descriptors, expressions, 0)?;
+    if dependencies & ENV_B != 0 {
+        boundaries.extend_from_slice(tempo_times);
+    }
     boundaries.sort_by(f64::total_cmp);
     boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
     Ok(boundaries)

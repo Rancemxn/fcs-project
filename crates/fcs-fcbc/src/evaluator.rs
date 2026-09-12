@@ -1192,6 +1192,42 @@ fn integrate_scroll_product(
         .descriptors
         .get(tempo_descriptor as usize)
         .ok_or(EXECUTION_ERROR)?;
+    if let DescriptorKind::Piecewise(pieces) = &descriptor.kind {
+        let mut total = 0.0;
+        let mut cursor = start;
+        for piece in pieces {
+            let piece_start = if piece.flags & 0b010 != 0 {
+                cursor
+            } else {
+                cursor.max(piece.start)
+            };
+            let piece_end = if piece.flags & 0b100 != 0 {
+                end
+            } else {
+                end.min(piece.end)
+            };
+            if piece_start < piece_end {
+                // Loaded Piecewise children are in strict postorder.
+                if piece.descriptor_index >= tempo_descriptor || piece_start != cursor {
+                    return Err(EXECUTION_ERROR);
+                }
+                total += integrate_scroll_product(
+                    chart,
+                    speed_descriptor,
+                    piece.descriptor_index,
+                    piece_start,
+                    piece_end,
+                )?;
+                cursor = piece_end;
+            }
+            if cursor >= end {
+                break;
+            }
+        }
+        return (cursor == end && total.is_finite())
+            .then_some(total)
+            .ok_or(EXECUTION_ERROR);
+    }
     let DescriptorKind::SegmentTrack(segments) = &descriptor.kind else {
         return Err(EXECUTION_ERROR);
     };
