@@ -125,6 +125,18 @@ impl CanonicalTrackSegment {
         &self.interpolation
     }
 
+    /// The value the segment actually reaches at its end limit (FCS §9.4):
+    /// step holds its start value throughout, every other interpolation
+    /// approaches the end value. `holdAfter` (FCS §9.3) resolves from this,
+    /// not from `end_value`.
+    pub fn end_limit(&self) -> CanonicalTrackValue {
+        if matches!(self.interpolation, CanonicalTrackInterpolation::Step) {
+            self.start_value
+        } else {
+            self.end_value
+        }
+    }
+
     pub const fn document_order(&self) -> u64 {
         self.document_order
     }

@@ -2659,3 +2659,85 @@ fn write_from_compilation_round_trips_a_shared_piecewise_chain() {
         );
     }
 }
+
+#[test]
+fn write_from_compilation_resolves_step_hold_after_from_the_end_limit() {
+    // FCS sections 9.3/9.4: gaps and trailing extrapolation hold each step's
+    // start value, including when another Track contributes to the property.
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        alpha: 1.0;
+        tracks {
+            track held -> alpha: float {
+                fill: "holdAfter";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "holdAfter";
+                segments {
+                    [0s, 1s): 0.25 -> 0.75 using "step";
+                    [2s, 3s): 0.5 -> 0.875 using "step";
+                }
+            }
+            EXTRA_TRACKS
+        }
+    }
+}
+"#;
+    let extra = r#"track layer -> alpha: float {
+        blend: "BLEND";
+        priority: -1;
+        fill: "holdAfter";
+        extrapolateBefore: "holdBefore";
+        extrapolateAfter: "holdAfter";
+        segments { [0s, 4s): 0.125 -> 0.625 using "step"; }
+    }"#;
+    for (blend, first, last) in [
+        ("", 0.25, 0.5),
+        ("replace", 0.25, 0.5),
+        ("add", 0.375, 0.625),
+        ("multiply", 0.03125, 0.0625),
+    ] {
+        let extra = if blend.is_empty() {
+            String::new()
+        } else {
+            extra.replace("BLEND", blend)
+        };
+        let (_, decoded, tracks, owner) = composed_chart(&source.replace("EXTRA_TRACKS", &extra));
+        let descriptor = decoded.lines[0].alpha_descriptor;
+        for (time, expected) in [
+            (0.5, first),
+            (1.0, first),
+            (1.5, first),
+            (3.0, last),
+            (3.5, last),
+            (4.0, last),
+            (5.0, last),
+        ] {
+            assert_eq!(
+                fcs_runtime::evaluate_track_set(
+                    &tracks,
+                    &owner,
+                    CanonicalTrackTarget::Alpha,
+                    time,
+                    CanonicalTrackValue::Float(1.0),
+                ),
+                Ok(CanonicalTrackValue::Float(expected)),
+                "{blend} at {time}"
+            );
+            let actual = crate::query_descriptor(
+                &decoded,
+                descriptor,
+                time,
+                crate::EvaluationEnvironment::at_time(time),
+            )
+            .expect("step holdAfter evaluation")
+            .value;
+            assert_runtime_value_bits(
+                actual,
+                track_runtime_value(CanonicalTrackValue::Float(expected)),
+            );
+        }
+    }
+}
