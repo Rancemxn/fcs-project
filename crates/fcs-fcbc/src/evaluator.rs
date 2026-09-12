@@ -899,6 +899,7 @@ fn vector_component(vector_value: RuntimeValue, use_y: bool) -> Result<RuntimeVa
             scalar(element_type, value[usize::from(use_y)])
         }
         RuntimeValue::Vec2Int(value) => Ok(RuntimeValue::Int(value[usize::from(use_y)])),
+        _ => Err(EXECUTION_ERROR),
     }
 }
 
