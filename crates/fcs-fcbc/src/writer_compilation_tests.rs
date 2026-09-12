@@ -2854,9 +2854,84 @@ fn canonical_line_roots_keep_type_domain_and_environment_validation() {
             vec![descriptor],
             vec![CanonicalDescriptorRoot::new(path, line_id, 0).unwrap()],
         );
-        let result = write_from_compilation(&compiled).and_then(|bytes| crate::load_chart(&bytes));
-        assert_eq!(result.unwrap_err().category(), expected, "{path}");
+        let result = write_from_compilation(&compiled)
+            .map_err(|error| error.category())
+            .and_then(|bytes| crate::load_chart(&bytes));
+        assert_eq!(result.unwrap_err(), expected, "{path}");
     }
+}
+
+#[test]
+fn canonical_scroll_expression_includes_global_beat_boundaries() {
+    use CanonicalExpressionOpcode::{Choose, Constant, EnvB, Eq};
+    use CanonicalExpressionType::{Beat, Bool, Float};
+    let source = SHARED_SUBGRAPH_NOTE_SOURCE
+        .replace("0beat -> 120bpm;", "0beat -> 60bpm; 1beat -> 120bpm;")
+        .replace("line main {}", "line main { integrationOrigin: 0.25s; }");
+    let base = compilation(&source);
+    let line_id = base.chart().lines().lines().next().unwrap().id().value();
+    let dag = CanonicalExpressionDag::new(
+        vec![
+            CanonicalExpressionNode::new(EnvB, Beat, [None; 3], None, 0),
+            CanonicalExpressionNode::new(Eq, Bool, [Some(0), Some(0), None], None, 0),
+            CanonicalExpressionNode::new(
+                Constant,
+                Float,
+                [None; 3],
+                Some(CanonicalExpressionValue::Float(2.0)),
+                0,
+            ),
+            CanonicalExpressionNode::new(
+                Constant,
+                Float,
+                [None; 3],
+                Some(CanonicalExpressionValue::Float(3.0)),
+                0,
+            ),
+            CanonicalExpressionNode::new(Choose, Float, [Some(1), Some(2), Some(3)], None, 0),
+        ],
+        4,
+    )
+    .unwrap();
+    let compiled = with_descriptor_roots(
+        &base,
+        vec![
+            CanonicalPropertyDescriptor::new(
+                Float,
+                unbounded_descriptor_domain(),
+                CanonicalDescriptorKind::Expression(dag),
+            )
+            .unwrap(),
+            constant_property(CanonicalExpressionValue::Float(60.0)),
+        ],
+        vec![
+            CanonicalDescriptorRoot::new("line.scrollSpeed", line_id, 0).unwrap(),
+            CanonicalDescriptorRoot::new("line.scrollTempo", line_id, 1).unwrap(),
+        ],
+    );
+    let decoded = crate::load_chart(&write_from_compilation(&compiled).unwrap()).unwrap();
+    assert_eq!(decoded.distances[0].boundaries, vec![0.0, 0.25, 1.0]);
+    assert_eq!(
+        decoded.distances[0].classification,
+        crate::DistanceClassification::PortableEvaluable
+    );
+    let result = crate::query_descriptor(
+        &decoded,
+        decoded.lines[0].scroll_speed_descriptor,
+        2.0,
+        crate::EvaluationEnvironment {
+            b: 3.0,
+            ..crate::EvaluationEnvironment::at_time(2.0)
+        },
+    )
+    .unwrap();
+    assert_runtime_value_bits(
+        result.value,
+        crate::RuntimeValue::Scalar {
+            ty: crate::ValueType::Float,
+            value: 2.0,
+        },
+    );
 }
 
 #[test]
