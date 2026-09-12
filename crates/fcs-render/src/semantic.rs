@@ -2262,7 +2262,7 @@ fn sample_image_pattern(
     if (!repeat_x && !(0.0..f64::from(decoded.width)).contains(&x))
         || (!repeat_y && !(0.0..f64::from(decoded.height)).contains(&y))
     {
-        return Ok(None);
+        return Ok(Some([0.0; 4]));
     }
     match pattern.sampling {
         1 => {
