@@ -1324,7 +1324,7 @@ mod tests {
             node
         };
         let query = |chart: &mut DecodedChart,
-                     opcode: u32,
+                     opcode: u16,
                      result_type: ValueType,
                      left: u32,
                      right: u32| {

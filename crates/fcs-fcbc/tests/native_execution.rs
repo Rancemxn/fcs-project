@@ -369,7 +369,8 @@ fn native_unit_integer_scaling_matches_canonical_evaluator() {
     // DAG. Beat has no note slot and no conversion builtin, so it drives a
     // color `choose` predicate; angle drives a `rotation` choose branch
     // (pure-literal subexpressions are retained by the lowerer, not folded).
-    let cases: &[(&str, usize, &str, &[(f64, f64, f64)])] = &[
+    type ScalingCase = (&str, usize, &str, &[(f64, f64, f64)]);
+    let cases: &[ScalingCase] = &[
         (
             "presentation.alpha: seconds(s * 2);",
             4,
