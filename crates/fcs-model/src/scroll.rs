@@ -1,6 +1,7 @@
 //! Exact canonical Line scroll coordinates for the I3.7 constant-speed seam.
 
 use std::fmt;
+use std::ops::Add;
 
 use crate::{
     CanonicalScrollTempo, ChartTimeMap, DoubleDouble, EntityKind, ScrollTempoKey, StableId,

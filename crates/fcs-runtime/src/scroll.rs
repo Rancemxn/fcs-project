@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::ops::{Add, Neg};
 
 use fcs_model::{
     CanonicalLine, CanonicalLineGraph, CanonicalNote, CanonicalScrollLine, CanonicalScrollSet,

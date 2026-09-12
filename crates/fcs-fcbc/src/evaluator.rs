@@ -5,6 +5,7 @@ use super::loader::{
 use fcs_model::{DoubleDouble, scaled_difference};
 use fcs_runtime::{evaluate_cubic_bezier_progress, evaluate_easing};
 use std::collections::BTreeMap;
+use std::ops::{Add, Neg};
 
 const EXECUTION_ERROR: &str = "fcbc.execution-error";
 

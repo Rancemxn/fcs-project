@@ -6,6 +6,8 @@
 //! binary64 chain rounds the integral before the initial offset can cancel
 //! it, losing the low bits (issue #649).
 
+use std::ops::Add;
+
 /// A double-double number `hi + lo`.
 ///
 /// ponytail: 106 bits of significand cover the section 15 conformance
