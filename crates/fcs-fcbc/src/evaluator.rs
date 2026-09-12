@@ -1,5 +1,6 @@
 use super::loader::{
-    DecodedChart, DescriptorKind, DistanceClassification, RuntimeValue, Segment, ValueType,
+    DecodedChart, DescriptorKind, DistanceClassification, MAX_VALIDATOR_DEPTH, RuntimeValue,
+    Segment, ValueType,
 };
 use fcs_runtime::evaluate_easing;
 use std::collections::BTreeMap;
@@ -211,7 +212,7 @@ fn evaluate_descriptor_inner(
     memo: &mut ExpressionMemo,
     depth: usize,
 ) -> Result<RuntimeValue, &'static str> {
-    if depth > chart.descriptors.len() + 1 {
+    if depth > MAX_VALIDATOR_DEPTH || depth > chart.descriptors.len() {
         return Err(EXECUTION_ERROR);
     }
     let descriptor = chart
@@ -251,7 +252,15 @@ fn evaluate_descriptor_inner(
             )?
         }
         DescriptorKind::Expression(root) => {
-            evaluate_node(chart, *root, environment, visited_nodes, memo, depth + 1)?
+            let remaining_depth = (MAX_VALIDATOR_DEPTH - depth).min(chart.expressions.len());
+            evaluate_node(
+                chart,
+                *root,
+                environment,
+                visited_nodes,
+                memo,
+                remaining_depth,
+            )?
         }
     };
     if value.value_type() != descriptor.property_type {
@@ -345,9 +354,9 @@ fn evaluate_node(
     environment: EvaluationEnvironment,
     visited_nodes: &mut Vec<u32>,
     memo: &mut ExpressionMemo,
-    depth: usize,
+    remaining_depth: usize,
 ) -> Result<RuntimeValue, &'static str> {
-    if depth > chart.expressions.len() + 1 {
+    if remaining_depth == 0 {
         return Err(EXECUTION_ERROR);
     }
     let node = chart
@@ -377,7 +386,7 @@ fn evaluate_node(
             environment,
             visited,
             memo,
-            depth + 1,
+            remaining_depth - 1,
         )
     };
 
