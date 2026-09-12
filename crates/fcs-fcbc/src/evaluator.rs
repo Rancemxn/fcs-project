@@ -302,10 +302,25 @@ fn evaluate_segment_track(
             .ok_or(EXECUTION_ERROR)?;
         return interpolate_segment(start, end, segment, time);
     }
-    let point = segments
-        .iter()
-        .rfind(|segment| segment.flags & 1 != 0 && segment.start <= time)
-        .or_else(|| segments.first().filter(|segment| segment.flags & 1 != 0))
+    // A point holds from its start until the next entry begins. The last such
+    // point is the hold candidate, but an ordinary segment that began at or
+    // after it (and at or before `time`) terminated its lifetime, so the hold
+    // cannot be revived across an interval the ordinary left uncovered.
+    let mut held: Option<&Segment> = None;
+    for segment in segments {
+        if segment.flags & 1 != 0 {
+            if segment.start <= time {
+                held = Some(segment);
+            }
+        } else if held.is_some() && segment.start <= time {
+            held = None;
+        }
+    }
+    let point = held
+        .or_else(|| {
+            let first = segments.first()?;
+            (first.flags & 1 != 0 && first.start > time).then_some(first)
+        })
         .ok_or(EXECUTION_ERROR)?;
     chart
         .constants
@@ -1208,7 +1223,7 @@ fn constant_descriptor_scalar(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loader::{DescriptorKind, Domain, ExpressionNode, PropertyDescriptor};
+    use crate::loader::{DescriptorKind, Domain, ExpressionNode, PropertyDescriptor, Segment};
 
     fn unbounded() -> Domain {
         Domain {
@@ -1338,5 +1353,97 @@ mod tests {
         );
         let expected: Vec<u32> = (leaf..=leaf + 26).rev().chain(leaf..leaf + 26).collect();
         assert_eq!(evaluation.visited_nodes, expected);
+    }
+
+    #[test]
+    fn a_point_cannot_be_revived_across_an_uncovered_interval() {
+        // point(0)=1, ordinary [0,1): 1 -> 0.8, point(3)=0.5. The ordinary
+        // begins at the point's own time, so the point's lifetime ends there
+        // and [1,3) is uncovered: querying it must be an execution error,
+        // not the old point's value.
+        let mut chart = crate::load_chart(&crate::write_nonempty_execution()).unwrap();
+        let base = chart.constants.len() as u32;
+        chart.constants.extend([
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 1.0,
+            },
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 0.8,
+            },
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 0.5,
+            },
+        ]);
+        let segments = vec![
+            Segment {
+                start: 0.0,
+                end: 0.0,
+                interpolation: 1,
+                easing: 0,
+                flags: 1,
+                start_constant: base,
+                end_constant: base,
+                bezier: [0.0; 4],
+            },
+            Segment {
+                start: 0.0,
+                end: 1.0,
+                interpolation: 2,
+                easing: 0,
+                flags: 0,
+                start_constant: base,
+                end_constant: base + 1,
+                bezier: [0.0; 4],
+            },
+            Segment {
+                start: 3.0,
+                end: 3.0,
+                interpolation: 1,
+                easing: 0,
+                flags: 1,
+                start_constant: base + 2,
+                end_constant: base + 2,
+                bezier: [0.0; 4],
+            },
+        ];
+        let descriptor = chart.descriptors.len() as u32;
+        chart.descriptors.push(PropertyDescriptor {
+            property_type: ValueType::Float,
+            domain: unbounded(),
+            kind: DescriptorKind::SegmentTrack(segments),
+        });
+        let query = |time: f64| {
+            query_descriptor(
+                &chart,
+                descriptor,
+                time,
+                EvaluationEnvironment::at_time(time),
+            )
+        };
+        assert_eq!(
+            query(0.5).unwrap().value,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 0.9,
+            }
+        );
+        assert_eq!(query(2.0).unwrap_err(), "fcbc.execution-error");
+        assert_eq!(
+            query(4.0).unwrap().value,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 0.5,
+            }
+        );
+        assert_eq!(
+            query(-1.0).unwrap().value,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 1.0,
+            }
+        );
     }
 }

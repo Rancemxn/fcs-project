@@ -4,7 +4,7 @@ use fcs_model::{
     Beat as CanonicalBeat, CanonicalLineGraph, CanonicalTime, CanonicalTrack, CanonicalTrackBlend,
     CanonicalTrackError, CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece,
     CanonicalTrackPoint, CanonicalTrackSegment, CanonicalTrackSet, CanonicalTrackTarget,
-    CanonicalTrackValue, CanonicalVec2, ChartTimeMap,
+    CanonicalTrackValue, CanonicalVec2, ChartTimeMap, StableId,
 };
 
 use crate::ast::{
@@ -69,7 +69,37 @@ fn lower_track(
             return None;
         }
     };
-    let target = target(track, diagnostics)?;
+    let (target, expected_type) = target(track, diagnostics)?;
+    lower_track_with_target(track, owner, target, &expected_type, time_map, diagnostics)
+}
+
+/// Lowers one expanded Track against a caller-resolved owner and target.
+///
+/// The Line path resolves both through the Line graph; the Render node Track
+/// lowering supplies a synthetic Line-namespace carrier owner and the
+/// opacity/scale target mapping instead.
+pub(crate) fn lower_track_with_target(
+    track: &ExpandedTrack,
+    owner: StableId,
+    target: CanonicalTrackTarget,
+    expected_type: &Type,
+    time_map: &ChartTimeMap,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<CanonicalTrack> {
+    if track.value_type() != expected_type {
+        diagnostics.push(Diagnostic::new(
+            DiagnosticCode::TYPE_MISMATCH,
+            DiagnosticStage::Canonical,
+            format!(
+                "Track target {} requires {}, found {}",
+                track.target(),
+                expected_type,
+                track.value_type()
+            ),
+            track.target_span(),
+        ));
+        return None;
+    }
     let blend = enum_setting(
         track,
         "blend",
@@ -169,7 +199,7 @@ fn lower_track(
 fn target(
     track: &ExpandedTrack,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Option<CanonicalTrackTarget> {
+) -> Option<(CanonicalTrackTarget, Type)> {
     let expected = match track.target() {
         "position" => (
             CanonicalTrackTarget::Position,
@@ -192,22 +222,7 @@ fn target(
             return None;
         }
     };
-    if track.value_type() != &expected.1 {
-        diagnostics.push(Diagnostic::new(
-            DiagnosticCode::TYPE_MISMATCH,
-            DiagnosticStage::Canonical,
-            format!(
-                "Track target {} requires {}, found {}",
-                track.target(),
-                expected.1,
-                track.value_type()
-            ),
-            track.target_span(),
-        ));
-        None
-    } else {
-        Some(expected.0)
-    }
+    Some(expected)
 }
 
 fn lower_time(
@@ -342,6 +357,32 @@ fn lower_interpolation(
         }
     };
     Some(lowered)
+}
+
+/// Single-diagnostic adapter over the Vec-driven Track lowering, for lowering
+/// surfaces that abort on the first Track error.
+pub(crate) fn lower_expanded_track_with_target(
+    track: &ExpandedTrack,
+    owner: StableId,
+    target: CanonicalTrackTarget,
+    expected_type: &Type,
+    time_map: &ChartTimeMap,
+) -> Result<CanonicalTrack, Diagnostic> {
+    let mut diagnostics = Vec::new();
+    match lower_track_with_target(
+        track,
+        owner,
+        target,
+        expected_type,
+        time_map,
+        &mut diagnostics,
+    ) {
+        Some(track) => Ok(track),
+        None => Err(diagnostics
+            .into_iter()
+            .next()
+            .expect("a failed Track lowering pushes a diagnostic")),
+    }
 }
 
 fn enum_setting(

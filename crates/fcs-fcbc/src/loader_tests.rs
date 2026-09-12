@@ -559,3 +559,137 @@ mod extension_tests {
         );
     }
 }
+
+mod segment_track_validation_tests {
+    use super::*;
+
+    fn float(value: f64) -> RuntimeValue {
+        RuntimeValue::Scalar {
+            ty: ValueType::Float,
+            value,
+        }
+    }
+
+    fn vec2(first: f64, second: f64) -> RuntimeValue {
+        RuntimeValue::Vec2 {
+            ty: ValueType::Vec2Float,
+            value: [first, second],
+        }
+    }
+
+    fn point(time: f64, start_constant: usize, end_constant: usize) -> Segment {
+        Segment {
+            start: time,
+            end: time,
+            interpolation: 1,
+            easing: 0,
+            flags: 1,
+            start_constant: start_constant as u32,
+            end_constant: end_constant as u32,
+            bezier: [0.0; 4],
+        }
+    }
+
+    fn ordinary(start: f64, end: f64, start_constant: usize, end_constant: usize) -> Segment {
+        Segment {
+            start,
+            end,
+            interpolation: 2,
+            easing: 0,
+            flags: 0,
+            start_constant: start_constant as u32,
+            end_constant: end_constant as u32,
+            bezier: [0.0; 4],
+        }
+    }
+
+    fn validate(
+        property_type: ValueType,
+        segments: &[Segment],
+        constants: &[RuntimeValue],
+    ) -> Result<(), &'static str> {
+        let descriptor = PropertyDescriptor {
+            property_type,
+            domain: Domain {
+                start: 0.0,
+                end: 3.0,
+                unbounded_before: false,
+                unbounded_after: false,
+            },
+            kind: DescriptorKind::SegmentTrack(segments.to_vec()),
+        };
+        validate_segments(&descriptor, segments, constants)
+    }
+
+    #[test]
+    fn an_uncovered_interval_after_an_ordinary_segment_is_rejected() {
+        // Issue #636 reproduction: point(0)=0, ordinary [0,1): 0 -> 1, point(3)=2.
+        // [1,3) has no defined value under section 13.1, yet every check the
+        // validator ran before the coverage rule accepted this track.
+        let constants = [float(0.0), float(1.0), float(2.0)];
+        let segments = [point(0.0, 0, 0), ordinary(0.0, 1.0, 0, 1), point(3.0, 2, 2)];
+        assert_eq!(
+            validate(ValueType::Float, &segments, &constants),
+            Err("fcbc.invalid-track")
+        );
+    }
+
+    #[test]
+    fn a_fully_covered_adjacent_track_is_accepted() {
+        let constants = [float(0.0), float(1.0)];
+        let segments = [point(0.0, 0, 0), ordinary(0.0, 3.0, 0, 1), point(3.0, 1, 1)];
+        assert!(validate(ValueType::Float, &segments, &constants).is_ok());
+    }
+
+    #[test]
+    fn a_point_after_an_ordinary_gap_is_rejected_even_with_a_later_point() {
+        // The gap point at 1.5 leaves [1,1.5) uncovered: the ordinary ended
+        // at 1, and the point does not start there.
+        let constants = [float(0.0), float(1.0), float(2.0)];
+        let segments = [
+            point(0.0, 0, 0),
+            ordinary(0.0, 1.0, 0, 1),
+            point(1.5, 2, 2),
+            ordinary(2.0, 3.0, 2, 1),
+            point(3.0, 1, 1),
+        ];
+        assert_eq!(
+            validate(ValueType::Float, &segments, &constants),
+            Err("fcbc.invalid-track")
+        );
+    }
+
+    #[test]
+    fn same_time_point_and_segment_values_must_agree_bitwise() {
+        // The point at 0 holds 0.0 while the ordinary starting at 0 rises
+        // from 1.0, so a query at the boundary has two defined values.
+        let constants = [float(0.0), float(1.0)];
+        let segments = [point(0.0, 0, 0), ordinary(0.0, 3.0, 1, 0), point(3.0, 0, 0)];
+        assert_eq!(
+            validate(ValueType::Float, &segments, &constants),
+            Err("fcbc.invalid-track")
+        );
+    }
+
+    #[test]
+    fn point_endpoints_must_match_bitwise_for_signed_zero() {
+        // +0.0 and -0.0 are numerically equal, so the former PartialEq check
+        // accepted this point; the bitwise rule rejects it.
+        let constants = [float(0.0), float(1.0), float(-0.0)];
+        let segments = [point(0.0, 0, 2), ordinary(0.0, 3.0, 0, 1), point(3.0, 1, 1)];
+        assert_eq!(
+            validate(ValueType::Float, &segments, &constants),
+            Err("fcbc.invalid-track")
+        );
+    }
+
+    #[test]
+    fn vector_point_endpoints_compare_componentwise_bits() {
+        let constants = [vec2(0.0, 1.0), vec2(-0.0, 1.0), vec2(1.0, 1.0)];
+        let segments = [point(0.0, 0, 1), ordinary(0.0, 3.0, 0, 2), point(3.0, 2, 2)];
+        assert_eq!(
+            validate(ValueType::Vec2Float, &segments, &constants),
+            Err("fcbc.invalid-track")
+        );
+    }
+}

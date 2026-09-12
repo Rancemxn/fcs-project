@@ -533,3 +533,188 @@ fn native_resource_data_trailing_byte_rejects() {
         "fcbc.invalid-resource-data"
     );
 }
+
+/// Compiles a chart with one fully covered Float alpha Track:
+/// `point 0s: 0; [0s,3s): 0 -> 1 linear; point 3s: 1`.
+fn segment_track_bytes() -> Vec<u8> {
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        tracks {
+            track fade -> alpha: float {
+                fill: "error";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "holdAfter";
+                segments {
+                    point 0s: 0.0;
+                    [0s, 3s): 0.0 -> 1.0 using "linear";
+                    point 3s: 1.0;
+                }
+            }
+        }
+    }
+}
+"#;
+    let document = parse_document(source).into_result().unwrap();
+    let compilation = document
+        .canonical_compilation(
+            CompileTimeLimits::default(),
+            std::path::Path::new("."),
+            ResourceLimits::default(),
+        )
+        .unwrap();
+    write_from_compilation(&compilation).unwrap()
+}
+
+/// Offset (within the Tracks section payload) of the descriptor payload for
+/// the three-segment alpha SegmentTrack. Descriptor records carry an 8-byte
+/// `length/version/flags` header; a kind-2 payload holds a 20-byte common
+/// header, the segment count, then 64-byte segments.
+fn segment_track_payload_offset(container: &ValidatedContainer, bytes: &[u8]) -> usize {
+    let payload = container
+        .section_payload(bytes, TRACKS)
+        .expect("Tracks section present");
+    let count = u32::from_le_bytes(payload[0..4].try_into().unwrap()) as usize;
+    let mut cursor = 4usize;
+    for _ in 0..count {
+        let record_size =
+            u32::from_le_bytes(payload[cursor..cursor + 4].try_into().unwrap()) as usize;
+        let descriptor = &payload[cursor + 8..cursor + record_size];
+        if descriptor[1] == 2 {
+            let segment_count = u32::from_le_bytes(descriptor[20..24].try_into().unwrap());
+            if segment_count == 3 {
+                return cursor + 8;
+            }
+        }
+        cursor += record_size;
+    }
+    panic!("alpha SegmentTrack descriptor not found");
+}
+
+/// Locates the Float constant whose payload is `value`, walking the pool's
+/// self-describing records (tag u8, reserved u8/u16, payload length u32,
+/// payload, zero padding to an 8-byte boundary). Returns its pool index and
+/// the absolute file offset of its 8-byte value payload. Asserts the Float
+/// constants so the signed-zero mutation's bit flip keeps the pool's
+/// ascending byte order.
+fn float_constant(container: &ValidatedContainer, bytes: &[u8], value: f64) -> (usize, usize) {
+    let payload = container
+        .section_payload(bytes, CONSTANT_POOL)
+        .expect("ConstantPool section present");
+    let count = u32::from_le_bytes(payload[0..4].try_into().unwrap()) as usize;
+    let section_start = payload_range(container, CONSTANT_POOL).start;
+    let mut cursor = 4usize;
+    let mut floats = Vec::new();
+    let mut found = None;
+    for index in 0..count {
+        let tag = payload[cursor];
+        let payload_length =
+            u32::from_le_bytes(payload[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
+        if tag == 3 {
+            let bits = u64::from_le_bytes(payload[cursor + 8..cursor + 16].try_into().unwrap());
+            let constant = f64::from_bits(bits);
+            floats.push(constant);
+            if constant.to_bits() == value.to_bits() {
+                found = Some((index, section_start + cursor + 8));
+            }
+        }
+        let consumed = 8 + payload_length;
+        cursor += consumed + (8 - consumed % 8) % 8;
+    }
+    assert_eq!(
+        floats,
+        vec![0.0, 120.0, 1.0],
+        "the signed-zero mutation assumes this three-float pool"
+    );
+    found.unwrap_or_else(|| panic!("Float constant {value} not in the pool"))
+}
+
+/// SegmentTrack coverage and boundary mutations from the issue #636 review.
+/// The baseline loads; each mutation must reject with `fcbc.invalid-track`.
+#[test]
+fn segment_track_coverage_mutations_reject_with_invalid_track() {
+    let base = segment_track_bytes();
+    let container = load_container(&base).expect("covered alpha Track must frame");
+    load_chart(&base).expect("covered alpha Track must load");
+
+    let descriptor = segment_track_payload_offset(&container, &base);
+    // Segment layout: start f64, end f64, interpolation u16, easing u16,
+    // flags u32, start_constant u32, end_constant u32, bezier 4 x f64.
+    let segments = descriptor + 20 + 4;
+    let segment_field = |index: usize, field: usize| segments + 64 * index + field;
+
+    // uncovered-interval: the ordinary [0,3) becomes [0,2), so [2,3) has no
+    // defined value — the point at 3 no longer starts where the ordinary ends.
+    let mut uncovered = base.clone();
+    corrupt_payload(
+        &mut uncovered,
+        &container,
+        TRACKS,
+        segment_field(1, 8),
+        &2.0f64.to_bits().to_le_bytes(),
+    );
+    assert_eq!(
+        load_chart(&uncovered).unwrap_err(),
+        "fcbc.invalid-track",
+        "uncovered interval must reject"
+    );
+
+    // same-time-value-mismatch: the ordinary's start constant is repointed to
+    // its end constant (1.0), disagreeing with the point at 0 (0.0).
+    let tracks_start = payload_range(&container, TRACKS).start;
+    let ordinary_start_constant = u32::from_le_bytes(
+        base[tracks_start + segment_field(1, 24)..tracks_start + segment_field(1, 28)]
+            .try_into()
+            .unwrap(),
+    );
+    let ordinary_end_constant = u32::from_le_bytes(
+        base[tracks_start + segment_field(1, 28)..tracks_start + segment_field(1, 32)]
+            .try_into()
+            .unwrap(),
+    );
+    assert_ne!(ordinary_start_constant, ordinary_end_constant);
+    let mut mismatch = base.clone();
+    corrupt_payload(
+        &mut mismatch,
+        &container,
+        TRACKS,
+        segment_field(1, 24),
+        &ordinary_end_constant.to_le_bytes(),
+    );
+    assert_eq!(
+        load_chart(&mismatch).unwrap_err(),
+        "fcbc.invalid-track",
+        "same-time point/segment value disagreement must reject"
+    );
+
+    // signed-zero point endpoints: the tempo-derived 120.0 Float constant's
+    // payload becomes -0.0 (still ascending in the pool's byte order between
+    // 0.0 and 1.0), and the point at 0 keeps +0.0 as its start constant while
+    // its end constant is repointed to the -0.0 entry. Numerically equal,
+    // bitwise distinct.
+    let (bpm, bpm_payload) = float_constant(&container, &base, 120.0);
+    let (zero, _) = float_constant(&container, &base, 0.0);
+    assert_ne!(bpm, zero);
+    let mut signed_zero = base.clone();
+    corrupt_payload(
+        &mut signed_zero,
+        &container,
+        CONSTANT_POOL,
+        bpm_payload - payload_range(&container, CONSTANT_POOL).start,
+        &(-0.0f64).to_bits().to_le_bytes(),
+    );
+    corrupt_payload(
+        &mut signed_zero,
+        &container,
+        TRACKS,
+        segment_field(0, 28),
+        &bpm.to_le_bytes(),
+    );
+    assert_eq!(
+        load_chart(&signed_zero).unwrap_err(),
+        "fcbc.invalid-track",
+        "signed-zero point endpoints must reject bitwise"
+    );
+}
