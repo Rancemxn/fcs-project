@@ -1,6 +1,6 @@
 use super::loader::{
     DecodedChart, DescriptorKind, DistanceClassification, MAX_VALIDATOR_DEPTH, RuntimeValue,
-    Segment, ValueType,
+    Segment, ValueType, is_unit_scalar,
 };
 use fcs_runtime::evaluate_easing;
 use std::collections::BTreeMap;
@@ -579,6 +579,20 @@ fn arithmetic(
                 _ => return Err(EXECUTION_ERROR),
             };
             scalar(result_type, result)
+        }
+        // Execution ABI section 14: `U,int` and `int,U` multiplication plus
+        // `U,int` division, with the integer rounded to binary64 first.
+        (RuntimeValue::Scalar { ty, value }, RuntimeValue::Int(right)) if is_unit_scalar(ty) => {
+            match operation {
+                Arithmetic::Multiply => scalar(ty, value * right as f64),
+                Arithmetic::Divide => scalar(ty, value / right as f64),
+                _ => Err(EXECUTION_ERROR),
+            }
+        }
+        (RuntimeValue::Int(left), RuntimeValue::Scalar { ty, value })
+            if is_unit_scalar(ty) && matches!(operation, Arithmetic::Multiply) =>
+        {
+            scalar(ty, left as f64 * value)
         }
         (
             RuntimeValue::Vec2 {
@@ -1291,6 +1305,116 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn unit_scalar_integer_mul_div_executes_abi_combinations() {
+        let mut chart = crate::load_chart(&crate::write_nonempty_execution()).unwrap();
+        let push_constant = |chart: &mut DecodedChart, value: RuntimeValue| {
+            let immediate = chart.constants.len() as u32;
+            chart.constants.push(value.clone());
+            let node = chart.expressions.len() as u32;
+            chart.expressions.push(ExpressionNode {
+                opcode: 1,
+                result_type: value.value_type(),
+                operands: [u32::MAX; 3],
+                arity: 0,
+                immediate,
+            });
+            node
+        };
+        let query = |chart: &mut DecodedChart,
+                     opcode: u16,
+                     result_type: ValueType,
+                     left: u32,
+                     right: u32| {
+            let root = chart.expressions.len() as u32;
+            chart.expressions.push(ExpressionNode {
+                opcode,
+                result_type,
+                operands: [left, right, u32::MAX],
+                arity: 2,
+                immediate: 0,
+            });
+            let descriptor = chart.descriptors.len() as u32;
+            chart.descriptors.push(PropertyDescriptor {
+                property_type: result_type,
+                domain: unbounded(),
+                kind: DescriptorKind::Expression(root),
+            });
+            query_descriptor(chart, descriptor, 0.0, EvaluationEnvironment::at_time(0.0))
+                .map(|evaluation| evaluation.value)
+        };
+
+        let two = push_constant(&mut chart, RuntimeValue::Int(2));
+        let zero = push_constant(&mut chart, RuntimeValue::Int(0));
+        let three = push_constant(&mut chart, RuntimeValue::Int(3));
+        let max = push_constant(&mut chart, RuntimeValue::Int(i64::MAX));
+        for ty in [
+            ValueType::Time,
+            ValueType::Beat,
+            ValueType::Length,
+            ValueType::Angle,
+        ] {
+            let unit = push_constant(&mut chart, RuntimeValue::Scalar { ty, value: 0.75 });
+            let one = push_constant(&mut chart, RuntimeValue::Scalar { ty, value: 1.0 });
+            let huge = push_constant(&mut chart, RuntimeValue::Scalar { ty, value: 1e300 });
+            let expected = |value: f64| RuntimeValue::Scalar { ty, value };
+
+            assert_eq!(
+                query(&mut chart, 22, ty, unit, two).unwrap(),
+                expected(1.5),
+                "{ty:?} * 2"
+            );
+            assert_eq!(
+                query(&mut chart, 22, ty, two, unit).unwrap(),
+                expected(1.5),
+                "2 * {ty:?}"
+            );
+            assert_eq!(
+                query(&mut chart, 23, ty, unit, two).unwrap(),
+                expected(0.375),
+                "{ty:?} / 2"
+            );
+            // i64::MAX is 2^63 - 1, nearer to 2^63 than to 2^63 - 1024, so
+            // rounding to nearest lands on 9223372036854775808.0.
+            assert_eq!(
+                query(&mut chart, 22, ty, one, max).unwrap(),
+                expected(9223372036854775808.0),
+                "{ty:?} * i64::MAX"
+            );
+            // 2^53 + 1 is exactly halfway between 2^53 and 2^53 + 2, so
+            // ties-to-even selects the even neighbor.
+            let tie = push_constant(&mut chart, RuntimeValue::Int((1 << 53) + 1));
+            assert_eq!(
+                query(&mut chart, 22, ty, one, tie).unwrap(),
+                expected(9007199254740992.0),
+                "{ty:?} * 2^53 + 1"
+            );
+            assert!(
+                query(&mut chart, 23, ty, unit, zero).is_err(),
+                "{ty:?} / 0 must be an execution error"
+            );
+            assert!(
+                query(&mut chart, 22, ty, huge, max).is_err(),
+                "{ty:?} * i64::MAX with a huge unit must be an execution error"
+            );
+            // int,U division is not an ABI combination.
+            assert!(
+                query(&mut chart, 23, ty, three, unit).is_err(),
+                "3 / {ty:?} must be an execution error"
+            );
+        }
+        // float,int multiplication stays rejected in both directions.
+        let float_two = push_constant(
+            &mut chart,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 2.0,
+            },
+        );
+        assert!(query(&mut chart, 22, ValueType::Float, float_two, three).is_err());
+        assert!(query(&mut chart, 22, ValueType::Float, three, float_two).is_err());
     }
 
     #[test]

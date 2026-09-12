@@ -894,6 +894,20 @@ fn scalar_unit_div(
         (CanonicalExpressionValue::Angle(left), CanonicalExpressionValue::Float(right)) => {
             finite_value(index, left / right).map(CanonicalExpressionValue::Angle)
         }
+        // Execution ABI section 14: `U,int` division rounds the integer to
+        // binary64 first; a zero integer is rejected by `binary_div` above.
+        (CanonicalExpressionValue::Time(left), CanonicalExpressionValue::Int(right)) => {
+            finite_value(index, left / right as f64).map(CanonicalExpressionValue::Time)
+        }
+        (CanonicalExpressionValue::Beat(left), CanonicalExpressionValue::Int(right)) => {
+            finite_value(index, left / right as f64).map(CanonicalExpressionValue::Beat)
+        }
+        (CanonicalExpressionValue::Length(left), CanonicalExpressionValue::Int(right)) => {
+            finite_value(index, left / right as f64).map(CanonicalExpressionValue::Length)
+        }
+        (CanonicalExpressionValue::Angle(left), CanonicalExpressionValue::Int(right)) => {
+            finite_value(index, left / right as f64).map(CanonicalExpressionValue::Angle)
+        }
         _ => Err(ExpressionEvaluationError::TypeMismatch {
             node: index,
             opcode,
@@ -1306,6 +1320,102 @@ mod tests {
         assert_eq!(
             evaluate_expression(&expression, environment).unwrap(),
             CanonicalExpressionValue::Float(0.25)
+        );
+    }
+
+    #[test]
+    fn unit_scalar_divides_by_integer_like_the_abi() {
+        for (unit, divided) in [
+            (
+                CanonicalExpressionValue::Time(0.75),
+                CanonicalExpressionValue::Time(0.375),
+            ),
+            (
+                CanonicalExpressionValue::Beat(0.75),
+                CanonicalExpressionValue::Beat(0.375),
+            ),
+            (
+                CanonicalExpressionValue::Length(0.75),
+                CanonicalExpressionValue::Length(0.375),
+            ),
+            (
+                CanonicalExpressionValue::Angle(0.75),
+                CanonicalExpressionValue::Angle(0.375),
+            ),
+        ] {
+            let ty = unit.value_type();
+            let expression = CanonicalExpressionDag::new(
+                vec![
+                    constant(unit.clone()),
+                    constant(CanonicalExpressionValue::Int(2)),
+                    node(
+                        CanonicalExpressionOpcode::Div,
+                        ty.clone(),
+                        [Some(0), Some(1), None],
+                    ),
+                ],
+                2,
+            )
+            .unwrap();
+            let by_zero = CanonicalExpressionDag::new(
+                vec![
+                    constant(unit),
+                    constant(CanonicalExpressionValue::Int(0)),
+                    node(CanonicalExpressionOpcode::Div, ty, [Some(0), Some(1), None]),
+                ],
+                2,
+            )
+            .unwrap();
+            let environment = ExpressionEnvironment::new(0.0, 0.0, 0.0, 0.0).unwrap();
+            assert_eq!(
+                evaluate_expression(&expression, environment).unwrap(),
+                divided
+            );
+            assert!(matches!(
+                evaluate_expression(&by_zero, environment),
+                Err(ExpressionEvaluationError::DivisionByZero { .. })
+            ));
+        }
+
+        // i64::MAX is 2^63 - 1, nearer to 2^63 than to 2^63 - 1024, so
+        // rounding to nearest lands on 9223372036854775808.0.
+        let expression = CanonicalExpressionDag::new(
+            vec![
+                constant(CanonicalExpressionValue::Time(1.0)),
+                constant(CanonicalExpressionValue::Int(i64::MAX)),
+                node(
+                    CanonicalExpressionOpcode::Div,
+                    CanonicalExpressionType::Time,
+                    [Some(0), Some(1), None],
+                ),
+            ],
+            2,
+        )
+        .unwrap();
+        let environment = ExpressionEnvironment::new(0.0, 0.0, 0.0, 0.0).unwrap();
+        assert_eq!(
+            evaluate_expression(&expression, environment).unwrap(),
+            CanonicalExpressionValue::Time(1.0 / 9223372036854775808.0)
+        );
+
+        // 2^53 + 1 is exactly halfway between 2^53 and 2^53 + 2, so
+        // ties-to-even selects the even neighbor.
+        let tie = CanonicalExpressionDag::new(
+            vec![
+                constant(CanonicalExpressionValue::Time(1.0)),
+                constant(CanonicalExpressionValue::Int((1 << 53) + 1)),
+                node(
+                    CanonicalExpressionOpcode::Div,
+                    CanonicalExpressionType::Time,
+                    [Some(0), Some(1), None],
+                ),
+            ],
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluate_expression(&tie, environment).unwrap(),
+            CanonicalExpressionValue::Time(1.0 / 9007199254740992.0)
         );
     }
 

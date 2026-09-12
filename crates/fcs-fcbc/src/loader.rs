@@ -2365,7 +2365,7 @@ fn is_numeric_scalar(ty: ValueType) -> bool {
     )
 }
 
-fn is_unit_scalar(ty: ValueType) -> bool {
+pub(crate) fn is_unit_scalar(ty: ValueType) -> bool {
     matches!(
         ty,
         ValueType::Time | ValueType::Beat | ValueType::Length | ValueType::Angle
