@@ -441,6 +441,7 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets_and_ignored(
             aggregate_fingerprint(actual.required_extensions()),
         );
     }
+    compare_render_scenes(expected, actual, &mut mismatches);
 
     let (mismatch_items, observed_mismatch_count) = mismatches.into_parts();
     let VerifiedMetricObservations {
@@ -458,6 +459,122 @@ pub(crate) fn compare_canonical_charts_with_resources_with_budgets_and_ignored(
             selectors.dedup();
             selectors
         },
+    }
+}
+
+/// Compare the optional canonical Render scene.
+///
+/// Scene presence is a structural fact: a chart that renders executes
+/// differently from one that does not, and no drop authorization may turn
+/// that into an equivalence (section 14's round-trip oracle). Within two
+/// present scenes every record group is exact and discrete; the descriptor
+/// indices nodes and records reference are covered by the compared
+/// descriptor table, so per-record equality needs no extra resolution.
+fn compare_render_scenes(
+    expected: &CanonicalChart,
+    actual: &CanonicalChart,
+    mismatches: &mut Mismatches<'_>,
+) {
+    let (Some(expected_scene), Some(actual_scene)) = (expected.render(), actual.render()) else {
+        if expected.render().is_some() != actual.render().is_some() {
+            mismatches.push_structural(ComparisonMismatch::new(
+                "render",
+                "discrete",
+                "scene.presence",
+                expected.render().map_or("absent", |_| "present"),
+                actual.render().map_or("absent", |_| "present"),
+                None,
+            ));
+        }
+        return;
+    };
+    if expected_scene.viewport() != actual_scene.viewport() {
+        mismatch(
+            mismatches,
+            "render",
+            "scene.viewport",
+            format!("{:?}", expected_scene.viewport()),
+            format!("{:?}", actual_scene.viewport()),
+        );
+    }
+    compare_render_record_group(
+        mismatches,
+        "scene.layers",
+        expected_scene.layers(),
+        actual_scene.layers(),
+    );
+    compare_render_record_group(
+        mismatches,
+        "scene.nodes",
+        expected_scene.nodes(),
+        actual_scene.nodes(),
+    );
+    compare_render_record_group(
+        mismatches,
+        "scene.geometries",
+        expected_scene.geometries(),
+        actual_scene.geometries(),
+    );
+    compare_render_record_group(
+        mismatches,
+        "scene.paths",
+        expected_scene.paths(),
+        actual_scene.paths(),
+    );
+    compare_render_record_group(
+        mismatches,
+        "scene.paints",
+        expected_scene.paints(),
+        actual_scene.paints(),
+    );
+    compare_render_record_group(
+        mismatches,
+        "scene.strokes",
+        expected_scene.strokes(),
+        actual_scene.strokes(),
+    );
+    compare_render_record_group(
+        mismatches,
+        "scene.clips",
+        expected_scene.clips(),
+        actual_scene.clips(),
+    );
+    compare_render_record_group(
+        mismatches,
+        "scene.glyphRuns",
+        expected_scene.glyph_runs(),
+        actual_scene.glyph_runs(),
+    );
+}
+
+/// One Render record group: counts are structural, records are fingerprints.
+fn compare_render_record_group<T: Debug + PartialEq>(
+    mismatches: &mut Mismatches<'_>,
+    field: &str,
+    expected: &[T],
+    actual: &[T],
+) {
+    if expected.len() != actual.len() {
+        mismatches.push_structural(ComparisonMismatch::new(
+            "render",
+            "discrete",
+            field,
+            expected.len().to_string(),
+            actual.len().to_string(),
+            None,
+        ));
+        return;
+    }
+    for (index, (expected_record, actual_record)) in expected.iter().zip(actual).enumerate() {
+        if expected_record != actual_record {
+            mismatch(
+                mismatches,
+                "render",
+                format!("{field}[{index}]"),
+                aggregate_fingerprint(expected_record),
+                aggregate_fingerprint(actual_record),
+            );
+        }
     }
 }
 
