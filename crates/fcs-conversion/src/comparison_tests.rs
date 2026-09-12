@@ -14,6 +14,7 @@ use fcs_model::{
     CanonicalVec2, CanonicalViewport, ChartTimeMap, DistributionMetadata, EntityKind, StableId,
     StableIdRegistry, TempoPoint,
 };
+use std::collections::BTreeMap;
 
 fn record(sink: &mut Mismatches<'_>, domain: &str, field: &str) {
     sink.push(ComparisonMismatch::new(
@@ -869,10 +870,21 @@ fn render_scene(
         layers: vec![
             CanonicalRenderLayer::new(layer_id, CanonicalRenderPass::Overlay, 0, 0, roots).unwrap(),
         ],
-        nodes: nodes
-            .into_iter()
-            .map(|spec| CanonicalRenderNode::new(spec).unwrap())
-            .collect(),
+        nodes: {
+            // The refrozen scene validation requires dense document order
+            // within each (layer, parent) sibling group; declaration order
+            // within a group satisfies it.
+            let mut next_order: BTreeMap<(usize, Option<usize>), u32> = BTreeMap::new();
+            nodes
+                .into_iter()
+                .map(|mut spec| {
+                    let order = next_order.entry((spec.layer, spec.parent)).or_insert(0);
+                    spec.document_order = *order;
+                    *order += 1;
+                    CanonicalRenderNode::new(spec).unwrap()
+                })
+                .collect()
+        },
         geometries: Vec::new(),
         paths: Vec::new(),
         paints: Vec::new(),
