@@ -1172,17 +1172,19 @@ impl<'a> StaticEntityValidator<'a> {
                 self.validate_expression_with_expected(&field.value, expression_scope, expected)?
             };
             validate_schema_type(field_schema, &actual, field.value.span())?;
-            if !is_resource_reference
-                && let Ok(value) = evaluate_with_context_expected(
+            if !is_resource_reference {
+                match evaluate_with_context_expected(
                     &field.value,
                     self.document.definitions.as_ref(),
                     &BTreeMap::new(),
                     self.schema,
                     &self.context,
                     expected,
-                )
-            {
-                validate_field_type(field_schema, &value, field.value.span())?;
+                ) {
+                    Ok(value) => validate_field_type(field_schema, &value, field.value.span())?,
+                    Err(error @ Diagnostic::LimitExceeded { .. }) => return Err(error),
+                    Err(_) => {}
+                }
             }
             if let Some(FieldConstraint::StringEnum(values)) = field_schema.constraint()
                 && let SourceExpression::Literal {
