@@ -369,82 +369,94 @@ fn native_unit_integer_scaling_matches_canonical_evaluator() {
     // DAG. Beat has no note slot and no conversion builtin, so it drives a
     // color `choose` predicate; angle drives a `rotation` choose branch
     // (pure-literal subexpressions are retained by the lowerer, not folded).
-    type ScalingCase = (&str, usize, &str, &[(f64, f64, f64)]);
-    let cases: &[ScalingCase] = &[
-        (
-            "presentation.alpha: seconds(s * 2);",
-            4,
-            "note.presentation.alpha",
-            &[(0.25, 0.0, 0.0)],
-        ),
-        (
-            "presentation.alpha: seconds(2 * s);",
-            4,
-            "note.presentation.alpha",
-            &[(0.25, 0.0, 0.0)],
-        ),
-        (
-            "presentation.alpha: seconds(s / 2);",
-            4,
-            "note.presentation.alpha",
-            &[(0.25, 0.0, 0.0)],
-        ),
-        (
-            "presentation.xOffset: d * 2;",
-            2,
-            "note.presentation.xOffset",
-            &[(0.0, 0.0, 1.5)],
-        ),
-        (
-            "presentation.xOffset: 2 * d;",
-            2,
-            "note.presentation.xOffset",
-            &[(0.0, 0.0, 1.5)],
-        ),
-        (
-            "presentation.xOffset: d / 2;",
-            2,
-            "note.presentation.xOffset",
-            &[(0.0, 0.0, 1.5)],
-        ),
-        (
-            "presentation.color: choose { when b * 2 > 1beat => #FF0000; else => #00FF00; };",
-            8,
-            "note.presentation.color",
-            &[(0.0, 0.75, 0.0), (0.0, 0.49, 0.0)],
-        ),
-        (
-            "presentation.color: choose { when 2 * b > 1beat => #FF0000; else => #00FF00; };",
-            8,
-            "note.presentation.color",
-            &[(0.0, 0.51, 0.0), (0.0, 0.49, 0.0)],
-        ),
-        (
-            "presentation.color: choose { when b / 2 > 1beat => #FF0000; else => #00FF00; };",
-            8,
-            "note.presentation.color",
-            &[(0.0, 2.5, 0.0), (0.0, 1.9, 0.0)],
-        ),
-        (
-            "presentation.rotation: choose { when s > 1s => 30deg * 2; else => 90deg; };",
-            7,
-            "note.presentation.rotation",
-            &[(2.0, 0.0, 0.0), (0.5, 0.0, 0.0)],
-        ),
-        (
-            "presentation.rotation: choose { when s > 1s => 2 * 30deg; else => 90deg; };",
-            7,
-            "note.presentation.rotation",
-            &[(2.0, 0.0, 0.0)],
-        ),
-        (
-            "presentation.rotation: choose { when s > 1s => 30deg / 2; else => 90deg; };",
-            7,
-            "note.presentation.rotation",
-            &[(2.0, 0.0, 0.0)],
-        ),
+    #[derive(Clone, Copy)]
+    struct ScalingCase<'a> {
+        presentation: &'a str,
+        slot: usize,
+        target_path: &'a str,
+        environments: &'a [(f64, f64, f64)],
+    }
+    let cases = [
+        ScalingCase {
+            presentation: "presentation.alpha: seconds(s * 2);",
+            slot: 4,
+            target_path: "note.presentation.alpha",
+            environments: &[(0.25, 0.0, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.alpha: seconds(2 * s);",
+            slot: 4,
+            target_path: "note.presentation.alpha",
+            environments: &[(0.25, 0.0, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.alpha: seconds(s / 2);",
+            slot: 4,
+            target_path: "note.presentation.alpha",
+            environments: &[(0.25, 0.0, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.xOffset: d * 2;",
+            slot: 2,
+            target_path: "note.presentation.xOffset",
+            environments: &[(0.0, 0.0, 1.5)],
+        },
+        ScalingCase {
+            presentation: "presentation.xOffset: 2 * d;",
+            slot: 2,
+            target_path: "note.presentation.xOffset",
+            environments: &[(0.0, 0.0, 1.5)],
+        },
+        ScalingCase {
+            presentation: "presentation.xOffset: d / 2;",
+            slot: 2,
+            target_path: "note.presentation.xOffset",
+            environments: &[(0.0, 0.0, 1.5)],
+        },
+        ScalingCase {
+            presentation: "presentation.color: choose { when b * 2 > 1beat => #FF0000; else => #00FF00; };",
+            slot: 8,
+            target_path: "note.presentation.color",
+            environments: &[(0.0, 0.75, 0.0), (0.0, 0.49, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.color: choose { when 2 * b > 1beat => #FF0000; else => #00FF00; };",
+            slot: 8,
+            target_path: "note.presentation.color",
+            environments: &[(0.0, 0.51, 0.0), (0.0, 0.49, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.color: choose { when b / 2 > 1beat => #FF0000; else => #00FF00; };",
+            slot: 8,
+            target_path: "note.presentation.color",
+            environments: &[(0.0, 2.5, 0.0), (0.0, 1.9, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.rotation: choose { when s > 1s => 30deg * 2; else => 90deg; };",
+            slot: 7,
+            target_path: "note.presentation.rotation",
+            environments: &[(2.0, 0.0, 0.0), (0.5, 0.0, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.rotation: choose { when s > 1s => 2 * 30deg; else => 90deg; };",
+            slot: 7,
+            target_path: "note.presentation.rotation",
+            environments: &[(2.0, 0.0, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.rotation: choose { when s > 1s => 30deg / 2; else => 90deg; };",
+            slot: 7,
+            target_path: "note.presentation.rotation",
+            environments: &[(2.0, 0.0, 0.0)],
+        },
     ];
-    for &(presentation, slot, target_path, environments) in cases {
+    for &ScalingCase {
+        presentation,
+        slot,
+        target_path,
+        environments,
+    } in &cases
+    {
         let compilation = compilation(&tap_source(presentation));
         let decoded = load_chart(&write_from_compilation(&compilation).unwrap()).unwrap();
         let table = compilation
