@@ -7,8 +7,7 @@ use fcs_model::{
     AudioOffset, Beat as CanonicalBeat, CanonicalActiveInterval, CanonicalArtwork, CanonicalChart,
     CanonicalChartError, CanonicalColor, CanonicalCompilation, CanonicalContributor,
     CanonicalCredit, CanonicalCreditRole, CanonicalDescriptorDomain, CanonicalDescriptorKind,
-    CanonicalDescriptorRoot, CanonicalDescriptorTable, CanonicalExpressionDag,
-    CanonicalExpressionNode, CanonicalExpressionOpcode, CanonicalExpressionType,
+    CanonicalDescriptorRoot, CanonicalDescriptorTable, CanonicalExpressionType,
     CanonicalExpressionValue, CanonicalGlyphPlacement, CanonicalGlyphRun, CanonicalGradientSpread,
     CanonicalGradientStop, CanonicalImageSampling, CanonicalLineGraph, CanonicalMetadata,
     CanonicalObject, CanonicalObjectEntry, CanonicalPiece, CanonicalPreview, CanonicalProfile,
@@ -20,9 +19,9 @@ use fcs_model::{
     CanonicalRenderStroke, CanonicalRequiredExtension, CanonicalResource, CanonicalResourceBundle,
     CanonicalResourceKind, CanonicalSourceVersion, CanonicalStrokeCap, CanonicalStrokeJoin,
     CanonicalSync, CanonicalTextualId, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
-    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget,
-    CanonicalTrackValue, CanonicalValue, CanonicalValueType, CanonicalVec2, CanonicalViewport,
-    ChartTimeMap, DeclaredSha256, DistributionMetadata, EntityKind, StableId, StableIdRegistry,
+    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackTarget, CanonicalTrackValue,
+    CanonicalValue, CanonicalValueType, CanonicalVec2, CanonicalViewport, ChartTimeMap,
+    DeclaredSha256, DistributionMetadata, EntityKind, StableId, StableIdRegistry,
 };
 use fcs_runtime::{TrackContribution, TrackExpressionBuilder, evaluate_track_contribution};
 
@@ -30,7 +29,7 @@ use crate::ast::{
     Definition, Document, DocumentProfile, ExtensionRequirement, FieldPath, MetaBlock,
     OrderedObject, ProfileFeature, RenderBodyItem, RenderItem, ResourceKind, SchemaField,
     SchemaValue, SourceExpression, SourceLiteral, SourceSpan, SyncBlock, TopLevelBlockKind,
-    TrackDeclaration, TrackSegmentItem, TracksBlock, Type, TypedValue,
+    TrackDeclaration, TrackSegmentItem, Type, TypedValue,
 };
 use crate::custom::CustomValueLimits;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLabel, DiagnosticStage};
@@ -1464,7 +1463,7 @@ impl<'a> RenderLowerer<'a> {
                 };
                 CanonicalVec2::new(*x, *y)
                     .map(CanonicalTrackValue::Vec2Float)
-                    .ok_or_else(|| render_error("Render scale must be finite", node.span))
+                    .map_err(|_| render_error("Render scale must be finite", node.span))
             }
         }
     }
@@ -1523,8 +1522,9 @@ impl<'a> RenderLowerer<'a> {
                     let value = builder
                         .contribution(TrackContribution::Segment(segment), target.carrier())
                         .map_err(|error| render_error(error.to_string(), span))?;
+                    let root = builder.root(value);
                     let dag = builder
-                        .finish(builder.root(value))
+                        .finish(root)
                         .map_err(|error| render_error(error.to_string(), span))?;
                     let index = self.descriptors.len();
                     self.descriptors.push(

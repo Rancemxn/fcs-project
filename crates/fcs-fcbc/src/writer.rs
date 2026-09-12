@@ -2725,8 +2725,9 @@ fn blended_region_expression(
             };
         }
     }
+    let root = builder.root(value);
     builder
-        .finish(builder.root(value))
+        .finish(root)
         .map_err(|error| FcbcError::new("fcbc.unsupported-track", error.to_string()))
 }
 

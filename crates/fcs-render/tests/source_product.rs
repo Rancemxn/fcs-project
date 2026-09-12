@@ -2784,6 +2784,13 @@ fn source_render_node_track_governed_cases_reject() {
             "no exact ABI 1.0 expression encoding",
         ),
         (
+            "origin target",
+            node(
+                r#"tracks { track move -> origin: vec2<length> { segments { [0s, 1s): vec2(0px, 0px) -> vec2(1px, 1px) using "linear"; } } }"#,
+            ),
+            "no exact ABI 1.0 expression encoding",
+        ),
+        (
             "cubic Bezier interpolation",
             node(
                 r#"tracks { track fade -> opacity: float { segments { [0s, 1s): 0.9 -> 0.2 using cubicBezier(0.42, 0.0, 0.58, 1.0); } } }"#,
@@ -2796,6 +2803,13 @@ fn source_render_node_track_governed_cases_reject() {
                 r#"tracks { track fade -> opacity: float { fill: "error"; segments { [0s, 1s): 0.9 -> 0.2 using "linear"; } } }"#,
             ),
             "error fill",
+        ),
+        (
+            "unresolved hold",
+            node(
+                r#"tracks { track fade -> opacity: float { fill: "holdBefore"; segments { [1s, 2s): 0.3 -> 0.7 using "linear"; point 2.5s: 0.5; } } }"#,
+            ),
+            "cannot be composed exactly",
         ),
         (
             "generator",
