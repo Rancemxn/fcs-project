@@ -1,8 +1,12 @@
 //! Exact canonical Line scroll coordinates for the I3.7 constant-speed seam.
 
 use std::fmt;
+use std::ops::Add;
 
-use crate::{CanonicalScrollTempo, ChartTimeMap, EntityKind, ScrollTempoKey, StableId};
+use crate::{
+    CanonicalScrollTempo, ChartTimeMap, DoubleDouble, EntityKind, ScrollTempoKey, StableId,
+    scaled_difference,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CanonicalScrollTempoPoint {
@@ -170,9 +174,16 @@ impl CanonicalScrollLine {
     }
 
     pub fn floor_position(&self, chart_time: f64) -> Result<f64, ScrollCoordinateError> {
+        if chart_time == self.integration_origin {
+            return Ok(self.initial_floor_position);
+        }
         let origin = self.coordinate.coordinate(self.integration_origin)?;
         let current = self.coordinate.coordinate(chart_time)?;
-        finite(self.initial_floor_position + self.speed * (current - origin))
+        finite(
+            DoubleDouble::from_f64(self.initial_floor_position)
+                .add(scaled_difference(self.speed, origin, current))
+                .round_once(),
+        )
     }
 
     pub fn scroll_bpm(&self, chart_time: f64) -> Result<f64, ScrollCoordinateError> {
@@ -346,6 +357,58 @@ mod tests {
         );
         assert!(
             CanonicalScrollLine::new(line_id(), coordinate, -1.0, true, 120.0, 0.0, 0.0,).is_ok()
+        );
+    }
+
+    #[test]
+    fn floor_position_rounds_only_once_after_the_initial_offset() {
+        // -2^54 + (2^54 + 1) = 1: the per-window difference must stay
+        // high-precision until the initial offset is added (issue #649).
+        let line = CanonicalScrollLine::new(
+            line_id(),
+            CanonicalScrollCoordinate::new([point(0.0, 60.0)]).unwrap(),
+            1.0,
+            true,
+            120.0,
+            -1.0,
+            -18_014_398_509_481_984.0,
+        )
+        .unwrap();
+        assert_eq!(line.floor_position(18_014_398_509_481_984.0), Ok(1.0));
+    }
+
+    #[test]
+    fn floor_position_keeps_ordinary_cancellation_bits() {
+        // 0.2 + 0.1 rounds to 5404319552844596 * 2^-54, exactly half an ulp
+        // above 0.3; adding the real -0.3 must cancel to 2^-55, not 2^-54.
+        let line = CanonicalScrollLine::new(
+            line_id(),
+            CanonicalScrollCoordinate::new([point(0.0, 60.0)]).unwrap(),
+            1.0,
+            true,
+            120.0,
+            -0.1,
+            -0.3,
+        )
+        .unwrap();
+        assert_eq!(line.floor_position(0.2), Ok(2.0f64.powi(-55)));
+    }
+
+    #[test]
+    fn floor_position_at_the_origin_returns_the_raw_initial_bits() {
+        let line = CanonicalScrollLine::new(
+            line_id(),
+            CanonicalScrollCoordinate::new([point(0.0, 60.0)]).unwrap(),
+            1.0,
+            true,
+            120.0,
+            0.0,
+            -0.0,
+        )
+        .unwrap();
+        assert_eq!(
+            line.floor_position(0.0).unwrap().to_bits(),
+            0x8000_0000_0000_0000
         );
     }
 }

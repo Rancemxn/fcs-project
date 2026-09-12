@@ -2,8 +2,10 @@ use super::loader::{
     DecodedChart, DescriptorKind, DistanceClassification, MAX_VALIDATOR_DEPTH, RuntimeValue,
     Segment, ValueType, is_unit_scalar,
 };
+use fcs_model::{DoubleDouble, scaled_difference};
 use fcs_runtime::{evaluate_cubic_bezier_progress, evaluate_easing};
 use std::collections::BTreeMap;
+use std::ops::{Add, Neg};
 
 const EXECUTION_ERROR: &str = "fcbc.execution-error";
 
@@ -141,13 +143,15 @@ pub fn query_distance(
                 EvaluationEnvironment::at_chart_time(chart, time)?,
             )?;
             let integrand = scalar_payload(&speed.value)? * scalar_payload(&tempo.value)? / 60.0;
-            let mut floor_position =
-                distance.initial_floor_position + integrand * (time - distance.integration_origin);
+            let floor_position = DoubleDouble::from_f64(distance.initial_floor_position)
+                .add(scaled_difference(
+                    integrand,
+                    distance.integration_origin,
+                    time,
+                ))
+                .round_once();
             if !floor_position.is_finite() {
                 return Err(EXECUTION_ERROR);
-            }
-            if floor_position == 0.0 {
-                floor_position = 0.0;
             }
             let mut visited_nodes = speed.visited_nodes;
             visited_nodes.extend(tempo.visited_nodes);
@@ -170,12 +174,11 @@ pub fn query_distance(
                 distance.integration_origin,
                 time,
             )?;
-            let mut floor_position = distance.initial_floor_position + integral;
+            let floor_position = DoubleDouble::from_f64(distance.initial_floor_position)
+                .add(integral)
+                .round_once();
             if !floor_position.is_finite() {
                 return Err(EXECUTION_ERROR);
-            }
-            if floor_position == 0.0 {
-                floor_position = 0.0;
             }
             Ok(DistanceEvaluation {
                 floor_position,
@@ -196,7 +199,7 @@ pub fn query_scroll_coordinate(
         return Err(EXECUTION_ERROR);
     }
     let integral = integrate_descriptor(chart, scroll_tempo_descriptor, 0.0, time, 0)?;
-    let coordinate = integral / 60.0;
+    let coordinate = integral.to_f64() / 60.0;
     coordinate
         .is_finite()
         .then_some(coordinate)
@@ -1011,7 +1014,7 @@ fn integrate_descriptor(
     start: f64,
     end: f64,
     depth: usize,
-) -> Result<f64, &'static str> {
+) -> Result<DoubleDouble, &'static str> {
     if depth > chart.descriptors.len() + 1 {
         return Err(EXECUTION_ERROR);
     }
@@ -1023,31 +1026,27 @@ fn integrate_descriptor(
         return Err(EXECUTION_ERROR);
     }
     if start.to_bits() == end.to_bits() {
-        return Ok(0.0);
+        return Ok(DoubleDouble::from_f64(0.0));
     }
     if end < start {
-        return Ok(-integrate_descriptor(
-            chart,
-            descriptor_index,
-            end,
-            start,
-            depth + 1,
-        )?);
+        return Ok(integrate_descriptor(chart, descriptor_index, end, start, depth + 1)?.neg());
     }
     let result = match &descriptor.kind {
-        DescriptorKind::Constant(index) => {
+        DescriptorKind::Constant(index) => scaled_difference(
             scalar_payload(
                 chart
                     .constants
                     .get(*index as usize)
                     .ok_or(EXECUTION_ERROR)?,
-            )? * (end - start)
-        }
+            )?,
+            start,
+            end,
+        ),
         DescriptorKind::SegmentTrack(segments) => {
             integrate_segment_track(chart, segments, start, end)?
         }
         DescriptorKind::Piecewise(pieces) => {
-            let mut total = 0.0;
+            let mut total = DoubleDouble::from_f64(0.0);
             let mut cursor = start;
             for piece in pieces {
                 let interpreted_start = if piece.flags & 0b010 != 0 {
@@ -1063,13 +1062,13 @@ fn integrate_descriptor(
                 let piece_start = cursor.max(interpreted_start);
                 let piece_end = end.min(interpreted_end);
                 if piece_start < piece_end {
-                    total += integrate_descriptor(
+                    total = total.add(integrate_descriptor(
                         chart,
                         piece.descriptor_index,
                         piece_start,
                         piece_end,
                         depth + 1,
-                    )?;
+                    )?);
                     cursor = piece_end;
                 }
                 if cursor >= end {
@@ -1083,7 +1082,7 @@ fn integrate_descriptor(
         }
         DescriptorKind::Expression(_) => return Err(EXECUTION_ERROR),
     };
-    if result.is_finite() {
+    if result.to_f64().is_finite() {
         Ok(result)
     } else {
         Err(EXECUTION_ERROR)
@@ -1095,7 +1094,7 @@ fn integrate_segment_track(
     segments: &[Segment],
     start: f64,
     end: f64,
-) -> Result<f64, &'static str> {
+) -> Result<DoubleDouble, &'static str> {
     let mut breakpoints = vec![start, end];
     for segment in segments {
         if start < segment.start && segment.start < end {
@@ -1107,7 +1106,7 @@ fn integrate_segment_track(
     }
     breakpoints.sort_by(f64::total_cmp);
     breakpoints.dedup_by(|left, right| left.to_bits() == right.to_bits());
-    let mut total = 0.0;
+    let mut total = DoubleDouble::from_f64(0.0);
     for interval in breakpoints.windows(2) {
         let interval_start = interval[0];
         let interval_end = interval[1];
@@ -1128,18 +1127,20 @@ fn integrate_segment_track(
                     .ok_or(EXECUTION_ERROR)?,
             )?;
             let area = match segment.interpolation {
-                1 => start_value * (interval_end - interval_start),
+                1 => scaled_difference(start_value, interval_start, interval_end),
                 2 => {
                     let duration = segment.end - segment.start;
                     let slope = (end_value - start_value) / duration;
                     let local_start = interval_start - segment.start;
                     let local_end = interval_end - segment.start;
-                    start_value * (interval_end - interval_start)
-                        + slope * (local_end * local_end - local_start * local_start) * 0.5
+                    DoubleDouble::from_f64(
+                        start_value * (interval_end - interval_start)
+                            + slope * (local_end * local_end - local_start * local_start) * 0.5,
+                    )
                 }
                 _ => return Err(EXECUTION_ERROR),
             };
-            total += area;
+            total = total.add(area);
         } else {
             let point = segments
                 .iter()
@@ -1152,7 +1153,7 @@ fn integrate_segment_track(
                     .get(point.start_constant as usize)
                     .ok_or(EXECUTION_ERROR)?,
             )?;
-            total += value * (interval_end - interval_start);
+            total = total.add(scaled_difference(value, interval_start, interval_end));
         }
     }
     Ok(total)
@@ -1164,28 +1165,38 @@ fn integrate_scroll_product(
     tempo_descriptor: u32,
     start: f64,
     end: f64,
-) -> Result<f64, &'static str> {
+) -> Result<DoubleDouble, &'static str> {
     if start.to_bits() == end.to_bits() {
-        return Ok(0.0);
+        return Ok(DoubleDouble::from_f64(0.0));
     }
     if end < start {
-        return Ok(-integrate_scroll_product(
+        return Ok(integrate_scroll_product(
             chart,
             speed_descriptor,
             tempo_descriptor,
             end,
             start,
-        )?);
+        )?
+        .neg());
     }
     if let Some(tempo) = constant_descriptor_scalar(chart, tempo_descriptor)? {
+        // Constant tempo: one binary64 scale factor fl(tempo / 60) applied to
+        // the high-precision speed integral. Exact for power-friendly tempi;
+        // for others the ~1 ulp relative drift is a smooth-integrand artifact
+        // the section 15 error budget already tolerates.
         let speed_integral = integrate_descriptor(chart, speed_descriptor, start, end, 0)?;
-        let result = speed_integral * tempo / 60.0;
-        return result.is_finite().then_some(result).ok_or(EXECUTION_ERROR);
+        return finite_integral(speed_integral.scale(tempo / 60.0));
     }
     if let Some(speed) = constant_descriptor_scalar(chart, speed_descriptor)? {
-        let tempo_integral = integrate_descriptor(chart, tempo_descriptor, start, end, 0)?;
-        let result = tempo_integral * speed / 60.0;
-        return result.is_finite().then_some(result).ok_or(EXECUTION_ERROR);
+        // Constant speed with a smooth tempo map: exact tempo integral scaled
+        // once. A step tempo track falls through to the per-window path so
+        // each window forms its node integrand fl(fl(speed * bpm) / 60)
+        // exactly; the end scale fl(speed / 60) would instead drift by ~1 ulp
+        // relative, which deep cancellation amplifies past the budget.
+        if !tempo_is_step_segment_track(chart, tempo_descriptor)? {
+            let tempo_integral = integrate_descriptor(chart, tempo_descriptor, start, end, 0)?;
+            return finite_integral(tempo_integral.scale(speed / 60.0));
+        }
     }
 
     let descriptor = chart
@@ -1212,7 +1223,7 @@ fn integrate_scroll_product(
     }
     breakpoints.sort_by(f64::total_cmp);
     breakpoints.dedup_by(|left, right| left.to_bits() == right.to_bits());
-    let mut total = 0.0;
+    let mut total = DoubleDouble::from_f64(0.0);
     for interval in breakpoints.windows(2) {
         let interval_start = interval[0];
         let interval_end = interval[1];
@@ -1229,11 +1240,37 @@ fn integrate_scroll_product(
         if !tempo.is_finite() || tempo <= 0.0 {
             return Err(EXECUTION_ERROR);
         }
-        total += integrate_descriptor(chart, speed_descriptor, interval_start, interval_end, 0)?
-            * tempo
-            / 60.0;
+        total = total.add(
+            integrate_descriptor(chart, speed_descriptor, interval_start, interval_end, 0)?
+                .scale(tempo / 60.0),
+        );
     }
-    total.is_finite().then_some(total).ok_or(EXECUTION_ERROR)
+    finite_integral(total)
+}
+
+fn finite_integral(integral: DoubleDouble) -> Result<DoubleDouble, &'static str> {
+    integral
+        .to_f64()
+        .is_finite()
+        .then_some(integral)
+        .ok_or(EXECUTION_ERROR)
+}
+
+fn tempo_is_step_segment_track(
+    chart: &DecodedChart,
+    tempo_descriptor: u32,
+) -> Result<bool, &'static str> {
+    let descriptor = chart
+        .descriptors
+        .get(tempo_descriptor as usize)
+        .ok_or(EXECUTION_ERROR)?;
+    Ok(matches!(
+        &descriptor.kind,
+        DescriptorKind::SegmentTrack(segments)
+            if segments
+                .iter()
+                .all(|segment| segment.flags & 1 != 0 || segment.interpolation == 1)
+    ))
 }
 
 fn constant_descriptor_scalar(

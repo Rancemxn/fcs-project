@@ -82,3 +82,33 @@ fn scroll_model_keeps_existing_line_policy_values() {
     assert!(line.allow_reverse_scroll());
     assert_eq!(line.floor_position(-1.0).unwrap(), 12.0);
 }
+
+fn scroll_at_sixty(source: &str) -> fcs_model::CanonicalScrollSet {
+    let map = ChartTimeMap::new([TempoPoint {
+        beat: Beat::zero(),
+        bpm: 60.0,
+    }])
+    .unwrap();
+    let document = parse_document(source).into_result().unwrap();
+    document.canonical_scroll_set(&map).unwrap()
+}
+
+#[test]
+fn floor_position_rounds_only_once_after_the_initial_offset() {
+    // -2^54 + (2^54 + 1) = 1 at 60 bpm with speed 1: the time difference
+    // must stay high-precision until the initial offset is added, or the
+    // final rounding loses the 1 (issue #649).
+    let set = scroll_at_sixty(&format!(
+        "{HEADER}tempoMap {{ 0beat -> 60bpm; }} lines {{ line main {{ integrationOrigin: -1s; initialFloorPosition: -18014398509481984.0; }} }}"
+    ));
+    let line = &set.lines()[0];
+    assert_eq!(line.floor_position(18_014_398_509_481_984.0).unwrap(), 1.0);
+
+    // Ordinary-sized cancellation: 0.2 + 0.1 ties half an ulp above 0.3, so
+    // only a single final rounding leaves exactly 2^-55.
+    let set = scroll_at_sixty(&format!(
+        "{HEADER}tempoMap {{ 0beat -> 60bpm; }} lines {{ line main {{ integrationOrigin: -0.1s; initialFloorPosition: -0.3; }} }}"
+    ));
+    let line = &set.lines()[0];
+    assert_eq!(line.floor_position(0.2).unwrap(), 2.0f64.powi(-55));
+}

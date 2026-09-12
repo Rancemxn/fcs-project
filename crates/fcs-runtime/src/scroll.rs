@@ -1,10 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::ops::{Add, Neg};
 
 use fcs_model::{
     CanonicalLine, CanonicalLineGraph, CanonicalNote, CanonicalScrollLine, CanonicalScrollSet,
     CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSet, CanonicalTrackTarget,
-    CanonicalTrackValue, EntityKind, ScrollCoordinateError, StableId,
+    CanonicalTrackValue, DoubleDouble, EntityKind, ScrollCoordinateError, StableId,
+    scaled_difference,
 };
 
 use crate::{TrackEvaluationError, evaluate_track_set};
@@ -206,18 +208,16 @@ pub fn evaluate_line_scroll(
             None => local.local_velocity,
         };
         let effective_floor = match parent {
-            Some(parent) => parent
-                .effective_floor
-                .add(DoubleDouble::from_f64(local.local_floor)),
-            None => DoubleDouble::from_f64(local.local_floor),
+            Some(parent) => parent.effective_floor.add(local.local_floor),
+            None => local.local_floor,
         };
         let public = EvaluatedLineScroll {
             line_id: id.value(),
             local_q: local.local_q,
             local_velocity: local.local_velocity,
-            local_floor: local.local_floor,
+            local_floor: finite(id.value(), "local floor", local.local_floor.round_once())?,
             effective_velocity,
-            effective_floor: finite(id.value(), "effective floor", effective_floor.to_f64())?,
+            effective_floor: finite(id.value(), "effective floor", effective_floor.round_once())?,
         };
         evaluated.insert(
             id.value(),
@@ -294,7 +294,7 @@ pub fn evaluate_note_distance(
 struct LocalScroll {
     local_q: f64,
     local_velocity: f64,
-    local_floor: f64,
+    local_floor: DoubleDouble,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -409,10 +409,10 @@ fn integrate_floor(
     tracks: &CanonicalTrackSet,
     line_id: &StableId,
     chart_time: f64,
-) -> Result<f64, ScrollEvaluationError> {
+) -> Result<DoubleDouble, ScrollEvaluationError> {
     let origin = descriptor.integration_origin();
     if chart_time == origin {
-        return Ok(descriptor.initial_floor_position());
+        return Ok(DoubleDouble::from_f64(descriptor.initial_floor_position()));
     }
     let (lower, upper, direction) = if chart_time > origin {
         (origin, chart_time, 1.0)
@@ -469,7 +469,7 @@ fn integrate_floor(
     for window in boundaries.windows(2) {
         let start = window[0];
         let end = window[1];
-        let contribution = if requires_numeric_integration {
+        integral = integral.add(if requires_numeric_integration {
             integrate_numeric_interval(
                 descriptor,
                 tracks,
@@ -481,14 +481,14 @@ fn integrate_floor(
             )?
         } else {
             integrate_step_interval(descriptor, tracks, line_id, start, end, &mut evaluations)?
-        };
-        integral = integral.add(DoubleDouble::from_f64(contribution));
+        });
     }
-    finite(
-        line_id.value(),
-        "local floor",
-        descriptor.initial_floor_position() + direction * integral.to_f64(),
-    )
+    let directed = if direction < 0.0 {
+        integral.neg()
+    } else {
+        integral
+    };
+    Ok(DoubleDouble::from_f64(descriptor.initial_floor_position()).add(directed))
 }
 
 fn integrate_step_interval(
@@ -498,7 +498,7 @@ fn integrate_step_interval(
     start: f64,
     end: f64,
     evaluations: &mut usize,
-) -> Result<f64, ScrollEvaluationError> {
+) -> Result<DoubleDouble, ScrollEvaluationError> {
     if *evaluations >= MAX_INTEGRATION_EVALUATIONS {
         return Err(ScrollEvaluationError::IntegrationBudgetExceeded {
             line: line_id.value(),
@@ -524,11 +524,13 @@ fn integrate_step_interval(
             source,
         }
     })?;
+    let contribution = scaled_difference(speed, q_start, q_end);
     finite(
         line_id.value(),
         "floor integration contribution",
-        speed * (q_end - q_start),
-    )
+        contribution.to_f64(),
+    )?;
+    Ok(contribution)
 }
 
 fn integrate_numeric_interval(
@@ -539,9 +541,9 @@ fn integrate_numeric_interval(
     end: f64,
     tolerance: f64,
     evaluations: &mut usize,
-) -> Result<f64, ScrollEvaluationError> {
+) -> Result<DoubleDouble, ScrollEvaluationError> {
     if start == end {
-        return Ok(0.0);
+        return Ok(DoubleDouble::from_f64(0.0));
     }
     let (estimate, error) =
         gauss_kronrod_panel(descriptor, tracks, line_id, start, end, evaluations)?;
@@ -606,7 +608,8 @@ fn integrate_numeric_interval(
             depth: panel.depth + 1,
         });
     }
-    finite(line_id.value(), "floor integration", total.to_f64())
+    finite(line_id.value(), "floor integration", total.to_f64())?;
+    Ok(total)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -745,42 +748,6 @@ fn finite_note(note: u64, field: &'static str, value: f64) -> Result<f64, Scroll
         .is_finite()
         .then_some(value)
         .ok_or(ScrollEvaluationError::NonFiniteNoteValue { note, field })
-}
-
-#[derive(Debug, Clone, Copy)]
-struct DoubleDouble {
-    hi: f64,
-    lo: f64,
-}
-
-impl DoubleDouble {
-    fn from_f64(value: f64) -> Self {
-        Self { hi: value, lo: 0.0 }
-    }
-
-    fn add(self, other: Self) -> Self {
-        let (sum, error) = two_sum(self.hi, other.hi);
-        let correction = self.lo + other.lo + error;
-        let (hi, lo) = two_sum(sum, correction);
-        Self { hi, lo }
-    }
-
-    fn to_f64(self) -> f64 {
-        if self.lo == 0.0 {
-            self.hi
-        } else {
-            self.hi + self.lo
-        }
-    }
-}
-
-fn two_sum(left: f64, right: f64) -> (f64, f64) {
-    let sum = left + right;
-    let virtual_right = sum - left;
-    let virtual_left = sum - virtual_right;
-    let right_error = right - virtual_right;
-    let left_error = left - virtual_left;
-    (sum, left_error + right_error)
 }
 
 #[cfg(test)]
@@ -922,6 +889,126 @@ mod tests {
         assert_eq!(later.effective_floor().to_bits(), 0);
         let reverse = evaluate_line_scroll(&graph, &scroll, &tracks, &line_id, -1.0).unwrap();
         assert_eq!(reverse.local_q(), -2.0);
+    }
+
+    fn single_point_descriptor(id: StableId, initial: f64, origin: f64) -> CanonicalScrollLine {
+        CanonicalScrollLine::new(
+            id,
+            CanonicalScrollCoordinate::new([
+                CanonicalChartScrollTempoPoint::new(0.0, 60.0).unwrap()
+            ])
+            .unwrap(),
+            1.0,
+            true,
+            10.0,
+            origin,
+            initial,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn local_floor_rounds_only_once_after_the_initial_offset() {
+        let mut registry = StableIdRegistry::new();
+        let line_id = id(&mut registry, "round-once");
+        let graph = graph(line_id.clone());
+        let scroll = CanonicalScrollSet::new(vec![single_point_descriptor(
+            line_id.clone(),
+            -18_014_398_509_481_984.0,
+            -1.0,
+        )])
+        .unwrap();
+        let tracks =
+            CanonicalTrackSet::new(vec![speed_track(line_id.clone(), "speed", 0.0, 2.0, 1.0)])
+                .unwrap();
+
+        // -2^54 + (2^54 + 1) = 1: rounding the integral before the initial
+        // offset is added loses the 1 (issue #649).
+        let result =
+            evaluate_line_scroll(&graph, &scroll, &tracks, &line_id, 18_014_398_509_481_984.0)
+                .unwrap();
+        assert_eq!(result.local_floor(), 1.0);
+        assert_eq!(result.effective_floor(), 1.0);
+    }
+
+    #[test]
+    fn local_floor_keeps_ordinary_cancellation_bits() {
+        let mut registry = StableIdRegistry::new();
+        let line_id = id(&mut registry, "round-once-ordinary");
+        let graph = graph(line_id.clone());
+        let scroll =
+            CanonicalScrollSet::new(vec![single_point_descriptor(line_id.clone(), -0.3, -0.1)])
+                .unwrap();
+        let tracks =
+            CanonicalTrackSet::new(vec![speed_track(line_id.clone(), "speed", 0.0, 2.0, 1.0)])
+                .unwrap();
+
+        // 0.2 + 0.1 is a half-ulp tie above 0.3; only a single final
+        // rounding cancels the real -0.3 down to 2^-55.
+        let result = evaluate_line_scroll(&graph, &scroll, &tracks, &line_id, 0.2).unwrap();
+        assert_eq!(result.local_floor(), 2.0f64.powi(-55));
+    }
+
+    #[test]
+    fn effective_floor_accumulates_unrounded_local_floors() {
+        let mut registry = StableIdRegistry::new();
+        let parent_id = id(&mut registry, "parent");
+        let child_id = id(&mut registry, "child");
+        let parent = CanonicalLine::new(
+            parent_id.clone(),
+            None,
+            0,
+            CanonicalLineBase::identity(),
+            CanonicalLineInherit::default(),
+            fcs_model::CanonicalScrollTempo::Global,
+        )
+        .unwrap();
+        let child = CanonicalLine::new(
+            child_id.clone(),
+            Some(parent_id.clone()),
+            1,
+            CanonicalLineBase::identity(),
+            CanonicalLineInherit::new(true, true, true, true, true),
+            fcs_model::CanonicalScrollTempo::Global,
+        )
+        .unwrap();
+        let graph = CanonicalLineGraph::new([parent, child]).unwrap();
+        let scroll = CanonicalScrollSet::new(vec![
+            single_point_descriptor(parent_id.clone(), 0.0, -1.0),
+            single_point_descriptor(
+                child_id.clone(),
+                -18_014_398_509_481_984.0,
+                18_014_398_509_481_984.0,
+            ),
+        ])
+        .unwrap();
+        let tracks = CanonicalTrackSet::new(vec![
+            speed_track(parent_id.clone(), "speed", 0.0, 2.0, 1.0),
+            speed_track(child_id.clone(), "speed", 0.0, 2.0, 1.0),
+        ])
+        .unwrap();
+
+        // The parent's exact local floor is 2^54 + 1, which rounds to 2^54;
+        // the child starts at -2^54. Only unrounded accumulation yields 1.
+        let parent = evaluate_line_scroll(
+            &graph,
+            &scroll,
+            &tracks,
+            &parent_id,
+            18_014_398_509_481_984.0,
+        )
+        .unwrap();
+        assert_eq!(parent.local_floor(), 18_014_398_509_481_984.0);
+        let child = evaluate_line_scroll(
+            &graph,
+            &scroll,
+            &tracks,
+            &child_id,
+            18_014_398_509_481_984.0,
+        )
+        .unwrap();
+        assert_eq!(child.local_floor(), -18_014_398_509_481_984.0);
+        assert_eq!(child.effective_floor(), 1.0);
     }
 
     #[test]
