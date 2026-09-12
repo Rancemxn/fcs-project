@@ -2,7 +2,7 @@ use super::loader::{
     DecodedChart, DescriptorKind, DistanceClassification, MAX_VALIDATOR_DEPTH, RuntimeValue,
     Segment, ValueType, is_unit_scalar,
 };
-use fcs_runtime::evaluate_easing;
+use fcs_runtime::{evaluate_cubic_bezier_progress, evaluate_easing};
 use std::collections::BTreeMap;
 
 const EXECUTION_ERROR: &str = "fcbc.execution-error";
@@ -959,29 +959,7 @@ fn cubic_bezier_progress(bezier: [f64; 4], progress: f64) -> Result<f64, &'stati
     if !(0.0..=1.0).contains(&progress) {
         return Err(EXECUTION_ERROR);
     }
-    let [x1, y1, x2, y2] = bezier;
-    let sample = |parameter: f64, first: f64, second: f64| {
-        let inverse = 1.0 - parameter;
-        3.0 * inverse * inverse * parameter * first
-            + 3.0 * inverse * parameter * parameter * second
-            + parameter * parameter * parameter
-    };
-    let mut lower = 0.0;
-    let mut upper = 1.0;
-    for _ in 0..64 {
-        let middle = (lower + upper) * 0.5;
-        if sample(middle, x1, x2) < progress {
-            lower = middle;
-        } else {
-            upper = middle;
-        }
-    }
-    let result = sample((lower + upper) * 0.5, y1, y2);
-    if result.is_finite() {
-        Ok(result)
-    } else {
-        Err(EXECUTION_ERROR)
-    }
+    evaluate_cubic_bezier_progress(bezier, progress).map_err(|_| EXECUTION_ERROR)
 }
 
 fn integrate_descriptor(
@@ -1426,6 +1404,35 @@ mod tests {
 
         assert_eq!(environment.s, 1.0);
         assert_eq!(environment.b, 2.0);
+    }
+
+    #[test]
+    fn cubic_bezier_progress_matches_canonical_vectors() {
+        // The native evaluator delegates to the canonical correctly rounded
+        // solver, so the canonical test vectors must hold here too: endpoint
+        // pinning, identity controls, the flat-x overshoot, and the explicit
+        // failures for invalid controls and unavailable enclosures.
+        assert_eq!(cubic_bezier_progress([0.25, 2.0, 0.75, -1.0], 0.0), Ok(0.0));
+        assert_eq!(cubic_bezier_progress([0.25, 2.0, 0.75, -1.0], 1.0), Ok(1.0));
+        assert_eq!(cubic_bezier_progress([0.0, 0.0, 1.0, 1.0], 0.25), Ok(0.25));
+        assert_eq!(cubic_bezier_progress([0.5, 2.0, 0.5, 2.0], 0.5), Ok(1.625));
+        assert_eq!(
+            cubic_bezier_progress([-0.25, 0.0, 0.75, 1.0], 0.5),
+            Err(EXECUTION_ERROR)
+        );
+        assert_eq!(
+            cubic_bezier_progress([0.25, 0.5, 0.75, f64::from_bits(1)], 0.25),
+            Err(EXECUTION_ERROR)
+        );
+        // The native wrapper keeps its own progress range check: the shared
+        // solver only rejects non-finite progress, so out-of-range and NaN
+        // progress must be rejected before the delegation.
+        for progress in [1.5, -0.2, f64::NAN] {
+            assert_eq!(
+                cubic_bezier_progress([0.25, 2.0, 0.75, -1.0], progress),
+                Err(EXECUTION_ERROR)
+            );
+        }
     }
 
     #[test]
