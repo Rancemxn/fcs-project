@@ -1320,6 +1320,46 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
 }
 
 #[test]
+fn compile_honors_zero_generated_nodes_for_render_tracks() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("scene.fcs");
+    fs::write(
+        &source,
+        r#"#fcs 5.0.0
+format { profile: renderable; }
+tempoMap { 0beat -> 120bpm; }
+render profile 1.0.0 {
+    viewport { width: 4px; height: 4px; }
+    layer main { pass: "overlay"; children {
+        circle animated { center: vec2(0px, 0px); radius: 1px; fill: solid(#FFFFFFFF);
+            tracks { track fade -> opacity: float {
+                segments { [0s, 1s): 0.25 -> 0.75 using "linear"; }
+            } }
+        }
+    } }
+}
+"#,
+    )
+    .unwrap();
+    let out = dir.path().join("out.fcbc");
+    let output = bin()
+        .arg("compile")
+        .arg(&source)
+        .arg("--output")
+        .arg(&out)
+        .args(["--max-generated-nodes", "0"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("compile-time.budget-exceeded")
+    );
+    assert!(!out.exists());
+}
+
+#[test]
 fn relative_source_filenames_resolve_resources_from_the_current_directory() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let fixtures = root.join("docs/conformance/fcs5/source/valid");
