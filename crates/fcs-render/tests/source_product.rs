@@ -14,16 +14,14 @@ use fcs_fcbc::{EvaluationEnvironment, RuntimeValue, query_descriptor, write_from
 use fcs_model::{
     CanonicalArcDirection, CanonicalCompilation, CanonicalDescriptorKind,
     CanonicalExpressionEnvironment, CanonicalExpressionType, CanonicalGlyphRun,
-    CanonicalImageRepeat, CanonicalImageSampling, CanonicalPathCommand, CanonicalPatternTransform,
-    CanonicalRenderAttachment, CanonicalRenderError, CanonicalRenderFillRule,
+    CanonicalPathCommand, CanonicalRenderAttachment, CanonicalRenderError, CanonicalRenderFillRule,
     CanonicalRenderGeometry, CanonicalRenderGeometryData, CanonicalRenderNode,
-    CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint,
-    CanonicalRenderPaintData, CanonicalRenderPath, CanonicalRenderScene, CanonicalRenderSceneSpec,
-    CanonicalRenderStroke, CanonicalStrokeCap, CanonicalStrokeJoin, CanonicalTextualId,
-    CanonicalTime, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
-    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackPoint, CanonicalTrackSegment,
-    CanonicalTrackTarget, CanonicalTrackValue, CanonicalVec2, EntityKind, StableIdRegistry,
-    derive_stable_id,
+    CanonicalRenderNodeKind, CanonicalRenderNodeSpec, CanonicalRenderPaint, CanonicalRenderPath,
+    CanonicalRenderScene, CanonicalRenderSceneSpec, CanonicalRenderStroke, CanonicalStrokeCap,
+    CanonicalStrokeJoin, CanonicalTextualId, CanonicalTime, CanonicalTrack, CanonicalTrackBlend,
+    CanonicalTrackFill, CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackPoint,
+    CanonicalTrackSegment, CanonicalTrackTarget, CanonicalTrackValue, CanonicalVec2, EntityKind,
+    StableIdRegistry, derive_stable_id,
 };
 use fcs_runtime::evaluate_track;
 use fcs_source::ResourceLimits;
