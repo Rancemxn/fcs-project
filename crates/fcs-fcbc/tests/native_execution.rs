@@ -471,11 +471,13 @@ fn native_integer_vector_predicates_preserve_values() {
     // `choose` stays lazy for integer vectors: the unselected branch would
     // overflow i64 and must not be evaluated. The overflow subexpression
     // depends on `s`, so the lowerer retains it instead of folding it away.
+    // Runtime expressions have no vector projection syntax yet, so the
+    // selected branch is observed through vector equality.
     let lazy = compile(&tap_source(
         "presentation.alpha: choose { \
-         when (choose { when s < 0s => vec2(9223372036854775807, 0) \
+         when choose { when s < 0s => vec2(9223372036854775807, 0) \
          + vec2(choose { when s >= 0s => 1; else => 0; }, 0); \
-         else => vec2(0, 0); }).x == 0 => 0.0; \
+         else => vec2(0, 0); } == vec2(0, 0) => 0.0; \
          else => 1.0; };",
     ));
     let decoded = load_chart(&lazy).unwrap();
