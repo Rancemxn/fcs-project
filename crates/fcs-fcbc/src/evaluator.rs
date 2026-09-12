@@ -1376,12 +1376,20 @@ mod tests {
                 expected(0.375),
                 "{ty:?} / 2"
             );
-            // i64::MAX is exactly halfway to 2^63, so roundTiesToEven lands on
-            // 9223372036854775808.0.
+            // i64::MAX is 2^63 - 1, nearer to 2^63 than to 2^63 - 1024, so
+            // rounding to nearest lands on 9223372036854775808.0.
             assert_eq!(
                 query(&mut chart, 22, ty, one, max).unwrap(),
                 expected(9223372036854775808.0),
                 "{ty:?} * i64::MAX"
+            );
+            // 2^53 + 1 is exactly halfway between 2^53 and 2^53 + 2, so
+            // ties-to-even selects the even neighbor.
+            let tie = push_constant(&mut chart, RuntimeValue::Int((1 << 53) + 1));
+            assert_eq!(
+                query(&mut chart, 22, ty, one, tie).unwrap(),
+                expected(9007199254740992.0),
+                "{ty:?} * 2^53 + 1"
             );
             assert!(
                 query(&mut chart, 23, ty, unit, zero).is_err(),

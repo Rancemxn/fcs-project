@@ -1377,8 +1377,8 @@ mod tests {
             ));
         }
 
-        // i64::MAX is exactly halfway to 2^63, so roundTiesToEven lands on
-        // 9223372036854775808.0.
+        // i64::MAX is 2^63 - 1, nearer to 2^63 than to 2^63 - 1024, so
+        // rounding to nearest lands on 9223372036854775808.0.
         let expression = CanonicalExpressionDag::new(
             vec![
                 constant(CanonicalExpressionValue::Time(1.0)),
@@ -1396,6 +1396,26 @@ mod tests {
         assert_eq!(
             evaluate_expression(&expression, environment).unwrap(),
             CanonicalExpressionValue::Time(1.0 / 9223372036854775808.0)
+        );
+
+        // 2^53 + 1 is exactly halfway between 2^53 and 2^53 + 2, so
+        // ties-to-even selects the even neighbor.
+        let tie = CanonicalExpressionDag::new(
+            vec![
+                constant(CanonicalExpressionValue::Time(1.0)),
+                constant(CanonicalExpressionValue::Int((1 << 53) + 1)),
+                node(
+                    CanonicalExpressionOpcode::Div,
+                    CanonicalExpressionType::Time,
+                    [Some(0), Some(1), None],
+                ),
+            ],
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluate_expression(&tie, environment).unwrap(),
+            CanonicalExpressionValue::Time(1.0 / 9007199254740992.0)
         );
     }
 
