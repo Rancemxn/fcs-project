@@ -483,6 +483,7 @@ fn compare_render_scenes(
                 "scene.presence",
                 expected.render().map_or("absent", |_| "present"),
                 actual.render().map_or("absent", |_| "present"),
+                None,
             ));
         }
         return;
@@ -560,6 +561,7 @@ fn compare_render_record_group<T: Debug + PartialEq>(
             field,
             expected.len().to_string(),
             actual.len().to_string(),
+            None,
         ));
         return;
     }
