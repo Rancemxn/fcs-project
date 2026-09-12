@@ -33,7 +33,7 @@ fn assert_budget(diagnostic: &Diagnostic, kind: &str, limit: usize) {
         diagnostic.code(),
         DiagnosticCode::COMPILE_TIME_BUDGET_EXCEEDED
     );
-    assert_eq!(diagnostic.stage(), DiagnosticStage::Elaborate);
+    assert_eq!(diagnostic.stage(), DiagnosticStage::Evaluate);
     let budget = diagnostic.budget().expect("structured budget");
     assert_eq!(budget.kind(), kind);
     assert_eq!(budget.limit(), limit);
@@ -100,7 +100,7 @@ collections { notes { tap { id: "n"; line: @line1; gameplay.time: 0s; }; } }"#;
 
 #[test]
 fn render_expression_helpers_use_the_configured_shared_budget() {
-    let source = scene("", NODE);
+    let source = scene("", NODE).replace("width: 4px", "width: 2px + 2px");
     let document = parse_document(&source).into_result().unwrap();
     for (kind, limits) in [
         (
@@ -123,7 +123,7 @@ fn render_expression_helpers_use_the_configured_shared_budget() {
             .unwrap_err();
         assert_budget(&error[0], kind, 0);
         let span = error[0].primary_span();
-        assert_eq!(&source[span.start..span.end], "4px");
+        assert_eq!(&source[span.start..span.end], "2px + 2px");
     }
 }
 
@@ -150,33 +150,43 @@ fn source_aware_core_expression_helpers_use_the_same_budget() {
 }
 
 #[test]
-fn runtime_render_fallback_cannot_swallow_a_budget_error() {
+fn runtime_expression_fallback_cannot_swallow_a_budget_error() {
     let node = r#"circle animated {
         center: vec2(0px, 0px); radius: 1px; fill: solid(#FFFFFFFF);
-        opacity: q;
+        opacity: offset + q;
     }"#;
-    let source = scene("", node);
-    let document = parse_document(&source).into_result().unwrap();
-    // Every insufficient limit must retain its budget diagnostic, including
-    // limits reached while deciding whether opacity is a runtime expression.
-    let mut accepted = false;
-    for limit in 0..100 {
-        match document.canonical_chart_with_source(
-            &source,
-            CompileTimeLimits {
-                max_expression_nodes: limit,
-                ..CompileTimeLimits::default()
-            },
-        ) {
-            Ok(_) => {
-                accepted = true;
-                break;
+    for notes in [
+        "",
+        r#"lines { line main {} }
+        collections { notes { tap {
+            id: "n"; line: @main; gameplay.time: 0s;
+            presentation.alpha: offset + q;
+        }; } }"#,
+    ] {
+        let core = format!("definitions {{ const offset: float = 0.0; }} {notes}");
+        let source = scene(&core, node);
+        let document = parse_document(&source).into_result().unwrap();
+        // The const is evaluated by both static evaluation and the runtime
+        // resolver. Every insufficient limit must retain its budget diagnostic.
+        let mut accepted = false;
+        for limit in 0..100 {
+            match document.canonical_chart_with_source(
+                &source,
+                CompileTimeLimits {
+                    max_expression_nodes: limit,
+                    ..CompileTimeLimits::default()
+                },
+            ) {
+                Ok(_) => {
+                    accepted = true;
+                    break;
+                }
+                Err(errors) => assert_budget(&errors[0], "max_expression_nodes", limit),
             }
-            Err(errors) => assert_budget(&errors[0], "max_expression_nodes", limit),
         }
+        assert!(
+            accepted,
+            "the bounded scene must compile with a sufficient budget"
+        );
     }
-    assert!(
-        accepted,
-        "the bounded scene must compile with a sufficient budget"
-    );
 }
