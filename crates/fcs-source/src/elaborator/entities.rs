@@ -863,39 +863,43 @@ impl<'a> StaticEntityValidator<'a> {
             None,
             Some(generator.range.span),
         ));
-        let range_result = self.validate_generator_range_types(generator);
+        // Constant probes in the body are part of this generator's preflight,
+        // so their budget failures need the same owner/range trace.
+        let result = (|| {
+            self.validate_generator_range_types(generator)?;
+            let mut scope = self.root.child();
+            scope.declare(
+                "index".to_owned(),
+                Binding {
+                    ty: Type::Int,
+                    value: None,
+                    span: generator.variable_span,
+                },
+            )?;
+            scope.declare(
+                "range".to_owned(),
+                Binding {
+                    ty: Type::GeneratorRange(Box::new(generator.variable_type.clone())),
+                    value: None,
+                    span: generator.range.span,
+                },
+            )?;
+            scope.declare(
+                generator.variable.clone(),
+                Binding {
+                    ty: generator.variable_type.clone(),
+                    value: None,
+                    span: generator.variable_span,
+                },
+            )?;
+            self.validate_generator_items(&generator.body, &scope, expected_type, schema)
+        })();
         self.context.pop_trace();
         self.context.pop_trace();
         if has_owner_frame {
             self.context.pop_trace();
         }
-        range_result?;
-        let mut scope = self.root.child();
-        scope.declare(
-            "index".to_owned(),
-            Binding {
-                ty: Type::Int,
-                value: None,
-                span: generator.variable_span,
-            },
-        )?;
-        scope.declare(
-            "range".to_owned(),
-            Binding {
-                ty: Type::GeneratorRange(Box::new(generator.variable_type.clone())),
-                value: None,
-                span: generator.range.span,
-            },
-        )?;
-        scope.declare(
-            generator.variable.clone(),
-            Binding {
-                ty: generator.variable_type.clone(),
-                value: None,
-                span: generator.variable_span,
-            },
-        )?;
-        self.validate_generator_items(&generator.body, &scope, expected_type, schema)
+        result
     }
 
     fn validate_generator_range_types(&self, generator: &Generator) -> Result<(), Diagnostic> {
