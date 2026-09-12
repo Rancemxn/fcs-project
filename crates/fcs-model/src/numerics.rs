@@ -19,23 +19,31 @@ pub struct DoubleDouble {
     lo: f64,
 }
 
-impl DoubleDouble {
-    pub const fn from_f64(value: f64) -> Self {
-        Self { hi: value, lo: 0.0 }
-    }
+impl std::ops::Add for DoubleDouble {
+    type Output = Self;
 
-    pub fn add(self, other: Self) -> Self {
+    fn add(self, other: Self) -> Self {
         let (sum, error) = two_sum(self.hi, other.hi);
         let correction = self.lo + other.lo + error;
         let (hi, lo) = two_sum(sum, correction);
         Self { hi, lo }
     }
+}
 
-    pub fn neg(self) -> Self {
+impl std::ops::Neg for DoubleDouble {
+    type Output = Self;
+
+    fn neg(self) -> Self {
         Self {
             hi: -self.hi,
             lo: -self.lo,
         }
+    }
+}
+
+impl DoubleDouble {
+    pub const fn from_f64(value: f64) -> Self {
+        Self { hi: value, lo: 0.0 }
     }
 
     /// Multiplies by a binary64 factor, carrying both product errors.
