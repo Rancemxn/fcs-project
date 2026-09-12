@@ -5,6 +5,11 @@ use super::loader::{
 use fcs_runtime::{evaluate_cubic_bezier_progress, evaluate_easing};
 use std::collections::BTreeMap;
 
+mod enclosure;
+mod integration;
+
+pub use integration::{MAX_INTEGRATION_DEPTH, MAX_INTEGRATION_EVALUATIONS};
+
 const EXECUTION_ERROR: &str = "fcbc.execution-error";
 
 /// Per-query value cache for shared expression subgraphs, keyed by the node
@@ -163,25 +168,7 @@ pub fn query_distance(
                 .iter()
                 .find(|line| line.id == distance.line_id)
                 .ok_or(EXECUTION_ERROR)?;
-            let integral = integrate_scroll_product(
-                chart,
-                line.scroll_speed_descriptor,
-                line.scroll_tempo_descriptor,
-                distance.integration_origin,
-                time,
-            )?;
-            let mut floor_position = distance.initial_floor_position + integral;
-            if !floor_position.is_finite() {
-                return Err(EXECUTION_ERROR);
-            }
-            if floor_position == 0.0 {
-                floor_position = 0.0;
-            }
-            Ok(DistanceEvaluation {
-                floor_position,
-                classification: distance.classification,
-                visited_nodes: Vec::new(),
-            })
+            integration::distance(chart, line, distance, time)
         }
     }
 }
@@ -195,12 +182,7 @@ pub fn query_scroll_coordinate(
     if !time.is_finite() {
         return Err(EXECUTION_ERROR);
     }
-    let integral = integrate_descriptor(chart, scroll_tempo_descriptor, 0.0, time, 0)?;
-    let coordinate = integral / 60.0;
-    coordinate
-        .is_finite()
-        .then_some(coordinate)
-        .ok_or(EXECUTION_ERROR)
+    integration::coordinate(chart, scroll_tempo_descriptor, time)
 }
 
 fn evaluate_descriptor_inner(
@@ -390,6 +372,21 @@ fn evaluate_node(
         )
     };
 
+    let value = evaluate_node_value(chart, node, environment, |index| {
+        operand(index, visited_nodes, memo)
+    })?;
+    // Only successful values are cached; an erroring node re-runs (and
+    // re-errors) on every occurrence, exactly as it did before the memo.
+    memo.insert((environment_key, index), value.clone());
+    Ok(value)
+}
+
+fn evaluate_node_value(
+    chart: &DecodedChart,
+    node: &super::loader::ExpressionNode,
+    environment: EvaluationEnvironment,
+    mut operand: impl FnMut(usize) -> Result<RuntimeValue, &'static str>,
+) -> Result<RuntimeValue, &'static str> {
     let value = match node.opcode {
         1 => chart
             .constants
@@ -401,70 +398,41 @@ fn evaluate_node(
         4 => scalar(ValueType::Float, environment.q)?,
         5 => scalar(ValueType::Length, environment.d)?,
         6 => scalar(ValueType::Float, environment.p)?,
-        10 => negate(operand(0, visited_nodes, memo)?)?,
-        11 => RuntimeValue::Bool(!boolean(&operand(0, visited_nodes, memo)?)?),
-        20 => arithmetic(
-            operand(0, visited_nodes, memo)?,
-            operand(1, visited_nodes, memo)?,
-            Arithmetic::Add,
-        )?,
-        21 => arithmetic(
-            operand(0, visited_nodes, memo)?,
-            operand(1, visited_nodes, memo)?,
-            Arithmetic::Subtract,
-        )?,
-        22 => arithmetic(
-            operand(0, visited_nodes, memo)?,
-            operand(1, visited_nodes, memo)?,
-            Arithmetic::Multiply,
-        )?,
-        23 => arithmetic(
-            operand(0, visited_nodes, memo)?,
-            operand(1, visited_nodes, memo)?,
-            Arithmetic::Divide,
-        )?,
+        10 => negate(operand(0)?)?,
+        11 => RuntimeValue::Bool(!boolean(&operand(0)?)?),
+        20 => arithmetic(operand(0)?, operand(1)?, Arithmetic::Add)?,
+        21 => arithmetic(operand(0)?, operand(1)?, Arithmetic::Subtract)?,
+        22 => arithmetic(operand(0)?, operand(1)?, Arithmetic::Multiply)?,
+        23 => arithmetic(operand(0)?, operand(1)?, Arithmetic::Divide)?,
         24 => {
-            let left = integer(&operand(0, visited_nodes, memo)?)?;
-            let right = integer(&operand(1, visited_nodes, memo)?)?;
+            let left = integer(&operand(0)?)?;
+            let right = integer(&operand(1)?)?;
             RuntimeValue::Int(left.checked_rem(right).ok_or(EXECUTION_ERROR)?)
         }
-        25 => power(
-            operand(0, visited_nodes, memo)?,
-            operand(1, visited_nodes, memo)?,
-        )?,
-        30 => RuntimeValue::Bool(values_equal(
-            &operand(0, visited_nodes, memo)?,
-            &operand(1, visited_nodes, memo)?,
-        )?),
-        31 => RuntimeValue::Bool(!values_equal(
-            &operand(0, visited_nodes, memo)?,
-            &operand(1, visited_nodes, memo)?,
-        )?),
-        32..=35 => compare(
-            operand(0, visited_nodes, memo)?,
-            operand(1, visited_nodes, memo)?,
-            node.opcode,
-        )?,
+        25 => power(operand(0)?, operand(1)?)?,
+        30 => RuntimeValue::Bool(values_equal(&operand(0)?, &operand(1)?)?),
+        31 => RuntimeValue::Bool(!values_equal(&operand(0)?, &operand(1)?)?),
+        32..=35 => compare(operand(0)?, operand(1)?, node.opcode)?,
         36 => {
-            let left = boolean(&operand(0, visited_nodes, memo)?)?;
+            let left = boolean(&operand(0)?)?;
             if left {
-                RuntimeValue::Bool(boolean(&operand(1, visited_nodes, memo)?)?)
+                RuntimeValue::Bool(boolean(&operand(1)?)?)
             } else {
                 RuntimeValue::Bool(false)
             }
         }
         37 => {
-            let left = boolean(&operand(0, visited_nodes, memo)?)?;
+            let left = boolean(&operand(0)?)?;
             if left {
                 RuntimeValue::Bool(true)
             } else {
-                RuntimeValue::Bool(boolean(&operand(1, visited_nodes, memo)?)?)
+                RuntimeValue::Bool(boolean(&operand(1)?)?)
             }
         }
         38 => {
-            let left = scalar_payload(&operand(0, visited_nodes, memo)?)?;
-            let right = scalar_payload(&operand(1, visited_nodes, memo)?)?;
-            let tolerance = scalar_payload(&operand(2, visited_nodes, memo)?)?;
+            let left = scalar_payload(&operand(0)?)?;
+            let right = scalar_payload(&operand(1)?)?;
+            let tolerance = scalar_payload(&operand(2)?)?;
             if tolerance < 0.0 {
                 return Err(EXECUTION_ERROR);
             }
@@ -474,49 +442,41 @@ fn evaluate_node(
             }
             RuntimeValue::Bool(difference.abs() <= tolerance)
         }
-        40 => absolute(operand(0, visited_nodes, memo)?)?,
-        41 | 42 => min_max(
-            operand(0, visited_nodes, memo)?,
-            operand(1, visited_nodes, memo)?,
-            node.opcode == 42,
-        )?,
-        43 => clamp(
-            operand(0, visited_nodes, memo)?,
-            operand(1, visited_nodes, memo)?,
-            operand(2, visited_nodes, memo)?,
-        )?,
-        44..=55 => unary_float(operand(0, visited_nodes, memo)?, node.opcode)?,
+        40 => absolute(operand(0)?)?,
+        41 | 42 => min_max(operand(0)?, operand(1)?, node.opcode == 42)?,
+        43 => clamp(operand(0)?, operand(1)?, operand(2)?)?,
+        44..=55 => unary_float(operand(0)?, node.opcode)?,
         56 => {
-            let left = scalar_payload(&operand(0, visited_nodes, memo)?)?;
-            let right = scalar_payload(&operand(1, visited_nodes, memo)?)?;
+            let left = scalar_payload(&operand(0)?)?;
+            let right = scalar_payload(&operand(1)?)?;
             scalar(ValueType::Float, left.atan2(right))?
         }
         60 => {
-            let input = scalar_payload(&operand(0, visited_nodes, memo)?)?;
+            let input = scalar_payload(&operand(0)?)?;
             scalar(ValueType::Float, easing(node.immediate as u16, input)?)?
         }
         61 => {
-            let value = integer(&operand(0, visited_nodes, memo)?)? as f64;
+            let value = integer(&operand(0)?)? as f64;
             scalar(ValueType::Float, value)?
         }
         62 | 63 => {
-            let value = scalar_payload(&operand(0, visited_nodes, memo)?)?;
+            let value = scalar_payload(&operand(0)?)?;
             scalar(ValueType::Float, value)?
         }
         70 => {
-            if boolean(&operand(0, visited_nodes, memo)?)? {
-                operand(1, visited_nodes, memo)?
+            if boolean(&operand(0)?)? {
+                operand(1)?
             } else {
-                operand(2, visited_nodes, memo)?
+                operand(2)?
             }
         }
         80 => {
-            let left = operand(0, visited_nodes, memo)?;
-            let right = operand(1, visited_nodes, memo)?;
+            let left = operand(0)?;
+            let right = operand(1)?;
             make_vec2(left, right, node.result_type)?
         }
         81 | 82 => {
-            let vector = operand(0, visited_nodes, memo)?;
+            let vector = operand(0)?;
             vector_component(vector, node.opcode == 82)?
         }
         _ => return Err(EXECUTION_ERROR),
@@ -524,9 +484,6 @@ fn evaluate_node(
     if value.value_type() != node.result_type {
         return Err(EXECUTION_ERROR);
     }
-    // Only successful values are cached; an erroring node re-runs (and
-    // re-errors) on every occurrence, exactly as it did before the memo.
-    memo.insert((environment_key, index), value.clone());
     Ok(value)
 }
 
@@ -1003,292 +960,6 @@ fn cubic_bezier_progress(bezier: [f64; 4], progress: f64) -> Result<f64, &'stati
         return Err(EXECUTION_ERROR);
     }
     evaluate_cubic_bezier_progress(bezier, progress).map_err(|_| EXECUTION_ERROR)
-}
-
-fn integrate_descriptor(
-    chart: &DecodedChart,
-    descriptor_index: u32,
-    start: f64,
-    end: f64,
-    depth: usize,
-) -> Result<f64, &'static str> {
-    if depth > chart.descriptors.len() + 1 {
-        return Err(EXECUTION_ERROR);
-    }
-    let descriptor = chart
-        .descriptors
-        .get(descriptor_index as usize)
-        .ok_or(EXECUTION_ERROR)?;
-    if !descriptor.domain.contains(start) || !descriptor.domain.contains(end) {
-        return Err(EXECUTION_ERROR);
-    }
-    if start.to_bits() == end.to_bits() {
-        return Ok(0.0);
-    }
-    if end < start {
-        return Ok(-integrate_descriptor(
-            chart,
-            descriptor_index,
-            end,
-            start,
-            depth + 1,
-        )?);
-    }
-    let result = match &descriptor.kind {
-        DescriptorKind::Constant(index) => {
-            scalar_payload(
-                chart
-                    .constants
-                    .get(*index as usize)
-                    .ok_or(EXECUTION_ERROR)?,
-            )? * (end - start)
-        }
-        DescriptorKind::SegmentTrack(segments) => {
-            integrate_segment_track(chart, segments, start, end)?
-        }
-        DescriptorKind::Piecewise(pieces) => {
-            let mut total = 0.0;
-            let mut cursor = start;
-            for piece in pieces {
-                let interpreted_start = if piece.flags & 0b010 != 0 {
-                    f64::NEG_INFINITY
-                } else {
-                    piece.start
-                };
-                let interpreted_end = if piece.flags & 0b100 != 0 {
-                    f64::INFINITY
-                } else {
-                    piece.end
-                };
-                let piece_start = cursor.max(interpreted_start);
-                let piece_end = end.min(interpreted_end);
-                if piece_start < piece_end {
-                    total += integrate_descriptor(
-                        chart,
-                        piece.descriptor_index,
-                        piece_start,
-                        piece_end,
-                        depth + 1,
-                    )?;
-                    cursor = piece_end;
-                }
-                if cursor >= end {
-                    break;
-                }
-            }
-            if cursor < end {
-                return Err(EXECUTION_ERROR);
-            }
-            total
-        }
-        DescriptorKind::Expression(_) => return Err(EXECUTION_ERROR),
-    };
-    if result.is_finite() {
-        Ok(result)
-    } else {
-        Err(EXECUTION_ERROR)
-    }
-}
-
-fn integrate_segment_track(
-    chart: &DecodedChart,
-    segments: &[Segment],
-    start: f64,
-    end: f64,
-) -> Result<f64, &'static str> {
-    let mut breakpoints = vec![start, end];
-    for segment in segments {
-        if start < segment.start && segment.start < end {
-            breakpoints.push(segment.start);
-        }
-        if segment.flags & 1 == 0 && start < segment.end && segment.end < end {
-            breakpoints.push(segment.end);
-        }
-    }
-    breakpoints.sort_by(f64::total_cmp);
-    breakpoints.dedup_by(|left, right| left.to_bits() == right.to_bits());
-    let mut total = 0.0;
-    for interval in breakpoints.windows(2) {
-        let interval_start = interval[0];
-        let interval_end = interval[1];
-        let midpoint = interval_start + (interval_end - interval_start) * 0.5;
-        if let Some(segment) = segments.iter().find(|segment| {
-            segment.flags & 1 == 0 && segment.start <= midpoint && midpoint < segment.end
-        }) {
-            let start_value = scalar_payload(
-                chart
-                    .constants
-                    .get(segment.start_constant as usize)
-                    .ok_or(EXECUTION_ERROR)?,
-            )?;
-            let end_value = scalar_payload(
-                chart
-                    .constants
-                    .get(segment.end_constant as usize)
-                    .ok_or(EXECUTION_ERROR)?,
-            )?;
-            let area = match segment.interpolation {
-                1 => start_value * (interval_end - interval_start),
-                2 => {
-                    let duration = segment.end - segment.start;
-                    let slope = (end_value - start_value) / duration;
-                    let local_start = interval_start - segment.start;
-                    let local_end = interval_end - segment.start;
-                    start_value * (interval_end - interval_start)
-                        + slope * (local_end * local_end - local_start * local_start) * 0.5
-                }
-                _ => return Err(EXECUTION_ERROR),
-            };
-            total += area;
-        } else {
-            let point = segments
-                .iter()
-                .rfind(|segment| segment.flags & 1 != 0 && segment.start <= midpoint)
-                .or_else(|| segments.first().filter(|segment| segment.flags & 1 != 0))
-                .ok_or(EXECUTION_ERROR)?;
-            let value = scalar_payload(
-                chart
-                    .constants
-                    .get(point.start_constant as usize)
-                    .ok_or(EXECUTION_ERROR)?,
-            )?;
-            total += value * (interval_end - interval_start);
-        }
-    }
-    Ok(total)
-}
-
-fn integrate_scroll_product(
-    chart: &DecodedChart,
-    speed_descriptor: u32,
-    tempo_descriptor: u32,
-    start: f64,
-    end: f64,
-) -> Result<f64, &'static str> {
-    if start.to_bits() == end.to_bits() {
-        return Ok(0.0);
-    }
-    if end < start {
-        return Ok(-integrate_scroll_product(
-            chart,
-            speed_descriptor,
-            tempo_descriptor,
-            end,
-            start,
-        )?);
-    }
-    if let Some(tempo) = constant_descriptor_scalar(chart, tempo_descriptor)? {
-        let speed_integral = integrate_descriptor(chart, speed_descriptor, start, end, 0)?;
-        let result = speed_integral * tempo / 60.0;
-        return result.is_finite().then_some(result).ok_or(EXECUTION_ERROR);
-    }
-    if let Some(speed) = constant_descriptor_scalar(chart, speed_descriptor)? {
-        let tempo_integral = integrate_descriptor(chart, tempo_descriptor, start, end, 0)?;
-        let result = tempo_integral * speed / 60.0;
-        return result.is_finite().then_some(result).ok_or(EXECUTION_ERROR);
-    }
-
-    let descriptor = chart
-        .descriptors
-        .get(tempo_descriptor as usize)
-        .ok_or(EXECUTION_ERROR)?;
-    if let DescriptorKind::Piecewise(pieces) = &descriptor.kind {
-        let mut total = 0.0;
-        let mut cursor = start;
-        for piece in pieces {
-            let piece_start = if piece.flags & 0b010 != 0 {
-                cursor
-            } else {
-                cursor.max(piece.start)
-            };
-            let piece_end = if piece.flags & 0b100 != 0 {
-                end
-            } else {
-                end.min(piece.end)
-            };
-            if piece_start < piece_end {
-                // Loaded Piecewise children are in strict postorder.
-                if piece.descriptor_index >= tempo_descriptor || piece_start != cursor {
-                    return Err(EXECUTION_ERROR);
-                }
-                total += integrate_scroll_product(
-                    chart,
-                    speed_descriptor,
-                    piece.descriptor_index,
-                    piece_start,
-                    piece_end,
-                )?;
-                cursor = piece_end;
-            }
-            if cursor >= end {
-                break;
-            }
-        }
-        return (cursor == end && total.is_finite())
-            .then_some(total)
-            .ok_or(EXECUTION_ERROR);
-    }
-    let DescriptorKind::SegmentTrack(segments) = &descriptor.kind else {
-        return Err(EXECUTION_ERROR);
-    };
-    if segments
-        .iter()
-        .any(|segment| segment.flags & 1 == 0 && segment.interpolation != 1)
-    {
-        return Err(EXECUTION_ERROR);
-    }
-    let mut breakpoints = vec![start, end];
-    for segment in segments {
-        if start < segment.start && segment.start < end {
-            breakpoints.push(segment.start);
-        }
-        if segment.flags & 1 == 0 && start < segment.end && segment.end < end {
-            breakpoints.push(segment.end);
-        }
-    }
-    breakpoints.sort_by(f64::total_cmp);
-    breakpoints.dedup_by(|left, right| left.to_bits() == right.to_bits());
-    let mut total = 0.0;
-    for interval in breakpoints.windows(2) {
-        let interval_start = interval[0];
-        let interval_end = interval[1];
-        let midpoint = interval_start + (interval_end - interval_start) * 0.5;
-        let tempo = scalar_payload(
-            &query_descriptor(
-                chart,
-                tempo_descriptor,
-                midpoint,
-                EvaluationEnvironment::at_chart_time(chart, midpoint)?,
-            )?
-            .value,
-        )?;
-        if !tempo.is_finite() || tempo <= 0.0 {
-            return Err(EXECUTION_ERROR);
-        }
-        total += integrate_descriptor(chart, speed_descriptor, interval_start, interval_end, 0)?
-            * tempo
-            / 60.0;
-    }
-    total.is_finite().then_some(total).ok_or(EXECUTION_ERROR)
-}
-
-fn constant_descriptor_scalar(
-    chart: &DecodedChart,
-    descriptor_index: u32,
-) -> Result<Option<f64>, &'static str> {
-    let descriptor = chart
-        .descriptors
-        .get(descriptor_index as usize)
-        .ok_or(EXECUTION_ERROR)?;
-    let DescriptorKind::Constant(index) = &descriptor.kind else {
-        return Ok(None);
-    };
-    Ok(Some(scalar_payload(
-        chart
-            .constants
-            .get(*index as usize)
-            .ok_or(EXECUTION_ERROR)?,
-    )?))
 }
 
 #[cfg(test)]

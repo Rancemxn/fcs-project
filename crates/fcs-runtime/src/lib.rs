@@ -22,8 +22,9 @@ pub use scroll::{
     evaluate_note_distance,
 };
 pub use track::{
-    TrackContribution, TrackEvaluationError, evaluate_cubic_bezier_progress, evaluate_track,
-    evaluate_track_contribution, evaluate_track_set,
+    TrackContribution, TrackEvaluationError, cubic_bezier_parameter_bounds,
+    evaluate_cubic_bezier_progress, evaluate_track, evaluate_track_contribution,
+    evaluate_track_set,
 };
 pub use track_expression::{TrackExpressionBuilder, TrackExpressionError, TrackExpressionValue};
 pub use transform::{

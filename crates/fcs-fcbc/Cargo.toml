@@ -6,6 +6,7 @@ license-file.workspace = true
 description = "FCBC 2 container framing, codec primitives, and product loader surface"
 
 [dependencies]
+astro-float.workspace = true
 crc.workspace = true
 fcs-model = { path = "../fcs-model" }
 fcs-runtime = { path = "../fcs-runtime" }

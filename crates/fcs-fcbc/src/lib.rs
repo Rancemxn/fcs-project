@@ -26,8 +26,9 @@ pub use container::{
 };
 pub use error::{FcbcError, FcbcResult};
 pub use evaluator::{
-    DescriptorEvaluation, DistanceEvaluation, EvaluationEnvironment, chart_beat_at_time,
-    query_descriptor, query_distance, query_scroll_coordinate,
+    DescriptorEvaluation, DistanceEvaluation, EvaluationEnvironment, MAX_INTEGRATION_DEPTH,
+    MAX_INTEGRATION_EVALUATIONS, chart_beat_at_time, query_descriptor, query_distance,
+    query_scroll_coordinate,
 };
 pub use loader::{
     DecodedChart, DecodedContributor, DecodedCredit, DecodedJudgeShape, DecodedNoteScorePolicy,
