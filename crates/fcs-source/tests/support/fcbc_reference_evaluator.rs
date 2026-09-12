@@ -1,8 +1,16 @@
+use std::collections::BTreeMap;
+
 use super::fcbc_reference_loader::{
     DecodedChart, DescriptorKind, DistanceClassification, RuntimeValue, Segment, ValueType,
 };
 
 const EXECUTION_ERROR: &str = "fcbc.execution-error";
+
+/// Per-query value cache for shared expression subgraphs, keyed by the node
+/// index and the exact environment bits. Evaluation is pure, so a cached
+/// value is bit-identical to recomputation; the trace still records every
+/// recursive entry, including memo hits.
+type ExpressionMemo = BTreeMap<([u64; 5], u32), RuntimeValue>;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EvaluationEnvironment {
@@ -50,12 +58,14 @@ pub fn query_descriptor(
         return Err(EXECUTION_ERROR);
     }
     let mut visited_nodes = Vec::new();
+    let mut memo = ExpressionMemo::new();
     let value = evaluate_descriptor_inner(
         chart,
         descriptor_index,
         time,
         environment,
         &mut visited_nodes,
+        &mut memo,
         0,
     )?;
     Ok(DescriptorEvaluation {
@@ -173,6 +183,7 @@ fn evaluate_descriptor_inner(
     time: f64,
     environment: EvaluationEnvironment,
     visited_nodes: &mut Vec<u32>,
+    memo: &mut ExpressionMemo,
     depth: usize,
 ) -> Result<RuntimeValue, &'static str> {
     if depth > chart.descriptors.len() + 1 {
@@ -210,11 +221,12 @@ fn evaluate_descriptor_inner(
                 time,
                 piece_environment,
                 visited_nodes,
+                memo,
                 depth + 1,
             )?
         }
         DescriptorKind::Expression(root) => {
-            evaluate_node(chart, *root, environment, visited_nodes, depth + 1)?
+            evaluate_node(chart, *root, environment, visited_nodes, memo, depth + 1)?
         }
     };
     if value.value_type() != descriptor.property_type {
@@ -295,6 +307,7 @@ fn evaluate_node(
     index: u32,
     environment: EvaluationEnvironment,
     visited_nodes: &mut Vec<u32>,
+    memo: &mut ExpressionMemo,
     depth: usize,
 ) -> Result<RuntimeValue, &'static str> {
     if depth > chart.expressions.len() + 1 {
@@ -305,16 +318,31 @@ fn evaluate_node(
         .get(index as usize)
         .ok_or(EXECUTION_ERROR)?;
     visited_nodes.push(index);
-    let operand =
-        |operand_index: usize, visited: &mut Vec<u32>| -> Result<RuntimeValue, &'static str> {
-            evaluate_node(
-                chart,
-                node.operands[operand_index],
-                environment,
-                visited,
-                depth + 1,
-            )
-        };
+    // The push happens before the memo lookup so the trace keeps recording
+    // recursive entry order; only the recomputation is skipped on a hit.
+    let environment_key = [
+        environment.s.to_bits(),
+        environment.b.to_bits(),
+        environment.q.to_bits(),
+        environment.d.to_bits(),
+        environment.p.to_bits(),
+    ];
+    if let Some(value) = memo.get(&(environment_key, index)) {
+        return Ok(value.clone());
+    }
+    let operand = |operand_index: usize,
+                   visited: &mut Vec<u32>,
+                   memo: &mut ExpressionMemo|
+     -> Result<RuntimeValue, &'static str> {
+        evaluate_node(
+            chart,
+            node.operands[operand_index],
+            environment,
+            visited,
+            memo,
+            depth + 1,
+        )
+    };
 
     let value = match node.opcode {
         1 => chart
@@ -327,67 +355,70 @@ fn evaluate_node(
         4 => scalar(ValueType::Float, environment.q)?,
         5 => scalar(ValueType::Length, environment.d)?,
         6 => scalar(ValueType::Float, environment.p)?,
-        10 => negate(operand(0, visited_nodes)?)?,
-        11 => RuntimeValue::Bool(!boolean(&operand(0, visited_nodes)?)?),
+        10 => negate(operand(0, visited_nodes, memo)?)?,
+        11 => RuntimeValue::Bool(!boolean(&operand(0, visited_nodes, memo)?)?),
         20 => arithmetic(
-            operand(0, visited_nodes)?,
-            operand(1, visited_nodes)?,
+            operand(0, visited_nodes, memo)?,
+            operand(1, visited_nodes, memo)?,
             Arithmetic::Add,
         )?,
         21 => arithmetic(
-            operand(0, visited_nodes)?,
-            operand(1, visited_nodes)?,
+            operand(0, visited_nodes, memo)?,
+            operand(1, visited_nodes, memo)?,
             Arithmetic::Subtract,
         )?,
         22 => arithmetic(
-            operand(0, visited_nodes)?,
-            operand(1, visited_nodes)?,
+            operand(0, visited_nodes, memo)?,
+            operand(1, visited_nodes, memo)?,
             Arithmetic::Multiply,
         )?,
         23 => arithmetic(
-            operand(0, visited_nodes)?,
-            operand(1, visited_nodes)?,
+            operand(0, visited_nodes, memo)?,
+            operand(1, visited_nodes, memo)?,
             Arithmetic::Divide,
         )?,
         24 => {
-            let left = integer(&operand(0, visited_nodes)?)?;
-            let right = integer(&operand(1, visited_nodes)?)?;
+            let left = integer(&operand(0, visited_nodes, memo)?)?;
+            let right = integer(&operand(1, visited_nodes, memo)?)?;
             RuntimeValue::Int(left.checked_rem(right).ok_or(EXECUTION_ERROR)?)
         }
-        25 => power(operand(0, visited_nodes)?, operand(1, visited_nodes)?)?,
+        25 => power(
+            operand(0, visited_nodes, memo)?,
+            operand(1, visited_nodes, memo)?,
+        )?,
         30 => RuntimeValue::Bool(values_equal(
-            &operand(0, visited_nodes)?,
-            &operand(1, visited_nodes)?,
+            &operand(0, visited_nodes, memo)?,
+            &operand(1, visited_nodes, memo)?,
         )?),
         31 => RuntimeValue::Bool(!values_equal(
-            &operand(0, visited_nodes)?,
-            &operand(1, visited_nodes)?,
+            &operand(0, visited_nodes, memo)?,
+            &operand(1, visited_nodes, memo)?,
         )?),
         32..=35 => compare(
-            operand(0, visited_nodes)?,
-            operand(1, visited_nodes)?,
+            operand(0, visited_nodes, memo)?,
+            operand(1, visited_nodes, memo)?,
             node.opcode,
         )?,
         36 => {
-            let left = boolean(&operand(0, visited_nodes)?)?;
+            let left = boolean(&operand(0, visited_nodes, memo)?)?;
             if left {
-                RuntimeValue::Bool(boolean(&operand(1, visited_nodes)?)?)
+                RuntimeValue::Bool(boolean(&operand(1, visited_nodes, memo)?)?)
             } else {
                 RuntimeValue::Bool(false)
             }
         }
         37 => {
-            let left = boolean(&operand(0, visited_nodes)?)?;
+            let left = boolean(&operand(0, visited_nodes, memo)?)?;
             if left {
                 RuntimeValue::Bool(true)
             } else {
-                RuntimeValue::Bool(boolean(&operand(1, visited_nodes)?)?)
+                RuntimeValue::Bool(boolean(&operand(1, visited_nodes, memo)?)?)
             }
         }
         38 => {
-            let left = scalar_payload(&operand(0, visited_nodes)?)?;
-            let right = scalar_payload(&operand(1, visited_nodes)?)?;
-            let tolerance = scalar_payload(&operand(2, visited_nodes)?)?;
+            let left = scalar_payload(&operand(0, visited_nodes, memo)?)?;
+            let right = scalar_payload(&operand(1, visited_nodes, memo)?)?;
+            let tolerance = scalar_payload(&operand(2, visited_nodes, memo)?)?;
             if tolerance < 0.0 {
                 return Err(EXECUTION_ERROR);
             }
@@ -397,49 +428,49 @@ fn evaluate_node(
             }
             RuntimeValue::Bool(difference.abs() <= tolerance)
         }
-        40 => absolute(operand(0, visited_nodes)?)?,
+        40 => absolute(operand(0, visited_nodes, memo)?)?,
         41 | 42 => min_max(
-            operand(0, visited_nodes)?,
-            operand(1, visited_nodes)?,
+            operand(0, visited_nodes, memo)?,
+            operand(1, visited_nodes, memo)?,
             node.opcode == 42,
         )?,
         43 => clamp(
-            operand(0, visited_nodes)?,
-            operand(1, visited_nodes)?,
-            operand(2, visited_nodes)?,
+            operand(0, visited_nodes, memo)?,
+            operand(1, visited_nodes, memo)?,
+            operand(2, visited_nodes, memo)?,
         )?,
-        44..=55 => unary_float(operand(0, visited_nodes)?, node.opcode)?,
+        44..=55 => unary_float(operand(0, visited_nodes, memo)?, node.opcode)?,
         56 => {
-            let left = scalar_payload(&operand(0, visited_nodes)?)?;
-            let right = scalar_payload(&operand(1, visited_nodes)?)?;
+            let left = scalar_payload(&operand(0, visited_nodes, memo)?)?;
+            let right = scalar_payload(&operand(1, visited_nodes, memo)?)?;
             scalar(ValueType::Float, left.atan2(right))?
         }
         60 => {
-            let input = scalar_payload(&operand(0, visited_nodes)?)?;
+            let input = scalar_payload(&operand(0, visited_nodes, memo)?)?;
             scalar(ValueType::Float, easing(node.immediate as u16, input)?)?
         }
         61 => {
-            let value = integer(&operand(0, visited_nodes)?)? as f64;
+            let value = integer(&operand(0, visited_nodes, memo)?)? as f64;
             scalar(ValueType::Float, value)?
         }
         62 | 63 => {
-            let value = scalar_payload(&operand(0, visited_nodes)?)?;
+            let value = scalar_payload(&operand(0, visited_nodes, memo)?)?;
             scalar(ValueType::Float, value)?
         }
         70 => {
-            if boolean(&operand(0, visited_nodes)?)? {
-                operand(1, visited_nodes)?
+            if boolean(&operand(0, visited_nodes, memo)?)? {
+                operand(1, visited_nodes, memo)?
             } else {
-                operand(2, visited_nodes)?
+                operand(2, visited_nodes, memo)?
             }
         }
         80 => {
-            let left = operand(0, visited_nodes)?;
-            let right = operand(1, visited_nodes)?;
+            let left = operand(0, visited_nodes, memo)?;
+            let right = operand(1, visited_nodes, memo)?;
             make_vec2(left, right, node.result_type)?
         }
         81 | 82 => {
-            let vector = operand(0, visited_nodes)?;
+            let vector = operand(0, visited_nodes, memo)?;
             vector_component(vector, node.opcode == 82)?
         }
         _ => return Err(EXECUTION_ERROR),
@@ -447,6 +478,9 @@ fn evaluate_node(
     if value.value_type() != node.result_type {
         return Err(EXECUTION_ERROR);
     }
+    // Only successful values are cached; an erroring node re-runs (and
+    // re-errors) on every occurrence, exactly as it did before the memo.
+    memo.insert((environment_key, index), value.clone());
     Ok(value)
 }
 

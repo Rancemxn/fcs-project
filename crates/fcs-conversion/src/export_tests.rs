@@ -2,11 +2,11 @@ use super::*;
 use crate::{CapabilityLimit, RpeSpeedMode, SelectionDirection, load_profile_registry};
 use fcs_model::{
     CanonicalChart, CanonicalMetadata, CanonicalNote, CanonicalNotePresentation, CanonicalNoteSet,
-    CanonicalObject, CanonicalResourceBundle, CanonicalSourceVersion, CanonicalTime,
-    CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill, CanonicalTrackInterpolation,
-    CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget, CanonicalTrackValue,
-    CanonicalValue, DistributionMetadata, InputContentHash, OriginState, ProvenanceGraph,
-    RestrictedProvenanceFact,
+    CanonicalObject, CanonicalResourceBundle, CanonicalScrollLine, CanonicalScrollSet,
+    CanonicalSourceVersion, CanonicalTime, CanonicalTrack, CanonicalTrackBlend, CanonicalTrackFill,
+    CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackSet,
+    CanonicalTrackTarget, CanonicalTrackValue, CanonicalValue, DistributionMetadata,
+    InputContentHash, OriginState, ProvenanceGraph, RestrictedProvenanceFact,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -2024,4 +2024,282 @@ fn successful_writer_fails_if_same_profile_reparse_changes_canonical_identity() 
             .iter()
             .any(|entry| entry.category() == "conversion.roundtrip-mismatch")
     );
+}
+
+// --- native FCBC scroll-speed base regressions (review finding #633) ---
+
+/// Rebuilds `chart` with every scroll Line base speed replaced by `speed`.
+///
+/// The public model accepts a non-default base speed with no speed Track, so
+/// the native writer no-Track path must serialize that base, not `1.0`.
+fn with_scroll_speed(chart: &CanonicalChart, speed: f64) -> CanonicalChart {
+    let scroll = CanonicalScrollSet::new(
+        chart
+            .scroll()
+            .lines()
+            .iter()
+            .map(|line| {
+                CanonicalScrollLine::new(
+                    line.line_id().clone(),
+                    line.coordinate().clone(),
+                    speed,
+                    line.allow_reverse_scroll(),
+                    line.floor_scale(),
+                    line.integration_origin(),
+                    line.initial_floor_position(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap(),
+    )
+    .unwrap();
+    CanonicalChart::new(
+        chart.source_version().clone(),
+        chart.profile(),
+        chart.features().iter().cloned(),
+        chart.time_map().clone(),
+        chart.metadata().clone(),
+        chart.lines().clone(),
+        chart.notes().clone(),
+        chart.tracks().clone(),
+        scroll,
+        chart.required_extensions().to_vec(),
+    )
+}
+
+fn reparse_pec_compilation(bytes: Vec<u8>) -> CanonicalCompilation {
+    let artifact = SourceArtifact::new("mutated.pec", ArtifactRole::Chart, bytes).unwrap();
+    let source = parse_pec_document(&artifact, PecLimits::default()).unwrap();
+    let floor = ExactDecimal::parse("120", DecimalLimits::default()).unwrap();
+    let binding = PecProfileBinding::new(PecProfile::Phira, floor).unwrap();
+    let semantic = interpret_pec(&source, &binding).unwrap();
+    lower_pec_to_canonical(&semantic, &artifact)
+        .unwrap()
+        .compilation()
+        .clone()
+}
+
+fn rpe_extreme_compilation() -> CanonicalCompilation {
+    let bytes = fs::read(
+        root().join("docs/conformance/conversion/public-fixtures/sources/rpe-extreme.rpe.json"),
+    )
+    .unwrap();
+    let artifact = SourceArtifact::new("rpe-extreme.rpe.json", ArtifactRole::Chart, bytes).unwrap();
+    let parsed = parse_json_document(SourceFormat::Rpe, &artifact).unwrap();
+    let source = parse_rpe_document(&parsed, RpeLimits::default()).unwrap();
+    let semantic =
+        interpret_rpe_semantics(&source, &RpeProfileBinding::phira_legacy_speed()).unwrap();
+    lower_rpe_to_canonical(&semantic, &artifact)
+        .unwrap()
+        .compilation()
+        .clone()
+}
+
+fn write_and_load(compilation: &CanonicalCompilation) -> fcs_fcbc::DecodedChart {
+    let bytes = fcs_fcbc::write_from_compilation(compilation).unwrap();
+    fcs_fcbc::load_chart(&bytes).unwrap()
+}
+
+fn native_scalar(chart: &fcs_fcbc::DecodedChart, descriptor: u32, time: f64) -> f64 {
+    let evaluation = fcs_fcbc::query_descriptor(
+        chart,
+        descriptor,
+        time,
+        fcs_fcbc::EvaluationEnvironment::at_time(time),
+    )
+    .unwrap();
+    match evaluation.value {
+        fcs_fcbc::RuntimeValue::Scalar { value, .. } => value,
+        other => panic!("expected a scalar descriptor value, got {other:?}"),
+    }
+}
+
+#[test]
+fn native_writer_preserves_the_pec_zero_speed_base_before_the_first_cv() {
+    // pec-minimal.pec with one positive-time speed command appended: Phira
+    // scales cv 5.85 to exactly 1.0, and the PEC lowering sets the base speed
+    // to 0.0 because the first speed event starts after time zero.
+    let mut bytes = fs::read(
+        root().join("docs/conformance/conversion/public-fixtures/sources/pec-minimal.pec"),
+    )
+    .unwrap();
+    bytes.extend_from_slice(b"cv 0 4 5.85\n");
+    let compilation = reparse_pec_compilation(bytes);
+    let chart = compilation.chart();
+    let scroll_line = chart.scroll().lines().first().unwrap();
+
+    // Canonical execution: 4beat is 2.0 s at the chart's 120 bpm, so 0.5 s is
+    // before the command and runs on the 0.0 base — zero velocity, zero
+    // displacement. The scroll-tempo override is a constant 60 bpm, so after
+    // the command the point holds speed 1.0 at velocity 1.0, and the floor
+    // integrates 1.0 over [2.0, 2.5] to 0.5.
+    for (time, velocity, floor) in [(0.5, 0.0, 0.0), (2.5, 1.0, 0.5)] {
+        let scroll = fcs_runtime::evaluate_line_scroll(
+            chart.lines(),
+            chart.scroll(),
+            chart.tracks(),
+            scroll_line.line_id(),
+            time,
+        )
+        .unwrap();
+        assert_eq!(scroll.local_velocity(), velocity, "velocity at {time}");
+        assert_eq!(scroll.effective_floor(), floor, "floor at {time}");
+    }
+
+    let decoded = write_and_load(&compilation);
+    let record = decoded
+        .lines
+        .iter()
+        .find(|record| record.id == scroll_line.line_id().value())
+        .unwrap();
+    for (time, speed) in [(0.5, 0.0), (2.5, 1.0)] {
+        assert_eq!(
+            native_scalar(&decoded, record.scroll_speed_descriptor, time),
+            speed,
+            "native speed at {time}"
+        );
+        let oracle = fcs_runtime::evaluate_line_scroll(
+            chart.lines(),
+            chart.scroll(),
+            chart.tracks(),
+            scroll_line.line_id(),
+            time,
+        )
+        .unwrap();
+        let distance =
+            fcs_fcbc::query_distance(&decoded, record.distance_descriptor, time).unwrap();
+        assert!(
+            (distance.floor_position - oracle.effective_floor()).abs() <= 1e-9,
+            "native floor {} vs canonical {} at {time}",
+            distance.floor_position,
+            oracle.effective_floor()
+        );
+    }
+}
+
+/// Rebuilds `chart` keeping only the scroll-speed Tracks.
+///
+/// rpe-extreme also lowers position events whose blending has no exact
+/// ABI 1.0 encoding; the scroll-speed base regression only needs the speed
+/// layers, so the position Tracks are dropped instead of written.
+fn scroll_speed_tracks_only(chart: &CanonicalChart) -> CanonicalChart {
+    let tracks = CanonicalTrackSet::new(
+        chart
+            .tracks()
+            .tracks()
+            .iter()
+            .filter(|track| track.target() == CanonicalTrackTarget::ScrollSpeed)
+            .cloned()
+            .collect(),
+    )
+    .unwrap();
+    CanonicalChart::new(
+        chart.source_version().clone(),
+        chart.profile(),
+        chart.features().iter().cloned(),
+        chart.time_map().clone(),
+        chart.metadata().clone(),
+        chart.lines().clone(),
+        chart.notes().clone(),
+        tracks,
+        chart.scroll().clone(),
+        chart.required_extensions().to_vec(),
+    )
+}
+
+#[test]
+fn native_writer_preserves_the_rpe_zero_speed_base_under_add_speed_layers() {
+    // rpe-extreme lowers every speed-event Line to base speed 0.0 with Add
+    // Tracks on top (60 bpm, layers on [0, 16] s). A 1.0 base would add a
+    // constant offset to the single, layered, and blended speed paths.
+    // Position events are dropped because their blending has no exact ABI 1.0
+    // encoding; the Blended speed contributions share that limit - the
+    // PortableEvaluable distance integral only covers Constant/SegmentTrack/
+    // Piecewise descriptors - so this test pins the zero base through the
+    // speed values, which the base shifts directly.
+    let base = rpe_extreme_compilation();
+    let chart = scroll_speed_tracks_only(base.chart());
+    let compilation = CanonicalCompilation::new(
+        chart.clone(),
+        base.resources().clone(),
+        base.distribution().clone(),
+    );
+    let decoded = write_and_load(&compilation);
+    for scroll_line in chart.scroll().lines() {
+        let record = decoded
+            .lines
+            .iter()
+            .find(|record| record.id == scroll_line.line_id().value())
+            .unwrap();
+        for time in [0.0, 3.0, 8.0, 12.5, 16.0, 20.0] {
+            let canonical_speed = fcs_runtime::evaluate_track_set(
+                chart.tracks(),
+                scroll_line.line_id(),
+                CanonicalTrackTarget::ScrollSpeed,
+                time,
+                CanonicalTrackValue::Float(scroll_line.speed()),
+            )
+            .unwrap();
+            let CanonicalTrackValue::Float(canonical_speed) = canonical_speed else {
+                panic!("canonical speed must be a float at {time}");
+            };
+            assert_eq!(
+                native_scalar(&decoded, record.scroll_speed_descriptor, time),
+                canonical_speed,
+                "native speed at {time}"
+            );
+        }
+        // Outside the speed layers every Add Track fills Zero, so the whole
+        // chart executes on the imported 0.0 base, not on a 1.0 default.
+        for time in [16.0, 20.0] {
+            assert_eq!(
+                native_scalar(&decoded, record.scroll_speed_descriptor, time),
+                0.0
+            );
+        }
+    }
+}
+
+#[test]
+fn native_writer_preserves_a_non_default_no_track_scroll_speed() {
+    // pec-minimal has no speed Track at all; replacing its base with 2.5 pins
+    // the no-Track descriptor and the constant-pool seeding to the canonical
+    // base instead of the source default 1.0. The scroll-tempo override is a
+    // constant 60 bpm, so the velocity is 2.5 and the floor at time t is 2.5t.
+    let chart = with_scroll_speed(&pec_chart(), 2.5);
+    let compilation = CanonicalCompilation::new(
+        chart.clone(),
+        CanonicalResourceBundle::new(Vec::new()).unwrap(),
+        DistributionMetadata::empty(),
+    );
+    let decoded = write_and_load(&compilation);
+    let scroll_line = chart.scroll().lines().first().unwrap();
+    let record = decoded
+        .lines
+        .iter()
+        .find(|record| record.id == scroll_line.line_id().value())
+        .unwrap();
+    for time in [0.0, 0.7, 1.9] {
+        assert_eq!(
+            native_scalar(&decoded, record.scroll_speed_descriptor, time),
+            2.5
+        );
+        let oracle = fcs_runtime::evaluate_line_scroll(
+            chart.lines(),
+            chart.scroll(),
+            chart.tracks(),
+            scroll_line.line_id(),
+            time,
+        )
+        .unwrap();
+        assert_eq!(oracle.local_velocity(), 2.5);
+        let distance =
+            fcs_fcbc::query_distance(&decoded, record.distance_descriptor, time).unwrap();
+        assert!(
+            (distance.floor_position - oracle.effective_floor()).abs() <= 1e-12,
+            "native floor {} vs canonical {} at {time}",
+            distance.floor_position,
+            oracle.effective_floor()
+        );
+    }
 }

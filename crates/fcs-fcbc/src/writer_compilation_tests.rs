@@ -1,6 +1,9 @@
 use super::*;
 use std::fs;
 
+use fcs_model::{
+    CanonicalDescriptorDomain, CanonicalDescriptorRoot, CanonicalPiece, CanonicalPropertyDescriptor,
+};
 use fcs_source::ResourceLimits;
 use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
@@ -2488,5 +2491,170 @@ lines {
         .expect("step blended Track evaluation")
         .value;
         assert_runtime_value_bits(actual, track_runtime_value(expected));
+    }
+}
+
+const SHARED_SUBGRAPH_NOTE_SOURCE: &str = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {} }
+collections {
+    notes {
+        tap {
+            id: "shared-dag";
+            line: @main;
+            gameplay.time: 1s;
+        };
+    }
+}
+"#;
+
+fn unbounded_descriptor_domain() -> CanonicalDescriptorDomain {
+    CanonicalDescriptorDomain::new(None, None, false).unwrap()
+}
+
+#[test]
+fn write_from_compilation_round_trips_a_shared_expression_dag() {
+    // Node i adds node i - 1 twice: the tree-shaped re-evaluation the old
+    // unbounded pipeline performed doubles on every level, so this payload
+    // used to be unbuildable rather than merely slow. Interning, flat keys,
+    // memoized validation, and per-query memoization must all keep the
+    // sharing intact from the hand-built table through the product load.
+    let base = compilation(SHARED_SUBGRAPH_NOTE_SOURCE);
+    let note_id = base.chart().notes().notes()[0].id().value();
+
+    let mut nodes = vec![CanonicalExpressionNode::new(
+        CanonicalExpressionOpcode::Constant,
+        CanonicalExpressionType::Float,
+        [None; 3],
+        Some(CanonicalExpressionValue::Float(1.0)),
+        0,
+    )];
+    for level in 1..=26usize {
+        nodes.push(CanonicalExpressionNode::new(
+            CanonicalExpressionOpcode::Add,
+            CanonicalExpressionType::Float,
+            [Some(level - 1), Some(level - 1), None],
+            None,
+            0,
+        ));
+    }
+    let expression = CanonicalExpressionDag::new(nodes, 26).unwrap();
+    let descriptor = CanonicalPropertyDescriptor::new(
+        CanonicalExpressionType::Float,
+        unbounded_descriptor_domain(),
+        CanonicalDescriptorKind::Expression(expression),
+    )
+    .unwrap();
+    let table = CanonicalDescriptorTable::new(
+        vec![descriptor],
+        vec![CanonicalDescriptorRoot::new("note.presentation.alpha", note_id, 0).unwrap()],
+    )
+    .unwrap();
+    let chart = base.chart().clone().with_descriptors(table);
+    let compilation =
+        CanonicalCompilation::new(chart, base.resources().clone(), base.distribution().clone());
+
+    let bytes = write_from_compilation(&compilation).expect("shared DAG write");
+    let decoded = crate::load_chart(&bytes).expect("shared DAG load");
+    assert_eq!(decoded.expressions.len(), 27);
+    let note = &decoded.notes[0];
+    let evaluation = crate::query_descriptor(
+        &decoded,
+        note.property_descriptors[4],
+        0.0,
+        crate::EvaluationEnvironment {
+            s: 0.0,
+            b: 0.0,
+            q: 0.0,
+            d: 0.0,
+            p: 0.0,
+        },
+    )
+    .expect("shared DAG query");
+    assert_runtime_value_bits(
+        evaluation.value,
+        crate::RuntimeValue::Scalar {
+            ty: crate::ValueType::Float,
+            value: 67_108_864.0,
+        },
+    );
+    // Each shared node is visited once per operand occurrence in entry
+    // order: the 27 first-expansion entries descending to the leaf, then 26
+    // memo hits ascending back to the root's second operand. An expanded
+    // tree would need 2^27 - 1 entries.
+    assert_eq!(evaluation.visited_nodes.len(), 53);
+    assert_eq!(evaluation.visited_nodes.first(), Some(&26));
+    assert_eq!(evaluation.visited_nodes.last(), Some(&25));
+}
+
+#[test]
+fn write_from_compilation_round_trips_a_shared_piecewise_chain() {
+    // Descriptor 0 is a constant and descriptor i wraps i - 1 in a Piecewise
+    // whose two pieces share the child, so the recursive structural key
+    // doubled on every level; the flat interning-based key keeps the table
+    // buildable and the product round-trip evaluates the leaf value.
+    let base = compilation(SHARED_SUBGRAPH_NOTE_SOURCE);
+    let note_id = base.chart().notes().notes()[0].id().value();
+
+    // Note property roots must be total over chartTime (the loader enforces
+    // unbounded root domains), so the chain tiles (-inf, +inf) with two
+    // pieces per level and every domain is unbounded.
+    let mut descriptors = vec![
+        CanonicalPropertyDescriptor::new(
+            CanonicalExpressionType::Float,
+            unbounded_descriptor_domain(),
+            CanonicalDescriptorKind::Constant(CanonicalExpressionValue::Float(0.5)),
+        )
+        .unwrap(),
+    ];
+    for level in 1..=26usize {
+        let child = level - 1;
+        let pieces = vec![
+            CanonicalPiece::new(None, Some(1.0), false, child).unwrap(),
+            CanonicalPiece::new(Some(1.0), None, false, child).unwrap(),
+        ];
+        descriptors.push(
+            CanonicalPropertyDescriptor::new(
+                CanonicalExpressionType::Float,
+                unbounded_descriptor_domain(),
+                CanonicalDescriptorKind::Piecewise(pieces),
+            )
+            .unwrap(),
+        );
+    }
+    let table = CanonicalDescriptorTable::new(
+        descriptors,
+        vec![CanonicalDescriptorRoot::new("note.presentation.alpha", note_id, 26).unwrap()],
+    )
+    .unwrap();
+    let chart = base.chart().clone().with_descriptors(table);
+    let compilation =
+        CanonicalCompilation::new(chart, base.resources().clone(), base.distribution().clone());
+
+    let bytes = write_from_compilation(&compilation).expect("shared piecewise write");
+    let decoded = crate::load_chart(&bytes).expect("shared piecewise load");
+    let note = &decoded.notes[0];
+    for time in [0.0, 1.5] {
+        let evaluation = crate::query_descriptor(
+            &decoded,
+            note.property_descriptors[4],
+            time,
+            crate::EvaluationEnvironment {
+                s: time,
+                b: 0.0,
+                q: 0.0,
+                d: 0.0,
+                p: 0.0,
+            },
+        )
+        .expect("shared piecewise query");
+        assert_runtime_value_bits(
+            evaluation.value,
+            crate::RuntimeValue::Scalar {
+                ty: crate::ValueType::Float,
+                value: 0.5,
+            },
+        );
     }
 }
