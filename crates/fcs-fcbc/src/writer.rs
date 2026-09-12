@@ -107,7 +107,6 @@ struct LineFixture {
     speed_descriptor: u32,
     scroll_tempo: Vec<ScrollTempoPointFixture>,
     scroll_speed: f64,
-    evaluable_speed: bool,
     floor_scale: f64,
     integration_origin: f64,
     initial_floor: f64,
@@ -181,13 +180,11 @@ enum NativeTrackKind {
     /// Replace/Add/Multiply blend composition. Regions are elementary
     /// chartTime intervals in order; each references an exact Expression DAG
     /// over EnvS that mirrors the canonical blend order and per-operation
-    /// rounding. `scroll_boundaries` carries every group piece time for the
-    /// Distance boundary table.
+    /// rounding.
     Blended {
         property_type: u8,
         regions: Vec<BlendedRegion>,
         expressions: Vec<CanonicalExpressionDag>,
-        scroll_boundaries: Vec<f64>,
     },
 }
 
@@ -225,22 +222,6 @@ impl NativeTrackFixture {
                 .map(|layer| (&layer.before_constant, layer.segments.as_slice()))
                 .collect(),
             NativeTrackKind::Blended { .. } => Vec::new(),
-        }
-    }
-
-    /// Finite times the Distance boundary table must cover for this Track's
-    /// reachable descriptors, excluding the integration origin.
-    fn distance_boundaries(&self) -> Vec<f64> {
-        match &self.kind {
-            NativeTrackKind::Single(_) | NativeTrackKind::Layered { .. } => self
-                .layers()
-                .into_iter()
-                .flat_map(|(_, segments)| segments.iter())
-                .flat_map(|segment| [segment.start, segment.end])
-                .collect(),
-            NativeTrackKind::Blended {
-                scroll_boundaries, ..
-            } => scroll_boundaries.clone(),
         }
     }
 }
@@ -384,7 +365,6 @@ pub fn write_nonempty_execution() -> Vec<u8> {
                 bpm: 60.0,
             }],
             scroll_speed: 1.0,
-            evaluable_speed: false,
             floor_scale: 1.0,
             integration_origin: 0.0,
             initial_floor: 10.0,
@@ -414,7 +394,6 @@ pub fn write_nonempty_execution() -> Vec<u8> {
                 bpm: 60.0,
             }],
             scroll_speed: 1.0,
-            evaluable_speed: true,
             floor_scale: 1.0,
             integration_origin: 0.0,
             initial_floor: 20.0,
@@ -431,12 +410,10 @@ pub fn write_nonempty_execution() -> Vec<u8> {
             if index == 0 {
                 line.alpha_descriptor = SECONDS_ALPHA_DESCRIPTOR_INDEX;
                 line.speed_descriptor = EVALUABLE_SPEED_DESCRIPTOR_INDEX;
-                line.evaluable_speed = true;
                 line.initial_floor = 20.0;
             } else if index == 1 {
                 line.alpha_descriptor = CHOOSE_ALPHA_DESCRIPTOR_INDEX;
                 line.speed_descriptor = ANALYTIC_SPEED_DESCRIPTOR_INDEX;
-                line.evaluable_speed = false;
                 line.initial_floor = 10.0;
             }
         }
@@ -566,7 +543,6 @@ pub fn write_from_compilation_with_profile(
                         bpm: point.bpm(),
                     })
                     .collect(),
-                evaluable_speed: false,
                 // Core section 10 makes the canonical scroll speed the Line's
                 // Track base, so imported zero or non-unit bases must survive
                 // the round trip instead of collapsing to the source default.
@@ -980,7 +956,7 @@ fn assemble_package(
             runtime_descriptors,
         )?,
     };
-    let distances = distance_section_for_lines(&lines, tracks);
+    let distances = distance_section_for_lines(&lines, &track_section, &expressions, tempo)?;
     let mut feature_flags = if lines.iter().any(|line| line.line_flags & 1 != 0) {
         1 << 8
     } else {
@@ -2659,7 +2635,6 @@ fn native_blended_fixture(
             property_type,
             regions,
             expressions,
-            scroll_boundaries: boundaries,
         },
     })
 }
@@ -3944,74 +3919,104 @@ fn native_tracks_section(
         .map(|table| vec![None; table.descriptors().len()])
         .unwrap_or_default();
 
+    let line_paths = [
+        ("line.alpha", Some(CanonicalTrackTarget::Alpha)),
+        ("line.position", Some(CanonicalTrackTarget::Position)),
+        ("line.rotation", Some(CanonicalTrackTarget::Rotation)),
+        ("line.scale", Some(CanonicalTrackTarget::Scale)),
+        ("line.scrollSpeed", Some(CanonicalTrackTarget::ScrollSpeed)),
+        ("line.scrollTempo", None),
+    ];
+    if let Some(table) = runtime_descriptors {
+        for root in table
+            .roots()
+            .iter()
+            .filter(|root| root.target_path().starts_with("line."))
+        {
+            if !line_paths
+                .iter()
+                .any(|(path, _)| *path == root.target_path())
+            {
+                return Err(FcbcError::new(
+                    "fcbc.invalid-track",
+                    "unknown canonical Line root path",
+                ));
+            }
+            if !lines.iter().any(|line| line.id == root.owner()) {
+                return Err(FcbcError::new(
+                    "fcbc.dangling-reference",
+                    "canonical Line root has no owning Line",
+                ));
+            }
+        }
+    }
+
     // Descriptor order follows the canonical direct-root path order used by the loader:
     // all Line roots are grouped by path, then by stable Line ID.
-    for line in lines.iter_mut() {
-        line.alpha_descriptor = native_line_descriptor(
-            &mut descriptors,
-            constants,
-            &mut expressions,
-            tracks,
-            line.id,
-            CanonicalTrackTarget::Alpha,
-            TY_FLOAT,
-            &float_constant(line.alpha),
-        )?;
-    }
-    for line in lines.iter_mut() {
-        line.position_descriptor = native_line_descriptor(
-            &mut descriptors,
-            constants,
-            &mut expressions,
-            tracks,
-            line.id,
-            CanonicalTrackTarget::Position,
-            TY_VEC2_LENGTH,
-            &vec2_constant(7, line.position),
-        )?;
-    }
-    for line in lines.iter_mut() {
-        line.rotation_descriptor = native_line_descriptor(
-            &mut descriptors,
-            constants,
-            &mut expressions,
-            tracks,
-            line.id,
-            CanonicalTrackTarget::Rotation,
-            TY_ANGLE,
-            &scalar_constant(8, line.rotation),
-        )?;
-    }
-    for line in lines.iter_mut() {
-        line.scale_descriptor = native_line_descriptor(
-            &mut descriptors,
-            constants,
-            &mut expressions,
-            tracks,
-            line.id,
-            CanonicalTrackTarget::Scale,
-            TY_VEC2_FLOAT,
-            &vec2_constant(3, line.scale),
-        )?;
-    }
-    for line in lines.iter_mut() {
-        line.speed_descriptor = native_line_descriptor(
-            &mut descriptors,
-            constants,
-            &mut expressions,
-            tracks,
-            line.id,
-            CanonicalTrackTarget::ScrollSpeed,
-            TY_FLOAT,
-            &float_constant(line.scroll_speed),
-        )?;
-        line.evaluable_speed = tracks.iter().any(|track| {
-            track.line_id == line.id && track.target == CanonicalTrackTarget::ScrollSpeed
-        });
-    }
-    for line in lines.iter_mut() {
-        line.scroll_tempo_descriptor =
-            native_scroll_tempo_descriptor(&mut descriptors, constants, &line.scroll_tempo);
+    for (path, target) in line_paths {
+        for line in lines.iter_mut() {
+            let root = runtime_descriptors.and_then(|table| {
+                table
+                    .roots()
+                    .iter()
+                    .find(|root| root.target_path() == path && root.owner() == line.id)
+                    .map(|root| (table, root.descriptor()))
+            });
+            let descriptor = if let Some((table, index)) = root {
+                if tracks
+                    .iter()
+                    .any(|track| track.line_id == line.id && Some(track.target) == target)
+                {
+                    return Err(FcbcError::new(
+                        "fcbc.invalid-track",
+                        format!(
+                            "Line {} supplies both a canonical {path} root and uncomposed Tracks",
+                            line.id
+                        ),
+                    ));
+                }
+                native_canonical_descriptor(
+                    table,
+                    index,
+                    constants,
+                    &mut descriptors,
+                    &mut expressions,
+                    &mut runtime_descriptor_indices,
+                )?
+            } else if let Some(target) = target {
+                let (property_type, base) = match target {
+                    CanonicalTrackTarget::Alpha => (TY_FLOAT, float_constant(line.alpha)),
+                    CanonicalTrackTarget::Position => {
+                        (TY_VEC2_LENGTH, vec2_constant(7, line.position))
+                    }
+                    CanonicalTrackTarget::Rotation => (TY_ANGLE, scalar_constant(8, line.rotation)),
+                    CanonicalTrackTarget::Scale => (TY_VEC2_FLOAT, vec2_constant(3, line.scale)),
+                    CanonicalTrackTarget::ScrollSpeed => {
+                        (TY_FLOAT, float_constant(line.scroll_speed))
+                    }
+                };
+                native_line_descriptor(
+                    &mut descriptors,
+                    constants,
+                    &mut expressions,
+                    tracks,
+                    line.id,
+                    target,
+                    property_type,
+                    &base,
+                )?
+            } else {
+                native_scroll_tempo_descriptor(&mut descriptors, constants, &line.scroll_tempo)
+            };
+            *match target {
+                Some(CanonicalTrackTarget::Alpha) => &mut line.alpha_descriptor,
+                Some(CanonicalTrackTarget::Position) => &mut line.position_descriptor,
+                Some(CanonicalTrackTarget::Rotation) => &mut line.rotation_descriptor,
+                Some(CanonicalTrackTarget::Scale) => &mut line.scale_descriptor,
+                Some(CanonicalTrackTarget::ScrollSpeed) => &mut line.speed_descriptor,
+                None => &mut line.scroll_tempo_descriptor,
+            } = descriptor;
+        }
     }
 
     if has_notes {
@@ -4129,30 +4134,29 @@ fn native_canonical_descriptor(
         )
     })?;
     let property_type = canonical_expression_type(descriptor.property_type());
-    let encoded = match descriptor.kind() {
-        CanonicalDescriptorKind::Constant(value) => constant_descriptor(
-            property_type,
+    let domain = descriptor.domain();
+    let kind = match descriptor.kind() {
+        CanonicalDescriptorKind::Constant(_) => 1,
+        CanonicalDescriptorKind::Piecewise(_) => 3,
+        CanonicalDescriptorKind::Expression(_) => 4,
+    };
+    let flags = u16::from(domain.start().is_none()) | (u16::from(domain.end().is_none()) << 1);
+    let mut payload = descriptor_common(
+        property_type,
+        kind,
+        flags,
+        domain.start().unwrap_or(0.0),
+        domain.end().unwrap_or(0.0),
+    );
+    match descriptor.kind() {
+        CanonicalDescriptorKind::Constant(value) => put_u32(
+            &mut payload,
             find_constant(constants, &canonical_expression_constant(value)?),
         ),
         CanonicalDescriptorKind::Expression(expression) => {
-            expression_descriptor(property_type, expressions.emit(expression, constants)?)
+            put_u32(&mut payload, expressions.emit(expression, constants)?);
         }
         CanonicalDescriptorKind::Piecewise(pieces) => {
-            let domain = descriptor.domain();
-            let mut flags = 0;
-            if domain.start().is_none() {
-                flags |= 1;
-            }
-            if domain.end().is_none() {
-                flags |= 2;
-            }
-            let mut payload = descriptor_common(
-                property_type,
-                3,
-                flags,
-                domain.start().unwrap_or(0.0),
-                domain.end().unwrap_or(0.0),
-            );
             put_u32(&mut payload, pieces.len() as u32);
             for piece in pieces {
                 let child = native_canonical_descriptor(
@@ -4173,10 +4177,9 @@ fn native_canonical_descriptor(
                         | (u32::from(piece.end().is_none()) << 2),
                 );
             }
-            record(payload)
         }
-    };
-    let index = intern_descriptor(descriptors, encoded);
+    }
+    let index = intern_descriptor(descriptors, record(payload));
     mapped[canonical_index] = Some(index);
     Ok(index)
 }
@@ -4737,36 +4740,44 @@ fn expression_node(
     put_u32(nodes, immediate);
 }
 
-fn distance_section_for_lines(lines: &[LineFixture], tracks: &[NativeTrackFixture]) -> Vec<u8> {
+fn distance_section_for_lines(
+    lines: &[LineFixture],
+    tracks: &[u8],
+    expressions: &[u8],
+    tempo: &[(i64, i64, f64, f64, u32)],
+) -> FcbcResult<Vec<u8>> {
+    // The emitted roots, including canonical overrides and shared children,
+    // are the single source for both classification and the boundary union.
+    let descriptors = crate::loader::parse_tracks(tracks)
+        .map_err(|category| FcbcError::new(category, "cannot decode emitted Tracks"))?;
+    let expressions = crate::loader::parse_expressions(expressions)
+        .map_err(|category| FcbcError::new(category, "cannot decode emitted Expressions"))?;
+    let tempo_times: Vec<_> = tempo.iter().map(|point| point.2).collect();
     let mut section = Vec::new();
     put_u32(&mut section, lines.len() as u32);
     for line in lines {
-        // Classification/boundary pairing must match both Line scroll roots.
-        let evaluable_distance = line.evaluable_speed || line.scroll_tempo.len() > 1;
-        let (classification, max_error, mut boundaries) = if evaluable_distance {
-            let mut boundaries = vec![line.integration_origin];
-            if line.evaluable_speed {
-                if let Some(track) = tracks.iter().find(|track| {
-                    track.line_id == line.id && track.target == CanonicalTrackTarget::ScrollSpeed
-                }) {
-                    // Every reachable SegmentTrack point/segment of retained
-                    // layers or blended contributions; merged root Piece
-                    // boundaries are a subset of them.
-                    boundaries.extend(track.distance_boundaries());
-                } else {
-                    // The declarative non-empty fixture has no native Track graph.
-                    boundaries.push(2.0);
-                }
-            }
-            if line.scroll_tempo.len() > 1 {
-                boundaries.extend(line.scroll_tempo.iter().map(|point| point.time));
-            }
-            (2u8, 2.328_306_436_538_696_3e-10, boundaries)
+        let both_constant = [line.speed_descriptor, line.scroll_tempo_descriptor]
+            .iter()
+            .all(|index| {
+                matches!(
+                    descriptors[*index as usize].kind,
+                    crate::DescriptorKind::Constant(_)
+                )
+            });
+        let (classification, max_error) = if both_constant {
+            (1u8, 0.0)
         } else {
-            (1u8, 0.0, vec![line.integration_origin])
+            (2u8, 2.328_306_436_538_696_3e-10)
         };
-        boundaries.sort_by(f64::total_cmp);
-        boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
+        let boundaries = crate::loader::expected_distance_boundaries(
+            line.integration_origin,
+            line.speed_descriptor,
+            line.scroll_tempo_descriptor,
+            &descriptors,
+            &expressions,
+            &tempo_times,
+        )
+        .map_err(|category| FcbcError::new(category, "cannot derive Distance boundaries"))?;
         section.extend_from_slice(&distance_record(
             line.id,
             line.speed_descriptor,
@@ -4777,7 +4788,7 @@ fn distance_section_for_lines(lines: &[LineFixture], tracks: &[NativeTrackFixtur
             &boundaries,
         ));
     }
-    section
+    Ok(section)
 }
 
 fn distance_record(
