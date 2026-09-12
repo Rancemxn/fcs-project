@@ -14,6 +14,7 @@ use crate::ast::{
     SourceExpression, SourceLiteral, SourceSpan, Type, TypedValue,
 };
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLabel, DiagnosticStage};
+use crate::elaborator::{CompileTimeContext, CompileTimeLimits};
 
 impl Document {
     /// Lowers direct `lines` declarations into the immutable canonical Line graph.
@@ -22,14 +23,16 @@ impl Document {
     /// owned by I3.6; this boundary only validates Line-owned static fields,
     /// parent topology, and the declared scroll-tempo envelope.
     pub fn canonical_line_graph(&self) -> Result<CanonicalLineGraph, Vec<Diagnostic>> {
-        lower_line_graph(self, None)
+        let context = CompileTimeContext::new(CompileTimeLimits::default());
+        lower_line_graph(&context, self, None)
     }
 
     pub(crate) fn canonical_line_graph_with_expanded(
         &self,
+        context: &CompileTimeContext,
         expanded: &ExpandedSourceDocument,
     ) -> Result<CanonicalLineGraph, Vec<Diagnostic>> {
-        lower_line_graph(self, Some(expanded))
+        lower_line_graph(context, self, Some(expanded))
     }
 }
 
@@ -45,6 +48,7 @@ struct LoweredLine {
 }
 
 fn lower_line_graph(
+    context: &CompileTimeContext,
     document: &Document,
     expanded: Option<&ExpandedSourceDocument>,
 ) -> Result<CanonicalLineGraph, Vec<Diagnostic>> {
@@ -138,6 +142,7 @@ fn lower_line_graph(
     let mut lowered = Vec::new();
     for (document_order, declaration, id) in identities {
         if let Some(line) = lower_line(
+            context,
             declaration,
             id,
             document_order,
@@ -271,6 +276,7 @@ fn lower_expanded_line(
 }
 
 fn lower_line(
+    context: &CompileTimeContext,
     declaration: &LineDeclaration,
     id: StableId,
     document_order: u64,
@@ -352,9 +358,10 @@ fn lower_line(
 
     let parent_name = fields
         .get("parent")
-        .and_then(|field| lower_parent(field, definitions, diagnostics));
+        .and_then(|field| lower_parent(context, field, definitions, diagnostics));
     let mut field_spans = BTreeMap::<String, SourceSpan>::new();
     let position = field_or_default(
+        context,
         &fields,
         "position",
         definitions,
@@ -364,6 +371,7 @@ fn lower_line(
         vec2_length(0.0, 0.0),
     );
     let rotation = field_or_default(
+        context,
         &fields,
         "rotation",
         definitions,
@@ -373,6 +381,7 @@ fn lower_line(
         TypedValue::Angle(0.0),
     );
     let scale = field_or_default(
+        context,
         &fields,
         "scale",
         definitions,
@@ -382,6 +391,7 @@ fn lower_line(
         vec2_float(1.0, 1.0),
     );
     let alpha = field_or_default(
+        context,
         &fields,
         "alpha",
         definitions,
@@ -391,6 +401,7 @@ fn lower_line(
         TypedValue::Float(1.0),
     );
     let transform_origin = field_or_default(
+        context,
         &fields,
         "transformOrigin",
         definitions,
@@ -400,6 +411,7 @@ fn lower_line(
         vec2_length(0.0, 0.0),
     );
     let texture_anchor = field_or_default(
+        context,
         &fields,
         "textureAnchor",
         definitions,
@@ -409,6 +421,7 @@ fn lower_line(
         vec2_float(0.5, 0.5),
     );
     let floor_scale = field_or_default(
+        context,
         &fields,
         "floorScale",
         definitions,
@@ -418,6 +431,7 @@ fn lower_line(
         TypedValue::Length(120.0),
     );
     let integration_origin = field_or_default(
+        context,
         &fields,
         "integrationOrigin",
         definitions,
@@ -427,6 +441,7 @@ fn lower_line(
         TypedValue::Time(0.0),
     );
     let initial_floor_position = field_or_default(
+        context,
         &fields,
         "initialFloorPosition",
         definitions,
@@ -436,6 +451,7 @@ fn lower_line(
         TypedValue::Float(0.0),
     );
     let allow_reverse_scroll = field_or_default(
+        context,
         &fields,
         "allowReverseScroll",
         definitions,
@@ -445,6 +461,7 @@ fn lower_line(
         TypedValue::Bool(false),
     );
     let z_order = field_or_default(
+        context,
         &fields,
         "zOrder",
         definitions,
@@ -463,7 +480,7 @@ fn lower_line(
         ("inherit.scroll", 4),
     ] {
         if let Some(field) = fields.get(path)
-            && let Some(value) = evaluate_field(field, definitions, diagnostics)
+            && let Some(value) = evaluate_field(context, field, definitions, diagnostics)
         {
             match value {
                 TypedValue::Bool(value) => {
@@ -509,7 +526,8 @@ fn lower_line(
     };
 
     let scroll_tempo = scroll_map.and_then(|map| {
-        lower_scroll_tempo_map(map, definitions, diagnostics).map(CanonicalScrollTempo::Override)
+        lower_scroll_tempo_map(context, map, definitions, diagnostics)
+            .map(CanonicalScrollTempo::Override)
     });
 
     Some(LoweredLine {
@@ -524,6 +542,7 @@ fn lower_line(
 }
 
 fn lower_parent(
+    context: &CompileTimeContext,
     field: &EntityField,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     diagnostics: &mut Vec<Diagnostic>,
@@ -537,7 +556,7 @@ fn lower_parent(
     ) {
         return None;
     }
-    let value = evaluate_field(field, definitions, diagnostics)?;
+    let value = evaluate_field(context, field, definitions, diagnostics)?;
     match value {
         TypedValue::Line(name) => Some((name, field.value.span())),
         other => {
@@ -547,7 +566,9 @@ fn lower_parent(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn field_or_default(
+    context: &CompileTimeContext,
     fields: &BTreeMap<String, &EntityField>,
     path: &str,
     definitions: Option<&crate::ast::DefinitionsBlock>,
@@ -560,18 +581,23 @@ fn field_or_default(
         return default;
     };
     field_spans.insert(path.to_owned(), field.span);
-    evaluate_field(field, definitions, diagnostics).unwrap_or_else(|| {
+    evaluate_field(context, field, definitions, diagnostics).unwrap_or_else(|| {
         field_spans.insert(path.to_owned(), declaration_span);
         default
     })
 }
 
 fn evaluate_field(
+    context: &CompileTimeContext,
     field: &EntityField,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<TypedValue> {
-    match crate::elaborator::evaluate_metadata_expression(&field.value, definitions) {
+    match crate::elaborator::evaluate_metadata_expression_with_context(
+        context,
+        &field.value,
+        definitions,
+    ) {
         Ok(value) => Some(value),
         Err(diagnostic) => {
             diagnostics.push(diagnostic);
@@ -665,13 +691,18 @@ fn lower_base(
 }
 
 fn lower_scroll_tempo_map(
+    context: &CompileTimeContext,
     map: &crate::ast::ScrollTempoMap,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<CanonicalScrollTempoMap> {
     let mut points = Vec::new();
     for point in &map.points {
-        let key = match crate::elaborator::evaluate_metadata_expression(&point.key, definitions) {
+        let key = match crate::elaborator::evaluate_metadata_expression_with_context(
+            context,
+            &point.key,
+            definitions,
+        ) {
             Ok(TypedValue::Beat(value)) => {
                 CanonicalBeat::new(value.numerator(), value.denominator())
                     .ok()

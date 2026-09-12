@@ -128,6 +128,28 @@ fn render_expression_helpers_use_the_configured_shared_budget() {
 }
 
 #[test]
+fn source_aware_core_expression_helpers_use_the_same_budget() {
+    for core in [
+        "meta { level: 1.0 + 2.0; }",
+        "lines { line main { alpha: 0.5 + 0.25; } }",
+    ] {
+        let source = scene(core, NODE);
+        let document = parse_document(&source).into_result().unwrap();
+        let errors = document
+            .canonical_chart_with_source(
+                &source,
+                CompileTimeLimits {
+                    max_expression_nodes: 0,
+                    ..CompileTimeLimits::default()
+                },
+            )
+            .unwrap_err();
+        assert_budget(&errors[0], "max_expression_nodes", 0);
+        assert!(errors[0].primary_span().start < source.find("render profile").unwrap());
+    }
+}
+
+#[test]
 fn runtime_render_fallback_cannot_swallow_a_budget_error() {
     let node = r#"circle animated {
         center: vec2(0px, 0px); radius: 1px; fill: solid(#FFFFFFFF);

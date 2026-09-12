@@ -2227,6 +2227,7 @@ impl<'a> ExpansionContext<'a> {
             expected,
         ) {
             Ok(value) => Ok((value, None)),
+            Err(error @ Diagnostic::LimitExceeded { .. }) => Err(error),
             Err(error)
                 if contains_runtime_environment(expression, &|name| {
                     bindings.contains_key(name) || document_defines(self.document, name)
@@ -2234,15 +2235,20 @@ impl<'a> ExpansionContext<'a> {
             {
                 let runtime_expression =
                     lower_runtime_expression_with_resolver(expression, |candidate| {
-                        evaluate_with_context_expected(
+                        match evaluate_with_context_expected(
                             candidate,
                             self.document.definitions.as_ref(),
                             bindings,
                             self.schema,
                             &self.context,
                             None,
-                        )
-                        .ok()
+                        ) {
+                            Ok(value) => Ok(Some(value)),
+                            Err(error @ Diagnostic::LimitExceeded { .. }) => {
+                                Err(error.into_diagnostic())
+                            }
+                            Err(_) => Ok(None),
+                        }
                     })
                     .map_err(|diagnostic| Diagnostic::CanonicalDiagnostic(Box::new(diagnostic)))?;
                 let actual = source_type(runtime_expression.result_type());
