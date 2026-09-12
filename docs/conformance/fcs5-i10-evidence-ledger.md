@@ -214,6 +214,32 @@ exposed that #638's `writer_compilation_tests.rs` had relied on `use super::*` f
 import, and merged main `8561a8176bd1c9d099d95f950f86cb26656836ea` passed push Full Gate
 [34694369633](https://github.com/Rancemxn/fcs-project/actions/runs/34694369633).
 
+### Conversion canonical comparison Render scene delta
+
+PR [#644](https://github.com/Rancemxn/fcs-project/pull/644) extends the canonical semantic
+comparison to Render scenes. Scene presence is a structural `render.scene.presence` selector;
+viewport differences report `render.scene.viewport`; and the layers, nodes, geometries, paths,
+paints, strokes, clips, and glyphRuns record groups compare counts structurally with per-record
+SHA-256 fingerprints at `render.scene.<group>[i]`. The comparison lane covers
+`identical_render_scenes_compare_equivalent`,
+`a_viewport_only_render_change_is_a_mismatch`,
+`an_active_interval_only_render_change_is_a_mismatch`,
+`a_topology_only_render_change_is_a_mismatch` (a two-root scene versus a root-and-child form
+differs in both `render.scene.layers` and `render.scene.nodes`, because the layer roots change
+alongside the node parents), `render_scene_presence_is_structural_and_undropable`, and
+`render_scene_changes_reach_the_compilation_entry_point`. Diagnostic head
+`58402ea2fa92ab128916b00dd5e21e368ea67d09` failed pull_request Full Gate
+[34696692791](https://github.com/Rancemxn/fcs-project/actions/runs/34696692791): the topology
+assertion expected only `render.scene.nodes`, but the comparator correctly also reports
+`render.scene.layers`. Corrective head
+`a230d97de31cba6365f25b7328bd4bc2f2a0efd1` passed pull_request Full Gate
+[34696905250](https://github.com/Rancemxn/fcs-project/actions/runs/34696905250). Merged main
+`b4b551a9d6a25442bb62badbbc18cffc885e2c42` had its push run
+[34698830298](https://github.com/Rancemxn/fcs-project/actions/runs/34698830298) cancelled as
+superseded by the #645 merge covering the same tree; merged main
+`2da1a27fc9461250d07c8f936518877c76217b89` passed push Full Gate
+[34698973832](https://github.com/Rancemxn/fcs-project/actions/runs/34698973832).
+
 ## Verified implementation residuals
 
 The requirement audit found concrete product gaps beyond the historical pending-review statements.
