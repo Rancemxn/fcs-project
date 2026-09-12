@@ -363,6 +363,64 @@ fn native_unit_integer_scaling_executes() {
 }
 
 #[test]
+fn native_bezier_preserves_exact_start_value() {
+    // Issue #647: the segment start must evaluate to exactly the start
+    // constant. For these controls every bisection midpoint has positive x,
+    // so the old approximate solver returned y(2^-65) = 3 * 2^-65 instead of
+    // exactly +0.0.
+    let bytes = compile(
+        r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {
+    tracks { track fade -> alpha: float {
+        extrapolateBefore: "holdBefore";
+        extrapolateAfter: "holdAfter";
+        segments {
+            [0s, 1s): 0.0 -> 1.0 using cubicBezier(0.0, 1.0, 1.0, 1.0);
+        }
+    } }
+} }
+"#,
+    );
+    let decoded = load_chart(&bytes).unwrap();
+    let descriptor = decoded.lines[0].alpha_descriptor;
+    assert_eq!(evaluate(&decoded, descriptor, 0.0), float(0.0));
+}
+
+#[test]
+fn native_bezier_interior_and_overshoot_match_canonical_vectors() {
+    // Nontrivial interior and flat-x overshoot controls through native
+    // write -> load -> query. Segment domains are half-open, so progress 1.0
+    // is unreachable through a Track query; endpoint pinning and the
+    // explicit enclosure failures are bound by the unit test over the same
+    // shared solver. With start 0.0 and end 1.0 the alpha equals the y
+    // progress exactly, and 1.625 is the value the canonical evaluator
+    // independently established for cubicBezier(0.5, 2.0, 0.5, 2.0) at
+    // x = 0.5.
+    let bytes = compile(
+        r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {
+    tracks { track fade -> alpha: float {
+        extrapolateBefore: "holdBefore";
+        extrapolateAfter: "holdAfter";
+        segments {
+            [0s, 1s): 0.0 -> 1.0 using cubicBezier(0.0, 0.0, 1.0, 1.0);
+            [1s, 3s): 0.0 -> 1.0 using cubicBezier(0.5, 2.0, 0.5, 2.0);
+        }
+    } }
+} }
+"#,
+    );
+    let decoded = load_chart(&bytes).unwrap();
+    let descriptor = decoded.lines[0].alpha_descriptor;
+    assert_eq!(evaluate(&decoded, descriptor, 0.25), float(0.25));
+    assert_eq!(evaluate(&decoded, descriptor, 2.0), float(1.625));
+}
+
+#[test]
 fn native_unit_integer_scaling_matches_canonical_evaluator() {
     // Every permitted U,int / int,U combination across time, beat, length,
     // and angle must agree with the canonical evaluator on the same compiled
