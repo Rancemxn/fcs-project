@@ -281,6 +281,101 @@ collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1beat; }; } }
 }
 
 #[test]
+fn analytic_distance_rounds_only_once_after_the_initial_offset() {
+    // A single tempo point compiles to the constant analytic path. The exact
+    // floor is -2^54 + (2^54 + 1) = 1; rounding the integral before the
+    // initial offset is added loses the 1 (issue #649).
+    let bytes = compile(
+        r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 60bpm; }
+lines { line main { integrationOrigin: -1s; initialFloorPosition: -18014398509481984.0; } }
+collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
+"#,
+    );
+    let decoded = load_chart(&bytes).expect("chart must load");
+    let line = decoded.lines.first().expect("main Line");
+    let distance = query_distance(&decoded, line.distance_descriptor, 18_014_398_509_481_984.0)
+        .expect("analytic distance at 2^54 s");
+    assert_eq!(
+        distance.classification,
+        DistanceClassification::PortableAnalytic
+    );
+    assert_eq!(distance.floor_position, 1.0);
+}
+
+#[test]
+fn analytic_distance_keeps_ordinary_cancellation_bits() {
+    // 0.2 + 0.1 is a half-ulp tie above 0.3; only a single final rounding
+    // cancels the real -0.3 down to 2^-55 instead of 2^-54.
+    let bytes = compile(
+        r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 60bpm; }
+lines { line main { integrationOrigin: -0.1s; initialFloorPosition: -0.3; } }
+collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
+"#,
+    );
+    let decoded = load_chart(&bytes).expect("chart must load");
+    let line = decoded.lines.first().expect("main Line");
+    let distance = query_distance(&decoded, line.distance_descriptor, 0.2)
+        .expect("analytic distance at 0.2 s");
+    assert_eq!(
+        distance.classification,
+        DistanceClassification::PortableAnalytic
+    );
+    assert_eq!(distance.floor_position, 2.0f64.powi(-55));
+}
+
+#[test]
+fn evaluable_distance_rounds_only_once_after_the_initial_offset() {
+    // Two tempo points force the evaluable path: a step tempo track with the
+    // default constant speed 1. Each integration window forms its node
+    // integrand exactly, so the exact floor -2^54 + (2^54 + 1) survives.
+    let bytes = compile(
+        r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 60bpm; 36028797018963968beat -> 120bpm; }
+lines { line main { integrationOrigin: -1s; initialFloorPosition: -18014398509481984.0; } }
+collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
+"#,
+    );
+    let decoded = load_chart(&bytes).expect("chart must load");
+    let line = decoded.lines.first().expect("main Line");
+    let distance = query_distance(&decoded, line.distance_descriptor, 18_014_398_509_481_984.0)
+        .expect("evaluable distance at 2^54 s");
+    assert_eq!(
+        distance.classification,
+        DistanceClassification::PortableEvaluable
+    );
+    assert_eq!(distance.floor_position, 1.0);
+}
+
+#[test]
+fn evaluable_distance_keeps_ordinary_cancellation_bits() {
+    // Same step-tempo evaluable shape at ordinary scale: the two window
+    // contributions 0.1 + 0.2 tie, and the single final rounding against the
+    // real -0.3 leaves exactly 2^-55.
+    let bytes = compile(
+        r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 60bpm; 36028797018963968beat -> 120bpm; }
+lines { line main { integrationOrigin: -0.1s; initialFloorPosition: -0.3; } }
+collections { notes { tap { id: "tap"; line: @main; gameplay.time: 1s; }; } }
+"#,
+    );
+    let decoded = load_chart(&bytes).expect("chart must load");
+    let line = decoded.lines.first().expect("main Line");
+    let distance = query_distance(&decoded, line.distance_descriptor, 0.2)
+        .expect("evaluable distance at 0.2 s");
+    assert_eq!(
+        distance.classification,
+        DistanceClassification::PortableEvaluable
+    );
+    assert_eq!(distance.floor_position, 2.0f64.powi(-55));
+}
+
+#[test]
 fn deterministic_random_tempo_maps_round_trip_through_product_load() {
     fn next(seed: &mut u64) -> u64 {
         *seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);

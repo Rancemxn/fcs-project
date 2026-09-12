@@ -15,6 +15,7 @@ mod expression;
 mod line;
 mod metadata;
 mod note;
+mod numerics;
 mod provenance;
 mod render;
 mod report;
@@ -55,6 +56,7 @@ pub use note::{
     CanonicalNoteKind, CanonicalNotePresentation, CanonicalNoteScorePolicy, CanonicalNoteSet,
     CanonicalNoteSide, CanonicalNoteSoundPolicy,
 };
+pub use numerics::{DoubleDouble, scaled_difference};
 pub use provenance::{
     CanonicalCompilation, DistributionMetadata, InputContentHash, LogicalSourceLocator,
     MappingRuleRef, OriginState, ProvenanceError, ProvenanceGraph, RestrictedProvenanceFact,
