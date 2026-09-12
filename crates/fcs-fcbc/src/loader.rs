@@ -84,9 +84,19 @@ impl ValueType {
 pub enum RuntimeValue {
     Bool(bool),
     Int(i64),
-    Scalar { ty: ValueType, value: f64 },
+    Scalar {
+        ty: ValueType,
+        value: f64,
+    },
     Color([f64; 4]),
-    Vec2 { ty: ValueType, value: [f64; 2] },
+    Vec2 {
+        ty: ValueType,
+        value: [f64; 2],
+    },
+    /// Integer vectors keep their exact i64 components (Execution ABI §14):
+    /// binary64 storage would collide integers above 2^53 and hide overflow.
+    /// `ty` is always `ValueType::Vec2Int`; `Vec2` never carries that type.
+    Vec2Int([i64; 2]),
     ResourceRef(u64),
     ContributorRef(u64),
 }
@@ -99,6 +109,7 @@ impl RuntimeValue {
             Self::Scalar { ty, .. } => *ty,
             Self::Color(_) => ValueType::Color,
             Self::Vec2 { ty, .. } => *ty,
+            Self::Vec2Int(_) => ValueType::Vec2Int,
             Self::ResourceRef(_) | Self::ContributorRef(_) => {
                 unreachable!("entity references are not expression ABI values")
             }
@@ -928,12 +939,16 @@ fn parse_runtime_constant(cursor: &mut Cursor<'_>) -> Result<RuntimeValue, &'sta
             value.zeroes(7)?;
             let element = scalar_tag_type(element_tag).ok_or("fcbc.invalid-record")?;
             let ty = ValueType::vector_of(element).ok_or("fcbc.invalid-record")?;
-            RuntimeValue::Vec2 {
-                ty,
-                value: [
-                    parse_scalar_value(&mut value, element_tag)?,
-                    parse_scalar_value(&mut value, element_tag)?,
-                ],
+            if element == ValueType::Int {
+                RuntimeValue::Vec2Int([value.i64()?, value.i64()?])
+            } else {
+                RuntimeValue::Vec2 {
+                    ty,
+                    value: [
+                        parse_scalar_value(&mut value, element_tag)?,
+                        parse_scalar_value(&mut value, element_tag)?,
+                    ],
+                }
             }
         }
         11 => RuntimeValue::ResourceRef(value.u64()?),
@@ -3309,6 +3324,12 @@ fn runtime_value_key(value: &RuntimeValue) -> Vec<u8> {
                 key.extend_from_slice(&component.to_bits().to_le_bytes());
             }
         }
+        RuntimeValue::Vec2Int(value) => {
+            key.push(ValueType::Vec2Int as u8);
+            for component in value {
+                key.extend_from_slice(&component.to_le_bytes());
+            }
+        }
         RuntimeValue::ResourceRef(value) => {
             key.push(15);
             key.extend_from_slice(&value.to_le_bytes());
@@ -4007,6 +4028,7 @@ fn runtime_value_type(value: &RuntimeValue) -> Option<ValueType> {
         RuntimeValue::Scalar { ty, .. } => Some(*ty),
         RuntimeValue::Color(_) => Some(ValueType::Color),
         RuntimeValue::Vec2 { ty, .. } => Some(*ty),
+        RuntimeValue::Vec2Int(_) => Some(ValueType::Vec2Int),
         RuntimeValue::ResourceRef(_) | RuntimeValue::ContributorRef(_) => None,
     }
 }
@@ -4029,6 +4051,7 @@ fn runtime_values_bitwise_equal(left: &RuntimeValue, right: &RuntimeValue) -> bo
         (RuntimeValue::Vec2 { value: left, .. }, RuntimeValue::Vec2 { value: right, .. }) => {
             component_bits(left, right)
         }
+        (RuntimeValue::Vec2Int(left), RuntimeValue::Vec2Int(right)) => left == right,
         (RuntimeValue::ResourceRef(left), RuntimeValue::ResourceRef(right)) => left == right,
         (RuntimeValue::ContributorRef(left), RuntimeValue::ContributorRef(right)) => left == right,
         _ => false,

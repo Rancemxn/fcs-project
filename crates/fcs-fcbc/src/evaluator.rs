@@ -611,6 +611,32 @@ fn arithmetic(
             };
             vector(ty, [apply(left_x, right_x), apply(left_y, right_y)])
         }
+        // Execution ABI section 14: integer vectors stay in checked i64 form;
+        // overflow, division by zero, and `i64::MIN / -1` are execution
+        // errors, and division truncates toward zero.
+        (RuntimeValue::Vec2Int([left_x, left_y]), RuntimeValue::Vec2Int([right_x, right_y]))
+            if matches!(operation, Arithmetic::Add | Arithmetic::Subtract) =>
+        {
+            let apply = |left: i64, right: i64| match operation {
+                Arithmetic::Add => left.checked_add(right),
+                Arithmetic::Subtract => left.checked_sub(right),
+                _ => unreachable!(),
+            };
+            Ok(RuntimeValue::Vec2Int([
+                apply(left_x, right_x).ok_or(EXECUTION_ERROR)?,
+                apply(left_y, right_y).ok_or(EXECUTION_ERROR)?,
+            ]))
+        }
+        (RuntimeValue::Vec2Int(value), RuntimeValue::Int(scalar))
+            if matches!(operation, Arithmetic::Multiply | Arithmetic::Divide) =>
+        {
+            scale_vector_int(value, scalar, operation)
+        }
+        (RuntimeValue::Int(scalar), RuntimeValue::Vec2Int(value))
+            if matches!(operation, Arithmetic::Multiply) =>
+        {
+            scale_vector_int(value, scalar, operation)
+        }
         (RuntimeValue::Vec2 { ty, value }, scalar)
             if matches!(operation, Arithmetic::Multiply | Arithmetic::Divide) =>
         {
@@ -643,6 +669,22 @@ fn scale_vector(
         _ => unreachable!(),
     };
     vector(ty, [apply(value[0]), apply(value[1])])
+}
+
+fn scale_vector_int(
+    value: [i64; 2],
+    scalar: i64,
+    operation: Arithmetic,
+) -> Result<RuntimeValue, &'static str> {
+    let apply = |component: i64| match operation {
+        Arithmetic::Multiply => component.checked_mul(scalar),
+        Arithmetic::Divide => component.checked_div(scalar),
+        _ => unreachable!(),
+    };
+    Ok(RuntimeValue::Vec2Int([
+        apply(value[0]).ok_or(EXECUTION_ERROR)?,
+        apply(value[1]).ok_or(EXECUTION_ERROR)?,
+    ]))
 }
 
 fn negate(value: RuntimeValue) -> Result<RuntimeValue, &'static str> {
@@ -732,6 +774,7 @@ fn values_equal(left: &RuntimeValue, right: &RuntimeValue) -> Result<bool, &'sta
                 value: right,
             },
         ) if left_type == right_type => Ok(left == right),
+        (RuntimeValue::Vec2Int(left), RuntimeValue::Vec2Int(right)) => Ok(left == right),
         _ => Err(EXECUTION_ERROR),
     }
 }
@@ -838,30 +881,30 @@ fn make_vec2(
     result_type: ValueType,
 ) -> Result<RuntimeValue, &'static str> {
     let element_type = result_type.vector_element().ok_or(EXECUTION_ERROR)?;
+    if element_type == ValueType::Int {
+        let (RuntimeValue::Int(x), RuntimeValue::Int(y)) = (&left, &right) else {
+            return Err(EXECUTION_ERROR);
+        };
+        return Ok(RuntimeValue::Vec2Int([*x, *y]));
+    }
     let left = component_payload(&left, element_type)?;
     let right = component_payload(&right, element_type)?;
     vector(result_type, [left, right])
 }
 
 fn vector_component(vector_value: RuntimeValue, use_y: bool) -> Result<RuntimeValue, &'static str> {
-    let RuntimeValue::Vec2 { ty, value } = vector_value else {
-        return Err(EXECUTION_ERROR);
-    };
-    let element_type = ty.vector_element().ok_or(EXECUTION_ERROR)?;
-    let component = value[usize::from(use_y)];
-    if element_type == ValueType::Int {
-        if component.fract() != 0.0 || component < i64::MIN as f64 || component > i64::MAX as f64 {
-            return Err(EXECUTION_ERROR);
+    match vector_value {
+        RuntimeValue::Vec2 { ty, value } => {
+            let element_type = ty.vector_element().ok_or(EXECUTION_ERROR)?;
+            scalar(element_type, value[usize::from(use_y)])
         }
-        Ok(RuntimeValue::Int(component as i64))
-    } else {
-        scalar(element_type, component)
+        RuntimeValue::Vec2Int(value) => Ok(RuntimeValue::Int(value[usize::from(use_y)])),
+        _ => Err(EXECUTION_ERROR),
     }
 }
 
 fn component_payload(value: &RuntimeValue, expected: ValueType) -> Result<f64, &'static str> {
     match value {
-        RuntimeValue::Int(value) if expected == ValueType::Int => Ok(*value as f64),
         RuntimeValue::Scalar { ty, value } if *ty == expected => Ok(*value),
         _ => Err(EXECUTION_ERROR),
     }
@@ -1230,10 +1273,7 @@ mod tests {
     fn vec2_int_expression_scales_by_int_operand() {
         let mut chart = crate::load_chart(&crate::write_nonempty_execution()).unwrap();
         let vector_constant = chart.constants.len() as u32;
-        chart.constants.push(RuntimeValue::Vec2 {
-            ty: ValueType::Vec2Int,
-            value: [1.0, 2.0],
-        });
+        chart.constants.push(RuntimeValue::Vec2Int([1, 2]));
         let factor_constant = chart.constants.len() as u32;
         chart.constants.push(RuntimeValue::Int(3));
 
@@ -1277,12 +1317,205 @@ mod tests {
                 query_descriptor(&chart, descriptor, 0.0, EvaluationEnvironment::at_time(0.0))
                     .unwrap()
                     .value,
-                RuntimeValue::Vec2 {
-                    ty: ValueType::Vec2Int,
-                    value: [3.0, 6.0],
-                }
+                RuntimeValue::Vec2Int([3, 6])
             );
         }
+    }
+
+    #[test]
+    fn vec2_int_arithmetic_stays_checked_i64() {
+        // Issue #648: integer vectors keep exact i64 components through
+        // construction, arithmetic, comparison, and projection. Adjacent
+        // integers above 2^53 stay distinct, division truncates toward zero,
+        // and overflow, division by zero, and `i64::MIN / -1` are execution
+        // errors instead of silent binary64 approximations.
+        let mut chart = crate::load_chart(&crate::write_nonempty_execution()).unwrap();
+        let push_constant = |chart: &mut DecodedChart, value: RuntimeValue| {
+            let immediate = chart.constants.len() as u32;
+            chart.constants.push(value.clone());
+            let node = chart.expressions.len() as u32;
+            chart.expressions.push(ExpressionNode {
+                opcode: 1,
+                result_type: value.value_type(),
+                operands: [u32::MAX; 3],
+                arity: 0,
+                immediate,
+            });
+            node
+        };
+        let push_node =
+            |chart: &mut DecodedChart, opcode: u16, result_type: ValueType, operands: [u32; 3]| {
+                let node = chart.expressions.len() as u32;
+                chart.expressions.push(ExpressionNode {
+                    opcode,
+                    result_type,
+                    operands,
+                    arity: operands
+                        .iter()
+                        .filter(|operand| **operand != u32::MAX)
+                        .count() as u8,
+                    immediate: 0,
+                });
+                node
+            };
+        let query =
+            |chart: &mut DecodedChart, opcode: u16, result_type: ValueType, operands: [u32; 3]| {
+                let root = push_node(chart, opcode, result_type, operands);
+                let descriptor = chart.descriptors.len() as u32;
+                chart.descriptors.push(PropertyDescriptor {
+                    property_type: result_type,
+                    domain: unbounded(),
+                    kind: DescriptorKind::Expression(root),
+                });
+                query_descriptor(chart, descriptor, 0.0, EvaluationEnvironment::at_time(0.0))
+                    .map(|evaluation| evaluation.value)
+            };
+
+        // Adjacent integers above 2^53 stay distinct: binary64 storage
+        // collided them and made this equality true.
+        let adjacent = push_constant(&mut chart, RuntimeValue::Vec2Int([(1 << 53) + 1, 0]));
+        let neighbor = push_constant(&mut chart, RuntimeValue::Vec2Int([1 << 53, 0]));
+        assert_eq!(
+            query(
+                &mut chart,
+                30,
+                ValueType::Bool,
+                [adjacent, neighbor, u32::MAX]
+            )
+            .unwrap(),
+            RuntimeValue::Bool(false),
+            "(2^53 + 1, 0) != (2^53, 0)"
+        );
+        assert_eq!(
+            query(
+                &mut chart,
+                30,
+                ValueType::Bool,
+                [adjacent, adjacent, u32::MAX]
+            )
+            .unwrap(),
+            RuntimeValue::Bool(true)
+        );
+
+        // Signed i64 endpoints survive constants and component projection.
+        let endpoints = push_constant(&mut chart, RuntimeValue::Vec2Int([i64::MAX, i64::MIN]));
+        assert_eq!(
+            query(
+                &mut chart,
+                81,
+                ValueType::Int,
+                [endpoints, u32::MAX, u32::MAX]
+            )
+            .unwrap(),
+            RuntimeValue::Int(i64::MAX)
+        );
+        assert_eq!(
+            query(
+                &mut chart,
+                82,
+                ValueType::Int,
+                [endpoints, u32::MAX, u32::MAX]
+            )
+            .unwrap(),
+            RuntimeValue::Int(i64::MIN)
+        );
+
+        // Division truncates toward zero in both signs: (5, 7) / 2 = (2, 3)
+        // and (-5, -5) / 2 = (-2, -2), with the vectors constructed from Int
+        // operands first.
+        let five = push_constant(&mut chart, RuntimeValue::Int(5));
+        let neg_five = push_constant(&mut chart, RuntimeValue::Int(-5));
+        let seven = push_constant(&mut chart, RuntimeValue::Int(7));
+        let two = push_constant(&mut chart, RuntimeValue::Int(2));
+        let zero = push_constant(&mut chart, RuntimeValue::Int(0));
+        let minus_one = push_constant(&mut chart, RuntimeValue::Int(-1));
+        let vector = push_node(&mut chart, 80, ValueType::Vec2Int, [five, seven, u32::MAX]);
+        assert_eq!(
+            query(&mut chart, 23, ValueType::Vec2Int, [vector, two, u32::MAX]).unwrap(),
+            RuntimeValue::Vec2Int([2, 3]),
+            "(5, 7) / 2 truncates toward zero"
+        );
+        let negative = push_node(
+            &mut chart,
+            80,
+            ValueType::Vec2Int,
+            [neg_five, neg_five, u32::MAX],
+        );
+        assert_eq!(
+            query(
+                &mut chart,
+                23,
+                ValueType::Vec2Int,
+                [negative, two, u32::MAX]
+            )
+            .unwrap(),
+            RuntimeValue::Vec2Int([-2, -2]),
+            "(-5, -5) / 2 truncates toward zero"
+        );
+
+        // Add and Mul overflow, division by zero, and i64::MIN / -1 are
+        // execution errors.
+        let max_vector = push_constant(&mut chart, RuntimeValue::Vec2Int([i64::MAX, i64::MAX]));
+        let one_vector = push_constant(&mut chart, RuntimeValue::Vec2Int([1, 1]));
+        assert!(
+            query(
+                &mut chart,
+                20,
+                ValueType::Vec2Int,
+                [max_vector, one_vector, u32::MAX]
+            )
+            .is_err(),
+            "i64::MAX + 1 must overflow"
+        );
+        assert!(
+            query(
+                &mut chart,
+                22,
+                ValueType::Vec2Int,
+                [max_vector, two, u32::MAX]
+            )
+            .is_err(),
+            "i64::MAX * 2 must overflow"
+        );
+        assert!(
+            query(&mut chart, 23, ValueType::Vec2Int, [vector, zero, u32::MAX]).is_err(),
+            "division by integer zero must be an execution error"
+        );
+        let min_vector = push_constant(&mut chart, RuntimeValue::Vec2Int([i64::MIN, i64::MIN]));
+        assert!(
+            query(
+                &mut chart,
+                23,
+                ValueType::Vec2Int,
+                [min_vector, minus_one, u32::MAX]
+            )
+            .is_err(),
+            "i64::MIN / -1 must be an execution error"
+        );
+
+        // int / vec2-int is not an ABI combination, and a float component
+        // cannot construct an integer vector.
+        assert!(
+            query(&mut chart, 23, ValueType::Vec2Int, [two, vector, u32::MAX]).is_err(),
+            "2 / (5, 7) must be an execution error"
+        );
+        let float_two = push_constant(
+            &mut chart,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 2.0,
+            },
+        );
+        assert!(
+            query(
+                &mut chart,
+                80,
+                ValueType::Vec2Int,
+                [float_two, five, u32::MAX]
+            )
+            .is_err(),
+            "vec2(float, int) must be an execution error"
+        );
     }
 
     #[test]
