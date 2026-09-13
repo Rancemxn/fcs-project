@@ -22,3 +22,4 @@ ADR 文件是 append-only 的历史决定记录。编号不保证唯一；`0012`
 | 0013 | [`0013-public-project-full-gate-ci.md`](0013-public-project-full-gate-ci.md) | 在公开项目仓库运行完整门禁 | Partially superseded by [0015](0015-portable-contributor-workflow.md)（仅全员本地执行限制） |
 | 0014 | [`0014-session-pool-delivery.md`](0014-session-pool-delivery.md) | FCS5 Session-Pool Delivery Workflow | Superseded by [0015](0015-portable-contributor-workflow.md) |
 | 0015 | [`0015-portable-contributor-workflow.md`](0015-portable-contributor-workflow.md) | 公共协作规则与本机开发约定分离 | Accepted |
+| 0016 | [`0016-blend-unit-and-bezier-expression-abi.md`](0016-blend-unit-and-bezier-expression-abi.md) | unit-typed blend 与 blend 内 cubicBezier 的 Expression ABI 编码 | Accepted |
