@@ -516,7 +516,8 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
             return Err("fcbc.dangling-reference");
         }
     }
-    let constants = parse_constant_pool(section_payload(bytes, &section_map, 2)?)?;
+    let expressions = parse_expressions(section_payload(bytes, &section_map, 12)?)?;
+    let constants = parse_constant_pool(section_payload(bytes, &section_map, 2)?, &expressions)?;
     let (document_profile, document_feature_bits, meta, artwork) =
         parse_meta(section_payload(bytes, &section_map, 3)?, &strings)?;
     let contributors = parse_contributors(section_payload(bytes, &section_map, 4)?, &strings)?;
@@ -558,7 +559,6 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
         &extensions,
     )?;
     let descriptors = parse_tracks(section_payload(bytes, &section_map, 11)?)?;
-    let expressions = parse_expressions(section_payload(bytes, &section_map, 12)?)?;
     let distances = parse_distances(section_payload(bytes, &section_map, 13)?)?;
 
     validate_expression_signatures(&expressions, &constants)?;
@@ -872,14 +872,33 @@ fn parse_string_table(bytes: &[u8]) -> Result<Vec<String>, &'static str> {
     Ok(strings)
 }
 
-fn parse_constant_pool(bytes: &[u8]) -> Result<Vec<RuntimeValue>, &'static str> {
+fn parse_constant_pool(
+    bytes: &[u8],
+    expressions: &[ExpressionNode],
+) -> Result<Vec<RuntimeValue>, &'static str> {
+    let bezier_controls: BTreeSet<u32> = expressions
+        .iter()
+        .filter(|node| node.opcode == 64)
+        .flat_map(|node| &node.operands[1..])
+        .filter_map(|operand| expressions.get(*operand as usize))
+        .filter(|node| node.opcode == 1)
+        .map(|node| node.immediate)
+        .collect();
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
     let count = limited_count(cursor.u32()?)?;
     let mut constants = Vec::new();
     let mut prior_encoding: Option<Vec<u8>> = None;
-    for _ in 0..count {
+    for index in 0..count {
         let start = cursor.position;
-        let value = parse_runtime_constant(&mut cursor)?;
+        let value = parse_runtime_constant(&mut cursor).map_err(|error| {
+            // Non-finite control payloads must use the Expression diagnostic,
+            // even though the Value decoder rejects them before type checking.
+            if bezier_controls.contains(&(index as u32)) {
+                "fcbc.invalid-expression"
+            } else {
+                error
+            }
+        })?;
         let encoding = bytes[start..cursor.position].to_vec();
         if prior_encoding
             .as_ref()
@@ -2177,6 +2196,26 @@ fn validate_expression_signatures(
             .map(|operand| nodes[*operand as usize].result_type)
             .collect();
         validate_expression_signature(node, &operands, constants)?;
+        if node.opcode == 64 {
+            for operand in &node.operands[1..] {
+                let control = &nodes[*operand as usize];
+                if control.opcode != 1 {
+                    return Err("fcbc.invalid-expression");
+                }
+                let Some(RuntimeValue::Vec2 {
+                    ty: ValueType::Vec2Float,
+                    value: [x, y],
+                }) = constants.get(control.immediate as usize)
+                else {
+                    return Err("fcbc.invalid-expression");
+                };
+                // With fixed endpoints 0 and 1, x1,x2 in [0,1] make x(t)
+                // strictly increasing, including x1=1,x2=0's isolated flat point.
+                if !x.is_finite() || !y.is_finite() || !(0.0..=1.0).contains(x) {
+                    return Err("fcbc.invalid-expression");
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -2257,6 +2296,11 @@ fn validate_expression_signature(
         61 => unary(node, operands, ValueType::Int, ValueType::Float),
         62 => unary(node, operands, ValueType::Time, ValueType::Float),
         63 => unary(node, operands, ValueType::Angle, ValueType::Float),
+        64 => {
+            node.arity == 3
+                && operands == [ValueType::Float, ValueType::Vec2Float, ValueType::Vec2Float]
+                && ty == ValueType::Float
+        }
         70 => {
             node.arity == 3
                 && operands.len() == 3
@@ -2288,7 +2332,7 @@ fn valid_mul(operands: &[ValueType], result: ValueType) -> bool {
     }
     let left = operands[0];
     let right = operands[1];
-    if left == right && matches!(left, ValueType::Int | ValueType::Float) {
+    if left == right && (is_numeric_scalar(left) || is_unit_vector(left)) {
         return result == left;
     }
     if is_unit_scalar(left) && matches!(right, ValueType::Int | ValueType::Float) {

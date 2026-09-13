@@ -2397,31 +2397,120 @@ lines {{
 }
 
 #[test]
-fn write_from_compilation_rejects_unexpressible_blends() {
-    // Position blends have no exact ABI 1.0 encoding (Mul has no U row).
-    let position = r#"#fcs 5.0.0
+fn write_from_compilation_composes_unit_blends_exactly() {
+    let source = r#"#fcs 5.0.0
 format { profile: chart; }
 tempoMap { 0beat -> 120bpm; }
 lines {
     line main {
+        position: vec2(8px, -3px);
+        rotation: 0.25rad;
         tracks {
+            track cover -> position: vec2<length> {
+                priority: 2;
+                fill: "base";
+                extrapolateBefore: "base";
+                extrapolateAfter: "base";
+                segments { [0s, 2s): vec2(4px, -2px) -> vec2(6px, 2px) using "linear"; }
+            }
             track shift -> position: vec2<length> {
                 blend: "add";
                 fill: "zero";
                 extrapolateBefore: "zero";
                 extrapolateAfter: "zero";
-                segments { [0s, 2s): vec2(1px, 1px) -> vec2(2px, 2px) using "linear"; }
+                segments { [-0.5s, 3s): vec2(0.1px, -0.3px) -> vec2(1.3px, 0.7px) using "easeInQuad"; }
+            }
+            track stretch -> position: vec2<length> {
+                blend: "multiply";
+                fill: "one";
+                extrapolateBefore: "one";
+                extrapolateAfter: "one";
+                segments { [1s, 4s): vec2(1.1px, -1.2px) -> vec2(0.5px, 0.3px) using "linear"; }
+            }
+            track turn -> rotation: angle {
+                priority: 2;
+                fill: "base";
+                extrapolateBefore: "base";
+                extrapolateAfter: "base";
+                segments { [0s, 2s): 0.1rad -> 0.7rad using "linear"; }
+            }
+            track tilt -> rotation: angle {
+                blend: "add";
+                fill: "zero";
+                extrapolateBefore: "zero";
+                extrapolateAfter: "zero";
+                segments { [-0.5s, 3s): -0.3rad -> 0.4rad using "easeInQuad"; }
+            }
+            track spin -> rotation: angle {
+                blend: "multiply";
+                fill: "one";
+                extrapolateBefore: "one";
+                extrapolateAfter: "one";
+                segments { [1s, 4s): 1.1rad -> -0.3rad using "linear"; }
             }
         }
     }
 }
 "#;
-    let error = write_from_compilation(&compilation(position))
-        .expect_err("unit-typed blend has no exact ABI encoding");
-    assert_eq!(error.category(), "fcbc.unsupported-track");
+    let (_, decoded, tracks, owner) = composed_chart(source);
+    let line = &decoded.lines[0];
+    for (target, base, descriptor, ty) in [
+        (
+            CanonicalTrackTarget::Position,
+            CanonicalTrackValue::Vec2Length(fcs_model::CanonicalVec2::new(8.0, -3.0).unwrap()),
+            line.position_descriptor,
+            ValueType::Vec2Length,
+        ),
+        (
+            CanonicalTrackTarget::Rotation,
+            CanonicalTrackValue::Angle(0.25),
+            line.rotation_descriptor,
+            ValueType::Angle,
+        ),
+    ] {
+        assert!(decoded.expressions.iter().any(|node| {
+            node.opcode == 22
+                && node.result_type == ty
+                && node.operands[..2]
+                    .iter()
+                    .all(|operand| decoded.expressions[*operand as usize].result_type == ty)
+        }));
+        for time in [
+            -1.0,
+            -0.5,
+            -0.0,
+            0.0,
+            0.3,
+            1.0,
+            1.7,
+            2.0f64.next_down(),
+            2.0,
+            2.5,
+            3.0,
+            3.7,
+            4.0f64.next_down(),
+            4.0,
+            5.0,
+            1.7,
+        ] {
+            let expected =
+                fcs_runtime::evaluate_track_set(&tracks, &owner, target, time, base).unwrap();
+            let actual = crate::query_descriptor(
+                &decoded,
+                descriptor,
+                time,
+                crate::EvaluationEnvironment::at_time(time),
+            )
+            .unwrap()
+            .value;
+            assert_runtime_value_bits(actual, track_runtime_value(expected));
+        }
+    }
+}
 
-    // cubicBezier progress has no exact Expression opcode.
-    let bezier = r#"#fcs 5.0.0
+#[test]
+fn write_from_compilation_composes_bezier_blends_exactly() {
+    let source = r#"#fcs 5.0.0
 format { profile: chart; }
 tempoMap { 0beat -> 120bpm; }
 lines {
@@ -2435,13 +2524,65 @@ lines {
                 extrapolateAfter: "zero";
                 segments { [0s, 2s): 0.1 -> 0.3 using cubicBezier(0.25, 0.1, 0.25, 1.0); }
             }
+            track cover -> alpha: float {
+                fill: "base";
+                extrapolateBefore: "base";
+                extrapolateAfter: "base";
+                segments { [0.5s, 1.5s): 0.2 -> 0.4 using cubicBezier(1.0, 0.0, 0.0, 1.0); }
+            }
+            track gain -> alpha: float {
+                blend: "multiply";
+                fill: "one";
+                extrapolateBefore: "one";
+                extrapolateAfter: "one";
+                segments { [1s, 3s): 0.7 -> 0.9 using cubicBezier(0.5, 2.0, 0.5, 2.0); }
+            }
         }
     }
 }
 "#;
-    let error = write_from_compilation(&compilation(bezier))
-        .expect_err("cubicBezier blend progress has no exact opcode");
-    assert_eq!(error.category(), "fcbc.unsupported-track");
+    let (bytes, decoded, tracks, owner) = composed_chart(source);
+    assert_eq!(
+        bytes,
+        compile(source),
+        "Bezier DAG encoding is deterministic"
+    );
+    assert!(decoded.expressions.iter().any(|node| node.opcode == 64));
+    for time in [
+        -1.0,
+        0.0,
+        0.125,
+        0.25,
+        0.5,
+        0.75,
+        1.0,
+        1.25,
+        1.5f64.next_down(),
+        1.5,
+        2.0,
+        2.5,
+        3.0,
+        4.0,
+        0.75,
+    ] {
+        let expected = fcs_runtime::evaluate_track_set(
+            &tracks,
+            &owner,
+            CanonicalTrackTarget::Alpha,
+            time,
+            CanonicalTrackValue::Float(0.5),
+        )
+        .unwrap();
+        let actual = crate::query_descriptor(
+            &decoded,
+            decoded.lines[0].alpha_descriptor,
+            time,
+            crate::EvaluationEnvironment::at_time(time),
+        )
+        .unwrap()
+        .value;
+        assert_runtime_value_bits(actual, track_runtime_value(expected));
+    }
 }
 
 #[test]
