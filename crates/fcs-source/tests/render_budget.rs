@@ -190,3 +190,42 @@ fn runtime_expression_fallback_cannot_swallow_a_budget_error() {
         );
     }
 }
+
+#[test]
+fn a_failing_pure_call_in_a_generator_precheck_leaves_no_stale_trace() {
+    // An empty generator whose body precheck fails inside a pure function
+    // call must not leave a stale Function/Generator/Range frame behind:
+    // the later direct Render Track budget diagnostic reports no expansion
+    // trace because no generator or template is active at that point.
+    let core = r#"definitions { fn bad() -> float { return 1.0 / 0.0; } }
+lines { line main {} }
+collections { notes {
+    generate i: int in 0..<0 step 1 {
+        emit tap {
+            id: "unused"; line: @main; gameplay.time: 0s;
+            presentation.alpha: bad();
+        };
+    }
+} }"#;
+    let source = scene(core, NODE);
+    let document = parse_document(&source).into_result().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let limits = CompileTimeLimits {
+        max_generated_nodes: 0,
+        ..CompileTimeLimits::default()
+    };
+    let chart_error = document
+        .canonical_chart_with_source(&source, limits)
+        .unwrap_err();
+    let compilation_error = document
+        .canonical_compilation_with_source(
+            &source,
+            limits,
+            workspace.path(),
+            ResourceLimits::default(),
+        )
+        .unwrap_err();
+    assert_eq!(chart_error, compilation_error);
+    assert_budget(&chart_error[0], "max_generated_nodes", 0);
+    assert!(chart_error[0].expansion_trace().is_empty());
+}

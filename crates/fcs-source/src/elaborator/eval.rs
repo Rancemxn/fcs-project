@@ -1157,9 +1157,10 @@ fn evaluate_expression_with_expected(
                 const_values,
                 budget,
             );
-            if result.is_ok() {
-                budget.context.pop_trace();
-            }
+            // A failed call still pops: LimitExceeded snapshots the trace
+            // inside evaluate_function, so a stale frame here desynchronizes
+            // the fixed-depth unwinds in validate_generator.
+            budget.context.pop_trace();
             result
         }
         SourceExpression::FieldAccess { base, field, span } => {
