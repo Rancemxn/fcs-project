@@ -575,8 +575,21 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
                         self.expression(node.operands[1], progress, allow_q, memo, depth + 1)?
                     }
                     (36 | 37, None) => {
+                        let mut branch = self.branch_memo(
+                            node.operands[0],
+                            node.opcode == 36,
+                            memo,
+                            (progress, allow_q),
+                            depth + 1,
+                        )?;
                         let right = self
-                            .expression(node.operands[1], progress, allow_q, memo, depth + 1)?
+                            .expression(
+                                node.operands[1],
+                                progress,
+                                allow_q,
+                                &mut branch,
+                                depth + 1,
+                            )?
                             .boolean()?;
                         Value::truth(match (node.opcode, right) {
                             (36, Some(false)) => Some(false),
@@ -592,10 +605,34 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
                         depth + 1,
                     )?,
                     (70, None) => {
-                        let left =
-                            self.expression(node.operands[1], progress, allow_q, memo, depth + 1)?;
-                        let right =
-                            self.expression(node.operands[2], progress, allow_q, memo, depth + 1)?;
+                        let mut branch = self.branch_memo(
+                            node.operands[0],
+                            true,
+                            memo,
+                            (progress, allow_q),
+                            depth + 1,
+                        )?;
+                        let left = self.expression(
+                            node.operands[1],
+                            progress,
+                            allow_q,
+                            &mut branch,
+                            depth + 1,
+                        )?;
+                        let mut branch = self.branch_memo(
+                            node.operands[0],
+                            false,
+                            memo,
+                            (progress, allow_q),
+                            depth + 1,
+                        )?;
+                        let right = self.expression(
+                            node.operands[2],
+                            progress,
+                            allow_q,
+                            &mut branch,
+                            depth + 1,
+                        )?;
                         left.hull(right)?
                     }
                     _ => return None,
@@ -633,6 +670,173 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
         value.finite()?;
         memo.insert(index, value.clone());
         Some(value)
+    }
+
+    fn branch_memo(
+        &mut self,
+        predicate: u32,
+        selected: bool,
+        memo: &BTreeMap<u32, Value>,
+        environment: (Taylor, bool),
+        depth: usize,
+    ) -> Option<BTreeMap<u32, Value>> {
+        for _ in memo {
+            self.query.charge().ok()?;
+        }
+        let mut branch = memo.clone();
+        let mut changed = std::collections::BTreeSet::new();
+        self.restrict_predicate(
+            predicate,
+            selected,
+            &mut branch,
+            &mut changed,
+            environment,
+            depth,
+        )?;
+        // A value computed before narrowing an operand is no longer this
+        // branch's cache value. Topological indices make invalidation one pass.
+        for index in memo.keys().copied() {
+            self.query.charge().ok()?;
+            if !changed.contains(&index)
+                && self.query.chart.expressions[index as usize]
+                    .operands
+                    .iter()
+                    .any(|operand| changed.contains(operand))
+            {
+                branch.remove(&index);
+                changed.insert(index);
+            }
+        }
+        branch.insert(predicate, Value::truth(Some(selected)));
+        Some(branch)
+    }
+
+    fn restrict_predicate(
+        &mut self,
+        index: u32,
+        selected: bool,
+        memo: &mut BTreeMap<u32, Value>,
+        changed: &mut std::collections::BTreeSet<u32>,
+        environment: (Taylor, bool),
+        depth: usize,
+    ) -> Option<()> {
+        self.query.charge().ok()?;
+        if depth >= MAX_VALIDATOR_DEPTH {
+            return None;
+        }
+        let node = self.query.chart.expressions.get(index as usize)?;
+        match node.opcode {
+            11 => self.restrict_predicate(
+                node.operands[0],
+                !selected,
+                memo,
+                changed,
+                environment,
+                depth + 1,
+            )?,
+            36 if selected => {
+                self.restrict_predicate(
+                    node.operands[0],
+                    true,
+                    memo,
+                    changed,
+                    environment,
+                    depth + 1,
+                )?;
+                self.restrict_predicate(
+                    node.operands[1],
+                    true,
+                    memo,
+                    changed,
+                    environment,
+                    depth + 1,
+                )?;
+            }
+            37 if !selected => {
+                self.restrict_predicate(
+                    node.operands[0],
+                    false,
+                    memo,
+                    changed,
+                    environment,
+                    depth + 1,
+                )?;
+                self.restrict_predicate(
+                    node.operands[1],
+                    false,
+                    memo,
+                    changed,
+                    environment,
+                    depth + 1,
+                )?;
+            }
+            30..=35 => {
+                let left = self.expression(
+                    node.operands[0],
+                    environment.0,
+                    environment.1,
+                    memo,
+                    depth + 1,
+                )?;
+                let right = self.expression(
+                    node.operands[1],
+                    environment.0,
+                    environment.1,
+                    memo,
+                    depth + 1,
+                )?;
+                // Integer comparisons must stay in i64; their branch hulls
+                // remain conservative without a lossy binary64 constraint.
+                if left.integers().is_some() || right.integers().is_some() {
+                    return Some(());
+                }
+                let (Some(left), Some(right)) = (left.float(), right.float()) else {
+                    return Some(());
+                };
+                let (mut a, mut b) = (left.range().finite()?, right.range().finite()?);
+                let opcode = if selected {
+                    node.opcode
+                } else {
+                    match node.opcode {
+                        30 => 31,
+                        31 => 30,
+                        32 => 35,
+                        33 => 34,
+                        34 => 33,
+                        _ => 32,
+                    }
+                };
+                match opcode {
+                    30 => {
+                        a = a.intersect(b);
+                        b = a;
+                    }
+                    31 => return Some(()),
+                    32 | 33 => {
+                        let lo = a.lo;
+                        a.hi = a.hi.min(if opcode == 32 { b.hi.next_down() } else { b.hi });
+                        b.lo = b.lo.max(if opcode == 32 { lo.next_up() } else { lo });
+                    }
+                    34 | 35 => {
+                        let hi = a.hi;
+                        a.lo = a.lo.max(if opcode == 34 { b.lo.next_up() } else { b.lo });
+                        b.hi = b.hi.min(if opcode == 34 { hi.next_down() } else { hi });
+                    }
+                    _ => return None,
+                }
+                a.finite()?;
+                b.finite()?;
+                for (index, value) in [
+                    (node.operands[0], left.with_bound(a)),
+                    (node.operands[1], right.with_bound(b)),
+                ] {
+                    memo.insert(index, Value::Float(value));
+                    changed.insert(index);
+                }
+            }
+            _ => {}
+        }
+        Some(())
     }
 
     fn operation(
@@ -1420,6 +1624,28 @@ mod tests {
         );
         let index = bind_speed(&mut chart, root, &[0.0]);
         assert_eq!(query_distance(&chart, index, 1.0), Err(EXECUTION_ERROR));
+    }
+
+    #[test]
+    fn conditional_domains_are_checked_only_where_the_branch_is_selected() {
+        let mut chart = chart();
+        let time = node(&mut chart, 2, ValueType::Time, &[]);
+        let half_time = constant(&mut chart, ValueType::Time, 0.5);
+        let before = node(&mut chart, 32, ValueType::Bool, &[time, half_time]);
+        let raw_time = node(&mut chart, 62, ValueType::Float, &[time]);
+        let half = constant(&mut chart, ValueType::Float, 0.5);
+        let left = node(&mut chart, 21, ValueType::Float, &[half, raw_time]);
+        let right = node(&mut chart, 21, ValueType::Float, &[raw_time, half]);
+        let left = node(&mut chart, 47, ValueType::Float, &[left]);
+        let right = node(&mut chart, 47, ValueType::Float, &[right]);
+        let root = node(&mut chart, 70, ValueType::Float, &[before, left, right]);
+        let one = constant(&mut chart, ValueType::Float, 1.0);
+        let root = node(&mut chart, 20, ValueType::Float, &[root, one]);
+        let index = bind_speed(&mut chart, root, &[0.0]);
+        let actual = query_distance(&chart, index, 1.0).unwrap();
+        // Integral of 1 + sqrt(abs(t - 1/2)) on [0,1].
+        let expected = 1.0 + 2.0f64.sqrt() / 3.0;
+        assert!((actual.floor_position - expected).abs() <= ABSOLUTE_ERROR);
     }
 
     #[test]
