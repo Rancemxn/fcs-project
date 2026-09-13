@@ -984,6 +984,7 @@ opcode、arity 和类型固定如下；表中的 `T` 要求所有出现位置是
 | Floor / Ceil / Round / Sqrt / Exp / Ln / Sin / Cos / Tan / Asin / Acos / Atan | 1；A:float | float |
 | Atan2 | 2；A:float、B:float | float |
 | Easing | 1；A:float | float；immediate 是 0–30 easing ID |
+| CubicBezier | 3；A:float、B:vec2-float、C:vec2-float | float；immediate=0 |
 | ToFloat | 1；A:int | float |
 | Seconds | 1；A:time | float |
 | Radians | 1；A:angle | float |
@@ -999,9 +1000,11 @@ Mul/Div 因 result type 不总与两侧相同，使用以下唯一组合；`U` �
 | Mul | float,float | float |
 | Mul | U,int 或 int,U | U |
 | Mul | U,float 或 float,U | U |
+| Mul | U,U（同一 U） | U |
 | Mul | vec2-int,int 或 int,vec2-int | vec2-int |
 | Mul | vec2-float,float 或 float,vec2-float | vec2-float |
 | Mul | vec2-U,int/float 或 int/float,vec2-U | vec2-U |
+| Mul | vec2-U,vec2-U（同一 U） | vec2-U |
 | Div | int,int | int |
 | Div | float,float | float |
 | Div | U,int/float | U |
@@ -1019,7 +1022,19 @@ Mul/Div 因 result type 不总与两侧相同，使用以下唯一组合；`U` �
 静态 type。`ApproxEq` 先要求 tolerance 有限且非负，再按两个输入的 binary64 subtraction、Abs、
 Le 三个逐步 roundTiesToEven 操作的结果定义；任何中间非有限值产生 execution error。Vec2 按 A、
 B 顺序求值并组合两个同类型 component，Vec2X/Vec2Y 返回相应 component。Easing ID 0 是 linear，
-1–30 与 Segment 表一致。
+1–30 与 Segment 表一致。`CubicBezier` 的 A 是 clamp 到 `[0,1]` 后的 scalar progress，B 是
+`(x1,y1)`、C 是 `(x2,y2)` 两个 vec2-float 常量：把 A 与四个 binary64 control value 解释为精确
+实数，取满足 cubic x(t)=A 的唯一 `t∈[0,1]`，再把实数 cubic y(t) 正确舍入一次为 binary64——
+与 `fcs.md` 第 9.4 节相同。B/C 必须是结构可判定的 constant vec2-float node，仅接受两种形状：
+opcode 1 Constant（resultType 为 vec2-float，引用 elementType=float 的 vec2 Value），或
+opcode 80 Vec2 且两个 operand 均为 opcode 1 float Constant；其他形状（含引用环境或求值后才
+可知为常量的 DAG）以 `fcbc.invalid-expression` 拒绝。control 的有限性由第 6 章 ConstantPool
+的 Value 有效性保证：非有限 float component 在 pool 解码时已按 `fcbc.invalid-record` 拒绝，
+先于 Expression 校验，本 opcode 不再产生独立的非有限诊断；`x1`/`x2` 不在 `[0,1]` 或 x 曲线
+不可单值反解仍以 `fcbc.invalid-expression` 在 load 时拒绝。`Mul U,U` 与 `Mul vec2-U,vec2-U`
+按 payload/component 逐项 binary64 乘法、每项单独 roundTiesToEven 定义；其中 U=angle 的
+`Mul U,U` 与 U=length 的 `Mul vec2-U,vec2-U` 与 Core runtime blend `combine` 的对应 multiply
+路径逐操作一致，其余 unit 组合是 ABI 层扩展，Core runtime `combine` 未暴露对应路径。
 
 ABI 1.0 的 numeric opcode number 为：
 
@@ -1037,6 +1052,7 @@ ABI 1.0 的 numeric opcode number 为：
 53 Asin          54 Acos          55 Atan           56 Atan2
 60 Easing        immediate=easing ID
 61 ToFloat       62 Seconds        63 Radians
+64 CubicBezier   operandA=scalar progress, B=(x1,y1), C=(x2,y2)
 70 Choose        operandA=predicate, B=true value, C=false value/next Choose
 80 Vec2          81 Vec2X         82 Vec2Y
 ```
