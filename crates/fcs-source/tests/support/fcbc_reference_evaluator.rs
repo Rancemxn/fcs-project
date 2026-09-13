@@ -457,6 +457,27 @@ fn evaluate_node(
             let value = scalar_payload(&operand(0, visited_nodes, memo)?)?;
             scalar(ValueType::Float, value)?
         }
+        64 => {
+            let progress = scalar_payload(&operand(0, visited_nodes, memo)?)?;
+            let RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Float,
+                value: [x1, y1],
+            } = operand(1, visited_nodes, memo)?
+            else {
+                return Err(EXECUTION_ERROR);
+            };
+            let RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Float,
+                value: [x2, y2],
+            } = operand(2, visited_nodes, memo)?
+            else {
+                return Err(EXECUTION_ERROR);
+            };
+            scalar(
+                ValueType::Float,
+                cubic_bezier_progress([x1, y1, x2, y2], progress)?,
+            )?
+        }
         70 => {
             if boolean(&operand(0, visited_nodes, memo)?)? {
                 operand(1, visited_nodes, memo)?
@@ -521,11 +542,7 @@ fn arithmetic(
             let (result_type, result) = match operation {
                 Arithmetic::Add if left_type == right_type => (left_type, left + right),
                 Arithmetic::Subtract if left_type == right_type => (left_type, left - right),
-                Arithmetic::Multiply
-                    if left_type == right_type && left_type == ValueType::Float =>
-                {
-                    (ValueType::Float, left * right)
-                }
+                Arithmetic::Multiply if left_type == right_type => (left_type, left * right),
                 Arithmetic::Multiply if right_type == ValueType::Float => (left_type, left * right),
                 Arithmetic::Multiply if left_type == ValueType::Float => (right_type, left * right),
                 Arithmetic::Divide if right_type == ValueType::Float => (left_type, left / right),
@@ -543,10 +560,21 @@ fn arithmetic(
                 ty: right_type,
                 value: [right_x, right_y],
             },
-        ) if ty == right_type && matches!(operation, Arithmetic::Add | Arithmetic::Subtract) => {
+        ) if ty == right_type
+            && (matches!(operation, Arithmetic::Add | Arithmetic::Subtract)
+                || matches!(operation, Arithmetic::Multiply)
+                    && matches!(
+                        ty,
+                        ValueType::Vec2Time
+                            | ValueType::Vec2Beat
+                            | ValueType::Vec2Length
+                            | ValueType::Vec2Angle
+                    )) =>
+        {
             let apply = |left: f64, right: f64| match operation {
                 Arithmetic::Add => left + right,
                 Arithmetic::Subtract => left - right,
+                Arithmetic::Multiply => left * right,
                 _ => unreachable!(),
             };
             vector(ty, [apply(left_x, right_x), apply(left_y, right_y)])
@@ -922,29 +950,9 @@ fn cubic_bezier_progress(bezier: [f64; 4], progress: f64) -> Result<f64, &'stati
     if !(0.0..=1.0).contains(&progress) {
         return Err(EXECUTION_ERROR);
     }
-    let [x1, y1, x2, y2] = bezier;
-    let sample = |parameter: f64, first: f64, second: f64| {
-        let inverse = 1.0 - parameter;
-        3.0 * inverse * inverse * parameter * first
-            + 3.0 * inverse * parameter * parameter * second
-            + parameter * parameter * parameter
-    };
-    let mut lower = 0.0;
-    let mut upper = 1.0;
-    for _ in 0..64 {
-        let middle = (lower + upper) * 0.5;
-        if sample(middle, x1, x2) < progress {
-            lower = middle;
-        } else {
-            upper = middle;
-        }
-    }
-    let result = sample((lower + upper) * 0.5, y1, y2);
-    if result.is_finite() {
-        Ok(result)
-    } else {
-        Err(EXECUTION_ERROR)
-    }
+    // The ABI interpreter is independent; the certified numeric primitive is
+    // shared with SegmentTrack and the canonical runtime (Core section 9.4).
+    fcs_runtime::evaluate_cubic_bezier_progress(bezier, progress).map_err(|_| EXECUTION_ERROR)
 }
 
 fn integrate_descriptor(

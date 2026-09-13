@@ -10,11 +10,12 @@ use fcs_model::{
     CanonicalTrackInterpolation, CanonicalTrackPiece, CanonicalTrackSegment, CanonicalTrackTarget,
     CanonicalTrackValue, CanonicalValue, CanonicalValueType, DistributionMetadata,
 };
-use fcs_runtime::{EasingId, TrackExpressionBuilder, TrackExpressionError};
+use fcs_runtime::{EasingId, TrackContribution};
 use sha2::{Digest, Sha256};
 
 use crate::container::ContainerProfile;
 use crate::error::{FcbcError, FcbcResult};
+use crate::loader::{ExpressionNode, ValueType};
 
 /// The section 12 NoteRecord `kind` ordinals.
 ///
@@ -184,7 +185,7 @@ enum NativeTrackKind {
     Blended {
         property_type: u8,
         regions: Vec<BlendedRegion>,
-        expressions: Vec<CanonicalExpressionDag>,
+        expressions: Vec<NativeBlendExpression>,
     },
 }
 
@@ -193,6 +194,15 @@ struct BlendedRegion {
     /// Ignored for the first region, which is unbounded before.
     start: f64,
     expression: usize,
+}
+
+/// Execution ABI nodes for native Track blends. These include the ABI-only
+/// unit Mul rows and CubicBezier without changing source Expression semantics.
+#[derive(Clone, Default)]
+struct NativeBlendExpression {
+    nodes: Vec<ExpressionNode>,
+    constants: Vec<Constant>,
+    root: u32,
 }
 
 #[derive(Clone)]
@@ -299,27 +309,65 @@ impl NativeExpressionPool {
                 Some(value) => find_constant(constants, &canonical_expression_constant(value)?),
                 None => node.immediate(),
             };
-            let mut encoded = Vec::with_capacity(20);
-            expression_node(
-                &mut encoded,
+            let global = pool.intern(
                 canonical_expression_opcode(node.opcode()),
                 canonical_expression_type(node.result_type()),
                 &operands[..arity],
                 immediate,
             );
-            let global = if let Some(index) = pool.nodes.iter().position(|item| item == &encoded) {
-                index as u32
-            } else {
-                let index = pool.nodes.len() as u32;
-                pool.nodes.push(encoded);
-                index
-            };
             mapped[index] = Some(global);
             Ok(global)
         }
 
         let mut mapped = vec![None; expression.nodes().len()];
         emit_node(self, expression, expression.root(), constants, &mut mapped)
+    }
+
+    fn emit_blend(&mut self, expression: &NativeBlendExpression, constants: &[Constant]) -> u32 {
+        fn emit_node(
+            pool: &mut NativeExpressionPool,
+            expression: &NativeBlendExpression,
+            index: u32,
+            constants: &[Constant],
+            mapped: &mut [Option<u32>],
+        ) -> u32 {
+            if let Some(global) = mapped[index as usize] {
+                return global;
+            }
+            let node = &expression.nodes[index as usize];
+            let mut operands = [NULL_INDEX; 3];
+            for (slot, operand) in node.operands[..node.arity as usize].iter().enumerate() {
+                operands[slot] = emit_node(pool, expression, *operand, constants, mapped);
+            }
+            let immediate = if node.opcode == 1 {
+                find_constant(constants, &expression.constants[node.immediate as usize])
+            } else {
+                node.immediate
+            };
+            let global = pool.intern(
+                node.opcode,
+                node.result_type as u8,
+                &operands[..node.arity as usize],
+                immediate,
+            );
+            mapped[index as usize] = Some(global);
+            global
+        }
+
+        let mut mapped = vec![None; expression.nodes.len()];
+        emit_node(self, expression, expression.root, constants, &mut mapped)
+    }
+
+    fn intern(&mut self, opcode: u16, ty: u8, operands: &[u32], immediate: u32) -> u32 {
+        let mut encoded = Vec::with_capacity(20);
+        expression_node(&mut encoded, opcode, ty, operands, immediate);
+        if let Some(index) = self.nodes.iter().position(|item| item == &encoded) {
+            index as u32
+        } else {
+            let index = self.nodes.len() as u32;
+            self.nodes.push(encoded);
+            index
+        }
     }
 
     fn section(&self) -> Vec<u8> {
@@ -902,11 +950,7 @@ fn assemble_package(
             // Blend expressions reference their node constants directly.
             if let NativeTrackKind::Blended { expressions, .. } = &track.kind {
                 for expression in expressions {
-                    for node in expression.nodes() {
-                        if let Some(value) = node.constant() {
-                            constants.push(canonical_expression_constant(value)?);
-                        }
-                    }
+                    constants.extend(expression.constants.iter().cloned());
                 }
             }
         }
@@ -2556,14 +2600,11 @@ fn native_layered_replace_fixture(
 ///
 /// Each elementary region's value is one Expression DAG over EnvS whose node
 /// arithmetic mirrors `evaluate_track`/`evaluate_track_set` operation for
-/// operation: the segment `Sub → Div → Clamp → Easing` progress, the
+/// operation: the segment `Sub → Div → Clamp → Easing/CubicBezier` progress, the
 /// `start + (end-start)*p'` interpolation, and the
 /// base → replace → Adds → Multiplies fold. Every binary64 operation rounds
 /// once in both lanes, so the product query and the canonical runtime agree
-/// bit for bit. Contributions that ABI 1.0 cannot express exactly — unit-typed
-/// targets (no `Mul` row for U×float) and cubicBezier segments inside a blend
-/// (no Expression opcode for the correctly rounded Bezier solve) — reject the
-/// write instead of approximating.
+/// bit for bit, including unit-typed Mul and the certified Bezier solve (ADR 0016).
 fn native_blended_fixture(
     tracks: &[&CanonicalTrack],
     lines: &[LineFixture],
@@ -2571,37 +2612,16 @@ fn native_blended_fixture(
     target: CanonicalTrackTarget,
 ) -> FcbcResult<NativeTrackFixture> {
     let property_type = match target {
-        CanonicalTrackTarget::Alpha | CanonicalTrackTarget::ScrollSpeed => TY_FLOAT,
-        CanonicalTrackTarget::Scale => TY_VEC2_FLOAT,
-        CanonicalTrackTarget::Position | CanonicalTrackTarget::Rotation => {
-            return Err(FcbcError::new(
-                "fcbc.unsupported-track",
-                format!(
-                    "native {:?} Track blending for Line {line_id} has no exact ABI 1.0 encoding",
-                    target
-                ),
-            ));
-        }
+        CanonicalTrackTarget::Alpha | CanonicalTrackTarget::ScrollSpeed => ValueType::Float,
+        CanonicalTrackTarget::Scale => ValueType::Vec2Float,
+        CanonicalTrackTarget::Position => ValueType::Vec2Length,
+        CanonicalTrackTarget::Rotation => ValueType::Angle,
     };
     let line = lines
         .iter()
         .find(|line| line.id == line_id)
         .expect("validated Line owner");
-    let base = match target {
-        CanonicalTrackTarget::Alpha => CanonicalTrackValue::Float(line.alpha),
-        CanonicalTrackTarget::ScrollSpeed => CanonicalTrackValue::Float(line.scroll_speed),
-        CanonicalTrackTarget::Scale => CanonicalTrackValue::Vec2Float(
-            fcs_model::CanonicalVec2::new(line.scale[0], line.scale[1]).map_err(|_| {
-                FcbcError::new(
-                    "fcbc.unsupported-track",
-                    format!("Line {line_id} scale base is not finite"),
-                )
-            })?,
-        ),
-        CanonicalTrackTarget::Position | CanonicalTrackTarget::Rotation => {
-            unreachable!("unit-typed blending rejects above")
-        }
-    };
+    let base = native_line_base_constant(line, target);
     let replaces: Vec<&CanonicalTrack> = tracks
         .iter()
         .copied()
@@ -2611,8 +2631,16 @@ fn native_blended_fixture(
 
     let mut expressions = Vec::new();
     let mut regions = Vec::new();
-    let probe = |time: f64, expressions: &mut Vec<CanonicalExpressionDag>| -> FcbcResult<usize> {
-        let expression = blended_region_expression(tracks, &replaces, time, base, target, line_id)?;
+    let probe = |time: f64, expressions: &mut Vec<NativeBlendExpression>| -> FcbcResult<usize> {
+        let expression = blended_region_expression(
+            tracks,
+            &replaces,
+            time,
+            &base,
+            target,
+            line_id,
+            property_type,
+        )?;
         expressions.push(expression);
         Ok(expressions.len() - 1)
     };
@@ -2632,7 +2660,7 @@ fn native_blended_fixture(
         line_id,
         target,
         kind: NativeTrackKind::Blended {
-            property_type,
+            property_type: property_type as u8,
             regions,
             expressions,
         },
@@ -2645,11 +2673,12 @@ fn blended_region_expression(
     tracks: &[&CanonicalTrack],
     replaces: &[&CanonicalTrack],
     time: f64,
-    base: CanonicalTrackValue,
+    base: &Constant,
     target: CanonicalTrackTarget,
     line_id: u64,
-) -> FcbcResult<CanonicalExpressionDag> {
-    let mut builder = TrackExpressionBuilder::new();
+    property_type: ValueType,
+) -> FcbcResult<NativeBlendExpression> {
+    let mut builder = NativeBlendExpression::default();
     let mut value = match select_replace_winner(replaces, time, target, line_id)? {
         Some(track) => {
             let contribution =
@@ -2665,16 +2694,14 @@ fn blended_region_expression(
                     )
                 })?;
             // A selected replace Track is active by construction.
-            builder
-                .contribution(
-                    contribution.expect("selected replace Track is active"),
-                    target,
-                )
-                .map_err(track_expression_error)?
+            builder.contribution(
+                contribution.expect("selected replace Track is active"),
+                target,
+                property_type,
+                track.name(),
+            )?
         }
-        None => builder
-            .constant_value(base, target)
-            .map_err(track_expression_error)?,
+        None => builder.constant(property_type, base.clone()),
     };
     for operation in [CanonicalTrackBlend::Add, CanonicalTrackBlend::Multiply] {
         // The group preserves the canonical (priority, name) order of the
@@ -2695,26 +2722,103 @@ fn blended_region_expression(
             else {
                 continue;
             };
-            let operand = builder
-                .contribution(contribution, target)
-                .map_err(track_expression_error)?;
+            let operand =
+                builder.contribution(contribution, target, property_type, track.name())?;
             value = match operation {
-                CanonicalTrackBlend::Add => builder.add(value, operand),
-                CanonicalTrackBlend::Multiply => builder.multiply(value, operand),
+                CanonicalTrackBlend::Add => builder.node(20, property_type, &[value, operand], 0),
+                CanonicalTrackBlend::Multiply => builder.multiply(value, operand, property_type),
                 CanonicalTrackBlend::Replace => {
                     unreachable!("replace Tracks are selected above")
                 }
             };
         }
     }
-    let root = builder.root(value);
-    builder
-        .finish(root)
-        .map_err(|error| FcbcError::new("fcbc.unsupported-track", error.to_string()))
+    builder.root = value;
+    Ok(builder)
 }
 
-fn track_expression_error(error: TrackExpressionError) -> FcbcError {
-    FcbcError::new("fcbc.unsupported-track", error.to_string())
+impl NativeBlendExpression {
+    fn node(&mut self, opcode: u16, ty: ValueType, operands: &[u32], immediate: u32) -> u32 {
+        let mut slots = [NULL_INDEX; 3];
+        slots[..operands.len()].copy_from_slice(operands);
+        let index = self.nodes.len() as u32;
+        self.nodes.push(ExpressionNode {
+            opcode,
+            result_type: ty,
+            operands: slots,
+            arity: operands.len() as u8,
+            immediate,
+        });
+        index
+    }
+
+    fn constant(&mut self, ty: ValueType, value: Constant) -> u32 {
+        let index = self.constants.len() as u32;
+        self.constants.push(value);
+        self.node(1, ty, &[], index)
+    }
+
+    fn contribution(
+        &mut self,
+        contribution: TrackContribution<'_>,
+        target: CanonicalTrackTarget,
+        ty: ValueType,
+        track_name: &str,
+    ) -> FcbcResult<u32> {
+        let segment = match contribution {
+            TrackContribution::Constant(value) => {
+                return Ok(self.constant(ty, native_track_constant(value, target, track_name)?));
+            }
+            TrackContribution::Segment(segment) => {
+                native_track_segment(segment, target, track_name)?
+            }
+        };
+        let start = self.constant(ty, segment.start_constant);
+        if segment.interpolation == 1 {
+            return Ok(start);
+        }
+
+        // Preserve every operation in evaluate_segment: (s-start)/(end-start),
+        // clamp, then easing or one correctly rounded cubic Bezier solve.
+        let env_s = self.node(2, ValueType::Time, &[], 0);
+        let start_time = self.constant(ValueType::Time, scalar_constant(5, segment.start));
+        let end_time = self.constant(ValueType::Time, scalar_constant(5, segment.end));
+        let numerator = self.node(21, ValueType::Time, &[env_s, start_time], 0);
+        let denominator = self.node(21, ValueType::Time, &[end_time, start_time], 0);
+        let progress = self.node(23, ValueType::Float, &[numerator, denominator], 0);
+        let zero = self.constant(ValueType::Float, float_constant(0.0));
+        let one = self.constant(ValueType::Float, float_constant(1.0));
+        let progress = self.node(43, ValueType::Float, &[progress, zero, one], 0);
+        let progress = match segment.interpolation {
+            3 => self.node(60, ValueType::Float, &[progress], segment.easing as u32),
+            4 => {
+                let [x1, y1, x2, y2] = segment.bezier;
+                let first = self.constant(ValueType::Vec2Float, vec2_constant(3, [x1, y1]));
+                let second = self.constant(ValueType::Vec2Float, vec2_constant(3, [x2, y2]));
+                self.node(64, ValueType::Float, &[progress, first, second], 0)
+            }
+            _ => progress,
+        };
+        let end = self.constant(ty, segment.end_constant);
+        let delta = self.node(21, ty, &[end, start], 0);
+        let scaled = self.node(22, ty, &[delta, progress], 0);
+        Ok(self.node(20, ty, &[start, scaled], 0))
+    }
+
+    fn multiply(&mut self, left: u32, right: u32, ty: ValueType) -> u32 {
+        if ty != ValueType::Vec2Float {
+            // Same-unit scalar/vector Mul mirrors combine/combine_vec directly.
+            return self.node(22, ty, &[left, right], 0);
+        }
+        // vec2-float still has no vector-by-vector Mul row in section 14.
+        let left_x = self.node(81, ValueType::Float, &[left], 0);
+        let right_x = self.node(81, ValueType::Float, &[right], 0);
+        let x = self.node(22, ValueType::Float, &[left_x, right_x], 0);
+        let left_y = self.node(82, ValueType::Float, &[left], 0);
+        let right_y = self.node(82, ValueType::Float, &[right], 0);
+        let y = self.node(22, ValueType::Float, &[left_y, right_y], 0);
+        self.node(80, ty, &[x, y], 0)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -4446,7 +4550,7 @@ fn native_line_descriptor(
                 let mut payload = descriptor_common(property_type, 3, 0b11, 0.0, 0.0);
                 put_u32(&mut payload, regions.len() as u32);
                 for (index, region) in regions.iter().enumerate() {
-                    let root = expressions.emit(&dags[region.expression], constants)?;
+                    let root = expressions.emit_blend(&dags[region.expression], constants);
                     let child =
                         intern_descriptor(descriptors, expression_descriptor(property_type, root));
                     let start = if index == 0 { 0.0 } else { region.start };

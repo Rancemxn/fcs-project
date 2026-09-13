@@ -17,7 +17,10 @@ use fcs_fcbc::{
     DistanceClassification, EvaluationEnvironment, RuntimeValue, ValueType, load_chart,
     query_descriptor, query_distance, query_scroll_coordinate, write_from_compilation,
 };
-use fcs_model::{CanonicalCompilation, CanonicalDescriptorKind, CanonicalExpressionValue};
+use fcs_model::{
+    CanonicalCompilation, CanonicalDescriptorKind, CanonicalExpressionValue, CanonicalTrackTarget,
+    CanonicalTrackValue, CanonicalVec2,
+};
 use fcs_source::ResourceLimits;
 use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
@@ -668,4 +671,361 @@ fn native_unit_integer_scaling_matches_canonical_evaluator() {
             "angle scaling at s = {s}"
         );
     }
+}
+
+const UNIT_BEZIER_BLEND_SOURCE: &str = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        position: vec2(2px, 3px);
+        rotation: 0.25rad;
+        alpha: 0.0;
+        tracks {
+            track positionCover -> position: vec2<length> {
+                priority: 2;
+                fill: "base"; extrapolateBefore: "base"; extrapolateAfter: "base";
+                segments { [0s, 1s): vec2(4px, -2px) -> vec2(6px, 2px)
+                    using cubicBezier(0.5, 2.0, 0.5, 2.0); }
+            }
+            track positionShift -> position: vec2<length> {
+                blend: "add";
+                fill: "zero"; extrapolateBefore: "zero"; extrapolateAfter: "zero";
+                segments { [0s, 1s): vec2(0.5px, 1px) -> vec2(1.5px, -1px)
+                    using cubicBezier(0.5, 2.0, 0.5, 2.0); }
+            }
+            track positionFactor -> position: vec2<length> {
+                blend: "multiply";
+                fill: "one"; extrapolateBefore: "one"; extrapolateAfter: "one";
+                segments { [0s, 1s): vec2(1.5px, -2px) -> vec2(2.5px, 0.5px) using "linear"; }
+            }
+            track rotationCover -> rotation: angle {
+                priority: 2;
+                fill: "base"; extrapolateBefore: "base"; extrapolateAfter: "base";
+                segments { [0s, 1s): 0.25rad -> 0.5rad using cubicBezier(0.5, 2.0, 0.5, 2.0); }
+            }
+            track rotationShift -> rotation: angle {
+                blend: "add";
+                fill: "zero"; extrapolateBefore: "zero"; extrapolateAfter: "zero";
+                segments { [0s, 1s): -0.125rad -> 0.125rad using cubicBezier(0.5, 2.0, 0.5, 2.0); }
+            }
+            track rotationFactor -> rotation: angle {
+                blend: "multiply";
+                fill: "one"; extrapolateBefore: "one"; extrapolateAfter: "one";
+                segments { [0s, 1s): 1.5rad -> 2.5rad using "linear"; }
+            }
+            track alphaShift -> alpha: float {
+                blend: "add";
+                fill: "zero"; extrapolateBefore: "zero"; extrapolateAfter: "zero";
+                segments { [0s, 1s): 0.0 -> 1.0 using cubicBezier(0.5, 2.0, 0.5, 2.0); }
+            }
+        }
+    }
+}
+"#;
+
+fn numeric_bits(value: RuntimeValue) -> Vec<u64> {
+    match value {
+        RuntimeValue::Scalar { value, .. } => vec![value.to_bits()],
+        RuntimeValue::Vec2 { value, .. } => value.map(f64::to_bits).to_vec(),
+        value => panic!("unexpected numeric value {value:?}"),
+    }
+}
+
+#[test]
+fn native_unit_and_bezier_blends_match_runtime_and_reference_bits() {
+    for controls in [
+        "0.5, 2.0, 0.5, 2.0",
+        "0.0, 0.0, 1.0, 1.0",
+        "1.0, 0.0, 0.0, 1.0",
+        "0.25, 0.1, 0.25, 1.0",
+    ] {
+        let source = UNIT_BEZIER_BLEND_SOURCE.replace("0.5, 2.0, 0.5, 2.0", controls);
+        let compilation = compilation(&source);
+        let bytes = write_from_compilation(&compilation).unwrap();
+        let decoded = load_chart(&bytes).unwrap();
+        let reference = fcbc_reference_loader::load(&bytes).unwrap();
+        let line = &decoded.lines[0];
+        let reference_line = &reference.lines[0];
+        let tracks = compilation.chart().tracks();
+        let owner = tracks.tracks()[0].owner();
+        for (target, base, ty, descriptor, reference_descriptor) in [
+            (
+                CanonicalTrackTarget::Position,
+                CanonicalTrackValue::Vec2Length(CanonicalVec2::new(2.0, 3.0).unwrap()),
+                ValueType::Vec2Length,
+                line.position_descriptor,
+                reference_line.position_descriptor,
+            ),
+            (
+                CanonicalTrackTarget::Rotation,
+                CanonicalTrackValue::Angle(0.25),
+                ValueType::Angle,
+                line.rotation_descriptor,
+                reference_line.rotation_descriptor,
+            ),
+            (
+                CanonicalTrackTarget::Alpha,
+                CanonicalTrackValue::Float(0.0),
+                ValueType::Float,
+                line.alpha_descriptor,
+                reference_line.alpha_descriptor,
+            ),
+        ] {
+            for time in [
+                -1.0,
+                -0.0,
+                0.0,
+                0.0625,
+                0.125,
+                0.25,
+                0.5,
+                0.75,
+                1.0f64.next_down(),
+                1.0,
+                2.0,
+                0.5,
+            ] {
+                let expected =
+                    fcs_runtime::evaluate_track_set(tracks, owner, target, time, base).unwrap();
+                let expected = match expected {
+                    CanonicalTrackValue::Float(value) | CanonicalTrackValue::Angle(value) => {
+                        vec![value.to_bits()]
+                    }
+                    CanonicalTrackValue::Vec2Length(value) => {
+                        vec![value.x().to_bits(), value.y().to_bits()]
+                    }
+                    value => panic!("unexpected Track value {value:?}"),
+                };
+                let actual = evaluate(&decoded, descriptor, time);
+                assert_eq!(actual.value_type(), ty);
+                assert_eq!(
+                    numeric_bits(actual),
+                    expected,
+                    "{target:?} at {time}: {controls}"
+                );
+
+                let reference_value = fcbc_reference_evaluator::query_descriptor(
+                    &reference,
+                    reference_descriptor,
+                    time,
+                    fcbc_reference_evaluator::EvaluationEnvironment::at_time(time),
+                )
+                .unwrap()
+                .value;
+                assert_eq!(reference_value.value_type() as u8, ty as u8);
+                let reference_bits = match reference_value {
+                    fcbc_reference_loader::RuntimeValue::Scalar { value, .. } => {
+                        vec![value.to_bits()]
+                    }
+                    fcbc_reference_loader::RuntimeValue::Vec2 { value, .. } => {
+                        value.map(f64::to_bits).to_vec()
+                    }
+                    value => panic!("unexpected reference value {value:?}"),
+                };
+                assert_eq!(
+                    reference_bits, expected,
+                    "reference {target:?} at {time}: {controls}"
+                );
+            }
+        }
+        if controls == "0.5, 2.0, 0.5, 2.0" {
+            // x(1/2)=1/2 and y(1/2)=13/8 exactly. The typed blends below
+            // are hand-derived from that progress and the linear factors.
+            for (descriptor, expected) in [
+                (line.position_descriptor, vec![18.75f64, -1.6875]),
+                (line.rotation_descriptor, vec![1.875]),
+                (line.alpha_descriptor, vec![1.625]),
+            ] {
+                assert_eq!(
+                    numeric_bits(evaluate(&decoded, descriptor, 0.5)),
+                    expected.into_iter().map(f64::to_bits).collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+}
+
+/// Retains framing and repairs the CRC so mutations reach ABI validation.
+fn patch_expression_section(
+    bytes: &[u8],
+    section_type: u32,
+    patch: impl FnOnce(&mut [u8]),
+) -> Vec<u8> {
+    let container = fcs_fcbc::load_container(bytes).unwrap();
+    let (index, section) = container
+        .sections
+        .iter()
+        .enumerate()
+        .find(|(_, section)| section.section_type == section_type)
+        .unwrap();
+    let start = section.offset as usize;
+    let end = start + section.length as usize;
+    let mut bytes = bytes.to_vec();
+    patch(&mut bytes[start..end]);
+    let checksum = fcs_fcbc::section_crc32_iso_hdlc(&bytes[start..end]);
+    let entry =
+        container.header.section_table_offset as usize + index * fcs_fcbc::SECTION_ENTRY_SIZE;
+    bytes[entry + 32..entry + 36].copy_from_slice(&checksum.to_le_bytes());
+    bytes
+}
+
+fn assert_invalid_expression(bytes: &[u8]) {
+    assert_eq!(load_chart(bytes).unwrap_err(), "fcbc.invalid-expression");
+    assert_eq!(
+        fcbc_reference_loader::load(bytes).unwrap_err(),
+        "fcbc.invalid-expression"
+    );
+}
+
+#[test]
+fn native_bezier_expression_rejects_invalid_controls_and_signatures() {
+    let source = UNIT_BEZIER_BLEND_SOURCE.replace("0.5, 2.0, 0.5, 2.0", "0.25, 0.1, 0.75, 1.0");
+    for invalid_x in [-0.25, 1.25] {
+        // A legal Scale base supplies an out-of-range x constant without
+        // corrupting ConstantPool sort order or its Value encoding.
+        let source = source.replace(
+            "alpha: 0.0;",
+            &format!("alpha: 0.0; scale: vec2({invalid_x}, 0.0);"),
+        );
+        let bytes = compile(&source);
+        let decoded = load_chart(&bytes).unwrap();
+        let (index, curve) = decoded
+            .expressions
+            .iter()
+            .enumerate()
+            .find(|(_, node)| node.opcode == 64)
+            .unwrap();
+        let invalid_constant = decoded.constants.iter().position(|value| {
+            matches!(value, RuntimeValue::Vec2 { ty: ValueType::Vec2Float, value } if value[0] == invalid_x)
+        }).unwrap() as u32;
+        for operand in [1, 2] {
+            let control_index = curve.operands[operand] as usize;
+            let control = &decoded.expressions[control_index];
+            assert_eq!(control.opcode, 1);
+            assert_invalid_expression(&patch_expression_section(&bytes, 12, |section| {
+                let immediate = 4 + 20 * control_index + 16;
+                section[immediate..immediate + 4].copy_from_slice(&invalid_constant.to_le_bytes());
+            }));
+
+            for component in [0, 1] {
+                for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                    assert_invalid_expression(&patch_expression_section(&bytes, 2, |section| {
+                        let mut offset = 4;
+                        for _ in 0..control.immediate {
+                            let length = u32::from_le_bytes(
+                                section[offset + 4..offset + 8].try_into().unwrap(),
+                            ) as usize;
+                            offset += (8 + length).next_multiple_of(8);
+                        }
+                        assert_eq!(section[offset], 10);
+                        assert_eq!(section[offset + 8], 3);
+                        let at = offset + 16 + component * 8;
+                        section[at..at + 8].copy_from_slice(&invalid.to_le_bytes());
+                    }));
+                }
+            }
+
+            // A computed vec2-float has the right type but is not a Constant.
+            assert!(curve.operands[0] < control_index as u32);
+            assert_invalid_expression(&patch_expression_section(&bytes, 12, |section| {
+                let at = 4 + 20 * control_index;
+                section[at..at + 2].copy_from_slice(&80u16.to_le_bytes());
+                section[at + 3] = 2;
+                section[at + 4..at + 8].copy_from_slice(&curve.operands[0].to_le_bytes());
+                section[at + 8..at + 12].copy_from_slice(&curve.operands[0].to_le_bytes());
+                section[at + 16..at + 20].copy_from_slice(&0u32.to_le_bytes());
+            }));
+        }
+        for (field, replacement) in [
+            (0, 65u16.to_le_bytes().to_vec()),
+            (2, vec![ValueType::Angle as u8]),
+            (3, vec![2]),
+            (4, curve.operands[1].to_le_bytes().to_vec()),
+            (16, 1u32.to_le_bytes().to_vec()),
+        ] {
+            assert_invalid_expression(&patch_expression_section(&bytes, 12, |section| {
+                let at = 4 + 20 * index + field;
+                section[at..at + replacement.len()].copy_from_slice(&replacement);
+            }));
+        }
+    }
+}
+
+#[test]
+fn native_unit_mul_rejects_mixed_units_and_wrong_results() {
+    let bytes = compile(UNIT_BEZIER_BLEND_SOURCE);
+    let decoded = load_chart(&bytes).unwrap();
+    for ty in [ValueType::Angle, ValueType::Vec2Length] {
+        let (index, _) = decoded
+            .expressions
+            .iter()
+            .enumerate()
+            .rfind(|(_, node)| {
+                node.opcode == 22
+                    && node.result_type == ty
+                    && node.operands[..2]
+                        .iter()
+                        .all(|operand| decoded.expressions[*operand as usize].result_type == ty)
+            })
+            .unwrap();
+        let wrong_operand = decoded.expressions[..index]
+            .iter()
+            .position(|node| {
+                node.result_type
+                    == if ty == ValueType::Angle {
+                        ValueType::Time
+                    } else {
+                        ValueType::Vec2Float
+                    }
+            })
+            .unwrap() as u32;
+        assert_invalid_expression(&patch_expression_section(&bytes, 12, |section| {
+            let at = 4 + 20 * index + 8;
+            section[at..at + 4].copy_from_slice(&wrong_operand.to_le_bytes());
+        }));
+        assert_invalid_expression(&patch_expression_section(&bytes, 12, |section| {
+            section[4 + 20 * index + 2] = ValueType::Float as u8;
+        }));
+    }
+}
+
+#[test]
+fn native_bezier_blend_propagates_uncertified_solver_errors() {
+    let source = UNIT_BEZIER_BLEND_SOURCE.replace("0.5, 2.0, 0.5, 2.0", "0.25, 0.5, 0.75, 5e-324");
+    let compilation = compilation(&source);
+    let bytes = write_from_compilation(&compilation).unwrap();
+    let decoded = load_chart(&bytes).unwrap();
+    let reference = fcbc_reference_loader::load(&bytes).unwrap();
+    let tracks = compilation.chart().tracks();
+    assert!(
+        fcs_runtime::evaluate_track_set(
+            tracks,
+            tracks.tracks()[0].owner(),
+            CanonicalTrackTarget::Alpha,
+            0.25,
+            CanonicalTrackValue::Float(0.0),
+        )
+        .is_err()
+    );
+    assert_eq!(
+        query_descriptor(
+            &decoded,
+            decoded.lines[0].alpha_descriptor,
+            0.25,
+            EvaluationEnvironment::at_time(0.25),
+        )
+        .unwrap_err(),
+        "fcbc.execution-error"
+    );
+    assert_eq!(
+        fcbc_reference_evaluator::query_descriptor(
+            &reference,
+            reference.lines[0].alpha_descriptor,
+            0.25,
+            fcbc_reference_evaluator::EvaluationEnvironment::at_time(0.25),
+        )
+        .unwrap_err(),
+        "fcbc.execution-error"
+    );
 }
