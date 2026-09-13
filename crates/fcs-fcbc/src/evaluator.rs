@@ -503,6 +503,27 @@ fn evaluate_node(
             let value = scalar_payload(&operand(0, visited_nodes, memo)?)?;
             scalar(ValueType::Float, value)?
         }
+        64 => {
+            let progress = scalar_payload(&operand(0, visited_nodes, memo)?)?;
+            let RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Float,
+                value: [x1, y1],
+            } = operand(1, visited_nodes, memo)?
+            else {
+                return Err(EXECUTION_ERROR);
+            };
+            let RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Float,
+                value: [x2, y2],
+            } = operand(2, visited_nodes, memo)?
+            else {
+                return Err(EXECUTION_ERROR);
+            };
+            scalar(
+                ValueType::Float,
+                cubic_bezier_progress([x1, y1, x2, y2], progress)?,
+            )?
+        }
         70 => {
             if boolean(&operand(0, visited_nodes, memo)?)? {
                 operand(1, visited_nodes, memo)?
@@ -567,11 +588,7 @@ fn arithmetic(
             let (result_type, result) = match operation {
                 Arithmetic::Add if left_type == right_type => (left_type, left + right),
                 Arithmetic::Subtract if left_type == right_type => (left_type, left - right),
-                Arithmetic::Multiply
-                    if left_type == right_type && left_type == ValueType::Float =>
-                {
-                    (ValueType::Float, left * right)
-                }
+                Arithmetic::Multiply if left_type == right_type => (left_type, left * right),
                 Arithmetic::Multiply if right_type == ValueType::Float => (left_type, left * right),
                 Arithmetic::Multiply if left_type == ValueType::Float => (right_type, left * right),
                 Arithmetic::Divide if right_type == ValueType::Float => (left_type, left / right),
@@ -603,10 +620,15 @@ fn arithmetic(
                 ty: right_type,
                 value: [right_x, right_y],
             },
-        ) if ty == right_type && matches!(operation, Arithmetic::Add | Arithmetic::Subtract) => {
+        ) if ty == right_type
+            && (matches!(operation, Arithmetic::Add | Arithmetic::Subtract)
+                || matches!(operation, Arithmetic::Multiply)
+                    && ty.vector_element().is_some_and(is_unit_scalar)) =>
+        {
             let apply = |left: f64, right: f64| match operation {
                 Arithmetic::Add => left + right,
                 Arithmetic::Subtract => left - right,
+                Arithmetic::Multiply => left * right,
                 _ => unreachable!(),
             };
             vector(ty, [apply(left_x, right_x), apply(left_y, right_y)])
@@ -1662,6 +1684,93 @@ mod tests {
         );
         assert!(query(&mut chart, 22, ValueType::Float, float_two, three).is_err());
         assert!(query(&mut chart, 22, ValueType::Float, three, float_two).is_err());
+    }
+
+    #[test]
+    fn same_unit_mul_rounds_each_payload_once() {
+        for (ty, vector_ty) in [
+            (ValueType::Time, ValueType::Vec2Time),
+            (ValueType::Beat, ValueType::Vec2Beat),
+            (ValueType::Length, ValueType::Vec2Length),
+            (ValueType::Angle, ValueType::Vec2Angle),
+        ] {
+            // Multiplying these adjacent payloads by 1.5 lands exactly at
+            // midpoints with opposite parity; each must choose the even bit.
+            for (left, expected_bits) in [
+                (f64::from_bits(0x3ff0_0000_0000_0001), 0x3ff8_0000_0000_0002),
+                (f64::from_bits(0x3ff0_0000_0000_0003), 0x3ff8_0000_0000_0004),
+                (-0.0, (-0.0f64).to_bits()),
+                (f64::from_bits(1), 2),
+            ] {
+                let result = arithmetic(
+                    RuntimeValue::Scalar { ty, value: left },
+                    RuntimeValue::Scalar { ty, value: 1.5 },
+                    Arithmetic::Multiply,
+                )
+                .unwrap();
+                let RuntimeValue::Scalar {
+                    ty: actual_ty,
+                    value,
+                } = result
+                else {
+                    panic!("unit scalar Mul result");
+                };
+                assert_eq!(actual_ty, ty);
+                assert_eq!(value.to_bits(), expected_bits);
+            }
+            let result = arithmetic(
+                RuntimeValue::Vec2 {
+                    ty: vector_ty,
+                    value: [
+                        f64::from_bits(0x3ff0_0000_0000_0001),
+                        f64::from_bits(0x3ff0_0000_0000_0003),
+                    ],
+                },
+                RuntimeValue::Vec2 {
+                    ty: vector_ty,
+                    value: [1.5, 1.5],
+                },
+                Arithmetic::Multiply,
+            )
+            .unwrap();
+            let RuntimeValue::Vec2 {
+                ty: actual_ty,
+                value,
+            } = result
+            else {
+                panic!("unit vector Mul result");
+            };
+            assert_eq!(actual_ty, vector_ty);
+            assert_eq!(
+                value.map(f64::to_bits),
+                [0x3ff8_0000_0000_0002, 0x3ff8_0000_0000_0004]
+            );
+            assert!(
+                arithmetic(
+                    RuntimeValue::Scalar {
+                        ty,
+                        value: f64::MAX
+                    },
+                    RuntimeValue::Scalar { ty, value: 2.0 },
+                    Arithmetic::Multiply,
+                )
+                .is_err()
+            );
+            assert!(
+                arithmetic(
+                    RuntimeValue::Vec2 {
+                        ty: vector_ty,
+                        value: [0.0, f64::MAX]
+                    },
+                    RuntimeValue::Vec2 {
+                        ty: vector_ty,
+                        value: [1.0, 2.0]
+                    },
+                    Arithmetic::Multiply,
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]

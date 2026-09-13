@@ -351,6 +351,7 @@ name = "fcs-fcbc"
 version = "5.0.0"
 dependencies = [
  "crc",
+ "fcs-conversion",
  "fcs-model",
  "fcs-runtime",
  "fcs-source",

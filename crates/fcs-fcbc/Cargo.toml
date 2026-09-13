@@ -12,6 +12,7 @@ fcs-runtime = { path = "../fcs-runtime" }
 sha2.workspace = true
 
 [dev-dependencies]
+fcs-conversion = { path = "../fcs-conversion" }
 fcs-source = { path = "../fcs-source" }
 serde = { workspace = true, features = ["derive"] }
 tempfile.workspace = true
