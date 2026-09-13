@@ -2347,13 +2347,83 @@ lines {
         .value;
         assert_runtime_value_bits(actual, track_runtime_value(expected));
     }
-    // The Distance boundary table covers the blended contribution's piece
-    // times. Direct integration of an Expression descriptor is not part of
-    // this change; the speed descriptor itself is evaluated above.
+    // Integral of 1.5 + t/4 on [0, 2]; the base speed is 1 outside it.
+    for (time, expected) in [
+        (-1.0, -1.0),
+        (0.0, 0.0),
+        (1.0, 1.625),
+        (2.0, 3.5),
+        (3.0, 4.5),
+        (1.0, 1.625),
+    ] {
+        let distance = crate::query_distance(&decoded, line.distance_descriptor, time)
+            .expect("native blended speed must support direct distance queries");
+        assert_eq!(
+            distance.classification,
+            crate::DistanceClassification::PortableEvaluable
+        );
+        assert!((distance.floor_position - expected).abs() <= 2.328_306_436_538_696_3e-10);
+    }
     assert_eq!(
         decoded.distances[line.distance_descriptor as usize].boundaries,
         [0.0, 2.0]
     );
+}
+
+#[test]
+fn native_eased_and_bezier_scroll_speeds_support_direct_distance_queries() {
+    for (interpolation, at_one, at_two) in [
+        ("\"easeInQuad\"", 13.0 / 12.0, 8.0 / 3.0),
+        ("cubicBezier(0.0, 0.0, 1.0, 1.0)", 1.25, 3.0),
+        ("cubicBezier(0.25, 0.0, 0.75, 1.0)", 77.0 / 64.0, 3.0),
+    ] {
+        let source = format!(
+            r#"#fcs 5.0.0
+format {{ profile: chart; }}
+tempoMap {{ 0beat -> 120bpm; }}
+lines {{ line main {{
+    scrollTempoMap {{ 0s -> 60bpm; }}
+    tracks {{ track speed -> scrollSpeed: float {{
+        extrapolateBefore: "holdBefore";
+        extrapolateAfter: "holdAfter";
+        segments {{ [0s, 2s): 1.0 -> 2.0 using {interpolation}; }}
+    }} }}
+}} }}
+"#
+        );
+        let (_, decoded, _, _) = composed_chart(&source);
+        let distance = decoded.lines[0].distance_descriptor;
+        // easeInQuad integrates 1 + t^2/4; the Bezier has x(u) == y(u),
+        // so it integrates 1 + t/2. For the non-linear Bezier, integrate
+        // Y(u)*X'(u) over u=[0,1/2] to get 13/128; symmetry gives its full
+        // area 1/2. All three use constant endpoint holds.
+        for (time, expected) in [
+            (-1.0, -1.0),
+            (0.0, 0.0),
+            (1.0, at_one),
+            (2.0, at_two),
+            (3.0, at_two + 2.0),
+            (1.0, at_one),
+        ] {
+            let actual = crate::query_distance(&decoded, distance, time)
+                .expect("accepted eased speed must have an executable Distance");
+            assert_eq!(
+                actual.classification,
+                crate::DistanceClassification::PortableEvaluable
+            );
+            assert!(
+                (actual.floor_position - expected).abs() <= 2.328_306_436_538_696_3e-10,
+                "{interpolation} at {time}: {} != {expected}",
+                actual.floor_position
+            );
+        }
+        let first = crate::query_distance(&decoded, distance, 1.0).unwrap();
+        crate::query_distance(&decoded, distance, -1.0).unwrap();
+        assert_eq!(
+            first,
+            crate::query_distance(&decoded, distance, 1.0).unwrap()
+        );
+    }
 }
 
 #[test]

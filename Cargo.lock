@@ -350,6 +350,7 @@ dependencies = [
 name = "fcs-fcbc"
 version = "5.0.0"
 dependencies = [
+ "astro-float",
  "crc",
  "fcs-model",
  "fcs-runtime",

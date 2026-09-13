@@ -493,6 +493,51 @@ fn exact_bezier_progress([x1, y1, x2, y2]: [f64; 4], progress: f64) -> Result<Op
     Ok(None)
 }
 
+/// Outward binary64 bounds on the exact parameter solving x(t) = progress.
+/// Distance enclosures reuse the same exact polynomial arithmetic as the
+/// point evaluator. The result is a bracket, not an approximate point value.
+pub fn cubic_bezier_parameter_bounds(
+    [x1, x2]: [f64; 2],
+    progress: f64,
+) -> Result<[f64; 2], TrackEvaluationError> {
+    if [x1, x2, progress]
+        .into_iter()
+        .any(|value| !value.is_finite() || !(0.0..=1.0).contains(&value))
+    {
+        return Err(TrackEvaluationError::InvalidBezier);
+    }
+    if progress == 0.0 || progress == 1.0 {
+        return Ok([progress; 2]);
+    }
+    let enclose = || -> Result<[f64; 2], ()> {
+        let controls = [0.0, x1, x2, 1.0].map(Expansion::from_f64);
+        let expected = Expansion::from_f64(progress);
+        let mut lower = Expansion::from_f64(0.0);
+        let mut upper = Expansion::from_f64(1.0);
+        for _ in 0..MAX_BEZIER_REFINEMENTS {
+            let midpoint = lower.add(&upper)?.scale(0.5)?;
+            match cubic_value(&controls, &midpoint)?.sub(&expected)?.sign() {
+                Ordering::Less => lower = midpoint,
+                Ordering::Greater => upper = midpoint,
+                Ordering::Equal => {
+                    lower = midpoint.clone();
+                    upper = midpoint;
+                }
+            }
+            let lo = lower.round()?;
+            let hi = upper.round()?;
+            if lo.next_up() >= hi {
+                return Ok([lo.next_down().max(0.0), hi.next_up().min(1.0)]);
+            }
+        }
+        Ok([
+            lower.round()?.next_down().max(0.0),
+            upper.round()?.next_up().min(1.0),
+        ])
+    };
+    enclose().map_err(|_| TrackEvaluationError::BezierEnclosureUnavailable)
+}
+
 fn certify_bezier_interval(
     controls: &[Expansion; 4],
     lower: &Expansion,

@@ -19,7 +19,7 @@
 
 | Cargo package | 精确版本 | 发布 Git SHA | 计划用途 |
 |---|---:|---|---|
-| `astro-float` | 0.9.5 | `6f76df1844b9af432b398e3e2e408bda894b2973` | I4.8 dev-only 高精度独立数值 oracle；不进入 production evaluator |
+| `astro-float` | 0.9.5 | `6f76df1844b9af432b398e3e2e408bda894b2973` | I4.8 高精度数值 oracle；I10 FCBC direct Distance 积分的定向误差包络与高精度累加 |
 | `bitflags` | 2.13.1 | `f92a2921b41644b02ca5d50a6ace542e309e6a6f` | I7/I9 checked wire flag types；未知位仍由 loader/profile 明确拒绝或保留 |
 | `chumsky` | 0.11.2 | `47eb15575a90d2fe40ae5450b49e484bafe138d9` | I0-I2 source lexer/parser/error recovery；不定义 grammar |
 | `clap` | 4.6.1 | `ac5fda6a799e4c640d671edd1111d4a5e723dc1a` | I10 CLI 参数结构；stable exit/diagnostic schema 由项目定义 |
@@ -62,8 +62,11 @@ toolchain 和 full gate 为实际兼容性证据。
 | `ttf-parser` 0.25.1 | `default-features = false` | MIT OR Apache-2.0 | 1.63.0 | 无必需运行时依赖；不得隐式激活 OpenType/Apple layout、variable-font、glyph-name 或 std profile |
 | `thiserror` 2.0.19 | default `std` | MIT OR Apache-2.0 | 1.71 | `thiserror-impl` 2.0.19 及其 proc-macro 闭包；derive output 不能改变稳定 diagnostic surface |
 
-`astro-float` 在 I4.8、`proptest` 在 I4.9 进入 `fcs-runtime` dev graph；两者都不进入 production
-dependency tree。I5.3 复用 `fcs-model` 已激活的 `sha2` 0.11.0 计算 exact resource bytes digest，并将
+`astro-float` 在 I4.8、`proptest` 在 I4.9 进入 `fcs-runtime` dev graph。I10 corrective #652 将同版本、
+同 feature 的 `astro-float` 激活到 `fcs-fcbc` production graph，用于 portable-evaluable Distance 的
+定向初等函数 bounds 与高精度求和；逐 node binary64 运算、Line-local environment、boundary、
+reverse policy、error bound 和公开 evaluation/depth budget 仍由 Execution ABI 与项目实现约束。
+`proptest` 继续仅用于 dev graph。I5.3 复用 `fcs-model` 已激活的 `sha2` 0.11.0 计算 exact resource bytes digest，并将
 `tempfile` 3.27.0 仅加入 `fcs-source` dev graph，以隔离 workspace/symlink/非普通文件测试；resolver
 production graph 不依赖 `tempfile`。`clap` 已由 I10 CLI 激活到 `fcs-cli`，`ryu` 已由 I8 转换
 激活到 `fcs-conversion`，`ttf-parser` 已由 I9 Render 激活到 `fcs-render`；`bitflags`、`num_enum`、
