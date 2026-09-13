@@ -8,6 +8,7 @@ use std::collections::BinaryHeap;
 
 /// One budget covers all panels, DAG entries and nested Line-local q queries.
 pub const MAX_INTEGRATION_EVALUATIONS: usize = 65_536;
+/// Maximum adaptive bisections below one known graph boundary interval.
 pub const MAX_INTEGRATION_DEPTH: usize = 64;
 const ABSOLUTE_ERROR: f64 = 2.328_306_436_538_696_3e-10;
 const COORDINATE_ERROR: f64 = 5.684_341_886_080_802e-14;
@@ -31,7 +32,7 @@ pub(super) fn distance(
         )?
         .bound
         .ok_or(EXECUTION_ERROR)?;
-    let bound = query.integrate(
+    let (_, value) = query.integrate(
         Some((line.scroll_speed_descriptor, line.line_flags & 1 != 0)),
         descriptor.integration_origin,
         time,
@@ -39,7 +40,7 @@ pub(super) fn distance(
         ABSOLUTE_ERROR,
     )?;
     Ok(DistanceEvaluation {
-        floor_position: normalized_midpoint(bound),
+        floor_position: value,
         classification: descriptor.classification,
         visited_nodes: query.visited_nodes,
     })
@@ -64,13 +65,8 @@ pub(super) fn coordinate(chart: &DecodedChart, tempo: u32, time: f64) -> Result<
     )
     .map_err(|_| EXECUTION_ERROR)?;
     let mut query = Query::new(chart, tempo, &boundaries)?;
-    let bound = query.integrate(None, 0.0, time, 0.0, COORDINATE_ERROR)?;
-    Ok(normalized_midpoint(bound))
-}
-
-fn normalized_midpoint(bound: Bounds) -> f64 {
-    let value = bound.midpoint();
-    if value == 0.0 { 0.0 } else { value }
+    let (_, value) = query.integrate(None, 0.0, time, 0.0, COORDINATE_ERROR)?;
+    Ok(value)
 }
 
 fn tolerance(bound: Bounds, absolute: f64) -> f64 {
@@ -124,38 +120,63 @@ impl<'a> Query<'a> {
     ) -> Result<Panel, &'static str> {
         self.charge()?;
         let bound = PanelEvaluator::new(self, start, end).and_then(|mut evaluator| {
-            let tempo = evaluator
-                .descriptor(evaluator.query.tempo, Taylor::constant(0.0), false, 0)?
-                .float()?;
-            if tempo.range().finite()?.lo <= 0.0 {
-                return None;
-            }
-            evaluator.tempo = Some(tempo);
-            let integrand = if let Some((root, allow_reverse)) = speed {
-                let speed = evaluator
-                    .descriptor(root, Taylor::constant(0.0), true, 0)?
-                    .float()?;
-                if !allow_reverse && speed.range().finite()?.lo < 0.0 {
-                    return None;
-                }
-                // These are separate ABI binary64 nodes, in the specified order.
-                (speed * tempo).divide(Taylor::constant(60.0))?
-            } else {
-                // q is the integral of BPM / 60, not a sampled Distance root.
-                tempo.scale(Bounds::point(1.0) / Bounds::point(60.0))
-            };
+            let integrand = evaluator.integrand(speed)?;
             integrand.range().finite()?;
-            integrand.integral(start, end).finite()
+            let integral = integrand.integral(start, end);
+            if speed.is_some() {
+                integral.finite()
+            } else {
+                (integral / Bounds::point(60.0)).finite()
+            }
         });
-        if self.evaluations >= MAX_INTEGRATION_EVALUATIONS {
-            return Err(EXECUTION_ERROR);
-        }
+        let estimate = if bound.is_some() && start != end {
+            self.estimate(speed, start, end)?
+        } else {
+            BigFloat::from_f64(0.0, PRECISION)
+        };
         Ok(Panel {
             start,
             end,
             depth,
             bound,
+            estimate,
         })
+    }
+
+    fn estimate(
+        &mut self,
+        speed: Option<(u32, bool)>,
+        start: f64,
+        end: f64,
+    ) -> Result<BigFloat, &'static str> {
+        // An open degree-three rule supplies the candidate, avoiding endpoint
+        // discontinuities. Only the independent whole-panel enclosure certifies it.
+        let mut sum = BigFloat::from_f64(0.0, PRECISION);
+        for (fraction, weight) in [(0.25, 2.0), (0.5, -1.0), (0.75, 2.0)] {
+            self.charge()?;
+            let time = start * (1.0 - fraction) + end * fraction;
+            let value = PanelEvaluator::new(self, time, time)
+                .and_then(|mut evaluator| evaluator.integrand(speed))
+                .and_then(|value| value.range().finite())
+                .ok_or(EXECUTION_ERROR)?
+                .midpoint();
+            let term = BigFloat::from_f64(value, PRECISION).mul(
+                &BigFloat::from_f64(weight, PRECISION),
+                PRECISION,
+                RoundingMode::ToEven,
+            );
+            sum = sum.add(&term, PRECISION, RoundingMode::ToEven);
+        }
+        let width = BigFloat::from_f64(end, PRECISION).sub(
+            &BigFloat::from_f64(start, PRECISION),
+            PRECISION,
+            RoundingMode::ToEven,
+        );
+        Ok(sum.mul(&width, PRECISION, RoundingMode::ToEven).div(
+            &BigFloat::from_f64(if speed.is_some() { 3.0 } else { 180.0 }, PRECISION),
+            PRECISION,
+            RoundingMode::ToEven,
+        ))
     }
 
     fn integrate(
@@ -165,12 +186,12 @@ impl<'a> Query<'a> {
         time: f64,
         initial: f64,
         absolute: f64,
-    ) -> Result<Bounds, &'static str> {
+    ) -> Result<(Bounds, f64), &'static str> {
         if !origin.is_finite() || !time.is_finite() || !initial.is_finite() {
             return Err(EXECUTION_ERROR);
         }
         if time == origin {
-            return Ok(Bounds::point(initial));
+            return Ok((Bounds::point(initial), initial));
         }
         let (start, end) = (origin.min(time), origin.max(time));
         let reverse = time < origin;
@@ -186,7 +207,7 @@ impl<'a> Query<'a> {
                 continue;
             }
             let panel = self.panel(speed, previous, boundary, 0)?;
-            total.update(panel.bound, false);
+            total.update(&panel, false);
             uncertain += usize::from(panel.bound.is_none());
             heap.push(panel);
             previous = boundary;
@@ -196,19 +217,18 @@ impl<'a> Query<'a> {
         }
         if previous < end {
             let panel = self.panel(speed, previous, end, 0)?;
-            total.update(panel.bound, false);
+            total.update(&panel, false);
             uncertain += usize::from(panel.bound.is_none());
             heap.push(panel);
         }
         loop {
             if uncertain == 0 {
-                let bound = total
+                let (bound, value) = total
                     .absolute(initial, reverse, &mut self.math)
                     .ok_or(EXECUTION_ERROR)?;
-                let midpoint = bound.midpoint();
-                let error = (midpoint - bound.lo).max(bound.hi - midpoint).next_up();
+                let error = (value - bound.lo).max(bound.hi - value).next_up();
                 if error <= tolerance(bound, absolute) {
-                    return Ok(bound);
+                    return Ok((bound, value));
                 }
             }
             let panel = heap.pop().ok_or(EXECUTION_ERROR)?;
@@ -217,11 +237,11 @@ impl<'a> Query<'a> {
             {
                 return Err(EXECUTION_ERROR);
             }
-            total.update(panel.bound, true);
+            total.update(&panel, true);
             uncertain -= usize::from(panel.bound.is_none());
             for (start, end) in [(panel.start, middle), (middle, panel.end)] {
                 let child = self.panel(speed, start, end, panel.depth + 1)?;
-                total.update(child.bound, false);
+                total.update(&child, false);
                 uncertain += usize::from(child.bound.is_none());
                 heap.push(child);
             }
@@ -232,6 +252,7 @@ impl<'a> Query<'a> {
 struct Sum {
     lower: BigFloat,
     upper: BigFloat,
+    estimate: BigFloat,
 }
 
 impl Sum {
@@ -239,11 +260,12 @@ impl Sum {
         Self {
             lower: BigFloat::from_f64(0.0, PRECISION),
             upper: BigFloat::from_f64(0.0, PRECISION),
+            estimate: BigFloat::from_f64(0.0, PRECISION),
         }
     }
 
-    fn update(&mut self, bound: Option<Bounds>, subtract: bool) {
-        let Some(bound) = bound else {
+    fn update(&mut self, panel: &Panel, subtract: bool) {
+        let Some(bound) = panel.bound else {
             return;
         };
         let lower = BigFloat::from_f64(bound.lo, PRECISION);
@@ -251,13 +273,19 @@ impl Sum {
         if subtract {
             self.lower = self.lower.sub(&lower, PRECISION, RoundingMode::Down);
             self.upper = self.upper.sub(&upper, PRECISION, RoundingMode::Up);
+            self.estimate = self
+                .estimate
+                .sub(&panel.estimate, PRECISION, RoundingMode::ToEven);
         } else {
             self.lower = self.lower.add(&lower, PRECISION, RoundingMode::Down);
             self.upper = self.upper.add(&upper, PRECISION, RoundingMode::Up);
+            self.estimate = self
+                .estimate
+                .add(&panel.estimate, PRECISION, RoundingMode::ToEven);
         }
     }
 
-    fn absolute(&self, initial: f64, reverse: bool, math: &mut Math) -> Option<Bounds> {
+    fn absolute(&self, initial: f64, reverse: bool, math: &mut Math) -> Option<(Bounds, f64)> {
         let initial = BigFloat::from_f64(initial, PRECISION);
         let (lower, upper) = if reverse {
             (
@@ -270,11 +298,18 @@ impl Sum {
                 initial.add(&self.upper, PRECISION, RoundingMode::Up),
             )
         };
-        Bounds {
+        let estimate = if reverse {
+            initial.sub(&self.estimate, PRECISION, RoundingMode::ToEven)
+        } else {
+            initial.add(&self.estimate, PRECISION, RoundingMode::ToEven)
+        };
+        let value = math.float_round(&estimate)?;
+        let bound = Bounds {
             lo: math.float_bound(&lower, true)?,
             hi: math.float_bound(&upper, false)?,
         }
-        .finite()
+        .finite()?;
+        Some((bound, if value == 0.0 { 0.0 } else { value }))
     }
 }
 
@@ -283,6 +318,7 @@ struct Panel {
     end: f64,
     depth: usize,
     bound: Option<Bounds>,
+    estimate: BigFloat,
 }
 
 impl Panel {
@@ -323,7 +359,13 @@ struct PanelEvaluator<'a, 'q> {
 
 impl<'a, 'q> PanelEvaluator<'a, 'q> {
     fn new(query: &'q mut Query<'a>, start: f64, end: f64) -> Option<Self> {
-        let time = Taylor::variable(start, end);
+        let time = if start == end {
+            Taylor::constant(start)
+        } else {
+            Taylor::variable(start, end)
+                .rounded()
+                .with_bound(Bounds { lo: start, hi: end })
+        };
         let first = query.chart.tempo_points.first()?;
         let point = query
             .chart
@@ -345,6 +387,29 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
         })
     }
 
+    fn integrand(&mut self, speed: Option<(u32, bool)>) -> Option<Taylor> {
+        let tempo = self
+            .descriptor(self.query.tempo, Taylor::constant(0.0), false, 0)?
+            .float()?;
+        if tempo.range().finite()?.lo <= 0.0 {
+            return None;
+        }
+        self.tempo = Some(tempo);
+        if let Some((root, allow_reverse)) = speed {
+            let speed = self
+                .descriptor(root, Taylor::constant(0.0), true, 0)?
+                .float()?;
+            if !allow_reverse && speed.range().finite()?.lo < 0.0 {
+                return None;
+            }
+            // These are separate ABI binary64 nodes, in the specified order.
+            (speed * tempo).divide(Taylor::constant(60.0))
+        } else {
+            // q integrates BPM in real arithmetic, then divides by 60.
+            Some(tempo)
+        }
+    }
+
     fn coordinate(&mut self) -> Option<Taylor> {
         if let Some(value) = self.coordinate {
             return Some(value);
@@ -353,7 +418,8 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
         let center = self
             .query
             .integrate(None, 0.0, middle, 0.0, COORDINATE_ERROR)
-            .ok()?;
+            .ok()?
+            .0;
         let tempo = self.tempo?;
         let mut value = Taylor::enclosed(center)
             .real_add(
@@ -577,7 +643,32 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
         let float = |index: usize| values.get(index)?.float();
         let truth = Value::truth;
         if node.result_type == ValueType::Int {
+            if matches!(node.opcode, 81 | 82) {
+                let (lo, hi) = values[0].integer_components()?[usize::from(node.opcode == 82)];
+                return Some(Value::integer(lo, hi));
+            }
             return integer_operation(node.opcode, values);
+        }
+        if node.result_type == ValueType::Vec2Int {
+            if node.opcode == 80 {
+                return Some(Value::IntVector([
+                    values[0].integers()?,
+                    values[1].integers()?,
+                ]));
+            }
+            let left = values[0].integer_components()?;
+            let right = values[1].integer_components()?;
+            let apply = |i: usize| {
+                integer_operation(
+                    node.opcode,
+                    &[
+                        Value::integer(left[i].0, left[i].1),
+                        Value::integer(right[i].0, right[i].1),
+                    ],
+                )?
+                .integers()
+            };
+            return Some(Value::IntVector([apply(0)?, apply(1)?]));
         }
         let result = match node.opcode {
             10 => Value::Float(-float(0)?),
@@ -601,12 +692,12 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
             25 => Value::Float(self.query.math.power(float(0)?, float(1)?)?),
             30..=35 => truth(comparison(&values[0], &values[1], node.opcode)?),
             38 => {
-                let tolerance = float(2)?.range();
+                let tolerance = float(2)?.range().finite()?;
                 if tolerance.lo < 0.0 {
                     return None;
                 }
                 let difference = absolute(float(0)? - float(1)?);
-                truth(compare_bounds(difference.range(), tolerance, 33))
+                truth(compare_bounds(difference.range().finite()?, tolerance, 33))
             }
             40 => Value::Float(absolute(float(0)?)),
             41 | 42 => Value::Float(min_max(float(0)?, float(1)?, node.opcode == 42)),
@@ -636,10 +727,20 @@ enum Value {
     Float(Taylor),
     Vector([Taylor; 2]),
     Integer { lo: i64, hi: i64 },
+    IntVector([(i64, i64); 2]),
+    Color([Bounds; 4]),
     UnknownBool,
 }
 
 impl Value {
+    fn integer(lo: i64, hi: i64) -> Self {
+        if lo == hi {
+            Self::Exact(RuntimeValue::Int(lo))
+        } else {
+            Self::Integer { lo, hi }
+        }
+    }
+
     fn truth(value: Option<bool>) -> Self {
         value.map_or(Self::UnknownBool, |value| {
             Self::Exact(RuntimeValue::Bool(value))
@@ -675,6 +776,22 @@ impl Value {
         }
     }
 
+    fn integer_components(&self) -> Option<[(i64, i64); 2]> {
+        match self {
+            Self::IntVector(values) => Some(*values),
+            Self::Exact(RuntimeValue::Vec2Int(values)) => Some(values.map(|value| (value, value))),
+            _ => self.integers().map(|value| [value; 2]),
+        }
+    }
+
+    fn colors(&self) -> Option<[Bounds; 4]> {
+        match self {
+            Self::Color(values) => Some(*values),
+            Self::Exact(RuntimeValue::Color(values)) => Some(values.map(Bounds::point)),
+            _ => None,
+        }
+    }
+
     fn components(&self) -> Option<[Taylor; 2]> {
         match self {
             Self::Vector(values) => Some(*values),
@@ -694,6 +811,12 @@ impl Value {
                 }
             }
             Self::Integer { lo, hi } if lo > hi => return None,
+            Self::IntVector(values) if values.iter().any(|(lo, hi)| lo > hi) => return None,
+            Self::Color(values) => {
+                for value in values {
+                    value.finite()?;
+                }
+            }
             _ => {}
         }
         Some(())
@@ -703,31 +826,67 @@ impl Value {
         if let (Self::Exact(left), Self::Exact(right)) = (&self, &other)
             && left == right
         {
-            return Some(self);
+            let mixed_zero = match (left, right) {
+                (RuntimeValue::Scalar { value: a, .. }, RuntimeValue::Scalar { value: b, .. }) => {
+                    a.to_bits() != b.to_bits()
+                }
+                (RuntimeValue::Vec2 { value: a, .. }, RuntimeValue::Vec2 { value: b, .. }) => {
+                    a.iter().zip(b).any(|(a, b)| a.to_bits() != b.to_bits())
+                }
+                _ => false,
+            };
+            if !mixed_zero {
+                return Some(self);
+            }
         }
         if let (Some(left), Some(right)) = (self.integers(), other.integers()) {
-            return Some(Self::Integer {
-                lo: left.0.min(right.0),
-                hi: left.1.max(right.1),
-            });
+            return Some(Self::integer(left.0.min(right.0), left.1.max(right.1)));
+        }
+        if let (Some(left), Some(right)) = (self.integer_components(), other.integer_components()) {
+            return Some(Self::IntVector(std::array::from_fn(|i| {
+                (left[i].0.min(right[i].0), left[i].1.max(right[i].1))
+            })));
+        }
+        if let (Some(left), Some(right)) = (self.colors(), other.colors()) {
+            return Some(Self::Color(std::array::from_fn(|i| left[i].hull(right[i]))));
         }
         if let (Some(left), Some(right)) = (self.boolean(), other.boolean()) {
             return Some(Self::truth(if left == right { left } else { None }));
         }
         if let (Some(left), Some(right)) = (self.float(), other.float()) {
-            return Some(Self::Float(Taylor::enclosed(
-                left.range().hull(right.range()),
-            )));
+            return Some(Self::Float(Taylor::enclosed(signed_hull(
+                left.range(),
+                right.range(),
+            ))));
         }
         let left = self.components()?;
         let right = other.components()?;
         Some(Self::Vector(std::array::from_fn(|i| {
-            Taylor::enclosed(left[i].range().hull(right[i].range()))
+            Taylor::enclosed(signed_hull(left[i].range(), right[i].range()))
         })))
     }
 }
 
+fn signed_hull(left: Bounds, right: Bounds) -> Bounds {
+    if left.lo == 0.0
+        && left.hi == 0.0
+        && right.lo == 0.0
+        && right.hi == 0.0
+        && (left.lo.to_bits() != right.lo.to_bits() || left.hi.to_bits() != right.hi.to_bits())
+    {
+        Bounds {
+            lo: 0.0f64.next_down(),
+            hi: 0.0f64.next_up(),
+        }
+    } else {
+        left.hull(right)
+    }
+}
+
 fn absolute(value: Taylor) -> Taylor {
+    if let Some(value) = value.exact_constant() {
+        return Taylor::constant(value.abs());
+    }
     let range = value.range();
     if range.lo >= 0.0 {
         value
@@ -742,6 +901,13 @@ fn absolute(value: Taylor) -> Taylor {
 }
 
 fn min_max(left: Taylor, right: Taylor, maximum: bool) -> Taylor {
+    if let (Some(left), Some(right)) = (left.exact_constant(), right.exact_constant()) {
+        return Taylor::constant(if maximum {
+            left.max(right)
+        } else {
+            left.min(right)
+        });
+    }
     let a = left.range();
     let b = right.range();
     if a.hi <= b.lo {
@@ -858,6 +1024,27 @@ fn comparison(left: &Value, right: &Value, opcode: u16) -> Option<Option<bool>> 
     if !matches!(opcode, 30 | 31) {
         return None;
     }
+    if let (Some(left), Some(right)) = (left.integer_components(), right.integer_components()) {
+        let x = comparison(
+            &Value::integer(left[0].0, left[0].1),
+            &Value::integer(right[0].0, right[0].1),
+            30,
+        )?;
+        let y = comparison(
+            &Value::integer(left[1].0, left[1].1),
+            &Value::integer(right[1].0, right[1].1),
+            30,
+        )?;
+        return Some(combine_equal([x, y]).map(|equal| equal == (opcode == 30)));
+    }
+    if let (Some(left), Some(right)) = (left.colors(), right.colors()) {
+        return Some(
+            combine_equal(std::array::from_fn::<_, 4, _>(|i| {
+                compare_bounds(left[i], right[i], 30)
+            }))
+            .map(|equal| equal == (opcode == 30)),
+        );
+    }
     if let (Some(a), Some(b)) = (left.boolean(), right.boolean()) {
         return Some(a.zip(b).map(|(a, b)| (a == b) == (opcode == 30)));
     }
@@ -875,6 +1062,16 @@ fn comparison(left: &Value, right: &Value, opcode: u16) -> Option<Option<bool>> 
     Some(equal.map(|equal| equal == (opcode == 30)))
 }
 
+fn combine_equal<const N: usize>(values: [Option<bool>; N]) -> Option<bool> {
+    if values.contains(&Some(false)) {
+        Some(false)
+    } else if values.iter().all(|value| *value == Some(true)) {
+        Some(true)
+    } else {
+        None
+    }
+}
+
 fn integer_operation(opcode: u16, values: &[Value]) -> Option<Value> {
     let (a, b) = values[0].integers()?;
     let (lo, hi) = match opcode {
@@ -882,6 +1079,50 @@ fn integer_operation(opcode: u16, values: &[Value]) -> Option<Value> {
         40 if a >= 0 => (a, b),
         40 if b <= 0 => (b.checked_neg()?, a.checked_neg()?),
         40 => (0, a.checked_abs()?.max(b)),
+        24 => {
+            let (c, d) = values[1].integers()?;
+            if (c <= 0 && d >= 0) || (a == i64::MIN && c <= -1 && d >= -1) {
+                return None;
+            }
+            let maximum = c.unsigned_abs().max(d.unsigned_abs()) - 1;
+            (
+                if a < 0 {
+                    -(a.unsigned_abs().min(maximum) as i64)
+                } else {
+                    0
+                },
+                if b > 0 {
+                    (b as u64).min(maximum) as i64
+                } else {
+                    0
+                },
+            )
+        }
+        25 => {
+            let (c, d) = values[1].integers()?;
+            let c = u32::try_from(c).ok()?;
+            let d = u32::try_from(d).ok()?;
+            if a >= -1 && b <= 1 {
+                (-1, 1)
+            } else {
+                if d > 63 {
+                    return None;
+                }
+                let mut lo = i64::MAX;
+                let mut hi = i64::MIN;
+                for exponent in c..=d {
+                    let x = a.checked_pow(exponent)?;
+                    let y = b.checked_pow(exponent)?;
+                    lo = lo.min(x).min(y);
+                    hi = hi.max(x).max(y);
+                    if a <= 0 && b >= 0 && exponent != 0 {
+                        lo = lo.min(0);
+                        hi = hi.max(0);
+                    }
+                }
+                (lo, hi)
+            }
+        }
         20..=23 | 41..=43 => {
             let (c, d) = values[1].integers()?;
             match opcode {
@@ -913,15 +1154,9 @@ fn integer_operation(opcode: u16, values: &[Value]) -> Option<Value> {
                 _ => return None,
             }
         }
-        // These operations need refinement until branch-dependent integer
-        // operands become exact; no float approximation of i64 arithmetic.
         _ => return None,
     };
-    Some(if lo == hi {
-        Value::Exact(RuntimeValue::Int(lo))
-    } else {
-        Value::Integer { lo, hi }
-    })
+    Some(Value::integer(lo, hi))
 }
 
 #[cfg(test)]
@@ -949,8 +1184,13 @@ mod tests {
     }
 
     fn constant(chart: &mut DecodedChart, ty: ValueType, value: f64) -> u32 {
+        literal(chart, RuntimeValue::Scalar { ty, value })
+    }
+
+    fn literal(chart: &mut DecodedChart, value: RuntimeValue) -> u32 {
         let immediate = chart.constants.len() as u32;
-        chart.constants.push(RuntimeValue::Scalar { ty, value });
+        let ty = value.value_type();
+        chart.constants.push(value);
         let index = node(chart, 1, ty, &[]);
         chart.expressions[index as usize].immediate = immediate;
         index
@@ -1079,7 +1319,8 @@ mod tests {
             ]);
         let q = node(&mut chart, 4, ValueType::Float, &[]);
         let beat = node(&mut chart, 3, ValueType::Beat, &[]);
-        let raw_beat = node(&mut chart, 63, ValueType::Float, &[beat]);
+        let one_beat = constant(&mut chart, ValueType::Beat, 1.0);
+        let raw_beat = node(&mut chart, 23, ValueType::Float, &[beat, one_beat]);
         let speed = node(&mut chart, 20, ValueType::Float, &[q, raw_beat]);
         let index = bind_speed(&mut chart, speed, &[0.0, 1.0, 2.0]);
         chart.lines[0].line_flags = 1;
@@ -1100,6 +1341,85 @@ mod tests {
         chart.lines[0].line_flags = 0;
         assert!(query_distance(&chart, index, 1.0).is_ok());
         assert_eq!(query_distance(&chart, index, -1.0), Err(EXECUTION_ERROR));
+    }
+
+    #[test]
+    fn branch_values_retain_integer_vector_color_and_signed_zero_semantics() {
+        for (left, right) in [
+            (
+                RuntimeValue::Int(9_007_199_254_740_993),
+                RuntimeValue::Int(9_007_199_254_740_992),
+            ),
+            (
+                RuntimeValue::Vec2Int([9_007_199_254_740_993, -3]),
+                RuntimeValue::Vec2Int([9_007_199_254_740_992, -3]),
+            ),
+            (
+                RuntimeValue::Color([0.1, 0.2, 0.3, 1.0]),
+                RuntimeValue::Color([0.1, 0.2, 0.4, 1.0]),
+            ),
+        ] {
+            let mut chart = chart();
+            let ty = left.value_type();
+            let time = node(&mut chart, 2, ValueType::Time, &[]);
+            let switch = constant(&mut chart, ValueType::Time, 0.375);
+            let predicate = node(&mut chart, 32, ValueType::Bool, &[time, switch]);
+            let left = literal(&mut chart, left);
+            let right = literal(&mut chart, right);
+            let choice = node(&mut chart, 70, ty, &[predicate, left, right]);
+            let equal = node(&mut chart, 30, ValueType::Bool, &[choice, left]);
+            let high = constant(&mut chart, ValueType::Float, 4.0);
+            let low = constant(&mut chart, ValueType::Float, 1.0);
+            let root = node(&mut chart, 70, ValueType::Float, &[equal, high, low]);
+            let index = bind_speed(&mut chart, root, &[0.0]);
+            let result = query_distance(&chart, index, 1.0).unwrap();
+            assert!(
+                (result.floor_position - 2.125).abs() <= ABSOLUTE_ERROR,
+                "{ty:?}"
+            );
+        }
+
+        let mut chart = chart();
+        let time = node(&mut chart, 2, ValueType::Time, &[]);
+        let switch = constant(&mut chart, ValueType::Time, 0.375);
+        let predicate = node(&mut chart, 32, ValueType::Bool, &[time, switch]);
+        let negative_zero = constant(&mut chart, ValueType::Float, -0.0);
+        let positive_zero = constant(&mut chart, ValueType::Float, 0.0);
+        let choice = node(
+            &mut chart,
+            70,
+            ValueType::Float,
+            &[predicate, negative_zero, positive_zero],
+        );
+        let negative_one = constant(&mut chart, ValueType::Float, -1.0);
+        let angle = node(&mut chart, 56, ValueType::Float, &[choice, negative_one]);
+        let four = constant(&mut chart, ValueType::Float, 4.0);
+        let root = node(&mut chart, 20, ValueType::Float, &[angle, four]);
+        let index = bind_speed(&mut chart, root, &[0.0]);
+        let result = query_distance(&chart, index, 1.0).unwrap();
+        assert!(
+            (result.floor_position - (4.0 + std::f64::consts::PI / 4.0)).abs() <= ABSOLUTE_ERROR
+        );
+
+        // A finite boolean result cannot hide overflow in ApproxEq's subtraction.
+        let raw_time = node(&mut chart, 62, ValueType::Float, &[time]);
+        let maximum = constant(&mut chart, ValueType::Float, f64::MAX);
+        let negative_maximum = constant(&mut chart, ValueType::Float, -f64::MAX);
+        let large = node(&mut chart, 20, ValueType::Float, &[maximum, raw_time]);
+        let approximate = node(
+            &mut chart,
+            38,
+            ValueType::Bool,
+            &[large, negative_maximum, four],
+        );
+        let root = node(
+            &mut chart,
+            70,
+            ValueType::Float,
+            &[approximate, four, positive_zero],
+        );
+        let index = bind_speed(&mut chart, root, &[0.0]);
+        assert_eq!(query_distance(&chart, index, 1.0), Err(EXECUTION_ERROR));
     }
 
     #[test]

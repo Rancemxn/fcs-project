@@ -421,18 +421,24 @@ impl Math {
         })
     }
 
-    pub fn float_bound(&mut self, value: &BigFloat, lower: bool) -> Option<f64> {
+    pub fn float_round(&mut self, value: &BigFloat) -> Option<f64> {
         let rounded = value
             .format(Radix::Dec, RoundingMode::None, &mut self.constants)
             .ok()?
             .parse::<f64>()
             .ok()?;
-        rounded.is_finite().then(|| {
-            if lower {
-                rounded.next_down()
-            } else {
-                rounded.next_up()
-            }
+        rounded.is_finite().then_some(rounded)
+    }
+
+    pub fn float_bound(&mut self, value: &BigFloat, lower: bool) -> Option<f64> {
+        let rounded = self.float_round(value)?;
+        let ordering = BigFloat::from_f64(rounded, 64).cmp(value)?;
+        Some(if lower && ordering > 0 {
+            rounded.next_down()
+        } else if !lower && ordering < 0 {
+            rounded.next_up()
+        } else {
+            rounded
         })
     }
 
@@ -640,6 +646,9 @@ impl Math {
     }
 
     pub fn atan2(&mut self, y: Taylor, x: Taylor) -> Option<Taylor> {
+        if let (Some(y), Some(x)) = (y.exact_constant(), x.exact_constant()) {
+            return Some(Taylor::constant(y.atan2(x)));
+        }
         let xr = x.range().finite()?;
         let yr = y.range().finite()?;
         let pi = self.point(54, -1.0)?;
