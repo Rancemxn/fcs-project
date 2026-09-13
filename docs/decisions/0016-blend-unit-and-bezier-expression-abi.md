@@ -33,9 +33,11 @@ Mul U,U（同一 U）            → U
 Mul vec2-U,vec2-U（同一 U）  → vec2-U
 ```
 
-语义按 payload/component 逐项 binary64 乘法、每项单独 roundTiesToEven 定义，与 Core runtime
-blend `combine` 的 multiply 语义逐操作一致，因此 writer 镜像编码后 product 查询与 canonical
-runtime bit for bit 相同。
+语义按 payload/component 逐项 binary64 乘法、每项单独 roundTiesToEven 定义。其中 U=angle 的
+`Mul U,U` 与 U=length 的 `Mul vec2-U,vec2-U` 与 Core runtime blend `combine` 已有的对应
+multiply 路径逐操作一致，writer 镜像编码后这两类组合的 product 查询与 canonical runtime
+bit for bit 相同；time/beat 等其余 unit 组合是 ABI 层扩展，Core runtime `combine` 未暴露
+对应路径，但同样逐项正确舍入。
 
 ### 2.2 CubicBezier opcode
 
@@ -43,8 +45,12 @@ runtime bit for bit 相同。
 progress（float），operandB 是 `(x1,y1)`、operandC 是 `(x2,y2)` 两个 vec2-float 常量，result
 为 float，immediate=0。求值语义与 `fcs.md` §9.4 的 cubicBezier 完全一致：把 p 与四个 binary64
 control value 解释为精确实数，取满足 cubic x(t)=p 的唯一 `t∈[0,1]`，再把实数 cubic y(t) 正确
-舍入一次为 binary64。Loader 在 load 时以 `fcbc.invalid-expression` 拒绝非有限 control value、
-`x1`/`x2` 不在 `[0,1]` 或 x 曲线不可单值反解的节点。
+舍入一次为 binary64。B/C 必须是结构可判定的 constant vec2-float node，仅接受两种形状：
+opcode 1 Constant（resultType 为 vec2-float，引用 elementType=float 的 vec2 Value），或
+opcode 80 Vec2 且两个 operand 均为 opcode 1 float Constant；其他形状以
+`fcbc.invalid-expression` 拒绝。control 的有限性由 ConstantPool Value 有效性在 pool 解码阶段
+以 `fcbc.invalid-record` 保证（先于 Expression 校验，不产生独立的非有限诊断）；`x1`/`x2`
+不在 `[0,1]` 或 x 曲线不可单值反解仍以 `fcbc.invalid-expression` 在 load 时拒绝。
 
 `CubicBezier` 复用既有 StructuralKey 规则（operand 递归嵌入、Constant node 嵌入被引 Value
 canonical bytes、immediate=0 不另产生可变 key），不引入新的 key 规则。
@@ -65,7 +71,10 @@ canonical bytes、immediate=0 不另产生可变 key），不引入新的 key �
   解除，Position/Rotation blend 与 Bezier-in-blend 进入精确组合路径；
 - I10 evidence ledger 的对应 residual 移至已关闭列；
 - 在所有实现同步前，旧 reader 读到 opcode 64 按未知 opcode 以 `fcbc.invalid-expression`
-  拒绝，不产生部分解释。
+  拒绝，不产生部分解释；
+- loader 的 B/C 形状约束与校验顺序由 mutation 用例固定：非 constant 形状的 B/C、越界
+  `x1`/`x2`、不可单值反解的 x 曲线各至少一例，且 pool 阶段的非有限 control 以
+  `fcbc.invalid-record` 先于 Expression 校验失败，随实现分支交付。
 
 ## 5. 不在本决策范围
 

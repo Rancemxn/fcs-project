@@ -1025,10 +1025,16 @@ B 顺序求值并组合两个同类型 component，Vec2X/Vec2Y 返回相应 comp
 1–30 与 Segment 表一致。`CubicBezier` 的 A 是 clamp 到 `[0,1]` 后的 scalar progress，B 是
 `(x1,y1)`、C 是 `(x2,y2)` 两个 vec2-float 常量：把 A 与四个 binary64 control value 解释为精确
 实数，取满足 cubic x(t)=A 的唯一 `t∈[0,1]`，再把实数 cubic y(t) 正确舍入一次为 binary64——
-与 `fcs.md` 第 9.4 节相同。Loader 必须在 load 时拒绝 B/C 非有限、`x1`/`x2` 不在 `[0,1]` 或
-x 曲线不可单值反解的节点（`fcbc.invalid-expression`）。`Mul U,U` 与 `Mul vec2-U,vec2-U`
-按 payload/component 逐项 binary64 乘法、每项单独 roundTiesToEven 定义，与 Core runtime blend
-的 multiply 语义一致。
+与 `fcs.md` 第 9.4 节相同。B/C 必须是结构可判定的 constant vec2-float node，仅接受两种形状：
+opcode 1 Constant（resultType 为 vec2-float，引用 elementType=float 的 vec2 Value），或
+opcode 80 Vec2 且两个 operand 均为 opcode 1 float Constant；其他形状（含引用环境或求值后才
+可知为常量的 DAG）以 `fcbc.invalid-expression` 拒绝。control 的有限性由第 6 章 ConstantPool
+的 Value 有效性保证：非有限 float component 在 pool 解码时已按 `fcbc.invalid-record` 拒绝，
+先于 Expression 校验，本 opcode 不再产生独立的非有限诊断；`x1`/`x2` 不在 `[0,1]` 或 x 曲线
+不可单值反解仍以 `fcbc.invalid-expression` 在 load 时拒绝。`Mul U,U` 与 `Mul vec2-U,vec2-U`
+按 payload/component 逐项 binary64 乘法、每项单独 roundTiesToEven 定义；其中 U=angle 的
+`Mul U,U` 与 U=length 的 `Mul vec2-U,vec2-U` 与 Core runtime blend `combine` 的对应 multiply
+路径逐操作一致，其余 unit 组合是 ABI 层扩展，Core runtime `combine` 未暴露对应路径。
 
 ABI 1.0 的 numeric opcode number 为：
 
