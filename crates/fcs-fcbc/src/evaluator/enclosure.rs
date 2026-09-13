@@ -8,6 +8,8 @@
 use astro_float::{BigFloat, Consts, Radix, RoundingMode};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
+const POINT_PRECISION: usize = 192;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Bounds {
     pub lo: f64,
@@ -443,32 +445,48 @@ impl Math {
         })
     }
 
-    fn point(&mut self, opcode: u16, input: f64) -> Option<Bounds> {
+    fn directed(
+        &mut self,
+        rounded: bool,
+        mut operation: impl FnMut(RoundingMode, &mut Consts) -> Option<BigFloat>,
+    ) -> Option<Bounds> {
         let mut values = [0.0; 2];
         for (index, rounding) in [RoundingMode::Down, RoundingMode::Up]
             .into_iter()
             .enumerate()
         {
-            let input = BigFloat::from_f64(input, 192);
-            let value = match opcode {
-                47 => input.sqrt(192, rounding),
-                48 => input.exp(192, rounding, &mut self.constants),
-                49 => input.ln(192, rounding, &mut self.constants),
-                50 => input.sin(192, rounding, &mut self.constants),
-                51 => input.cos(192, rounding, &mut self.constants),
-                52 => input.tan(192, rounding, &mut self.constants),
-                53 => input.asin(192, rounding, &mut self.constants),
-                54 => input.acos(192, rounding, &mut self.constants),
-                55 => input.atan(192, rounding, &mut self.constants),
-                _ => return None,
+            let value = operation(rounding, &mut self.constants)?;
+            // Monotone binary64 rounding certifies a point only when both bounds
+            // round to the same bits; otherwise the uncertainty remains visible.
+            values[index] = if rounded {
+                self.float_round(&value)?
+            } else {
+                self.float_bound(&value, index == 0)?
             };
-            values[index] = self.float_bound(&value, index == 0)?;
         }
         Bounds {
             lo: values[0],
             hi: values[1],
         }
         .finite()
+    }
+
+    fn point(&mut self, opcode: u16, input: f64, rounded: bool) -> Option<Bounds> {
+        self.directed(rounded, |rounding, constants| {
+            let input = BigFloat::from_f64(input, POINT_PRECISION);
+            Some(match opcode {
+                47 => input.sqrt(POINT_PRECISION, rounding),
+                48 => input.exp(POINT_PRECISION, rounding, constants),
+                49 => input.ln(POINT_PRECISION, rounding, constants),
+                50 => input.sin(POINT_PRECISION, rounding, constants),
+                51 => input.cos(POINT_PRECISION, rounding, constants),
+                52 => input.tan(POINT_PRECISION, rounding, constants),
+                53 => input.asin(POINT_PRECISION, rounding, constants),
+                54 => input.acos(POINT_PRECISION, rounding, constants),
+                55 => input.atan(POINT_PRECISION, rounding, constants),
+                _ => return None,
+            })
+        })
     }
 
     fn unary_range(&mut self, opcode: u16, input: Bounds) -> Option<Bounds> {
@@ -484,8 +502,8 @@ impl Math {
         {
             return None;
         }
-        let left = self.point(opcode, input.lo)?;
-        let right = self.point(opcode, input.hi)?;
+        let left = self.point(opcode, input.lo, false)?;
+        let right = self.point(opcode, input.hi, false)?;
         Some(left.hull(right))
     }
 
@@ -519,7 +537,7 @@ impl Math {
             }
             50 | 51 => {
                 let (sin, cos) = if x.lo == x.hi {
-                    (self.point(50, x.lo)?, self.point(51, x.lo)?)
+                    (self.point(50, x.lo, false)?, self.point(51, x.lo, false)?)
                 } else {
                     (Bounds::UNIT, Bounds::UNIT)
                 };
@@ -567,15 +585,19 @@ impl Math {
     pub fn unary(&mut self, opcode: u16, value: Taylor) -> Option<Taylor> {
         let range = value.range().finite()?;
         if let Some(input) = value.exact_constant() {
-            let output = super::unary_float(
-                super::RuntimeValue::Scalar {
-                    ty: super::ValueType::Float,
-                    value: input,
-                },
-                opcode,
-            )
-            .ok()?;
-            return Some(Taylor::constant(super::scalar_payload(&output).ok()?));
+            let exact = match opcode {
+                44 => Some(input.floor()),
+                45 => Some(input.ceil()),
+                46 => Some(input.round_ties_even()),
+                47 | 50 | 52 | 53 | 55 if input == 0.0 => Some(input),
+                48 | 51 if input == 0.0 => Some(1.0),
+                _ => None,
+            };
+            return Some(if let Some(output) = exact {
+                Taylor::constant(output)
+            } else {
+                Taylor::enclosed(self.point(opcode, input, true)?)
+            });
         }
         if matches!(opcode, 44..=46) {
             let apply = |value: f64| match opcode {
@@ -604,7 +626,7 @@ impl Math {
                 .compose(
                     center,
                     [
-                        self.point(opcode, center)?,
+                        self.point(opcode, center, false)?,
                         at_center[0],
                         at_center[1] / Bounds::point(2.0),
                         at_center[2] / Bounds::point(6.0),
@@ -617,6 +639,29 @@ impl Math {
     }
 
     pub fn power(&mut self, base: Taylor, exponent: Taylor) -> Option<Taylor> {
+        if let (Some(base), Some(exponent)) = (base.exact_constant(), exponent.exact_constant()) {
+            if base == 0.0 {
+                if exponent < 0.0 {
+                    return None;
+                }
+                return Some(Taylor::constant(if exponent == 0.0 {
+                    1.0
+                } else if base.is_sign_negative() && exponent % 2.0 == 1.0 {
+                    -0.0
+                } else {
+                    0.0
+                }));
+            }
+            let bound = self.directed(true, |rounding, constants| {
+                Some(BigFloat::from_f64(base, POINT_PRECISION).pow(
+                    &BigFloat::from_f64(exponent, POINT_PRECISION),
+                    POINT_PRECISION,
+                    rounding,
+                    constants,
+                ))
+            })?;
+            return Some(Taylor::enclosed(bound));
+        }
         if let Some(exponent) = exponent.exact_constant()
             && exponent.fract() == 0.0
             && exponent.abs() <= 64.0
@@ -639,7 +684,7 @@ impl Math {
             return Some(result.rounded());
         }
         let logarithm = if let Some(value) = base.exact_constant() {
-            Taylor::enclosed(self.point(49, value)?)
+            Taylor::enclosed(self.point(49, value, false)?)
         } else {
             self.unary(49, base)?
         };
@@ -647,12 +692,50 @@ impl Math {
     }
 
     pub fn atan2(&mut self, y: Taylor, x: Taylor) -> Option<Taylor> {
-        if let (Some(y), Some(x)) = (y.exact_constant(), x.exact_constant()) {
-            return Some(Taylor::constant(y.atan2(x)));
-        }
         let xr = x.range().finite()?;
         let yr = y.range().finite()?;
-        let pi = self.point(54, -1.0)?;
+        if let (Some(y), Some(x)) = (y.exact_constant(), x.exact_constant()) {
+            if y == 0.0 {
+                return Some(Taylor::constant(if x.is_sign_positive() {
+                    y
+                } else {
+                    std::f64::consts::PI.copysign(y)
+                }));
+            }
+            if x == 0.0 {
+                return Some(Taylor::constant(std::f64::consts::FRAC_PI_2.copysign(y)));
+            }
+            let bound = self.directed(true, |rounding, constants| {
+                let ratio = BigFloat::from_f64(y, POINT_PRECISION).div(
+                    &BigFloat::from_f64(x, POINT_PRECISION),
+                    POINT_PRECISION,
+                    rounding,
+                );
+                let angle = ratio.atan(POINT_PRECISION, rounding, constants);
+                Some(if x > 0.0 {
+                    angle
+                } else if y > 0.0 {
+                    angle.add(
+                        &constants.pi(POINT_PRECISION, rounding),
+                        POINT_PRECISION,
+                        rounding,
+                    )
+                } else {
+                    let opposite = if rounding == RoundingMode::Down {
+                        RoundingMode::Up
+                    } else {
+                        RoundingMode::Down
+                    };
+                    angle.sub(
+                        &constants.pi(POINT_PRECISION, opposite),
+                        POINT_PRECISION,
+                        rounding,
+                    )
+                })
+            })?;
+            return Some(Taylor::enclosed(bound));
+        }
+        let pi = self.point(54, -1.0, false)?;
         if xr.lo > 0.0 {
             return self.unary(55, y.real_mul(x.reciprocal()?));
         }
@@ -771,10 +854,10 @@ impl Math {
         if range.lo < 0.0 || range.hi > 1.0 || id > 30 {
             return None;
         }
-        if let Some(value) = value.exact_constant() {
-            return Some(Taylor::constant(
-                fcs_runtime::evaluate_easing(id, value).ok()?,
-            ));
+        if let Some(input) = value.exact_constant()
+            && (input == 0.0 || input == 1.0)
+        {
+            return Some(Taylor::constant(input.abs()));
         }
         if id == 0 {
             return Some(value);
@@ -825,6 +908,11 @@ impl Math {
 
     fn ease_in(&mut self, family: u16, value: Taylor) -> Option<Taylor> {
         let c = Taylor::constant;
+        if let Some(input) = value.exact_constant()
+            && (input == 0.0 || input == 1.0)
+        {
+            return Some(c(input.abs()));
+        }
         let result = match family {
             0 => c(1.0) - self.unary(51, c(std::f64::consts::PI) * value * c(0.5))?,
             1..=4 => {
@@ -858,7 +946,7 @@ impl Math {
             (2.0 / 2.75, 2.5 / 2.75, 2.25 / 2.75, 0.9375),
             (2.5 / 2.75, 1.0, 2.625 / 2.75, 0.984375),
         ] {
-            if range.hi < lower || range.lo > upper {
+            if range.hi < lower || range.lo > upper || (range.lo == upper && upper < 1.0) {
                 continue;
             }
             let shifted = value.with_bound(Bounds {

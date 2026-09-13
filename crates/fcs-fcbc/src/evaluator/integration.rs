@@ -458,7 +458,8 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
         depth: usize,
     ) -> Option<Value> {
         self.query.charge().ok()?;
-        if depth >= MAX_VALIDATOR_DEPTH {
+        // Like the loader, count edges from the descriptor root at depth zero.
+        if depth > MAX_VALIDATOR_DEPTH {
             return None;
         }
         let descriptor = self.query.chart.descriptors.get(index as usize)?;
@@ -548,7 +549,7 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
         depth: usize,
     ) -> Option<Value> {
         self.query.charge().ok()?;
-        if depth >= MAX_VALIDATOR_DEPTH {
+        if depth > MAX_VALIDATOR_DEPTH {
             return None;
         }
         self.query.visited_nodes.push(index);
@@ -651,6 +652,9 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
                 if operands
                     .iter()
                     .all(|value| matches!(value, Value::Exact(_)))
+                    // Float math still needs certification for constant operands.
+                    && (node.result_type == ValueType::Int
+                        || !matches!(node.opcode, 25 | 41 | 42 | 47..=56 | 60))
                 {
                     Value::Exact(
                         evaluate_node_value(
@@ -726,7 +730,7 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
         depth: usize,
     ) -> Option<()> {
         self.query.charge().ok()?;
-        if depth >= MAX_VALIDATOR_DEPTH {
+        if depth > MAX_VALIDATOR_DEPTH {
             return None;
         }
         let node = self.query.chart.expressions.get(index as usize)?;
@@ -1121,22 +1125,16 @@ fn absolute(value: Taylor) -> Taylor {
 }
 
 fn min_max(left: Taylor, right: Taylor, maximum: bool) -> Taylor {
-    if let (Some(left), Some(right)) = (left.exact_constant(), right.exact_constant()) {
-        return Taylor::constant(if maximum {
-            left.max(right)
-        } else {
-            left.min(right)
-        });
-    }
     let a = left.range();
     let b = right.range();
-    if a.hi <= b.lo {
-        return if maximum { right } else { left };
+    // Equality selects the first operand's bits, including zero sign (Core 14.1).
+    if (maximum && b.hi <= a.lo) || (!maximum && a.hi <= b.lo) {
+        return left;
     }
-    if b.hi <= a.lo {
-        return if maximum { left } else { right };
+    if (maximum && a.hi < b.lo) || (!maximum && b.hi < a.lo) {
+        return right;
     }
-    Taylor::enclosed(if maximum {
+    let mut bound = if maximum {
         Bounds {
             lo: a.lo.max(b.lo),
             hi: a.hi.max(b.hi),
@@ -1146,7 +1144,15 @@ fn min_max(left: Taylor, right: Taylor, maximum: bool) -> Taylor {
             lo: a.lo.min(b.lo),
             hi: a.hi.min(b.hi),
         }
-    })
+    };
+    // Overlapping operands can contribute either zero sign at a clipped endpoint.
+    if bound.lo == 0.0 {
+        bound.lo = 0.0f64.next_down();
+    }
+    if bound.hi == 0.0 {
+        bound.hi = 0.0f64.next_up();
+    }
+    Taylor::enclosed(bound)
 }
 
 fn compare_bounds(left: Bounds, right: Bounds, opcode: u16) -> Option<bool> {
@@ -1382,6 +1388,7 @@ fn integer_operation(opcode: u16, values: &[Value]) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::loader::Piece;
     use crate::{Domain, ExpressionNode, PropertyDescriptor, TempoPoint};
 
     fn node(
@@ -1451,6 +1458,214 @@ mod tests {
         let tempo = chart.lines[0].scroll_tempo_descriptor as usize;
         chart.descriptors[tempo].kind = DescriptorKind::Constant(constant);
         chart
+    }
+
+    #[test]
+    fn min_max_keeps_both_zero_signs_at_shared_endpoints() {
+        let mut math = Math::new().unwrap();
+        for maximum in [false, true] {
+            for zero in [-0.0, 0.0] {
+                let left = Taylor::constant(zero);
+                let right = Taylor::constant(-zero);
+                assert_eq!(
+                    min_max(left, right, maximum)
+                        .exact_constant()
+                        .unwrap()
+                        .to_bits(),
+                    zero.to_bits()
+                );
+                let left = Taylor::enclosed(if maximum {
+                    Bounds { lo: -1.0, hi: zero }
+                } else {
+                    Bounds { lo: zero, hi: 1.0 }
+                });
+                let angle = math
+                    .atan2(min_max(left, right, maximum), Taylor::constant(-1.0))
+                    .unwrap()
+                    .range();
+                assert!(angle.contains(-std::f64::consts::PI));
+                assert!(angle.contains(std::f64::consts::PI));
+            }
+        }
+    }
+
+    #[test]
+    fn distance_max_shared_endpoint_preserves_the_atan2_branch_cut() {
+        let mut chart = chart();
+        let time = node(&mut chart, 2, ValueType::Time, &[]);
+        let seconds = node(&mut chart, 62, ValueType::Float, &[time]);
+        let switch = constant(&mut chart, ValueType::Float, 0.875);
+        let difference = node(&mut chart, 21, ValueType::Float, &[seconds, switch]);
+        let zero = constant(&mut chart, ValueType::Float, 0.0);
+        let signed_zero = node(&mut chart, 22, ValueType::Float, &[difference, zero]);
+        let negative_zero = constant(&mut chart, ValueType::Float, -0.0);
+        let maximum = node(
+            &mut chart,
+            42,
+            ValueType::Float,
+            &[signed_zero, negative_zero],
+        );
+        let negative_one = constant(&mut chart, ValueType::Float, -1.0);
+        let angle = node(&mut chart, 56, ValueType::Float, &[maximum, negative_one]);
+        let four = constant(&mut chart, ValueType::Float, 4.0);
+        let speed = node(&mut chart, 20, ValueType::Float, &[four, angle]);
+        let distance = bind_speed(&mut chart, speed, &[0.0]);
+        assert_eq!(
+            query_distance(&chart, distance, 1.0)
+                .unwrap()
+                .floor_position,
+            1.643_805_509_807_655_6
+        );
+    }
+
+    #[test]
+    fn constant_and_point_environment_math_match_core_numeric_vectors() {
+        let vectors: toml::Value = toml::from_str(include_str!(
+            "../../../../docs/conformance/fcs5/expected/numeric-vectors.toml"
+        ))
+        .unwrap();
+        for kind in ["difficult_operation", "domain_operation", "easing"] {
+            for vector in vectors[kind].as_array().unwrap() {
+                let bits =
+                    |field: &str| u64::from_str_radix(vector[field].as_str().unwrap(), 16).unwrap();
+                let (opcode, immediate, input) = if kind == "easing" {
+                    let easing = fcs_runtime::EasingId::ALL
+                        .into_iter()
+                        .find(|easing| easing.name() == vector["name"].as_str().unwrap())
+                        .unwrap();
+                    (60, u32::from(easing.abi_id()), bits("x_hex_bits"))
+                } else {
+                    let opcode = match vector["opcode"].as_str().unwrap() {
+                        "pow" => 25,
+                        "sqrt" => 47,
+                        "exp" => 48,
+                        "ln" => 49,
+                        "sin" => 50,
+                        "cos" => 51,
+                        "tan" => 52,
+                        "asin" => 53,
+                        "acos" => 54,
+                        "atan" => 55,
+                        "atan2" => 56,
+                        opcode => panic!("unhandled numeric vector: {opcode}"),
+                    };
+                    (opcode, 0, bits("input_hex_bits"))
+                };
+                for literal_input in [true, false] {
+                    let mut chart = chart();
+                    let input = f64::from_bits(input);
+                    let left = if literal_input {
+                        constant(&mut chart, ValueType::Float, input)
+                    } else {
+                        node(&mut chart, 6, ValueType::Float, &[])
+                    };
+                    let mut operands = vec![left];
+                    if vector.get("right_hex_bits").is_some() {
+                        operands.push(constant(
+                            &mut chart,
+                            ValueType::Float,
+                            f64::from_bits(bits("right_hex_bits")),
+                        ));
+                    }
+                    let root = node(&mut chart, opcode, ValueType::Float, &operands);
+                    chart.expressions[root as usize].immediate = immediate;
+                    let mut query =
+                        Query::new(&chart, chart.lines[0].scroll_tempo_descriptor, &[0.0]).unwrap();
+                    let result = PanelEvaluator::new(&mut query, 0.0, 1.0)
+                        .unwrap()
+                        .expression(root, Taylor::constant(input), true, &mut BTreeMap::new(), 1);
+                    if kind == "domain_operation" {
+                        assert!(result.is_none(), "{vector:?}, literal={literal_input}");
+                    } else {
+                        let expected = bits(if kind == "easing" {
+                            "y_hex_bits"
+                        } else {
+                            "output_hex_bits"
+                        });
+                        assert_eq!(
+                            result
+                                .unwrap()
+                                .float()
+                                .unwrap()
+                                .exact_constant()
+                                .map(f64::to_bits),
+                            Some(expected),
+                            "{vector:?}, literal={literal_input}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn integration_and_loader_share_the_inclusive_combined_depth_limit() {
+        // Give the recursive evaluator enough test-thread stack to reach its
+        // published graph limit; the loader's corresponding walk is iterative.
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(|| {
+                for depth in [
+                    MAX_VALIDATOR_DEPTH - 1,
+                    MAX_VALIDATOR_DEPTH,
+                    MAX_VALIDATOR_DEPTH + 1,
+                ] {
+                    for descriptor_hops in [0, depth / 2, depth] {
+                        let mut chart = chart();
+                        let leaf = constant(&mut chart, ValueType::Float, 0.0);
+                        let mut expression = leaf;
+                        for _ in 1..depth - descriptor_hops {
+                            expression = node(&mut chart, 10, ValueType::Float, &[expression]);
+                        }
+                        bind_speed(&mut chart, expression, &[0.0]);
+                        let mut root = chart.lines[0].scroll_speed_descriptor;
+                        if descriptor_hops == depth {
+                            chart.descriptors[root as usize].kind = DescriptorKind::Constant(
+                                chart.expressions[leaf as usize].immediate,
+                            );
+                        }
+                        for _ in 0..descriptor_hops {
+                            let mut descriptor = chart.descriptors[root as usize].clone();
+                            descriptor.kind = DescriptorKind::Piecewise(vec![Piece {
+                                start: 0.0,
+                                end: 0.0,
+                                flags: 0b110,
+                                descriptor_index: root,
+                            }]);
+                            root = chart.descriptors.len() as u32;
+                            chart.descriptors.push(descriptor);
+                        }
+                        let accepted = depth <= MAX_VALIDATOR_DEPTH;
+                        assert_eq!(
+                            crate::validate_descriptor_environment_for_target(
+                                "line.scrollSpeed",
+                                root,
+                                &chart.descriptors,
+                                &chart.expressions,
+                            ),
+                            if accepted {
+                                Ok(())
+                            } else {
+                                Err("fcbc.limit-exceeded")
+                            }
+                        );
+                        let mut query =
+                            Query::new(&chart, chart.lines[0].scroll_tempo_descriptor, &[0.0])
+                                .unwrap();
+                        let actual = PanelEvaluator::new(&mut query, 0.0, 1.0)
+                            .unwrap()
+                            .descriptor(root, Taylor::constant(0.0), true, 0);
+                        assert_eq!(
+                            actual.is_some(),
+                            accepted,
+                            "depth={depth}, descriptor hops={descriptor_hops}"
+                        );
+                    }
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]
