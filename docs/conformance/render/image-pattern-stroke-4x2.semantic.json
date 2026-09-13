@@ -1,0 +1,27 @@
+{
+  "drawOrder": ["main/patterned"],
+  "drawOps": [
+    {
+      "nodeKind": "Line",
+      "worldBounds": [-2.0, 0.0, 2.0, 0.0],
+      "stroke": {
+        "width": 2.0,
+        "cap": "butt",
+        "join": "miter",
+        "miterLimit": 4.0,
+        "dashOffset": 0.0,
+        "dash": [],
+        "imagePattern": {
+          "resourceId": 4879288579923014711,
+          "position": [0.0, 0.0],
+          "origin": [0.0, 0.0],
+          "rotation": 0.0,
+          "scale": [1.0, 1.0],
+          "repeat": "both",
+          "sampling": "nearest"
+        }
+      },
+      "composite": "sourceOver"
+    }
+  ]
+}

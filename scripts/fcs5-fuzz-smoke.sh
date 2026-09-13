@@ -42,6 +42,7 @@ fi
 corpus=$(mktemp -d "${TMPDIR:-/tmp}/fcs5-fuzz-corpus.XXXXXX")
 trap 'rm -rf "$corpus"' EXIT
 
+python3 "$root/scripts/test-fcs5-fuzz-seeds.py"
 python3 "$root/scripts/fcs5-fuzz-seeds.py" "$root" "$corpus" "${targets[@]}"
 
 cd "$root"

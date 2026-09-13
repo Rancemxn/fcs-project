@@ -10,7 +10,7 @@ use crate::ast::{
 use super::{
     MISPLACED_GENERATOR_ERROR, NESTED_GENERATOR_ERROR,
     definitions::{identifier_with_span, let_statement_parser},
-    expression::expression_parser,
+    expression::{expression_parser, expression_parser_with_line_context},
     input::{ChumskySpan, ParserExtra, source_span},
     token::{Keyword, Punctuation, Token},
 };
@@ -361,6 +361,17 @@ where
         .delimited_by(just(left_brace()), just(right_brace()))
 }
 
+pub(super) fn render_schema_fields_parser<'tokens, I>()
+-> impl Parser<'tokens, I, Vec<SchemaField>, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    render_schema_field_parser()
+        .repeated()
+        .collect()
+        .delimited_by(just(left_brace()), just(right_brace()))
+}
+
 pub(super) fn schema_field_parser<'tokens, I>()
 -> impl Parser<'tokens, I, SchemaField, ParserExtra<'tokens>> + Clone
 where
@@ -369,6 +380,22 @@ where
     field_path_parser()
         .then_ignore(just(colon()))
         .then(schema_value_parser())
+        .then_ignore(just(semicolon()))
+        .map_with(|(path, value), extra| SchemaField {
+            path,
+            value,
+            span: source_span(extra.span()),
+        })
+}
+
+pub(super) fn render_schema_field_parser<'tokens, I>()
+-> impl Parser<'tokens, I, SchemaField, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    field_path_parser()
+        .then_ignore(just(colon()))
+        .then(render_schema_value_parser())
         .then_ignore(just(semicolon()))
         .map_with(|(path, value), extra| SchemaField {
             path,
@@ -386,6 +413,17 @@ where
         .map(|(values, span)| SchemaValue::CubicBezier { values, span })
         .or(schema_interval_parser())
         .or(expression_parser().map(SchemaValue::Expression))
+}
+
+fn render_schema_value_parser<'tokens, I>()
+-> impl Parser<'tokens, I, SchemaValue, ParserExtra<'tokens>> + Clone
+where
+    I: ValueInput<'tokens, Token = Token, Span = ChumskySpan>,
+{
+    cubic_bezier_value_parser()
+        .map(|(values, span)| SchemaValue::CubicBezier { values, span })
+        .or(schema_interval_parser())
+        .or(expression_parser_with_line_context(true).map(SchemaValue::Expression))
 }
 
 fn schema_interval_parser<'tokens, I>()

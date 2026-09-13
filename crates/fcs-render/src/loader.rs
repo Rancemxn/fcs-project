@@ -524,6 +524,7 @@ fn parse_resources(
             limits.max_descriptor_values,
             limits.max_descriptor_value_depth,
             1,
+            "fcbc.invalid-record",
         )?;
         record.finish()?;
         if data_length > limits.max_single_resource_bytes {
@@ -569,6 +570,7 @@ fn parse_value(
     max_items: usize,
     max_depth: usize,
     depth: usize,
+    duplicate_key_error: &'static str,
 ) -> Result<ParsedValue, &'static str> {
     if depth > max_depth {
         return Err(RENDER_DIAGNOSTIC_LIMIT_EXCEEDED);
@@ -646,8 +648,14 @@ fn parse_value(
             let count = limited_count(payload.u32()?, max_items)?;
             let mut values = Vec::with_capacity(count);
             for _ in 0..count {
-                let value =
-                    parse_value(&mut payload, string_count, max_items, max_depth, depth + 1)?;
+                let value = parse_value(
+                    &mut payload,
+                    string_count,
+                    max_items,
+                    max_depth,
+                    depth + 1,
+                    duplicate_key_error,
+                )?;
                 if value_tag(&value) != element_tag {
                     return Err(cursor.error);
                 }
@@ -665,11 +673,18 @@ fn parse_value(
                     return Err("fcbc.dangling-reference");
                 }
                 if !keys.insert(key) {
-                    return Err(cursor.error);
+                    return Err(duplicate_key_error);
                 }
                 fields.push((
                     key,
-                    parse_value(&mut payload, string_count, max_items, max_depth, depth + 1)?,
+                    parse_value(
+                        &mut payload,
+                        string_count,
+                        max_items,
+                        max_depth,
+                        depth + 1,
+                        duplicate_key_error,
+                    )?,
                 ));
             }
             ParsedValue::Object(fields)
@@ -908,6 +923,7 @@ fn parse_node(
                 limits.max_descriptor_values,
                 limits.max_descriptor_value_depth,
                 1,
+                RENDER_DIAGNOSTIC_INVALID_RECORD,
             )?,
             ParsedValue::Object(_)
         )
@@ -941,6 +957,7 @@ fn parse_geometry(
             max_value_items,
             limits.max_descriptor_value_depth,
             1,
+            RENDER_DIAGNOSTIC_INVALID_GEOMETRY,
         )?,
         strings,
     )?;
@@ -1434,8 +1451,8 @@ fn validate_render(
 ) -> Result<(), &'static str> {
     validate_ids_and_table_order(chart)?;
     validate_node_graph(chart, limits)?;
-    let owners = validate_ownership(chart)?;
-    validate_descriptor_roots(chart, &owners)?;
+    validate_ownership(chart)?;
+    validate_descriptor_roots(chart)?;
     validate_and_decode_resources(chart, limits)?;
     Ok(())
 }
@@ -1697,16 +1714,7 @@ fn validate_attachment(node: &NodeRecord, core: &DecodedChart) -> Result<(), &'s
     }
 }
 
-struct Ownership {
-    geometry_node: Vec<usize>,
-    path_node: Vec<usize>,
-    paint_node: Vec<usize>,
-    stroke_node: Vec<usize>,
-    clip_node: Vec<usize>,
-    glyph_node: Vec<usize>,
-}
-
-fn validate_ownership(chart: &DecodedRenderChart) -> Result<Ownership, &'static str> {
+fn validate_ownership(chart: &DecodedRenderChart) -> Result<(), &'static str> {
     let mut geometry_owner = vec![None; chart.geometries.len()];
     let mut paint_owner = vec![None; chart.paints.len()];
     let mut stroke_owner = vec![None; chart.strokes.len()];
@@ -1760,11 +1768,9 @@ fn validate_ownership(chart: &DecodedRenderChart) -> Result<Ownership, &'static 
             _ => {}
         }
     }
-    let mut stroke_node = Vec::with_capacity(chart.strokes.len());
     for (index, stroke) in chart.strokes.iter().enumerate() {
         let node = stroke_owner[index].ok_or(RENDER_DIAGNOSTIC_INVALID_GRAPH)?;
         claim(&mut paint_owner, stroke.paint_ref, node)?;
-        stroke_node.push(node);
     }
     let mut clip_node = Vec::with_capacity(chart.clips.len());
     for (index, clip) in chart.clips.iter().enumerate() {
@@ -1780,7 +1786,6 @@ fn validate_ownership(chart: &DecodedRenderChart) -> Result<Ownership, &'static 
         return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
     }
     let geometry_node: Vec<_> = geometry_owner.into_iter().map(Option::unwrap).collect();
-    let paint_node: Vec<_> = paint_owner.into_iter().map(Option::unwrap).collect();
 
     let mut path_owner = vec![None; chart.paths.len()];
     let mut glyph_owner = vec![None; chart.glyph_runs.len()];
@@ -1838,14 +1843,7 @@ fn validate_ownership(chart: &DecodedRenderChart) -> Result<Ownership, &'static 
             return Err(RENDER_DIAGNOSTIC_INVALID_GRAPH);
         }
     }
-    Ok(Ownership {
-        geometry_node,
-        path_node: path_owner.into_iter().map(Option::unwrap).collect(),
-        paint_node,
-        stroke_node,
-        clip_node,
-        glyph_node: glyph_owner.into_iter().map(Option::unwrap).collect(),
-    })
+    Ok(())
 }
 
 fn claim(owners: &mut [Option<usize>], reference: u32, owner: usize) -> Result<(), &'static str> {
@@ -1858,198 +1856,409 @@ fn claim(owners: &mut [Option<usize>], reference: u32, owner: usize) -> Result<(
     Ok(())
 }
 
-fn validate_descriptor_roots(
-    chart: &DecodedRenderChart,
-    owners: &Ownership,
-) -> Result<(), &'static str> {
-    for node in &chart.nodes {
-        for (reference, expected) in [
-            (node.position_descriptor, ValueType::Vec2Length),
-            (node.origin_descriptor, ValueType::Vec2Length),
-            (node.rotation_descriptor, ValueType::Angle),
-            (node.scale_descriptor, ValueType::Vec2Float),
-            (node.opacity_descriptor, ValueType::Float),
-            (node.visibility_descriptor, ValueType::Bool),
-        ] {
-            check_descriptor(chart, node, reference, expected)?;
-        }
-    }
-    for (index, geometry) in chart.geometries.iter().enumerate() {
-        let node = &chart.nodes[owners.geometry_node[index]];
-        validate_geometry_descriptors(chart, node, &geometry.data)?;
-    }
-    for (index, path) in chart.paths.iter().enumerate() {
-        let node = &chart.nodes[owners.path_node[index]];
-        for command in &path.commands {
-            validate_path_command_descriptors(chart, node, command)?;
-        }
-    }
-    for (index, paint) in chart.paints.iter().enumerate() {
-        let node = &chart.nodes[owners.paint_node[index]];
-        validate_paint_descriptors(chart, node, &paint.data)?;
-    }
-    for (index, stroke) in chart.strokes.iter().enumerate() {
-        let node = &chart.nodes[owners.stroke_node[index]];
-        check_descriptor(chart, node, stroke.width_descriptor, ValueType::Length)?;
-        check_descriptor(
-            chart,
-            node,
-            stroke.dash_offset_descriptor,
-            ValueType::Length,
-        )?;
-    }
-    for (index, glyph) in chart.glyph_runs.iter().enumerate() {
-        let node = &chart.nodes[owners.glyph_node[index]];
-        check_descriptor(chart, node, glyph.size_descriptor, ValueType::Length)?;
-    }
-    // Reading the field proves clip ownership contributes the same descriptor environment.
-    for node in &owners.clip_node {
-        let _ = chart
-            .nodes
-            .get(*node)
-            .ok_or(RENDER_DIAGNOSTIC_INVALID_GRAPH)?;
-    }
-    Ok(())
+/// Field constraints checked immediately after a direct root returns a typed finite value.
+#[derive(Clone, Copy)]
+pub(crate) enum RootRule {
+    Any,
+    NonNegative(&'static str),
+    RectSize {
+        origin: u32,
+    },
+    ImageExtent {
+        origin: u32,
+    },
+    ImageSource {
+        descriptors: [u32; 4],
+        component: usize,
+        resource_id: u64,
+    },
+    ArcStart {
+        end_angle: u32,
+        direction: u16,
+    },
+    GlyphSize,
+    ColorRange,
+    Opacity,
 }
 
-fn validate_geometry_descriptors(
+pub(crate) struct DescriptorRoot {
+    pub path: String,
+    pub owner: u64,
+    pub descriptor: u32,
+    pub expected: ValueType,
+    pub rule: RootRule,
+}
+
+/// The same section 14.8 field inventory drives load-time validation and visible-node queries.
+/// Ownership has already been validated; descendants have their own gates and are not included.
+pub(crate) fn node_descriptor_roots(
     chart: &DecodedRenderChart,
     node: &NodeRecord,
-    data: &GeometryData,
-) -> Result<(), &'static str> {
+) -> Result<Vec<DescriptorRoot>, &'static str> {
     let mut roots = Vec::new();
-    match data {
-        GeometryData::Rect { origin, size } => roots.extend([
-            (*origin, ValueType::Vec2Length),
-            (*size, ValueType::Vec2Length),
-        ]),
-        GeometryData::RoundedRect {
-            origin,
-            size,
-            radii,
-        } => {
-            roots.extend([
-                (*origin, ValueType::Vec2Length),
-                (*size, ValueType::Vec2Length),
-            ]);
-            roots.extend(radii.iter().map(|value| (*value, ValueType::Length)));
+    let mut add = |name: &str, descriptor, expected, rule| {
+        roots.push(DescriptorRoot {
+            path: format!("render.node.{name}"),
+            owner: node.id,
+            descriptor,
+            expected,
+            rule,
+        });
+    };
+    add(
+        "position",
+        node.position_descriptor,
+        ValueType::Vec2Length,
+        RootRule::Any,
+    );
+    add(
+        "origin",
+        node.origin_descriptor,
+        ValueType::Vec2Length,
+        RootRule::Any,
+    );
+    add(
+        "rotation",
+        node.rotation_descriptor,
+        ValueType::Angle,
+        RootRule::Any,
+    );
+    add(
+        "scale",
+        node.scale_descriptor,
+        ValueType::Vec2Float,
+        RootRule::Any,
+    );
+    add(
+        "opacity",
+        node.opacity_descriptor,
+        ValueType::Float,
+        RootRule::Opacity,
+    );
+    add(
+        "visibility",
+        node.visibility_descriptor,
+        ValueType::Bool,
+        RootRule::Any,
+    );
+    let clip_geometry = node
+        .clip_ref
+        .map(|index| {
+            chart
+                .clips
+                .get(index as usize)
+                .map(|clip| clip.geometry_ref)
+                .ok_or(RENDER_DIAGNOSTIC_INVALID_REFERENCE)
+        })
+        .transpose()?;
+    for index in node.geometry_ref.into_iter().chain(clip_geometry) {
+        let geometry = chart
+            .geometries
+            .get(index as usize)
+            .ok_or(RENDER_DIAGNOSTIC_INVALID_REFERENCE)?;
+        geometry_descriptor_roots(chart, geometry, &mut roots)?;
+    }
+    let stroke = node
+        .stroke_ref
+        .map(|index| {
+            chart
+                .strokes
+                .get(index as usize)
+                .ok_or(RENDER_DIAGNOSTIC_INVALID_REFERENCE)
+        })
+        .transpose()?;
+    for index in node
+        .fill_paint
+        .into_iter()
+        .chain(stroke.map(|stroke| stroke.paint_ref))
+    {
+        let paint = chart
+            .paints
+            .get(index as usize)
+            .ok_or(RENDER_DIAGNOSTIC_INVALID_REFERENCE)?;
+        paint_descriptor_roots(paint, &mut roots);
+    }
+    if let Some(stroke) = stroke {
+        for (name, descriptor, rule) in [
+            (
+                "width",
+                stroke.width_descriptor,
+                RootRule::NonNegative(RENDER_DIAGNOSTIC_INVALID_STROKE),
+            ),
+            ("dashOffset", stroke.dash_offset_descriptor, RootRule::Any),
+        ] {
+            roots.push(DescriptorRoot {
+                path: format!("render.stroke.{name}"),
+                owner: stroke.id,
+                descriptor,
+                expected: ValueType::Length,
+                rule,
+            });
         }
-        GeometryData::Circle { center, radius } => roots.extend([
-            (*center, ValueType::Vec2Length),
-            (*radius, ValueType::Length),
-        ]),
+    }
+    Ok(roots)
+}
+
+fn geometry_descriptor_roots(
+    chart: &DecodedRenderChart,
+    geometry: &GeometryRecord,
+    roots: &mut Vec<DescriptorRoot>,
+) -> Result<(), &'static str> {
+    use RootRule::{Any, NonNegative};
+    use ValueType::{Angle, Float, Length, Vec2Length};
+    let mut add = |name: &str, descriptor, expected, rule| {
+        roots.push(DescriptorRoot {
+            path: format!("render.geometry.{name}"),
+            owner: geometry.id,
+            descriptor,
+            expected,
+            rule,
+        });
+    };
+    match &geometry.data {
+        GeometryData::Rect { origin, size } | GeometryData::RoundedRect { origin, size, .. } => {
+            add("origin", *origin, Vec2Length, Any);
+            add(
+                "size",
+                *size,
+                Vec2Length,
+                RootRule::RectSize { origin: *origin },
+            );
+            if let GeometryData::RoundedRect { radii, .. } = &geometry.data {
+                for (index, descriptor) in radii.iter().enumerate() {
+                    add(
+                        &format!("radiiDescriptors[{index}]"),
+                        *descriptor,
+                        Length,
+                        NonNegative(RENDER_DIAGNOSTIC_INVALID_GEOMETRY),
+                    );
+                }
+            }
+        }
+        GeometryData::Circle { center, radius } => {
+            add("center", *center, Vec2Length, Any);
+            add(
+                "radius",
+                *radius,
+                Length,
+                NonNegative(RENDER_DIAGNOSTIC_INVALID_GEOMETRY),
+            );
+        }
         GeometryData::Ellipse {
             center,
             radius_x,
             radius_y,
             rotation,
-        } => roots.extend([
-            (*center, ValueType::Vec2Length),
-            (*radius_x, ValueType::Length),
-            (*radius_y, ValueType::Length),
-            (*rotation, ValueType::Angle),
-        ]),
-        GeometryData::Line { start, end } => roots.extend([
-            (*start, ValueType::Vec2Length),
-            (*end, ValueType::Vec2Length),
-        ]),
-        GeometryData::Polyline { points } | GeometryData::Polygon { points } => {
-            roots.extend(points.iter().map(|value| (*value, ValueType::Vec2Length)))
+        } => {
+            add("center", *center, Vec2Length, Any);
+            add(
+                "radiusX",
+                *radius_x,
+                Length,
+                NonNegative(RENDER_DIAGNOSTIC_INVALID_GEOMETRY),
+            );
+            add(
+                "radiusY",
+                *radius_y,
+                Length,
+                NonNegative(RENDER_DIAGNOSTIC_INVALID_GEOMETRY),
+            );
+            add("rotation", *rotation, Angle, Any);
         }
-        GeometryData::Path { .. } => {}
+        GeometryData::Line { start, end } => {
+            add("start", *start, Vec2Length, Any);
+            add("end", *end, Vec2Length, Any);
+        }
+        GeometryData::Polyline { points } | GeometryData::Polygon { points } => {
+            for (index, descriptor) in points.iter().enumerate() {
+                add(
+                    &format!("pointDescriptors[{index}]"),
+                    *descriptor,
+                    Vec2Length,
+                    Any,
+                );
+            }
+        }
+        GeometryData::Path { path_ref } => {
+            let path = chart
+                .paths
+                .get(*path_ref as usize)
+                .ok_or(RENDER_DIAGNOSTIC_INVALID_REFERENCE)?;
+            path_descriptor_roots(path, roots);
+        }
         GeometryData::Image {
+            resource_id,
             destination,
             source,
             ..
         } => {
-            roots.extend(destination.iter().map(|value| (*value, ValueType::Length)));
+            for (index, descriptor) in destination.iter().enumerate() {
+                let rule = if index < 2 {
+                    Any
+                } else {
+                    RootRule::ImageExtent {
+                        origin: destination[index - 2],
+                    }
+                };
+                add(
+                    &format!("destinationDescriptors[{index}]"),
+                    *descriptor,
+                    Length,
+                    rule,
+                );
+            }
             if let Some(source) = source {
-                roots.extend(source.iter().map(|value| (*value, ValueType::Float)));
+                for (index, descriptor) in source.iter().enumerate() {
+                    add(
+                        &format!("sourceDescriptors[{index}]"),
+                        *descriptor,
+                        Float,
+                        RootRule::ImageSource {
+                            descriptors: *source,
+                            component: index,
+                            resource_id: *resource_id,
+                        },
+                    );
+                }
             }
         }
-        GeometryData::Text { origin, .. } => roots.push((*origin, ValueType::Vec2Length)),
-    }
-    for (reference, expected) in roots {
-        check_descriptor(chart, node, reference, expected)?;
-    }
-    Ok(())
-}
-
-fn validate_path_command_descriptors(
-    chart: &DecodedRenderChart,
-    node: &NodeRecord,
-    command: &PathCommand,
-) -> Result<(), &'static str> {
-    let mut roots = Vec::new();
-    match command {
-        PathCommand::MoveTo(point) | PathCommand::LineTo(point) => {
-            roots.push((*point, ValueType::Vec2Length))
+        GeometryData::Text { origin, glyph_runs } => {
+            add("originDescriptor", *origin, Vec2Length, Any);
+            for index in glyph_runs {
+                let glyph = chart
+                    .glyph_runs
+                    .get(*index as usize)
+                    .ok_or(RENDER_DIAGNOSTIC_INVALID_REFERENCE)?;
+                roots.push(DescriptorRoot {
+                    path: "render.glyphRun.size".to_owned(),
+                    owner: glyph.id,
+                    descriptor: glyph.size_descriptor,
+                    expected: Length,
+                    rule: RootRule::GlyphSize,
+                });
+            }
         }
-        PathCommand::QuadraticTo(control, end) => roots.extend([
-            (*control, ValueType::Vec2Length),
-            (*end, ValueType::Vec2Length),
-        ]),
-        PathCommand::CubicTo(a, b, end) => roots.extend([
-            (*a, ValueType::Vec2Length),
-            (*b, ValueType::Vec2Length),
-            (*end, ValueType::Vec2Length),
-        ]),
-        PathCommand::Arc {
-            center,
-            radius,
-            start_angle,
-            end_angle,
-            ..
-        } => roots.extend([
-            (*center, ValueType::Vec2Length),
-            (*radius, ValueType::Length),
-            (*start_angle, ValueType::Angle),
-            (*end_angle, ValueType::Angle),
-        ]),
-        PathCommand::EllipseArc {
-            center,
-            radius_x,
-            radius_y,
-            rotation,
-            start_angle,
-            end_angle,
-            ..
-        } => roots.extend([
-            (*center, ValueType::Vec2Length),
-            (*radius_x, ValueType::Length),
-            (*radius_y, ValueType::Length),
-            (*rotation, ValueType::Angle),
-            (*start_angle, ValueType::Angle),
-            (*end_angle, ValueType::Angle),
-        ]),
-        PathCommand::Close => {}
-    }
-    for (reference, expected) in roots {
-        check_descriptor(chart, node, reference, expected)?;
     }
     Ok(())
 }
 
-fn validate_paint_descriptors(
-    chart: &DecodedRenderChart,
-    node: &NodeRecord,
-    paint: &PaintData,
-) -> Result<(), &'static str> {
-    let mut roots = Vec::new();
-    match paint {
-        PaintData::Solid { color } => roots.push((*color, ValueType::Color)),
+fn path_descriptor_roots(path: &PathRecord, roots: &mut Vec<DescriptorRoot>) {
+    use RootRule::{Any, NonNegative};
+    use ValueType::{Angle, Length, Vec2Length};
+    for (index, command) in path.commands.iter().enumerate() {
+        let mut add = |name: &str, descriptor, expected, rule| {
+            roots.push(DescriptorRoot {
+                path: format!("render.path.command[{index}].{name}"),
+                owner: path.id,
+                descriptor,
+                expected,
+                rule,
+            });
+        };
+        match command {
+            PathCommand::MoveTo(point) | PathCommand::LineTo(point) => {
+                add("point", *point, Vec2Length, Any)
+            }
+            PathCommand::QuadraticTo(control, end) => {
+                add("control", *control, Vec2Length, Any);
+                add("end", *end, Vec2Length, Any);
+            }
+            PathCommand::CubicTo(control1, control2, end) => {
+                add("control1", *control1, Vec2Length, Any);
+                add("control2", *control2, Vec2Length, Any);
+                add("end", *end, Vec2Length, Any);
+            }
+            PathCommand::Arc {
+                center,
+                radius,
+                start_angle,
+                end_angle,
+                direction,
+            } => {
+                add("center", *center, Vec2Length, Any);
+                add(
+                    "radius",
+                    *radius,
+                    Length,
+                    NonNegative(RENDER_DIAGNOSTIC_INVALID_GEOMETRY),
+                );
+                add(
+                    "startAngle",
+                    *start_angle,
+                    Angle,
+                    RootRule::ArcStart {
+                        end_angle: *end_angle,
+                        direction: *direction,
+                    },
+                );
+                add("endAngle", *end_angle, Angle, Any);
+            }
+            PathCommand::EllipseArc {
+                center,
+                radius_x,
+                radius_y,
+                rotation,
+                start_angle,
+                end_angle,
+                direction,
+            } => {
+                add("center", *center, Vec2Length, Any);
+                add(
+                    "radiusX",
+                    *radius_x,
+                    Length,
+                    NonNegative(RENDER_DIAGNOSTIC_INVALID_GEOMETRY),
+                );
+                add(
+                    "radiusY",
+                    *radius_y,
+                    Length,
+                    NonNegative(RENDER_DIAGNOSTIC_INVALID_GEOMETRY),
+                );
+                add("rotation", *rotation, Angle, Any);
+                add(
+                    "startAngle",
+                    *start_angle,
+                    Angle,
+                    RootRule::ArcStart {
+                        end_angle: *end_angle,
+                        direction: *direction,
+                    },
+                );
+                add("endAngle", *end_angle, Angle, Any);
+            }
+            PathCommand::Close => {}
+        }
+    }
+}
+
+fn paint_descriptor_roots(paint: &PaintRecord, roots: &mut Vec<DescriptorRoot>) {
+    use RootRule::{Any, ColorRange, NonNegative};
+    use ValueType::{Angle, Color, Length, Vec2Float, Vec2Length};
+    let mut add = |name: &str, descriptor, expected, rule| {
+        roots.push(DescriptorRoot {
+            path: format!("render.paint.{name}"),
+            owner: paint.id,
+            descriptor,
+            expected,
+            rule,
+        });
+    };
+    match &paint.data {
+        PaintData::Solid { color } => add("color", *color, Color, ColorRange),
         PaintData::LinearGradient {
             start, end, stops, ..
         } => {
-            roots.extend([
-                (*start, ValueType::Vec2Length),
-                (*end, ValueType::Vec2Length),
-            ]);
-            roots.extend(
-                stops
-                    .iter()
-                    .map(|stop| (stop.color_descriptor, ValueType::Color)),
-            );
+            add("start", *start, Vec2Length, Any);
+            add("end", *end, Vec2Length, Any);
+            for (index, stop) in stops.iter().enumerate() {
+                add(
+                    &format!("stop[{index}].color"),
+                    stop.color_descriptor,
+                    Color,
+                    ColorRange,
+                );
+            }
         }
         PaintData::RadialGradient {
             start_center,
@@ -2059,17 +2268,28 @@ fn validate_paint_descriptors(
             stops,
             ..
         } => {
-            roots.extend([
-                (*start_center, ValueType::Vec2Length),
-                (*start_radius, ValueType::Length),
-                (*end_center, ValueType::Vec2Length),
-                (*end_radius, ValueType::Length),
-            ]);
-            roots.extend(
-                stops
-                    .iter()
-                    .map(|stop| (stop.color_descriptor, ValueType::Color)),
+            add("startCenter", *start_center, Vec2Length, Any);
+            add(
+                "startRadius",
+                *start_radius,
+                Length,
+                NonNegative(RENDER_DIAGNOSTIC_INVALID_PAINT),
             );
+            add("endCenter", *end_center, Vec2Length, Any);
+            add(
+                "endRadius",
+                *end_radius,
+                Length,
+                NonNegative(RENDER_DIAGNOSTIC_INVALID_PAINT),
+            );
+            for (index, stop) in stops.iter().enumerate() {
+                add(
+                    &format!("stop[{index}].color"),
+                    stop.color_descriptor,
+                    Color,
+                    ColorRange,
+                );
+            }
         }
         PaintData::ImagePattern {
             position,
@@ -2077,15 +2297,20 @@ fn validate_paint_descriptors(
             rotation,
             scale,
             ..
-        } => roots.extend([
-            (*position, ValueType::Vec2Length),
-            (*origin, ValueType::Vec2Length),
-            (*rotation, ValueType::Angle),
-            (*scale, ValueType::Vec2Float),
-        ]),
+        } => {
+            add("position", *position, Vec2Length, Any);
+            add("origin", *origin, Vec2Length, Any);
+            add("rotation", *rotation, Angle, Any);
+            add("scale", *scale, Vec2Float, Any);
+        }
     }
-    for (reference, expected) in roots {
-        check_descriptor(chart, node, reference, expected)?;
+}
+
+fn validate_descriptor_roots(chart: &DecodedRenderChart) -> Result<(), &'static str> {
+    for node in &chart.nodes {
+        for root in node_descriptor_roots(chart, node)? {
+            check_descriptor(chart, node, root.descriptor, root.expected)?;
+        }
     }
     Ok(())
 }

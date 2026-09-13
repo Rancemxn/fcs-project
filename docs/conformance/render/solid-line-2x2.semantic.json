@@ -1,0 +1,19 @@
+{
+  "drawOrder": ["main/center"],
+  "drawOps": [
+    {
+      "nodeKind": "Line",
+      "worldBounds": [-1.0, 0.0, 1.0, 0.0],
+      "stroke": {
+        "width": 2.0,
+        "cap": "butt",
+        "join": "miter",
+        "miterLimit": 4.0,
+        "dashOffset": 0.0,
+        "dash": [],
+        "fillLinearRgba": [0.0, 1.0, 0.0, 1.0]
+      },
+      "composite": "sourceOver"
+    }
+  ]
+}

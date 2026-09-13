@@ -193,7 +193,7 @@ Expected: the commit contains the Frozen specifications, governance, roadmap, co
 review, decisions, I0 plan, implementation matrix, AGENTS changes, and deletion of obsolete dated
 plans. `git status --short` prints nothing.
 
-The untracked project workflow and Trellis/Codex scaffolding were committed separately as
+The untracked project workflow scaffolding was committed separately as
 `148936d` (`chore: preserve project workflow for source cutover`) so the archive preserves the
 complete inspected worktree without mixing workflow files into the specification commit.
 

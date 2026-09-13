@@ -39,9 +39,12 @@ render profile 1.0.0 {
                 cap: "round";
                 join: "round";
                 miterLimit: 4.0;
-                dash: [];
+                dash: [1px, 2px];
                 dashOffset: 0px;
-                patternPosition: vec2(0px, 0px);
+                patternPosition: choose {
+                    when s < 1s => vec2(0px, 0px);
+                    else => vec2(1px, 0px);
+                };
                 patternOrigin: vec2(0px, 0px);
                 patternRotation: 0deg;
                 patternScale: vec2(1.0, 1.0);

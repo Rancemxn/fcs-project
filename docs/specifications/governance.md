@@ -81,6 +81,69 @@ Profile 1.0.0 的旧 Frozen 状态并完成 Source grammar closure。随后用�
 profile 和 exact-first runtime expression 边界，因此五个版本域均进入本表所示的重新修订或联合
 复审状态。
 
+### 2.0.4 Rect stroke seam amendment (2026-08-30)
+
+Render Profile 1.0 already defined Rect as `origin + size`, required non-negative width/height,
+defined non-empty dash traversal, and required exact straight-segment arclength. It did not fix the
+closed Rect subpath's start and winding, so the reference writer and renderer deliberately rejected a
+non-empty Rect dash even though the same StrokeRecord was valid for the other supported geometries.
+
+`fcs-render.md` section 15.2 now fixes the Rect subpath to start at `origin`, then visit
+`origin + (0,height)`, `origin + (width,height)`, and `origin + (width,0)` before closing. This is
+clockwise in FCS Y-up coordinates and uses the existing exact straight-segment lengths. Zero width or
+height keeps the same ordered topology; the existing zero-length-segment rule removes coverage,
+tangent, join, and dash advancement for each degenerate edge.
+
+This closes one previously explicit implementation gap without adding another representation or
+algorithm: the FCBC writer accepts the existing StrokeRecord, and the renderer uses its existing
+closed-polyline stroke kernel. The active ImagePattern sibling-fields source fixture now carries a
+non-empty Rect dash, while a focused semantic test distinguishes the first left-edge dash from the
+later bottom closing edge.
+
+This activation supersedes only the 2.0.3 corrective record's I-5 statement that the
+ImagePattern sibling-fields fixture must remain absent from the active manifest. That statement was
+correct for its pre-implementation snapshot; the source fixture and product regression now provide
+the activation evidence without rewriting the historical review record.
+
+The affected candidate file is `fcs-render.md`; Render Profile 1.0.0 remains **Draft** under the
+unpublished-candidate policy. FCS Core, FCBC 2.0.0, Execution ABI 1.0.0, and Conversion 1.0.0 gain no
+version change from this Render-only seam. Exact-head Full Gate, final semantic/raster conformance,
+joint review, and I10 re-freeze remain open.
+
+### 2.0.6 Render fallback-font reference-list clarification (2026-08-30)
+
+Render Profile 1.0 required ordered `fallbackFonts: array<font reference>`, while FCS Core section 3.1
+forbids entity/reference values as elements of the general `array<T>` value type. Treating the field as a
+normal Core array therefore made the required Render spelling impossible to elaborate.
+
+`fcs-render.md` section 11 now fixes `fallbackFonts` as a Render-schema-owned static reference list whose
+source must be an explicit array literal of direct `@fontIdentifier` elements. It does not create or widen
+Core `array<T>`, so constants, functions, template bindings, and general entity arrays remain forbidden.
+The existing embedded-resource identity, ordered fallback lookup, shaping, and GlyphRun semantics are
+unchanged.
+
+The affected candidate file is `fcs-render.md`; Render Profile 1.0.0 remains **Draft**. Activation requires
+the existing source-to-canonical shaping regression, exact-head Full Gate, final joint review, and I10
+re-freeze. The other four version domains gain no version change from this Render-source clarification.
+
+### 2.0.5 Source Clip spelling amendment (2026-08-30)
+
+Render Profile 1.0 already required every `ClipGroup` to own one ClipRecord and constrained Clip geometry,
+fill rule, ownership, transform, semantic mask, and raster behaviour. The Draft source grammar named
+`clipGroup` but did not spell the source fields that construct its required clip, so a conforming source could
+not uniquely reach the existing canonical and FCBC contract.
+
+`fcs-render.md` section 3.1 now fixes that spelling as required compile-time `clip.kind` and
+`clip.fillRule` fields plus the selected geometry's existing fields under the `clip.` prefix. The prefix keeps
+clip-local geometry independent from the owning Node transform without adding a nested AST, geometry
+constructor family, or second geometry model. Path lowering uses the one `clip.fillRule` value for both its
+PathRecord and ClipRecord, making the existing equality invariant true by construction.
+
+The affected candidate file is `fcs-render.md`; Render Profile 1.0.0 remains **Draft** under the unpublished
+candidate policy. Activation still requires source-to-canonical lowering, legal and illegal source evidence,
+semantic/raster conformance, an exact-head Full Gate, final joint review, and I10 re-freeze. The other four
+version domains gain no version change from this Render-source closure.
+
 ### 2.0.3 Render dash, flatten, and imagePattern spelling amendment (2026-08-22)
 
 Issues #527, #528, and #533 recorded three Render gaps found while delivering the stroke units.
@@ -355,6 +418,10 @@ independent Render normative review、executable RenderSection binary/raster art
 尚未公开发布的候选版本可以在用户明确确认兼容成本为零后撤回 Frozen、保持候选 SemVer 修订并
 重新走完整审查；必须保留旧审计记录并标记其已撤回。依赖新语义的 I1–I9 实现必须等受影响阶段
 baseline 重新建立，I10/发布必须等版本重新 Frozen。已经公开的版本不得使用该例外。
+
+**2026-08-15 amendment:** 用户再次确认 FCS 5 尚未公开且兼容成本为零；该政策持续有效，直到用户
+手动宣布改变。五域 Frozen 和本地 RC 完成都不会自动结束该政策；在同一手动宣布前，不创建 public tag、
+GitHub Release、crate publish 或公开 release/conformance bundle。
 
 FCS、FCBC、Execution ABI、Render Profile、Conversion Specification 和 extension schema
 独立版本化。一个完全在编译期消失的 source 功能不必提升 FCBC 或 ABI；容器 framing

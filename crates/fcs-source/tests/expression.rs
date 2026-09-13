@@ -1,3 +1,6 @@
+use fcs_model::{
+    CanonicalExpressionEnvironment, CanonicalExpressionOpcode, CanonicalExpressionType,
+};
 use fcs_source::ast::{BinaryOperator, SourceExpression, SourceLiteral, SourceSpan, UnaryOperator};
 use fcs_source::diagnostic::DiagnosticCode;
 use fcs_source::lower_runtime_expression;
@@ -65,7 +68,7 @@ fn power_is_right_associative() {
 
 #[test]
 fn token_parser_rejects_reserved_names_and_trailing_input() {
-    for source in ["vec2", "a b", "a +"] {
+    for source in ["vec2", "line", "a b", "a +"] {
         let diagnostics = parse_expression(source).into_result().expect_err(source);
         assert_eq!(diagnostics[0].code(), DiagnosticCode::SYNTAX_INVALID_TOKEN);
     }
@@ -231,5 +234,30 @@ fn canonical_lowering_rejects_unknown_and_piece_only_environments() {
         let diagnostic = lower_runtime_expression(&expression)
             .expect_err("unsupported environment must fail at canonical lowering");
         assert_eq!(diagnostic.code(), expected);
+    }
+}
+
+#[test]
+fn runtime_lowering_projects_vec2_components() {
+    for (field, opcode) in [
+        ("x", CanonicalExpressionOpcode::Vec2X),
+        ("y", CanonicalExpressionOpcode::Vec2Y),
+    ] {
+        let source = format!(
+            "(choose {{ when s < 1s => vec2(1px, 2px); else => vec2(3px, 4px); }}).{field}"
+        );
+        let expression = parse_expression(&source).into_result().unwrap();
+        let dag = lower_runtime_expression(&expression)
+            .expect("runtime vec2 component access must lower exactly");
+
+        assert_eq!(dag.result_type(), &CanonicalExpressionType::Length);
+        assert_eq!(
+            dag.nodes().last().expect("projection node").opcode(),
+            opcode
+        );
+        assert!(
+            dag.required_environment()
+                .contains(&CanonicalExpressionEnvironment::S)
+        );
     }
 }

@@ -61,6 +61,11 @@ impl DiagnosticCode {
     pub const PROFILE_REQUIREMENT_MISSING: Self = Self("profile.requirement-missing");
     pub const REPAIR_APPLIED: Self = Self("repair.applied");
     pub const IMPLEMENTATION_FEATURE_UNAVAILABLE: Self = Self("implementation.feature-unavailable");
+    pub const RENDER_INVALID_CLIP: Self = Self("render.invalid-clip");
+    pub const RENDER_INVALID_PAINT: Self = Self("render.invalid-paint");
+    pub const RENDER_RESOURCE_NOT_FOUND: Self = Self("render.resource-not-found");
+    pub const RENDER_RESOURCE_TYPE_MISMATCH: Self = Self("render.resource-type-mismatch");
+    pub const RENDER_RESOURCE_DECODE_FAILED: Self = Self("render.resource-decode-failed");
 
     /// Returns the stable dotted diagnostic code.
     pub const fn as_str(self) -> &'static str {

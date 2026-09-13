@@ -1,0 +1,311 @@
+schema_version = 1
+base = "nonempty-render.hex"
+
+[[mutation]]
+id = "checksum-without-resign"
+diagnostic = "fcbc.section-checksum"
+[[mutation.patch]]
+offset = 680
+replace_hex = "b9"
+
+[[mutation]]
+id = "node-record-tail"
+diagnostic = "render.invalid-record"
+[[mutation.patch]]
+offset = 680
+replace_hex = "f74028e3"
+[[mutation.patch]]
+offset = 4984
+replace_hex = "80000000"
+
+[[mutation]]
+id = "node-kind"
+diagnostic = "render.invalid-geometry"
+[[mutation.patch]]
+offset = 680
+replace_hex = "aef23b2a"
+[[mutation.patch]]
+offset = 5000
+replace_hex = "6300"
+
+[[mutation]]
+id = "node-zero-id"
+diagnostic = "render.invalid-graph"
+[[mutation.patch]]
+offset = 680
+replace_hex = "09376f91"
+[[mutation.patch]]
+offset = 4992
+replace_hex = "0000000000000000"
+
+[[mutation]]
+id = "group-geometry-reference"
+diagnostic = "render.invalid-reference"
+[[mutation.patch]]
+offset = 680
+replace_hex = "be9cb634"
+[[mutation.patch]]
+offset = 5072
+replace_hex = "00000000"
+
+[[mutation]]
+id = "position-descriptor-type"
+diagnostic = "render.invalid-descriptor"
+[[mutation.patch]]
+offset = 680
+replace_hex = "b80109e3"
+[[mutation.patch]]
+offset = 5048
+replace_hex = "03000000"
+
+[[mutation]]
+id = "position-descriptor-index"
+diagnostic = "render.invalid-descriptor"
+[[mutation.patch]]
+offset = 680
+replace_hex = "30eaac6d"
+[[mutation.patch]]
+offset = 5048
+replace_hex = "ffffffff"
+
+[[mutation]]
+id = "composite-enum"
+diagnostic = "render.invalid-composite"
+[[mutation.patch]]
+offset = 680
+replace_hex = "56fd9da7"
+[[mutation.patch]]
+offset = 5088
+replace_hex = "6300"
+
+[[mutation]]
+id = "attachment-kind"
+diagnostic = "render.invalid-reference"
+[[mutation.patch]]
+offset = 680
+replace_hex = "e7f557ba"
+[[mutation.patch]]
+offset = 5020
+replace_hex = "6300"
+
+[[mutation]]
+id = "duplicate-node-id"
+diagnostic = "render.invalid-graph"
+[[mutation.patch]]
+offset = 680
+replace_hex = "0ba0aead"
+[[mutation.patch]]
+offset = 5116
+replace_hex = "d8d5b5122806e76b"
+
+[[mutation]]
+id = "root-range"
+diagnostic = "render.invalid-graph"
+[[mutation.patch]]
+offset = 680
+replace_hex = "a799792a"
+[[mutation.patch]]
+offset = 4976
+replace_hex = "01000000"
+
+[[mutation]]
+id = "geometry-table-order"
+diagnostic = "render.invalid-graph"
+[[mutation.patch]]
+offset = 680
+replace_hex = "b794ccfb"
+[[mutation.patch]]
+offset = 6604
+replace_hex = "88ea92e7a11d3922"
+[[mutation.patch]]
+offset = 6688
+replace_hex = "9be28da737d67101"
+
+[[mutation]]
+id = "geometry-duplicate-key"
+diagnostic = "render.invalid-geometry"
+[[mutation.patch]]
+offset = 680
+replace_hex = "5892d8f0"
+[[mutation.patch]]
+offset = 7288
+replace_hex = "1b000000"
+
+[[mutation]]
+id = "geometry-unknown-key"
+diagnostic = "render.invalid-geometry"
+[[mutation.patch]]
+offset = 680
+replace_hex = "d0ec0900"
+[[mutation.patch]]
+offset = 7288
+replace_hex = "0c000000"
+
+[[mutation]]
+id = "paint-kind"
+diagnostic = "render.invalid-paint"
+[[mutation.patch]]
+offset = 680
+replace_hex = "a2eb6e88"
+[[mutation.patch]]
+offset = 7856
+replace_hex = "6300"
+
+[[mutation]]
+id = "stroke-cap"
+diagnostic = "render.invalid-stroke"
+[[mutation.patch]]
+offset = 680
+replace_hex = "ca13a401"
+[[mutation.patch]]
+offset = 8204
+replace_hex = "6300"
+
+[[mutation]]
+id = "clip-fill-rule"
+diagnostic = "render.invalid-clip"
+[[mutation.patch]]
+offset = 680
+replace_hex = "9f094e7a"
+[[mutation.patch]]
+offset = 8258
+replace_hex = "6300"
+
+[[mutation]]
+id = "layer-pass"
+diagnostic = "render.invalid-graph"
+[[mutation.patch]]
+offset = 680
+replace_hex = "34cb5612"
+[[mutation.patch]]
+offset = 4964
+replace_hex = "6300"
+
+[[mutation]]
+id = "resource-missing"
+diagnostic = "render.resource-not-found"
+[[mutation.patch]]
+offset = 680
+replace_hex = "93f4cbbe"
+[[mutation.patch]]
+offset = 7452
+replace_hex = "0100000000000000"
+
+[[mutation]]
+id = "resource-type"
+diagnostic = "render.resource-type-mismatch"
+[[mutation.patch]]
+offset = 680
+replace_hex = "50369451"
+[[mutation.patch]]
+offset = 7452
+replace_hex = "6adf3d0d8210916a"
+
+[[mutation]]
+id = "resource-capability"
+diagnostic = "render.resource-capability-missing"
+[[mutation.patch]]
+offset = 680
+replace_hex = "02d8bc5d"
+[[mutation.patch]]
+offset = 7452
+replace_hex = "cb4d67c1ec75a0a5"
+
+[[mutation]]
+id = "resource-decode"
+diagnostic = "render.resource-decode-failed"
+[[mutation.patch]]
+offset = 680
+replace_hex = "86bba5d0"
+[[mutation.patch]]
+offset = 7452
+replace_hex = "06fcbdf980993749"
+
+[[mutation]]
+id = "graph-cycle"
+diagnostic = "render.invalid-graph"
+[[mutation.patch]]
+offset = 680
+replace_hex = "d24ce566"
+[[mutation.patch]]
+offset = 5376
+replace_hex = "03000000"
+
+[[mutation]]
+id = "glyph-source-text-tail"
+diagnostic = "render.invalid-record"
+[[mutation.patch]]
+offset = 680
+replace_hex = "c75cf56d"
+[[mutation.patch]]
+offset = 8316
+replace_hex = "00000000"
+[[mutation.patch]]
+offset = 8324
+replace_hex = "736f757263652074657874"
+
+[[mutation]]
+id = "glyph-zero"
+diagnostic = "render.invalid-geometry"
+[[mutation.patch]]
+offset = 680
+replace_hex = "ffd213b8"
+[[mutation.patch]]
+offset = 8324
+replace_hex = "00000000"
+
+[[mutation]]
+id = "glyph-at-num-glyphs"
+diagnostic = "render.invalid-geometry"
+[[mutation.patch]]
+offset = 680
+replace_hex = "30f0eb3d"
+[[mutation.patch]]
+offset = 8324
+replace_hex = "02000000"
+
+[[mutation]]
+id = "glyph-nonzero-face"
+diagnostic = "render.invalid-geometry"
+[[mutation.patch]]
+offset = 680
+replace_hex = "86f11599"
+[[mutation.patch]]
+offset = 8288
+replace_hex = "01000000"
+
+[[mutation]]
+id = "follow-hidden-world"
+diagnostic = "render.invalid-reference"
+[[mutation.patch]]
+offset = 680
+replace_hex = "4b8d38e8"
+[[mutation.patch]]
+offset = 5002
+replace_hex = "0b00"
+[[mutation.patch]]
+offset = 5020
+replace_hex = "0100"
+[[mutation.patch]]
+offset = 5024
+replace_hex = "0000000000000000"
+
+[[mutation]]
+id = "baked-curve-kind-five"
+diagnostic = "fcbc.forbidden-descriptor"
+[[mutation.patch]]
+offset = 560
+replace_hex = "7f9a4f08"
+[[mutation.patch]]
+offset = 3221
+replace_hex = "05"
+
+[[mutation]]
+id = "viewport-zero-width"
+diagnostic = "render.invalid-section"
+[[mutation.patch]]
+offset = 680
+replace_hex = "d0378250"
+[[mutation.patch]]
+offset = 4896
+replace_hex = "0000000000000000"

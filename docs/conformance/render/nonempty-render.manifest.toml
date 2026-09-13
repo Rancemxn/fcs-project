@@ -1,0 +1,159 @@
+schema_version = 1
+id = "render.nonempty-render"
+fcs_version = "5.0.0"
+fcbc_version = "2.0.0"
+execution_abi_version = "1.0.0"
+render_profile_version = "1.0.0"
+path = "nonempty-render.hex"
+expect = "success"
+decoded_length = 9024
+sha256 = "fac3a43f436e68c40975912ea50ab7402418a40ec90d14058978f9037490a7e0"
+viewport_width_bits = "4028000000000000"
+viewport_height_bits = "4028000000000000"
+viewport_color_space = 2
+table_counts = [1, 13, 11, 1, 9, 1, 1, 1]
+
+[[section]]
+type = 1
+offset = 728
+length = 520
+crc32 = "d8345b14"
+
+[[section]]
+type = 2
+offset = 1248
+length = 300
+crc32 = "3e38eac6"
+
+[[section]]
+type = 3
+offset = 1552
+length = 40
+crc32 = "e31c05b5"
+
+[[section]]
+type = 4
+offset = 1592
+length = 4
+crc32 = "2144df1c"
+
+[[section]]
+type = 5
+offset = 1600
+length = 4
+crc32 = "2144df1c"
+
+[[section]]
+type = 6
+offset = 1608
+length = 764
+crc32 = "7147627a"
+
+[[section]]
+type = 7
+offset = 2376
+length = 48
+crc32 = "6ea5c831"
+
+[[section]]
+type = 8
+offset = 2424
+length = 44
+crc32 = "06376fc0"
+
+[[section]]
+type = 9
+offset = 2472
+length = 236
+crc32 = "e249a0aa"
+
+[[section]]
+type = 10
+offset = 2712
+length = 496
+crc32 = "f6e42a27"
+
+[[section]]
+type = 11
+offset = 3208
+length = 668
+crc32 = "964b15a5"
+
+[[section]]
+type = 12
+offset = 3880
+length = 804
+crc32 = "363aa343"
+
+[[section]]
+type = 13
+offset = 4688
+length = 188
+crc32 = "5d120888"
+
+[[section]]
+type = 14
+offset = 4880
+length = 3484
+crc32 = "175740b8"
+
+[[section]]
+type = 20
+offset = 8368
+length = 656
+crc32 = "294c7364"
+
+[[resource]]
+canonical_textual_id = "fixture.render.malformed"
+id = "49379980f9bdfc06"
+kind = 2
+media_type = "image/png"
+data_offset = 0
+data_length = 29
+sha256 = "66eb55e69c42345c65021ea9364fc43c61d2151dde67a89dc02362543b289903"
+asset = "binding/assets/opaque-image.bin"
+metadata = { colorSpace = "srgb", alpha = "straight", sampling = "nearest" }
+
+[[resource]]
+canonical_textual_id = "fixture.render.font"
+id = "6a9110820d3ddf6a"
+kind = 3
+media_type = "font/ttf"
+data_offset = 32
+data_length = 344
+sha256 = "f603c8bcf005ee2a53ea78acae8002e91285ca26fee32ace235684b636706800"
+asset = "assets/fcs-test-font.ttf"
+metadata = { fontProfile = "truetype-glyf-1", shapingProfile = "simple-ltr-1", faceCount = 1 }
+
+[[resource]]
+canonical_textual_id = "fixture.render.png"
+id = "84bbc809041bbddf"
+kind = 2
+media_type = "image/png"
+data_offset = 376
+data_length = 86
+sha256 = "a108791d9edc1d9c37644a45ce29d4a20e479711db97daf85375b82924e8fa22"
+asset = "assets/fcs-test-rgba8.png"
+metadata = { colorSpace = "srgb", alpha = "straight", sampling = "nearest" }
+
+[[resource]]
+canonical_textual_id = "fixture.render.unsupported"
+id = "a5a075ecc1674dcb"
+kind = 2
+media_type = "image/jpeg"
+data_offset = 464
+data_length = 29
+sha256 = "66eb55e69c42345c65021ea9364fc43c61d2151dde67a89dc02362543b289903"
+asset = "binding/assets/opaque-image.bin"
+metadata = { colorSpace = "srgb", alpha = "straight", sampling = "nearest" }
+
+[[resource]]
+canonical_textual_id = "fixture.render.webp"
+id = "fb52dc20211d84f3"
+kind = 2
+media_type = "image/webp"
+data_offset = 496
+data_length = 160
+sha256 = "ec06d2ae4eda9d0b1df88bd375c296b01af24f8122978b1e436ee4c4e8db174b"
+asset = "assets/fcs-test-lossless.webp"
+metadata = { colorSpace = "srgb", alpha = "straight", sampling = "nearest" }
