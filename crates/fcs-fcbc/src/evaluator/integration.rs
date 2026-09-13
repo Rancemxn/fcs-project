@@ -75,7 +75,12 @@ fn tolerance(bound: Bounds, absolute: f64) -> f64 {
     } else {
         bound.lo.abs().min(bound.hi.abs())
     };
-    absolute.max(4.0 * (minimum.next_up() - minimum))
+    let spacing = if minimum == f64::MAX {
+        minimum - minimum.next_down()
+    } else {
+        minimum.next_up() - minimum
+    };
+    absolute.max(4.0 * spacing)
 }
 
 struct Query<'a> {
@@ -232,7 +237,7 @@ impl<'a> Query<'a> {
                 }
             }
             let panel = heap.pop().ok_or(EXECUTION_ERROR)?;
-            let middle = panel.start * 0.5 + panel.end * 0.5;
+            let middle = panel.start.midpoint(panel.end);
             if panel.depth >= MAX_INTEGRATION_DEPTH || middle <= panel.start || middle >= panel.end
             {
                 return Err(EXECUTION_ERROR);
@@ -414,7 +419,7 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
         if let Some(value) = self.coordinate {
             return Some(value);
         }
-        let middle = self.start * 0.5 + self.end * 0.5;
+        let middle = self.start.midpoint(self.end);
         let center = self
             .query
             .integrate(None, 0.0, middle, 0.0, COORDINATE_ERROR)
@@ -826,10 +831,21 @@ impl<'a, 'q> PanelEvaluator<'a, 'q> {
                 }
                 a.finite()?;
                 b.finite()?;
-                for (index, value) in [
-                    (node.operands[0], left.with_bound(a)),
-                    (node.operands[1], right.with_bound(b)),
-                ] {
+                for (index, value, bound) in
+                    [(node.operands[0], left, a), (node.operands[1], right, b)]
+                {
+                    let value = if value.exact_constant().is_some() {
+                        value
+                    } else if bound.lo == 0.0 && bound.hi == 0.0 {
+                        // Numeric equality accepts both zero signs; it cannot
+                        // turn an uncertain zero into a positive-zero constant.
+                        value.with_bound(Bounds {
+                            lo: 0.0f64.next_down(),
+                            hi: 0.0f64.next_up(),
+                        })
+                    } else {
+                        value.with_bound(bound)
+                    };
                     memo.insert(index, Value::Float(value));
                     changed.insert(index);
                 }
@@ -1597,9 +1613,26 @@ mod tests {
         );
         let negative_one = constant(&mut chart, ValueType::Float, -1.0);
         let angle = node(&mut chart, 56, ValueType::Float, &[choice, negative_one]);
+        let zero = node(&mut chart, 30, ValueType::Bool, &[choice, positive_zero]);
+        let angle = node(
+            &mut chart,
+            70,
+            ValueType::Float,
+            &[zero, angle, negative_one],
+        );
         let four = constant(&mut chart, ValueType::Float, 4.0);
         let root = node(&mut chart, 20, ValueType::Float, &[angle, four]);
         let index = bind_speed(&mut chart, root, &[0.0]);
+        let mut query = Query::new(&chart, chart.lines[0].scroll_tempo_descriptor, &[0.0]).unwrap();
+        let range = PanelEvaluator::new(&mut query, 0.0, 1.0)
+            .unwrap()
+            .expression(root, Taylor::constant(0.0), true, &mut BTreeMap::new(), 0)
+            .unwrap()
+            .float()
+            .unwrap()
+            .range();
+        assert!(range.contains(4.0 - std::f64::consts::PI));
+        assert!(range.contains(4.0 + std::f64::consts::PI));
         let result = query_distance(&chart, index, 1.0).unwrap();
         assert!(
             (result.floor_position - (4.0 + std::f64::consts::PI / 4.0)).abs() <= ABSOLUTE_ERROR
@@ -1650,6 +1683,10 @@ mod tests {
 
     #[test]
     fn every_boundary_and_nested_query_charges_the_same_finite_budget() {
+        assert_eq!(
+            tolerance(Bounds::point(f64::MAX), ABSOLUTE_ERROR),
+            4.0 * (f64::MAX - f64::MAX.next_down())
+        );
         let mut chart = chart();
         let q = node(&mut chart, 4, ValueType::Float, &[]);
         let zero = constant(&mut chart, ValueType::Float, 0.0);

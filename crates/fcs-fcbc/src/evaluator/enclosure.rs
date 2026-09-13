@@ -49,7 +49,7 @@ impl Bounds {
     }
 
     pub fn midpoint(self) -> f64 {
-        self.lo * 0.5 + self.hi * 0.5
+        self.lo.midpoint(self.hi)
     }
 
     pub fn contains(self, value: f64) -> bool {
@@ -80,7 +80,7 @@ impl Bounds {
     }
 
     fn float_binary(self, other: Self, apply: impl Fn(f64, f64) -> f64) -> Self {
-        let values = [
+        let mut values = [
             apply(self.lo, other.lo),
             apply(self.lo, other.hi),
             apply(self.hi, other.lo),
@@ -92,9 +92,10 @@ impl Bounds {
                 hi: f64::INFINITY,
             };
         }
+        values.sort_by(f64::total_cmp);
         Self {
-            lo: values.into_iter().fold(f64::INFINITY, f64::min),
-            hi: values.into_iter().fold(f64::NEG_INFINITY, f64::max),
+            lo: values[0],
+            hi: values[3],
         }
     }
 }
@@ -348,7 +349,7 @@ impl Taylor {
     pub fn primitive(self, start: f64, end: f64) -> Self {
         let half = Bounds::point(0.5);
         let width = (Bounds::point(end) - Bounds::point(start)) * half;
-        let center = Bounds::point(start * 0.5 + end * 0.5);
+        let center = Bounds::point(start.midpoint(end));
         let center_error = (Bounds::point(start) + Bounds::point(end)) * half - center;
         let remainder = width * self.coefficients[3] / Bounds::point(4.0) * Bounds::POSITIVE_UNIT
             + width * self.remainder * Bounds::UNIT
@@ -660,11 +661,13 @@ impl Math {
             let half_pi = pi / Bounds::point(if yr.lo > 0.0 { 2.0 } else { -2.0 });
             return Some(Taylor::enclosed(half_pi).real_add(-angle).rounded());
         }
-        if xr.hi < 0.0 && (yr.lo >= 0.0 || yr.hi <= 0.0) {
+        let above_cut = yr.lo > 0.0 || (yr.lo == 0.0 && !yr.lo.is_sign_negative());
+        let below_cut = yr.hi < 0.0 || (yr.hi == 0.0 && yr.hi.is_sign_negative());
+        if xr.hi < 0.0 && (above_cut || below_cut) {
             let angle = self.unary(55, y.real_mul(x.reciprocal()?))?;
             return Some(
                 angle
-                    .real_add(Taylor::enclosed(if yr.lo >= 0.0 { pi } else { -pi }))
+                    .real_add(Taylor::enclosed(if above_cut { pi } else { -pi }))
                     .rounded(),
             );
         }
@@ -902,6 +905,15 @@ mod tests {
     #[test]
     fn elementary_easing_and_bezier_models_enclose_point_queries() {
         let mut math = Math::new().unwrap();
+        let signed_zero = Taylor::variable(-1.0, 1.0) * Taylor::constant(0.0);
+        let angle = math
+            .atan2(signed_zero, Taylor::constant(-1.0))
+            .unwrap()
+            .range();
+        assert!(angle.contains(-std::f64::consts::PI));
+        assert!(angle.contains(std::f64::consts::PI));
+        let subnormal = f64::from_bits(1);
+        assert_eq!(Bounds::point(subnormal).midpoint(), subnormal);
         for (start, end) in [(0.1, 0.2), (0.45, 0.55), (0.8, 0.9)] {
             let input = Taylor::variable(start, end);
             let mut models = Vec::new();
