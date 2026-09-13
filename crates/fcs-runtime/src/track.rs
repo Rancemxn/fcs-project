@@ -217,7 +217,7 @@ fn evaluate_fill(
                 CanonicalTrackPiece::Segment(segment)
                     if segment.end().chart_time_seconds() <= chart_time =>
                 {
-                    Some(segment.end_value())
+                    Some(segment.end_limit())
                 }
                 _ => None,
             })
@@ -263,7 +263,7 @@ fn evaluate_segment(
         CanonicalTrackInterpolation::Linear => progress,
         CanonicalTrackInterpolation::Easing(name) => evaluate_core_easing(name, progress)?,
         CanonicalTrackInterpolation::CubicBezier(control) => {
-            cubic_bezier_progress(*control, progress)?
+            evaluate_cubic_bezier_progress(*control, progress)?
         }
     };
     interpolate(segment.start_value(), segment.end_value(), progress)
@@ -424,7 +424,16 @@ fn value_matches_target(value: CanonicalTrackValue, target: CanonicalTrackTarget
     )
 }
 
-fn cubic_bezier_progress(
+/// Solves the cubic Bezier easing curve for the y progress at the given x
+/// progress under Core §9.4: the controls are interpreted as exact reals, the
+/// solution is enclosed with exact arithmetic, and y is rounded once.
+///
+/// Segment evaluators in other crates must delegate here rather than
+/// re-implement an approximation, so every execution surface returns the same
+/// value for the same controls. Callers that clamp progress to the segment
+/// span first keep their own range check: this function only rejects non-
+/// finite progress (via `InvalidBezier`).
+pub fn evaluate_cubic_bezier_progress(
     [x1, y1, x2, y2]: [f64; 4],
     progress: f64,
 ) -> Result<f64, TrackEvaluationError> {
@@ -1178,6 +1187,69 @@ mod tests {
     }
 
     #[test]
+    fn hold_after_resolves_step_from_the_segment_end_limit() {
+        // FCS section 9.3 resolves holdAfter from the previous segment's end
+        // limit, and 9.4 makes a step hold its start value throughout, so a
+        // step 0.25 -> 0.75 holds 0.25 after the segment and across the gap,
+        // never 0.75.
+        let owner = owner("main");
+        let track = CanonicalTrack::new(
+            owner.clone(),
+            "step-hold",
+            CanonicalTrackTarget::Alpha,
+            CanonicalTrackBlend::Replace,
+            0,
+            CanonicalTrackFill::HoldAfter,
+            CanonicalTrackFill::HoldBefore,
+            CanonicalTrackFill::HoldAfter,
+            vec![
+                CanonicalTrackPiece::Segment(
+                    CanonicalTrackSegment::new(
+                        time(0.0),
+                        time(1.0),
+                        CanonicalTrackValue::Float(0.25),
+                        CanonicalTrackValue::Float(0.75),
+                        CanonicalTrackInterpolation::Step,
+                        0,
+                    )
+                    .unwrap(),
+                ),
+                CanonicalTrackPiece::Segment(
+                    CanonicalTrackSegment::new(
+                        time(2.0),
+                        time(3.0),
+                        CanonicalTrackValue::Float(0.5),
+                        CanonicalTrackValue::Float(0.875),
+                        CanonicalTrackInterpolation::Step,
+                        1,
+                    )
+                    .unwrap(),
+                ),
+            ],
+        )
+        .unwrap();
+        let tracks = CanonicalTrackSet::new(vec![track]).unwrap();
+        for (query, expected) in [
+            (0.5, 0.25),
+            (1.0, 0.25),
+            (1.5, 0.25),
+            (3.0, 0.5),
+            (5.0, 0.5),
+        ] {
+            assert_eq!(
+                evaluate_track_set(
+                    &tracks,
+                    &owner,
+                    CanonicalTrackTarget::Alpha,
+                    query,
+                    CanonicalTrackValue::Float(1.0),
+                ),
+                Ok(CanonicalTrackValue::Float(expected))
+            );
+        }
+    }
+
+    #[test]
     fn hold_fills_use_segment_boundaries_and_not_points() {
         let owner = owner("main");
         let before = CanonicalTrack::new(
@@ -1593,10 +1665,22 @@ mod tests {
 
     #[test]
     fn cubic_bezier_returns_only_certified_binary64_results() {
-        assert_eq!(cubic_bezier_progress([0.25, 2.0, 0.75, -1.0], 0.0), Ok(0.0));
-        assert_eq!(cubic_bezier_progress([0.25, 2.0, 0.75, -1.0], 1.0), Ok(1.0));
-        assert_eq!(cubic_bezier_progress([0.0, 0.0, 1.0, 1.0], 0.25), Ok(0.25));
-        assert_eq!(cubic_bezier_progress([0.5, 2.0, 0.5, 2.0], 0.5), Ok(1.625));
+        assert_eq!(
+            evaluate_cubic_bezier_progress([0.25, 2.0, 0.75, -1.0], 0.0),
+            Ok(0.0)
+        );
+        assert_eq!(
+            evaluate_cubic_bezier_progress([0.25, 2.0, 0.75, -1.0], 1.0),
+            Ok(1.0)
+        );
+        assert_eq!(
+            evaluate_cubic_bezier_progress([0.0, 0.0, 1.0, 1.0], 0.25),
+            Ok(0.25)
+        );
+        assert_eq!(
+            evaluate_cubic_bezier_progress([0.5, 2.0, 0.5, 2.0], 0.5),
+            Ok(1.625)
+        );
         let owner = owner("main");
         let track = segment_track(
             owner.clone(),
@@ -1617,11 +1701,11 @@ mod tests {
             Ok(CanonicalTrackValue::Float(3.25))
         );
         assert_eq!(
-            cubic_bezier_progress([-0.25, 0.0, 0.75, 1.0], 0.5),
+            evaluate_cubic_bezier_progress([-0.25, 0.0, 0.75, 1.0], 0.5),
             Err(TrackEvaluationError::InvalidBezier)
         );
         assert_eq!(
-            cubic_bezier_progress([0.25, 0.5, 0.75, f64::from_bits(1)], 0.25),
+            evaluate_cubic_bezier_progress([0.25, 0.5, 0.75, f64::from_bits(1)], 0.25),
             Err(TrackEvaluationError::BezierEnclosureUnavailable)
         );
     }

@@ -417,6 +417,51 @@ mod tests {
         render.nodes[target].fill_paint = Some(paint);
     }
 
+    fn image_pattern_paint(render: &mut DecodedRenderChart, repeat: u16, scale: [f64; 2]) -> u32 {
+        let position = add_descriptor_constant(
+            render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [0.0, 0.0],
+            },
+        );
+        let origin = add_descriptor_constant(
+            render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [0.0, 0.0],
+            },
+        );
+        let rotation = add_descriptor_constant(
+            render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Angle,
+                value: 0.0,
+            },
+        );
+        let scale = add_descriptor_constant(
+            render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Float,
+                value: scale,
+            },
+        );
+        let paint = render.paints.len() as u32;
+        render.paints.push(PaintRecord {
+            id: u64::MAX - 7,
+            data: PaintData::ImagePattern {
+                resource_id: resource_id(WEBP_RESOURCE_TEXT_ID),
+                position,
+                origin,
+                rotation,
+                scale,
+                repeat,
+                sampling: 1,
+            },
+        });
+        paint
+    }
+
     fn u32_at(bytes: &[u8], offset: usize) -> u32 {
         u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("u32 bytes"))
     }
@@ -1749,6 +1794,253 @@ mod tests {
         assert_eq!(
             rasterize_solid_rgba8(&render, 2, 1).expect("clipped raster"),
             vec![255, 255, 255, 255, 0, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn image_pattern_out_of_bounds_samples_composite_transparent_for_copy() {
+        const CYAN: [u8; 4] = [0, 255, 255, 255];
+        const YELLOW: [u8; 4] = [255, 255, 0, 255];
+        const MAGENTA: [u8; 4] = [255, 0, 255, 255];
+        const RED: [u8; 4] = [255, 0, 0, 255];
+        const CLEAR: [u8; 4] = [0, 0, 0, 0];
+
+        // The fixture webp decodes to cyan/yellow over yellow/magenta. With an
+        // identity pattern transform the 2x2 image covers logical [0,2)x[0,2),
+        // which is the top-right pixel block of the 4x4 viewport.
+        let repeat_none = [
+            CLEAR, CLEAR, YELLOW, MAGENTA, CLEAR, CLEAR, CYAN, YELLOW, CLEAR, CLEAR, CLEAR, CLEAR,
+            CLEAR, CLEAR, CLEAR, CLEAR,
+        ];
+        let repeat_x = [
+            YELLOW, MAGENTA, YELLOW, MAGENTA, CYAN, YELLOW, CYAN, YELLOW, CLEAR, CLEAR, CLEAR,
+            CLEAR, CLEAR, CLEAR, CLEAR, CLEAR,
+        ];
+        let repeat_y = [
+            CLEAR, CLEAR, YELLOW, MAGENTA, CLEAR, CLEAR, CYAN, YELLOW, CLEAR, CLEAR, YELLOW,
+            MAGENTA, CLEAR, CLEAR, CYAN, YELLOW,
+        ];
+        let repeat_both = [
+            YELLOW, MAGENTA, YELLOW, MAGENTA, CYAN, YELLOW, CYAN, YELLOW, YELLOW, MAGENTA, YELLOW,
+            MAGENTA, CYAN, YELLOW, CYAN, YELLOW,
+        ];
+
+        // An opaque red background under a full-viewport ImagePattern rect.
+        // Outside a non-repeating extent the paint sample must be transparent,
+        // so `copy` clears the destination instead of retaining the red.
+        let build = |composite: u16, repeat: u16, scale: [f64; 2]| {
+            let mut render = load_render(&render_fixture()).expect("render load");
+            make_world_attached(&mut render);
+            set_full_viewport_rect(&mut render);
+            render.viewport_width = 4.0;
+            render.viewport_height = 4.0;
+            render.viewport_color_space = 1;
+
+            let rect_index = render
+                .nodes
+                .iter()
+                .position(|node| node.kind == NodeKind::Rect)
+                .expect("fixture Rect");
+            let rect_geometry = render.nodes[rect_index].geometry_ref;
+            let color_descriptor = match render.paints
+                [render.nodes[rect_index].fill_paint.expect("Rect fill") as usize]
+                .data
+            {
+                PaintData::Solid { color } => color,
+                _ => panic!("fixture Rect paint is not solid"),
+            };
+            set_descriptor_constant(
+                &mut render,
+                color_descriptor,
+                RuntimeValue::Color([1.0, 0.0, 0.0, 1.0]),
+            );
+
+            let pattern_index = render
+                .nodes
+                .iter()
+                .position(|node| node.kind == NodeKind::RoundedRect)
+                .expect("fixture RoundedRect");
+            let pattern_paint = image_pattern_paint(&mut render, repeat, scale);
+            render.nodes[pattern_index].kind = NodeKind::Rect;
+            render.nodes[pattern_index].geometry_ref = rect_geometry;
+            render.nodes[pattern_index].fill_paint = Some(pattern_paint);
+            render.nodes[pattern_index].composite = composite;
+            // The fixture's rounded node opacity descriptor is the speed track
+            // (evaluates 0.0 at t=0).
+            render.nodes[pattern_index].opacity_descriptor = 8;
+
+            let hidden = add_descriptor_constant(&mut render, RuntimeValue::Bool(false));
+            let visible = add_descriptor_constant(&mut render, RuntimeValue::Bool(true));
+            for node in &mut render.nodes {
+                node.visibility_descriptor = hidden;
+            }
+            for index in [rect_index, pattern_index] {
+                let mut current = Some(index);
+                while let Some(node_index) = current {
+                    render.nodes[node_index].visibility_descriptor = visible;
+                    current = render.nodes[node_index]
+                        .parent
+                        .map(|parent| parent as usize);
+                }
+            }
+            render
+        };
+
+        for (repeat, expected) in [
+            (1u16, repeat_none),
+            (2, repeat_x),
+            (3, repeat_y),
+            (4, repeat_both),
+        ] {
+            let render = build(2, repeat, [1.0, 1.0]);
+            assert_eq!(
+                rasterize_solid_rgba8(&render, 4, 4).expect("pattern fill raster"),
+                expected.concat()
+            );
+        }
+
+        // sourceOver keeps the red background where the pattern is
+        // transparent: the transparent sample composites as a no-op.
+        let render = build(1, 1, [1.0, 1.0]);
+        assert_eq!(
+            rasterize_solid_rgba8(&render, 4, 4).expect("sourceOver raster"),
+            [
+                RED, RED, YELLOW, MAGENTA, RED, RED, CYAN, YELLOW, RED, RED, RED, RED, RED, RED,
+                RED, RED,
+            ]
+            .concat()
+        );
+
+        // A singular pattern transform keeps zero coverage: no sample
+        // composites at all, so even `copy` retains the red background.
+        let render = build(2, 1, [0.0, 0.0]);
+        assert_eq!(
+            rasterize_solid_rgba8(&render, 4, 4).expect("singular transform raster"),
+            [RED; 16].concat()
+        );
+
+        // Stroke shares the sampling path: a full-viewport Line stroke over
+        // the same background behaves like the fill case for `copy`.
+        let mut render = load_render(&render_fixture()).expect("render load");
+        make_world_attached(&mut render);
+        set_full_viewport_rect(&mut render);
+        render.viewport_width = 4.0;
+        render.viewport_height = 4.0;
+        render.viewport_color_space = 1;
+
+        let rect_index = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::Rect)
+            .expect("fixture Rect");
+        let color_descriptor = match render.paints
+            [render.nodes[rect_index].fill_paint.expect("Rect fill") as usize]
+            .data
+        {
+            PaintData::Solid { color } => color,
+            _ => panic!("fixture Rect paint is not solid"),
+        };
+        set_descriptor_constant(
+            &mut render,
+            color_descriptor,
+            RuntimeValue::Color([1.0, 0.0, 0.0, 1.0]),
+        );
+
+        let line_index = render
+            .nodes
+            .iter()
+            .position(|node| node.kind == NodeKind::Line)
+            .expect("fixture Line");
+        let stroke_index = render.nodes[line_index].stroke_ref.expect("Line stroke") as usize;
+        let width = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 4.0,
+            },
+        );
+        let dash_offset = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: 0.0,
+            },
+        );
+        render.strokes[stroke_index].paint_ref = image_pattern_paint(&mut render, 1, [1.0, 1.0]);
+        render.strokes[stroke_index].width_descriptor = width;
+        render.strokes[stroke_index].dash_offset_descriptor = dash_offset;
+        render.strokes[stroke_index].dash.clear();
+        render.nodes[line_index].composite = 2;
+
+        let hidden = add_descriptor_constant(&mut render, RuntimeValue::Bool(false));
+        let visible = add_descriptor_constant(&mut render, RuntimeValue::Bool(true));
+        let zero_position = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [0.0, 0.0],
+            },
+        );
+        let zero_angle = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Angle,
+                value: 0.0,
+            },
+        );
+        let unit_scale = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Float,
+                value: [1.0, 1.0],
+            },
+        );
+        let opaque = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Scalar {
+                ty: ValueType::Float,
+                value: 1.0,
+            },
+        );
+        for node in &mut render.nodes {
+            node.visibility_descriptor = hidden;
+        }
+        for index in [rect_index, line_index] {
+            let mut current = Some(index);
+            while let Some(node_index) = current {
+                let node = &mut render.nodes[node_index];
+                node.visibility_descriptor = visible;
+                node.position_descriptor = zero_position;
+                node.origin_descriptor = zero_position;
+                node.rotation_descriptor = zero_angle;
+                node.scale_descriptor = unit_scale;
+                node.opacity_descriptor = opaque;
+                current = node.parent.map(|parent| parent as usize);
+            }
+        }
+
+        let geometry_index = render.nodes[line_index]
+            .geometry_ref
+            .expect("Line geometry") as usize;
+        let start = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [-2.0, 0.0],
+            },
+        );
+        let end = add_descriptor_constant(
+            &mut render,
+            RuntimeValue::Vec2 {
+                ty: ValueType::Vec2Length,
+                value: [2.0, 0.0],
+            },
+        );
+        render.geometries[geometry_index].data = GeometryData::Line { start, end };
+
+        assert_eq!(
+            rasterize_solid_rgba8(&render, 4, 4).expect("pattern stroke raster"),
+            repeat_none.concat()
         );
     }
 

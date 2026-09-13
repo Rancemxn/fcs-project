@@ -474,7 +474,10 @@ fn cmd_check(path: &Path, json: bool, resolver_root: Option<&Path>) -> ExitCode 
         }
     };
     let workspace = resolver_root
-        .or_else(|| path.parent())
+        .or_else(|| {
+            path.parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+        })
         .unwrap_or_else(|| Path::new("."));
     match document.canonical_compilation_with_source(
         text,
@@ -569,7 +572,10 @@ fn cmd_compile(path: &Path, output: Option<&Path>, options: &CompileOptions) -> 
             return ExitCategory::InputInvalid.code();
         }
     };
-    let default_workspace = path.parent().unwrap_or_else(|| Path::new("."));
+    let default_workspace = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     let workspace = options
         .resolver_root
         .as_deref()

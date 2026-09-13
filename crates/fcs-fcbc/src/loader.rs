@@ -84,9 +84,19 @@ impl ValueType {
 pub enum RuntimeValue {
     Bool(bool),
     Int(i64),
-    Scalar { ty: ValueType, value: f64 },
+    Scalar {
+        ty: ValueType,
+        value: f64,
+    },
     Color([f64; 4]),
-    Vec2 { ty: ValueType, value: [f64; 2] },
+    Vec2 {
+        ty: ValueType,
+        value: [f64; 2],
+    },
+    /// Integer vectors keep their exact i64 components (Execution ABI §14):
+    /// binary64 storage would collide integers above 2^53 and hide overflow.
+    /// `ty` is always `ValueType::Vec2Int`; `Vec2` never carries that type.
+    Vec2Int([i64; 2]),
     ResourceRef(u64),
     ContributorRef(u64),
 }
@@ -99,6 +109,7 @@ impl RuntimeValue {
             Self::Scalar { ty, .. } => *ty,
             Self::Color(_) => ValueType::Color,
             Self::Vec2 { ty, .. } => *ty,
+            Self::Vec2Int(_) => ValueType::Vec2Int,
             Self::ResourceRef(_) | Self::ContributorRef(_) => {
                 unreachable!("entity references are not expression ABI values")
             }
@@ -554,7 +565,14 @@ pub fn load(bytes: &[u8]) -> Result<DecodedChart, &'static str> {
     validate_descriptors(&descriptors, &constants, &expressions)?;
     validate_lines(&lines, &descriptors, &constants, &distances)?;
     validate_notes(&notes, &lines, &descriptors, &resources)?;
-    validate_distances(&distances, &lines, &descriptors, &constants)?;
+    validate_distances(
+        &distances,
+        &lines,
+        &descriptors,
+        &constants,
+        &expressions,
+        &tempo_points,
+    )?;
     validate_canonical_reachability(
         &descriptors,
         &expressions,
@@ -928,12 +946,16 @@ fn parse_runtime_constant(cursor: &mut Cursor<'_>) -> Result<RuntimeValue, &'sta
             value.zeroes(7)?;
             let element = scalar_tag_type(element_tag).ok_or("fcbc.invalid-record")?;
             let ty = ValueType::vector_of(element).ok_or("fcbc.invalid-record")?;
-            RuntimeValue::Vec2 {
-                ty,
-                value: [
-                    parse_scalar_value(&mut value, element_tag)?,
-                    parse_scalar_value(&mut value, element_tag)?,
-                ],
+            if element == ValueType::Int {
+                RuntimeValue::Vec2Int([value.i64()?, value.i64()?])
+            } else {
+                RuntimeValue::Vec2 {
+                    ty,
+                    value: [
+                        parse_scalar_value(&mut value, element_tag)?,
+                        parse_scalar_value(&mut value, element_tag)?,
+                    ],
+                }
             }
         }
         11 => RuntimeValue::ResourceRef(value.u64()?),
@@ -1989,7 +2011,7 @@ fn parse_notes(
     Ok(notes)
 }
 
-fn parse_tracks(bytes: &[u8]) -> Result<Vec<PropertyDescriptor>, &'static str> {
+pub(crate) fn parse_tracks(bytes: &[u8]) -> Result<Vec<PropertyDescriptor>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-record");
     let count = limited_count(cursor.u32()?)?;
     let mut descriptors = Vec::new();
@@ -2056,7 +2078,7 @@ fn parse_tracks(bytes: &[u8]) -> Result<Vec<PropertyDescriptor>, &'static str> {
     Ok(descriptors)
 }
 
-fn parse_expressions(bytes: &[u8]) -> Result<Vec<ExpressionNode>, &'static str> {
+pub(crate) fn parse_expressions(bytes: &[u8]) -> Result<Vec<ExpressionNode>, &'static str> {
     let mut cursor = Cursor::new(bytes, "fcbc.invalid-expression");
     let count = limited_count(cursor.u32()?)?;
     let mut expressions = Vec::new();
@@ -2365,7 +2387,7 @@ fn is_numeric_scalar(ty: ValueType) -> bool {
     )
 }
 
-fn is_unit_scalar(ty: ValueType) -> bool {
+pub(crate) fn is_unit_scalar(ty: ValueType) -> bool {
     matches!(
         ty,
         ValueType::Time | ValueType::Beat | ValueType::Length | ValueType::Angle
@@ -2860,21 +2882,9 @@ pub fn validate_descriptor_environment_for_target(
         .ok_or("fcbc.invalid-expression")
 }
 
-// The depth-guarded walks below keep their own stacks instead of recursing:
-// chain length is file-controlled, so the table-sized cycle guards fire far
-// deeper than any native stack survives. The guards and their categories are
-// unchanged - they still bound cyclic references, not well-formed depth.
-//
-// The walks are also DAG-aware: a node completes once (facts memo), so shared
-// subgraphs are re-walked a bounded number of times instead of once per
-// occurrence. Because a completed node's guards no longer re-run on every
-// occurrence, each walk additionally records the longest downward path per
-// node and checks it against the same limits at the end. For acyclic graphs
-// that is exactly the deepest occurrence depth the recursive walk would have
-// reached, so accepted charts stay accepted and rejected charts stay rejected
-// with the same category; only the error chosen when a chart violates both a
-// length limit and the depth limit at once can shift from the length error to
-// `fcbc.limit-exceeded`.
+// Iterative, memoized walks bound each table's cycle depth separately. Longest
+// paths also retain the combined descriptor/expression depth budget, including
+// paths through a shared subgraph that completed on a shallower occurrence.
 
 fn descriptor_environment_dependencies(
     index: u32,
@@ -2893,24 +2903,20 @@ fn descriptor_environment_dependencies(
             if depth > MAX_VALIDATOR_DEPTH {
                 return Err("fcbc.limit-exceeded");
             }
-            if depth > descriptors.len() + expressions.len() {
+            if depth > descriptors.len() {
                 return Err("fcbc.invalid-expression");
             }
             let descriptor = descriptors
                 .get(index as usize)
                 .ok_or("fcbc.dangling-reference")?;
             if let DescriptorKind::Expression(root) = &descriptor.kind {
-                // The depth check runs on every occurrence, exactly as the
-                // recursive walk entered the expression subgraph once per
-                // occurrence; only the subgraph walk itself is memoized.
+                // The combined budget includes descriptor hops; expression
+                // cycle checks use only the expression subgraph's own depth.
                 let (_, root_longest) =
                     expression_dependency_facts(*root, expressions, &mut expression_facts)?;
                 let deepest = depth + 1 + root_longest;
                 if deepest > MAX_VALIDATOR_DEPTH {
                     return Err("fcbc.limit-exceeded");
-                }
-                if deepest > expressions.len() {
-                    return Err("fcbc.invalid-expression");
                 }
             }
             if completed[index as usize] {
@@ -2934,11 +2940,7 @@ fn descriptor_environment_dependencies(
                         let child = piece.descriptor_index as usize;
                         bits |= dependencies[child];
                         from_pieces = from_pieces.max(piece_longest[child] + 1);
-                        // A piece hop extends an expression path only when the
-                        // child actually reaches an expression: the recursive
-                        // walk applied the expression limit at real Expression
-                        // occurrences, so a pure Piecewise chain must not count
-                        // its hops against it.
+                        // Extend the combined path only if it reaches an expression.
                         if expression_longest[child] > 0 {
                             from_expressions = from_expressions.max(expression_longest[child] + 1);
                         }
@@ -2963,10 +2965,7 @@ fn descriptor_environment_dependencies(
     if descriptor_deepest.max(expression_deepest) > MAX_VALIDATOR_DEPTH {
         return Err("fcbc.limit-exceeded");
     }
-    if expression_deepest > expressions.len() {
-        return Err("fcbc.invalid-expression");
-    }
-    if descriptor_deepest > descriptors.len() + expressions.len() {
+    if descriptor_deepest > descriptors.len() {
         return Err("fcbc.invalid-expression");
     }
     Ok(dependencies[start])
@@ -3077,7 +3076,7 @@ pub fn validate_descriptor_env_p_context(
             if depth > MAX_VALIDATOR_DEPTH {
                 return Err("fcbc.limit-exceeded");
             }
-            if depth > descriptors.len() + expressions.len() {
+            if depth > descriptors.len() {
                 return Err("fcbc.invalid-expression");
             }
             let descriptor = descriptors
@@ -3093,9 +3092,6 @@ pub fn validate_descriptor_env_p_context(
                 let deepest = depth + 1 + root_longest;
                 if deepest > MAX_VALIDATOR_DEPTH {
                     return Err("fcbc.limit-exceeded");
-                }
-                if deepest > expressions.len() + 1 {
-                    return Err("fcbc.invalid-expression");
                 }
             }
             let context = usize::from(has_piece_context);
@@ -3118,9 +3114,6 @@ pub fn validate_descriptor_env_p_context(
                     for piece in pieces {
                         let child = piece.descriptor_index as usize;
                         from_pieces = from_pieces.max(piece_longest[child] + 1);
-                        // Same rule as the dependency walk: piece hops count
-                        // toward the expression limit only beneath a real
-                        // expression occurrence.
                         if expression_longest[child] > 0 {
                             from_expressions = from_expressions.max(expression_longest[child] + 1);
                         }
@@ -3148,10 +3141,7 @@ pub fn validate_descriptor_env_p_context(
     if descriptor_deepest.max(expression_deepest) > MAX_VALIDATOR_DEPTH {
         return Err("fcbc.limit-exceeded");
     }
-    if expression_deepest > expressions.len() + 1 {
-        return Err("fcbc.invalid-expression");
-    }
-    if descriptor_deepest > descriptors.len() + expressions.len() {
+    if descriptor_deepest > descriptors.len() {
         return Err("fcbc.invalid-expression");
     }
     Ok(())
@@ -3341,6 +3331,12 @@ fn runtime_value_key(value: &RuntimeValue) -> Vec<u8> {
                 key.extend_from_slice(&component.to_bits().to_le_bytes());
             }
         }
+        RuntimeValue::Vec2Int(value) => {
+            key.push(ValueType::Vec2Int as u8);
+            for component in value {
+                key.extend_from_slice(&component.to_le_bytes());
+            }
+        }
         RuntimeValue::ResourceRef(value) => {
             key.push(15);
             key.extend_from_slice(&value.to_le_bytes());
@@ -3476,9 +3472,12 @@ fn validate_distances(
     lines: &[LineRecord],
     descriptors: &[PropertyDescriptor],
     constants: &[RuntimeValue],
+    expressions: &[ExpressionNode],
+    tempo_points: &[TempoPoint],
 ) -> Result<(), &'static str> {
     let mut line_ids = BTreeSet::new();
     let mut prior_line_id = None;
+    let tempo_times: Vec<_> = tempo_points.iter().map(|point| point.chart_time).collect();
     for distance in distances {
         if distance.line_id == 0
             || !line_ids.insert(distance.line_id)
@@ -3549,6 +3548,8 @@ fn validate_distances(
             line.scroll_speed_descriptor,
             line.scroll_tempo_descriptor,
             descriptors,
+            expressions,
+            &tempo_times,
         )?;
         if distance.boundaries.len() != expected_boundaries.len()
             || distance
@@ -3594,11 +3595,13 @@ fn validate_distances(
     Ok(())
 }
 
-fn expected_distance_boundaries(
+pub(crate) fn expected_distance_boundaries(
     integration_origin: f64,
     speed_descriptor: u32,
     tempo_descriptor: u32,
     descriptors: &[PropertyDescriptor],
+    expressions: &[ExpressionNode],
+    tempo_times: &[f64],
 ) -> Result<Vec<f64>, &'static str> {
     fn collect(
         index: u32,
@@ -3639,6 +3642,12 @@ fn expected_distance_boundaries(
     let mut boundaries = vec![integration_origin];
     collect(speed_descriptor, descriptors, &mut seen, &mut boundaries)?;
     collect(tempo_descriptor, descriptors, &mut seen, &mut boundaries)?;
+    let dependencies =
+        descriptor_environment_dependencies(speed_descriptor, descriptors, expressions, 0)?
+            | descriptor_environment_dependencies(tempo_descriptor, descriptors, expressions, 0)?;
+    if dependencies & ENV_B != 0 {
+        boundaries.extend_from_slice(tempo_times);
+    }
     boundaries.sort_by(f64::total_cmp);
     boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
     Ok(boundaries)
@@ -3668,7 +3677,7 @@ const MAX_CUSTOM_VALUE_DEPTH: usize = 32;
 /// The descriptor/expression validation depth is a loader resource budget,
 /// separate from table-sized cycle guards. A deeper graph is rejected before
 /// the explicit validation stack can grow without bound.
-const MAX_VALIDATOR_DEPTH: usize = 1024;
+pub(crate) const MAX_VALIDATOR_DEPTH: usize = 1024;
 
 fn decode_value(value: &ParsedValue, strings: &[String]) -> Result<DecodedValue, &'static str> {
     match value.tag {
@@ -4039,6 +4048,7 @@ fn runtime_value_type(value: &RuntimeValue) -> Option<ValueType> {
         RuntimeValue::Scalar { ty, .. } => Some(*ty),
         RuntimeValue::Color(_) => Some(ValueType::Color),
         RuntimeValue::Vec2 { ty, .. } => Some(*ty),
+        RuntimeValue::Vec2Int(_) => Some(ValueType::Vec2Int),
         RuntimeValue::ResourceRef(_) | RuntimeValue::ContributorRef(_) => None,
     }
 }
@@ -4061,6 +4071,7 @@ fn runtime_values_bitwise_equal(left: &RuntimeValue, right: &RuntimeValue) -> bo
         (RuntimeValue::Vec2 { value: left, .. }, RuntimeValue::Vec2 { value: right, .. }) => {
             component_bits(left, right)
         }
+        (RuntimeValue::Vec2Int(left), RuntimeValue::Vec2Int(right)) => left == right,
         (RuntimeValue::ResourceRef(left), RuntimeValue::ResourceRef(right)) => left == right,
         (RuntimeValue::ContributorRef(left), RuntimeValue::ContributorRef(right)) => left == right,
         _ => false,

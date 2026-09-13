@@ -2515,6 +2515,426 @@ fn unbounded_descriptor_domain() -> CanonicalDescriptorDomain {
 }
 
 #[test]
+fn nested_piecewise_with_one_expression_round_trips_and_evaluates() {
+    let base = compilation(SHARED_SUBGRAPH_NOTE_SOURCE);
+    let note_id = base.chart().notes().notes()[0].id().value();
+    let line_id = base.chart().lines().lines().next().unwrap().id().value();
+    let expression = CanonicalExpressionDag::new(
+        vec![CanonicalExpressionNode::new(
+            CanonicalExpressionOpcode::EnvQ,
+            CanonicalExpressionType::Float,
+            [None; 3],
+            None,
+            0,
+        )],
+        0,
+    )
+    .unwrap();
+    let mut descriptors = vec![
+        CanonicalPropertyDescriptor::new(
+            CanonicalExpressionType::Float,
+            unbounded_descriptor_domain(),
+            CanonicalDescriptorKind::Expression(expression),
+        )
+        .unwrap(),
+    ];
+    for index in 1..=2 {
+        descriptors.push(
+            CanonicalPropertyDescriptor::new(
+                CanonicalExpressionType::Float,
+                unbounded_descriptor_domain(),
+                CanonicalDescriptorKind::Piecewise(vec![
+                    CanonicalPiece::new(None, None, false, index - 1).unwrap(),
+                ]),
+            )
+            .unwrap(),
+        );
+    }
+    let table = CanonicalDescriptorTable::new(
+        descriptors,
+        vec![
+            CanonicalDescriptorRoot::new("note.presentation.alpha", note_id, 2).unwrap(),
+            CanonicalDescriptorRoot::new("line.alpha", line_id, 2).unwrap(),
+        ],
+    )
+    .unwrap();
+    let compilation = CanonicalCompilation::new(
+        base.chart().clone().with_descriptors(table),
+        base.resources().clone(),
+        base.distribution().clone(),
+    );
+    let bytes = write_from_compilation(&compilation).unwrap();
+    let decoded = crate::load_chart(&bytes).unwrap();
+    assert_eq!(decoded.expressions.len(), 1);
+    assert_eq!(decoded.lines[0].alpha_descriptor, 2);
+    assert_eq!(
+        decoded.lines[0].alpha_descriptor,
+        decoded.notes[0].property_descriptors[4]
+    );
+    let result = crate::query_descriptor(
+        &decoded,
+        decoded.notes[0].property_descriptors[4],
+        0.0,
+        crate::EvaluationEnvironment {
+            q: 0.375,
+            ..crate::EvaluationEnvironment::at_time(0.0)
+        },
+    )
+    .unwrap();
+    assert_runtime_value_bits(
+        result.value,
+        crate::RuntimeValue::Scalar {
+            ty: crate::ValueType::Float,
+            value: 0.375,
+        },
+    );
+    assert_eq!(result.visited_nodes, vec![0]);
+}
+
+fn with_descriptor_roots(
+    base: &CanonicalCompilation,
+    descriptors: Vec<CanonicalPropertyDescriptor>,
+    roots: Vec<CanonicalDescriptorRoot>,
+) -> CanonicalCompilation {
+    CanonicalCompilation::new(
+        base.chart()
+            .clone()
+            .with_descriptors(CanonicalDescriptorTable::new(descriptors, roots).unwrap()),
+        base.resources().clone(),
+        base.distribution().clone(),
+    )
+}
+
+fn constant_property(value: CanonicalExpressionValue) -> CanonicalPropertyDescriptor {
+    CanonicalPropertyDescriptor::new(
+        value.value_type(),
+        unbounded_descriptor_domain(),
+        CanonicalDescriptorKind::Constant(value),
+    )
+    .unwrap()
+}
+
+#[test]
+fn canonical_line_roots_bind_all_six_fields_in_owner_order() {
+    use CanonicalExpressionValue::{Angle, Float, Length, Vec2};
+    let base = compilation(&SHARED_SUBGRAPH_NOTE_SOURCE.replace(
+        "lines { line main {} }",
+        "lines { line second {} line main {} }",
+    ));
+    let paths = [
+        "line.alpha",
+        "line.position",
+        "line.rotation",
+        "line.scale",
+        "line.scrollSpeed",
+        "line.scrollTempo",
+    ];
+    let values = [
+        Float(0.3),
+        Vec2(Box::new(Length(12.0)), Box::new(Length(-4.0))),
+        Angle(0.5),
+        Vec2(Box::new(Float(0.75)), Box::new(Float(1.25))),
+        Float(2.0),
+        Float(90.0),
+    ];
+    let descriptors: Vec<_> = values.into_iter().map(constant_property).collect();
+    let roots: Vec<_> = paths
+        .iter()
+        .enumerate()
+        .flat_map(|(index, path)| {
+            base.chart().lines().lines().map(move |line| {
+                CanonicalDescriptorRoot::new(*path, line.id().value(), index).unwrap()
+            })
+        })
+        .collect();
+    let compiled = with_descriptor_roots(&base, descriptors.clone(), roots.clone());
+    let bytes = write_from_compilation(&compiled).unwrap();
+    let reordered = with_descriptor_roots(&base, descriptors, roots.into_iter().rev().collect());
+    assert_eq!(bytes, write_from_compilation(&reordered).unwrap());
+    let decoded = crate::load_chart(&bytes).unwrap();
+    for line in &decoded.lines {
+        for (index, expected) in [
+            (
+                line.alpha_descriptor,
+                crate::RuntimeValue::Scalar {
+                    ty: crate::ValueType::Float,
+                    value: 0.3,
+                },
+            ),
+            (
+                line.position_descriptor,
+                crate::RuntimeValue::Vec2 {
+                    ty: crate::ValueType::Vec2Length,
+                    value: [12.0, -4.0],
+                },
+            ),
+            (
+                line.rotation_descriptor,
+                crate::RuntimeValue::Scalar {
+                    ty: crate::ValueType::Angle,
+                    value: 0.5,
+                },
+            ),
+            (
+                line.scale_descriptor,
+                crate::RuntimeValue::Vec2 {
+                    ty: crate::ValueType::Vec2Float,
+                    value: [0.75, 1.25],
+                },
+            ),
+            (
+                line.scroll_speed_descriptor,
+                crate::RuntimeValue::Scalar {
+                    ty: crate::ValueType::Float,
+                    value: 2.0,
+                },
+            ),
+            (
+                line.scroll_tempo_descriptor,
+                crate::RuntimeValue::Scalar {
+                    ty: crate::ValueType::Float,
+                    value: 90.0,
+                },
+            ),
+        ] {
+            let result = crate::query_descriptor(
+                &decoded,
+                index,
+                2.0,
+                crate::EvaluationEnvironment::at_time(2.0),
+            )
+            .unwrap();
+            assert_runtime_value_bits(result.value, expected);
+        }
+        let distance = &decoded.distances[line.distance_descriptor as usize];
+        assert_eq!(
+            distance.scroll_speed_descriptor,
+            line.scroll_speed_descriptor
+        );
+        assert_eq!(
+            distance.classification,
+            crate::DistanceClassification::PortableAnalytic
+        );
+        assert_eq!(distance.boundaries, vec![0.0]);
+        assert_eq!(
+            crate::query_distance(&decoded, line.distance_descriptor, 2.0)
+                .unwrap()
+                .floor_position,
+            6.0
+        );
+    }
+}
+
+#[test]
+fn canonical_scroll_roots_own_distance_boundaries_and_classification() {
+    let base = compilation(SHARED_SUBGRAPH_NOTE_SOURCE);
+    let line_id = base.chart().lines().lines().next().unwrap().id().value();
+    let piecewise = |boundary, left, right| {
+        CanonicalPropertyDescriptor::new(
+            CanonicalExpressionType::Float,
+            unbounded_descriptor_domain(),
+            CanonicalDescriptorKind::Piecewise(vec![
+                CanonicalPiece::new(None, Some(boundary), false, left).unwrap(),
+                CanonicalPiece::new(Some(boundary), None, false, right).unwrap(),
+            ]),
+        )
+        .unwrap()
+    };
+    let compiled = with_descriptor_roots(
+        &base,
+        vec![
+            constant_property(CanonicalExpressionValue::Float(2.0)),
+            constant_property(CanonicalExpressionValue::Float(4.0)),
+            piecewise(1.0, 0, 1),
+            constant_property(CanonicalExpressionValue::Float(60.0)),
+            constant_property(CanonicalExpressionValue::Float(120.0)),
+            piecewise(2.0, 3, 4),
+        ],
+        vec![
+            CanonicalDescriptorRoot::new("line.scrollSpeed", line_id, 2).unwrap(),
+            CanonicalDescriptorRoot::new("line.scrollTempo", line_id, 5).unwrap(),
+        ],
+    );
+    let decoded = crate::load_chart(&write_from_compilation(&compiled).unwrap()).unwrap();
+    let line = &decoded.lines[0];
+    let distance = &decoded.distances[line.distance_descriptor as usize];
+    assert_eq!(
+        distance.classification,
+        crate::DistanceClassification::PortableEvaluable
+    );
+    assert_eq!(distance.boundaries, vec![0.0, 1.0, 2.0]);
+    assert_eq!(
+        distance.scroll_speed_descriptor,
+        line.scroll_speed_descriptor
+    );
+    for (time, floor) in [(3.0, 14.0), (1.0, 2.0), (-1.0, -2.0), (2.0, 6.0)] {
+        let actual = crate::query_distance(&decoded, line.distance_descriptor, time).unwrap();
+        assert_eq!(actual.floor_position, floor);
+    }
+}
+
+#[test]
+fn canonical_line_roots_reject_conflicting_tracks_and_invalid_ownership() {
+    let base = compilation(&SHARED_SUBGRAPH_NOTE_SOURCE.replace(
+        "line main {}",
+        r#"line main { tracks { track fade -> alpha: float {
+            segments { [0s, 1s): 0.25 -> 0.75 using "linear"; }
+        } } }"#,
+    ));
+    let line_id = base.chart().lines().lines().next().unwrap().id().value();
+    let compiled = with_descriptor_roots(
+        &base,
+        vec![constant_property(CanonicalExpressionValue::Float(0.5))],
+        vec![CanonicalDescriptorRoot::new("line.alpha", line_id, 0).unwrap()],
+    );
+    assert_eq!(
+        write_from_compilation(&compiled).unwrap_err().category(),
+        "fcbc.invalid-track"
+    );
+
+    let base = compilation(SHARED_SUBGRAPH_NOTE_SOURCE);
+    let note_id = base.chart().notes().notes()[0].id().value();
+    for (path, owner, expected) in [
+        ("line.unknown", line_id, "fcbc.invalid-track"),
+        ("line.alpha", u64::MAX, "fcbc.dangling-reference"),
+    ] {
+        // The invalid root shares an otherwise valid Note descriptor, so
+        // descriptor reachability alone cannot detect the missing ownership.
+        let compiled = with_descriptor_roots(
+            &base,
+            vec![constant_property(CanonicalExpressionValue::Float(0.5))],
+            vec![
+                CanonicalDescriptorRoot::new(path, owner, 0).unwrap(),
+                CanonicalDescriptorRoot::new("note.presentation.alpha", note_id, 0).unwrap(),
+            ],
+        );
+        assert_eq!(
+            write_from_compilation(&compiled).unwrap_err().category(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn canonical_line_roots_keep_type_domain_and_environment_validation() {
+    let base = compilation(SHARED_SUBGRAPH_NOTE_SOURCE);
+    let line_id = base.chart().lines().lines().next().unwrap().id().value();
+    let constant = constant_property(CanonicalExpressionValue::Float(0.5));
+    let bounded = CanonicalPropertyDescriptor::new(
+        CanonicalExpressionType::Float,
+        CanonicalDescriptorDomain::new(Some(0.0), Some(1.0), true).unwrap(),
+        CanonicalDescriptorKind::Constant(CanonicalExpressionValue::Float(0.5)),
+    )
+    .unwrap();
+    let env_q = CanonicalPropertyDescriptor::new(
+        CanonicalExpressionType::Float,
+        unbounded_descriptor_domain(),
+        CanonicalDescriptorKind::Expression(
+            CanonicalExpressionDag::new(
+                vec![CanonicalExpressionNode::new(
+                    CanonicalExpressionOpcode::EnvQ,
+                    CanonicalExpressionType::Float,
+                    [None; 3],
+                    None,
+                    0,
+                )],
+                0,
+            )
+            .unwrap(),
+        ),
+    )
+    .unwrap();
+    for (path, descriptor, expected) in [
+        ("line.position", constant, "fcbc.invalid-track"),
+        ("line.alpha", bounded, "fcbc.invalid-track"),
+        ("line.scrollTempo", env_q, "fcbc.invalid-expression"),
+    ] {
+        let compiled = with_descriptor_roots(
+            &base,
+            vec![descriptor],
+            vec![CanonicalDescriptorRoot::new(path, line_id, 0).unwrap()],
+        );
+        let result = write_from_compilation(&compiled)
+            .map_err(|error| error.category())
+            .and_then(|bytes| crate::load_chart(&bytes));
+        assert_eq!(result.unwrap_err(), expected, "{path}");
+    }
+}
+
+#[test]
+fn canonical_scroll_expression_includes_global_beat_boundaries() {
+    use CanonicalExpressionOpcode::{Choose, Constant, EnvB, Eq};
+    use CanonicalExpressionType::{Beat, Bool, Float};
+    let source = SHARED_SUBGRAPH_NOTE_SOURCE
+        .replace("0beat -> 120bpm;", "0beat -> 60bpm; 1beat -> 120bpm;")
+        .replace("line main {}", "line main { integrationOrigin: 0.25s; }");
+    let base = compilation(&source);
+    let line_id = base.chart().lines().lines().next().unwrap().id().value();
+    let dag = CanonicalExpressionDag::new(
+        vec![
+            CanonicalExpressionNode::new(EnvB, Beat, [None; 3], None, 0),
+            CanonicalExpressionNode::new(Eq, Bool, [Some(0), Some(0), None], None, 0),
+            CanonicalExpressionNode::new(
+                Constant,
+                Float,
+                [None; 3],
+                Some(CanonicalExpressionValue::Float(2.0)),
+                0,
+            ),
+            CanonicalExpressionNode::new(
+                Constant,
+                Float,
+                [None; 3],
+                Some(CanonicalExpressionValue::Float(3.0)),
+                0,
+            ),
+            CanonicalExpressionNode::new(Choose, Float, [Some(1), Some(2), Some(3)], None, 0),
+        ],
+        4,
+    )
+    .unwrap();
+    let compiled = with_descriptor_roots(
+        &base,
+        vec![
+            CanonicalPropertyDescriptor::new(
+                Float,
+                unbounded_descriptor_domain(),
+                CanonicalDescriptorKind::Expression(dag),
+            )
+            .unwrap(),
+            constant_property(CanonicalExpressionValue::Float(60.0)),
+        ],
+        vec![
+            CanonicalDescriptorRoot::new("line.scrollSpeed", line_id, 0).unwrap(),
+            CanonicalDescriptorRoot::new("line.scrollTempo", line_id, 1).unwrap(),
+        ],
+    );
+    let decoded = crate::load_chart(&write_from_compilation(&compiled).unwrap()).unwrap();
+    assert_eq!(decoded.distances[0].boundaries, vec![0.0, 0.25, 1.0]);
+    assert_eq!(
+        decoded.distances[0].classification,
+        crate::DistanceClassification::PortableEvaluable
+    );
+    let result = crate::query_descriptor(
+        &decoded,
+        decoded.lines[0].scroll_speed_descriptor,
+        2.0,
+        crate::EvaluationEnvironment {
+            b: 3.0,
+            ..crate::EvaluationEnvironment::at_time(2.0)
+        },
+    )
+    .unwrap();
+    assert_runtime_value_bits(
+        result.value,
+        crate::RuntimeValue::Scalar {
+            ty: crate::ValueType::Float,
+            value: 2.0,
+        },
+    );
+}
+
+#[test]
 fn write_from_compilation_round_trips_a_shared_expression_dag() {
     // Node i adds node i - 1 twice: the tree-shaped re-evaluation the old
     // unbounded pipeline performed doubles on every level, so this payload
@@ -2657,5 +3077,87 @@ fn write_from_compilation_round_trips_a_shared_piecewise_chain() {
                 value: 0.5,
             },
         );
+    }
+}
+
+#[test]
+fn write_from_compilation_resolves_step_hold_after_from_the_end_limit() {
+    // FCS sections 9.3/9.4: gaps and trailing extrapolation hold each step's
+    // start value, including when another Track contributes to the property.
+    let source = r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines {
+    line main {
+        alpha: 1.0;
+        tracks {
+            track held -> alpha: float {
+                fill: "holdAfter";
+                extrapolateBefore: "holdBefore";
+                extrapolateAfter: "holdAfter";
+                segments {
+                    [0s, 1s): 0.25 -> 0.75 using "step";
+                    [2s, 3s): 0.5 -> 0.875 using "step";
+                }
+            }
+            EXTRA_TRACKS
+        }
+    }
+}
+"#;
+    let extra = r#"track layer -> alpha: float {
+        blend: "BLEND";
+        priority: -1;
+        fill: "holdAfter";
+        extrapolateBefore: "holdBefore";
+        extrapolateAfter: "holdAfter";
+        segments { [0s, 4s): 0.125 -> 0.625 using "step"; }
+    }"#;
+    for (blend, first, last) in [
+        ("", 0.25, 0.5),
+        ("replace", 0.25, 0.5),
+        ("add", 0.375, 0.625),
+        ("multiply", 0.03125, 0.0625),
+    ] {
+        let extra = if blend.is_empty() {
+            String::new()
+        } else {
+            extra.replace("BLEND", blend)
+        };
+        let (_, decoded, tracks, owner) = composed_chart(&source.replace("EXTRA_TRACKS", &extra));
+        let descriptor = decoded.lines[0].alpha_descriptor;
+        for (time, expected) in [
+            (0.5, first),
+            (1.0, first),
+            (1.5, first),
+            (3.0, last),
+            (3.5, last),
+            (4.0, last),
+            (5.0, last),
+        ] {
+            assert_eq!(
+                fcs_runtime::evaluate_track_set(
+                    &tracks,
+                    &owner,
+                    CanonicalTrackTarget::Alpha,
+                    time,
+                    CanonicalTrackValue::Float(1.0),
+                ),
+                Ok(CanonicalTrackValue::Float(expected)),
+                "{blend} at {time}"
+            );
+            let actual = crate::query_descriptor(
+                &decoded,
+                descriptor,
+                time,
+                crate::EvaluationEnvironment::at_time(time),
+            )
+            .expect("step holdAfter evaluation")
+            .value;
+            assert_runtime_value_bits(
+                actual,
+                track_runtime_value(CanonicalTrackValue::Float(expected)),
+            );
+        }
     }
 }

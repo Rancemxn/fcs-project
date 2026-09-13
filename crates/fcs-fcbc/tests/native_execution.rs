@@ -17,23 +17,27 @@ use fcs_fcbc::{
     DistanceClassification, EvaluationEnvironment, RuntimeValue, ValueType, load_chart,
     query_descriptor, query_distance, query_scroll_coordinate, write_from_compilation,
 };
+use fcs_model::{CanonicalCompilation, CanonicalDescriptorKind, CanonicalExpressionValue};
 use fcs_source::ResourceLimits;
 use fcs_source::elaborator::CompileTimeLimits;
 use fcs_source::parser::parse_document;
 use tempfile::tempdir;
 
-/// Compiles `source` and returns the product FCBC bytes.
-fn compile(source: &str) -> Vec<u8> {
+fn compilation(source: &str) -> CanonicalCompilation {
     let workspace = tempdir().unwrap();
     let document = parse_document(source).into_result().unwrap();
-    let compilation = document
+    document
         .canonical_compilation(
             CompileTimeLimits::default(),
             workspace.path(),
             ResourceLimits::default(),
         )
-        .unwrap();
-    write_from_compilation(&compilation).unwrap()
+        .unwrap()
+}
+
+/// Compiles `source` and returns the product FCBC bytes.
+fn compile(source: &str) -> Vec<u8> {
+    write_from_compilation(&compilation(source)).unwrap()
 }
 
 fn float(value: f64) -> RuntimeValue {
@@ -52,6 +56,52 @@ fn evaluate(chart: &fcs_fcbc::DecodedChart, descriptor: u32, time: f64) -> Runti
     )
     .expect("descriptor query")
     .value
+}
+
+/// A minimal tap Note carrying one dynamic presentation field.
+fn tap_source(presentation: &str) -> String {
+    format!(
+        r#"#fcs 5.0.0
+format {{ profile: chart; }}
+tempoMap {{ 0beat -> 120bpm; }}
+lines {{ line main {{}} }}
+collections {{ notes {{ tap {{
+    id: "n";
+    line: @main;
+    gameplay.time: 1s;
+    {presentation}
+}}; }} }}
+"#
+    )
+}
+
+fn assert_native_matches_canonical(native: RuntimeValue, canonical: CanonicalExpressionValue) {
+    match canonical {
+        CanonicalExpressionValue::Float(value) => assert_eq!(native, float(value)),
+        CanonicalExpressionValue::Time(value) => assert_eq!(
+            native,
+            RuntimeValue::Scalar {
+                ty: ValueType::Time,
+                value,
+            }
+        ),
+        CanonicalExpressionValue::Length(value) => assert_eq!(
+            native,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value,
+            }
+        ),
+        CanonicalExpressionValue::Angle(value) => assert_eq!(
+            native,
+            RuntimeValue::Scalar {
+                ty: ValueType::Angle,
+                value,
+            }
+        ),
+        CanonicalExpressionValue::Color(value) => assert_eq!(native, RuntimeValue::Color(value)),
+        other => panic!("unexpected canonical comparison value {other:?}"),
+    }
 }
 
 #[test]
@@ -258,5 +308,364 @@ collections {{ notes {{ tap {{ id: "tap"; line: @main; gameplay.time: 1s; }}; }}
         );
         let decoded = load_chart(&compile(&source)).expect("generated tempo map must load");
         assert_eq!(decoded.tempo_points.len(), 3);
+    }
+}
+
+#[test]
+fn native_unit_integer_scaling_executes() {
+    // Issue #646: `U,int` / `int,U` multiplication and `U,int` division must
+    // execute after a native round trip. At chart time 0.25 s the time cases
+    // are hand-derived; the length cases use note distance 1.5 px.
+    for (expression, expected) in [
+        ("seconds(s * 2)", 0.5),
+        ("seconds(2 * s)", 0.5),
+        ("seconds(s / 2)", 0.125),
+    ] {
+        let source = tap_source(&format!("presentation.alpha: {expression};"));
+        let decoded = load_chart(&compile(&source)).unwrap();
+        assert_eq!(
+            evaluate(&decoded, decoded.notes[0].property_descriptors[4], 0.25),
+            float(expected),
+            "{expression}"
+        );
+    }
+    for (expression, expected) in [
+        ("d * 2", 3.0),
+        ("2 * d", 3.0),
+        ("d / 2", 0.75),
+        ("d * -3", -4.5),
+    ] {
+        let source = tap_source(&format!("presentation.xOffset: {expression};"));
+        let decoded = load_chart(&compile(&source)).unwrap();
+        let environment = EvaluationEnvironment {
+            s: 0.0,
+            b: 0.0,
+            q: 0.0,
+            d: 1.5,
+            p: 0.0,
+        };
+        assert_eq!(
+            query_descriptor(
+                &decoded,
+                decoded.notes[0].property_descriptors[2],
+                environment.s,
+                environment
+            )
+            .unwrap()
+            .value,
+            RuntimeValue::Scalar {
+                ty: ValueType::Length,
+                value: expected,
+            },
+            "{expression}"
+        );
+    }
+}
+
+#[test]
+fn native_bezier_preserves_exact_start_value() {
+    // Issue #647: the segment start must evaluate to exactly the start
+    // constant. For these controls every bisection midpoint has positive x,
+    // so the old approximate solver returned y(2^-65) = 3 * 2^-65 instead of
+    // exactly +0.0.
+    let bytes = compile(
+        r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {
+    tracks { track fade -> alpha: float {
+        extrapolateBefore: "holdBefore";
+        extrapolateAfter: "holdAfter";
+        segments {
+            [0s, 1s): 0.0 -> 1.0 using cubicBezier(0.0, 1.0, 1.0, 1.0);
+        }
+    } }
+} }
+"#,
+    );
+    let decoded = load_chart(&bytes).unwrap();
+    let descriptor = decoded.lines[0].alpha_descriptor;
+    assert_eq!(evaluate(&decoded, descriptor, 0.0), float(0.0));
+}
+
+#[test]
+fn native_bezier_interior_and_overshoot_match_canonical_vectors() {
+    // Nontrivial interior and flat-x overshoot controls through native
+    // write -> load -> query. Segment domains are half-open, so progress 1.0
+    // is unreachable through a Track query; endpoint pinning and the
+    // explicit enclosure failures are bound by the unit test over the same
+    // shared solver. With start 0.0 and end 1.0 the alpha equals the y
+    // progress exactly, and 1.625 is the value the canonical evaluator
+    // independently established for cubicBezier(0.5, 2.0, 0.5, 2.0) at
+    // x = 0.5.
+    let bytes = compile(
+        r#"#fcs 5.0.0
+format { profile: chart; }
+tempoMap { 0beat -> 120bpm; }
+lines { line main {
+    tracks { track fade -> alpha: float {
+        extrapolateBefore: "holdBefore";
+        extrapolateAfter: "holdAfter";
+        segments {
+            [0s, 1s): 0.0 -> 1.0 using cubicBezier(0.0, 0.0, 1.0, 1.0);
+            [1s, 3s): 0.0 -> 1.0 using cubicBezier(0.5, 2.0, 0.5, 2.0);
+        }
+    } }
+} }
+"#,
+    );
+    let decoded = load_chart(&bytes).unwrap();
+    let descriptor = decoded.lines[0].alpha_descriptor;
+    assert_eq!(evaluate(&decoded, descriptor, 0.25), float(0.25));
+    assert_eq!(evaluate(&decoded, descriptor, 2.0), float(1.625));
+}
+
+#[test]
+fn native_integer_vector_predicates_preserve_values() {
+    // Issue #648: `vec2<int>` values survive a native write -> load -> query
+    // round trip in exact i64 form. Binary64 storage collided 2^53 + 1 with
+    // 2^53 (making the first predicate true instead of false) and lost the
+    // truncating integer division (making the second false instead of true).
+    // Alpha is float, so each predicate drives a `choose`. The canonical
+    // evaluator already keeps i64 components, so it must agree with the
+    // native result on the same compiled DAG.
+    for (predicate, expected) in [
+        (
+            "choose { when vec2(choose { when s >= 0s => 9007199254740993; else => 0; }, 0) \
+             == vec2(9007199254740992, 0) => 1.0; else => 0.0; }",
+            0.0,
+        ),
+        (
+            "choose { when (vec2(choose { when s >= 0s => 5; else => 1; }, 7) / 2) \
+             == vec2(2, 3) => 1.0; else => 0.0; }",
+            1.0,
+        ),
+    ] {
+        let compilation = compilation(&tap_source(&format!("presentation.alpha: {predicate};")));
+        let decoded = load_chart(&write_from_compilation(&compilation).unwrap()).unwrap();
+        let native = evaluate(&decoded, decoded.notes[0].property_descriptors[4], 0.25);
+        assert_eq!(native, float(expected), "{predicate}");
+
+        let table = compilation
+            .chart()
+            .descriptors()
+            .expect("dynamic presentation must produce a descriptor table");
+        let root = table
+            .roots()
+            .iter()
+            .find(|root| root.target_path() == "note.presentation.alpha")
+            .expect("root for note.presentation.alpha");
+        let CanonicalDescriptorKind::Expression(expression) =
+            table.descriptor(root.descriptor()).unwrap().kind()
+        else {
+            panic!("note.presentation.alpha must stay an expression DAG");
+        };
+        let canonical = fcs_runtime::evaluate_expression(
+            expression,
+            fcs_runtime::ExpressionEnvironment::new(0.25, 0.5, 0.0, 0.0).unwrap(),
+        )
+        .unwrap();
+        assert_native_matches_canonical(native, canonical);
+    }
+
+    // `choose` stays lazy for integer vectors: the unselected branch would
+    // overflow i64 and must not be evaluated. The overflow subexpression
+    // depends on `s`, so the lowerer retains it instead of folding it away.
+    // Runtime expressions have no vector projection syntax yet, so the
+    // selected branch is observed through vector equality.
+    let lazy = compile(&tap_source(
+        "presentation.alpha: choose { \
+         when choose { when s < 0s => vec2(9223372036854775807, 0) \
+         + vec2(choose { when s >= 0s => 1; else => 0; }, 0); \
+         else => vec2(0, 0); } == vec2(0, 0) => 0.0; \
+         else => 1.0; };",
+    ));
+    let decoded = load_chart(&lazy).unwrap();
+    assert_eq!(
+        evaluate(&decoded, decoded.notes[0].property_descriptors[4], 0.25),
+        float(0.0)
+    );
+}
+
+#[test]
+fn native_unit_integer_scaling_matches_canonical_evaluator() {
+    // Every permitted U,int / int,U combination across time, beat, length,
+    // and angle must agree with the canonical evaluator on the same compiled
+    // DAG. Beat has no note slot and no conversion builtin, so it drives a
+    // color `choose` predicate; angle drives a `rotation` choose branch
+    // (pure-literal subexpressions are retained by the lowerer, not folded).
+    #[derive(Clone, Copy)]
+    struct ScalingCase<'a> {
+        presentation: &'a str,
+        slot: usize,
+        target_path: &'a str,
+        environments: &'a [(f64, f64, f64)],
+    }
+    let cases = [
+        ScalingCase {
+            presentation: "presentation.alpha: seconds(s * 2);",
+            slot: 4,
+            target_path: "note.presentation.alpha",
+            environments: &[(0.25, 0.0, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.alpha: seconds(2 * s);",
+            slot: 4,
+            target_path: "note.presentation.alpha",
+            environments: &[(0.25, 0.0, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.alpha: seconds(s / 2);",
+            slot: 4,
+            target_path: "note.presentation.alpha",
+            environments: &[(0.25, 0.0, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.xOffset: d * 2;",
+            slot: 2,
+            target_path: "note.presentation.xOffset",
+            environments: &[(0.0, 0.0, 1.5)],
+        },
+        ScalingCase {
+            presentation: "presentation.xOffset: 2 * d;",
+            slot: 2,
+            target_path: "note.presentation.xOffset",
+            environments: &[(0.0, 0.0, 1.5)],
+        },
+        ScalingCase {
+            presentation: "presentation.xOffset: d / 2;",
+            slot: 2,
+            target_path: "note.presentation.xOffset",
+            environments: &[(0.0, 0.0, 1.5)],
+        },
+        ScalingCase {
+            presentation: "presentation.color: choose { when b * 2 > 1beat => #FF0000; else => #00FF00; };",
+            slot: 8,
+            target_path: "note.presentation.color",
+            environments: &[(0.0, 0.75, 0.0), (0.0, 0.49, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.color: choose { when 2 * b > 1beat => #FF0000; else => #00FF00; };",
+            slot: 8,
+            target_path: "note.presentation.color",
+            environments: &[(0.0, 0.51, 0.0), (0.0, 0.49, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.color: choose { when b / 2 > 1beat => #FF0000; else => #00FF00; };",
+            slot: 8,
+            target_path: "note.presentation.color",
+            environments: &[(0.0, 2.5, 0.0), (0.0, 1.9, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.rotation: choose { when s > 1s => 30deg * 2; else => 90deg; };",
+            slot: 7,
+            target_path: "note.presentation.rotation",
+            environments: &[(2.0, 0.0, 0.0), (0.5, 0.0, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.rotation: choose { when s > 1s => 2 * 30deg; else => 90deg; };",
+            slot: 7,
+            target_path: "note.presentation.rotation",
+            environments: &[(2.0, 0.0, 0.0)],
+        },
+        ScalingCase {
+            presentation: "presentation.rotation: choose { when s > 1s => 30deg / 2; else => 90deg; };",
+            slot: 7,
+            target_path: "note.presentation.rotation",
+            environments: &[(2.0, 0.0, 0.0)],
+        },
+    ];
+    for &ScalingCase {
+        presentation,
+        slot,
+        target_path,
+        environments,
+    } in &cases
+    {
+        let compilation = compilation(&tap_source(presentation));
+        let decoded = load_chart(&write_from_compilation(&compilation).unwrap()).unwrap();
+        let table = compilation
+            .chart()
+            .descriptors()
+            .expect("dynamic presentation must produce a descriptor table");
+        let root = table
+            .roots()
+            .iter()
+            .find(|root| root.target_path() == target_path)
+            .unwrap_or_else(|| panic!("root for {target_path}"));
+        let CanonicalDescriptorKind::Expression(expression) =
+            table.descriptor(root.descriptor()).unwrap().kind()
+        else {
+            panic!("{target_path} must stay an expression DAG");
+        };
+        for &(s, b, d) in environments {
+            let environment = EvaluationEnvironment {
+                s,
+                b,
+                q: 0.0,
+                d,
+                p: 0.0,
+            };
+            let native = query_descriptor(
+                &decoded,
+                decoded.notes[0].property_descriptors[slot],
+                s,
+                environment,
+            )
+            .unwrap()
+            .value;
+            let canonical = fcs_runtime::evaluate_expression(
+                expression,
+                fcs_runtime::ExpressionEnvironment::new(s, b, 0.0, d).unwrap(),
+            )
+            .unwrap();
+            assert_native_matches_canonical(native, canonical);
+        }
+    }
+
+    // Hand-derived absolutes for the units the float/length slots cannot
+    // reach: beat at 0.75/0.49 straddles the 1beat boundary through `b * 2`,
+    // and `30deg * 2` doubles the lexer's `30deg` payload (radians).
+    let decoded = load_chart(&compile(&tap_source(
+        "presentation.color: choose { when b * 2 > 1beat => #FF0000; else => #00FF00; };",
+    )))
+    .unwrap();
+    for (b, expected) in [(0.75, [1.0, 0.0, 0.0, 1.0]), (0.49, [0.0, 1.0, 0.0, 1.0])] {
+        let environment = EvaluationEnvironment {
+            s: 0.0,
+            b,
+            q: 0.0,
+            d: 0.0,
+            p: 0.0,
+        };
+        assert_eq!(
+            query_descriptor(
+                &decoded,
+                decoded.notes[0].property_descriptors[8],
+                environment.s,
+                environment
+            )
+            .unwrap()
+            .value,
+            RuntimeValue::Color(expected),
+            "beat scaling at b = {b}"
+        );
+    }
+    let decoded = load_chart(&compile(&tap_source(
+        "presentation.rotation: choose { when s > 1s => 30deg * 2; else => 90deg; };",
+    )))
+    .unwrap();
+    for (s, expected) in [
+        (2.0, 30.0_f64.to_radians() * 2.0),
+        (0.5, 90.0_f64.to_radians()),
+    ] {
+        assert_eq!(
+            evaluate(&decoded, decoded.notes[0].property_descriptors[7], s),
+            RuntimeValue::Scalar {
+                ty: ValueType::Angle,
+                value: expected,
+            },
+            "angle scaling at s = {s}"
+        );
     }
 }
