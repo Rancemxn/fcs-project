@@ -286,7 +286,15 @@ pub fn elaborate(
     schema: &ConstructionSchema,
     limits: CompileTimeLimits,
 ) -> Result<ExpandedSourceDocument, Vec<Diagnostic>> {
-    elaborate_inner(document, schema, limits).map_err(|error| vec![error.into_diagnostic()])
+    elaborate_with_context(document, schema, CompileTimeContext::new(limits))
+}
+
+pub(crate) fn elaborate_with_context(
+    document: &Document,
+    schema: &ConstructionSchema,
+    context: CompileTimeContext,
+) -> Result<ExpandedSourceDocument, Vec<Diagnostic>> {
+    elaborate_inner(document, schema, context).map_err(|error| vec![error.into_diagnostic()])
 }
 
 pub(crate) fn preflight_definition_cycles(
@@ -299,20 +307,20 @@ pub(crate) fn preflight_definition_cycles(
 /// used by source definitions. Container expressions and metadata references are
 /// handled by the canonical adapter; this helper supplies scalar arithmetic and
 /// constant/function semantics without exposing the elaborator internals.
-pub(crate) fn evaluate_metadata_expression(
+pub(crate) fn evaluate_metadata_expression_with_context(
+    context: &CompileTimeContext,
     expression: &crate::ast::SourceExpression,
     definitions: Option<&crate::ast::DefinitionsBlock>,
 ) -> Result<crate::ast::TypedValue, Diagnostic> {
     if let Some(definitions) = definitions {
         preflight_definition_cycles(definitions)?;
     }
-    let context = CompileTimeContext::new(CompileTimeLimits::default());
     eval::evaluate_with_context(
         expression,
         definitions,
         &BTreeMap::new(),
         crate::schema::phase2_schema(),
-        &context,
+        context,
     )
     .map_err(ElaboratorError::into_diagnostic)
 }
@@ -322,15 +330,15 @@ pub(crate) fn evaluate_metadata_expression(
 /// Render nodes own their Track declarations per node body, so the Render
 /// lowering resolves each declaration directly.
 pub(crate) fn expand_render_track(
+    context: &CompileTimeContext,
     document: &Document,
     owner: &str,
     track: &crate::ast::TrackDeclaration,
 ) -> Result<crate::ast::ExpandedTrack, Diagnostic> {
-    let context = CompileTimeContext::new(CompileTimeLimits::default());
     tracks::expand_track(
         document,
         crate::schema::phase2_schema(),
-        &context,
+        context,
         owner,
         track,
     )
@@ -340,11 +348,10 @@ pub(crate) fn expand_render_track(
 fn elaborate_inner(
     document: &Document,
     schema: &ConstructionSchema,
-    limits: CompileTimeLimits,
+    context: CompileTimeContext,
 ) -> Result<ExpandedSourceDocument, ElaboratorError> {
     preflight_names(document)?;
     resolve::check_document(document)?;
-    let context = CompileTimeContext::new(limits);
     if let Some(definitions) = &document.definitions {
         cycle::reject_cycles(definitions)?;
         eval::check_and_evaluate_with_context(definitions, schema, &context)?;

@@ -13,6 +13,7 @@ use fcs_model::{
 use crate::ast::{Document, SourceSpan};
 use crate::canonical::{LoweredDocument, lower_document_with_sources};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticStage};
+use crate::elaborator::{CompileTimeContext, CompileTimeLimits};
 
 /// Public implementation limits for one workspace resource-resolution pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +81,19 @@ impl Document {
         workspace_root: impl AsRef<Path>,
         limits: ResourceLimits,
     ) -> Result<CanonicalResourceBundle, Vec<Diagnostic>> {
+        self.canonical_resource_bundle_with_context(
+            &CompileTimeContext::new(CompileTimeLimits::default()),
+            workspace_root,
+            limits,
+        )
+    }
+
+    pub(crate) fn canonical_resource_bundle_with_context(
+        &self,
+        context: &CompileTimeContext,
+        workspace_root: impl AsRef<Path>,
+        limits: ResourceLimits,
+    ) -> Result<CanonicalResourceBundle, Vec<Diagnostic>> {
         let resource_span = self
             .resources
             .as_ref()
@@ -99,7 +113,7 @@ impl Document {
         let LoweredDocument {
             metadata,
             resource_sources,
-        } = lower_document_with_sources(self)?;
+        } = lower_document_with_sources(context, self)?;
         if metadata.resources().is_empty() {
             return Ok(CanonicalResourceBundle::new(Vec::new())
                 .expect("an empty canonical resource bundle cannot contain duplicate IDs"));

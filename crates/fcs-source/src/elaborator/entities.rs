@@ -863,39 +863,43 @@ impl<'a> StaticEntityValidator<'a> {
             None,
             Some(generator.range.span),
         ));
-        let range_result = self.validate_generator_range_types(generator);
+        // Constant probes in the body are part of this generator's preflight,
+        // so their budget failures need the same owner/range trace.
+        let result = (|| {
+            self.validate_generator_range_types(generator)?;
+            let mut scope = self.root.child();
+            scope.declare(
+                "index".to_owned(),
+                Binding {
+                    ty: Type::Int,
+                    value: None,
+                    span: generator.variable_span,
+                },
+            )?;
+            scope.declare(
+                "range".to_owned(),
+                Binding {
+                    ty: Type::GeneratorRange(Box::new(generator.variable_type.clone())),
+                    value: None,
+                    span: generator.range.span,
+                },
+            )?;
+            scope.declare(
+                generator.variable.clone(),
+                Binding {
+                    ty: generator.variable_type.clone(),
+                    value: None,
+                    span: generator.variable_span,
+                },
+            )?;
+            self.validate_generator_items(&generator.body, &scope, expected_type, schema)
+        })();
         self.context.pop_trace();
         self.context.pop_trace();
         if has_owner_frame {
             self.context.pop_trace();
         }
-        range_result?;
-        let mut scope = self.root.child();
-        scope.declare(
-            "index".to_owned(),
-            Binding {
-                ty: Type::Int,
-                value: None,
-                span: generator.variable_span,
-            },
-        )?;
-        scope.declare(
-            "range".to_owned(),
-            Binding {
-                ty: Type::GeneratorRange(Box::new(generator.variable_type.clone())),
-                value: None,
-                span: generator.range.span,
-            },
-        )?;
-        scope.declare(
-            generator.variable.clone(),
-            Binding {
-                ty: generator.variable_type.clone(),
-                value: None,
-                span: generator.variable_span,
-            },
-        )?;
-        self.validate_generator_items(&generator.body, &scope, expected_type, schema)
+        result
     }
 
     fn validate_generator_range_types(&self, generator: &Generator) -> Result<(), Diagnostic> {
@@ -1172,17 +1176,19 @@ impl<'a> StaticEntityValidator<'a> {
                 self.validate_expression_with_expected(&field.value, expression_scope, expected)?
             };
             validate_schema_type(field_schema, &actual, field.value.span())?;
-            if !is_resource_reference
-                && let Ok(value) = evaluate_with_context_expected(
+            if !is_resource_reference {
+                match evaluate_with_context_expected(
                     &field.value,
                     self.document.definitions.as_ref(),
                     &BTreeMap::new(),
                     self.schema,
                     &self.context,
                     expected,
-                )
-            {
-                validate_field_type(field_schema, &value, field.value.span())?;
+                ) {
+                    Ok(value) => validate_field_type(field_schema, &value, field.value.span())?,
+                    Err(error @ Diagnostic::LimitExceeded { .. }) => return Err(error),
+                    Err(_) => {}
+                }
             }
             if let Some(FieldConstraint::StringEnum(values)) = field_schema.constraint()
                 && let SourceExpression::Literal {
@@ -2227,6 +2233,7 @@ impl<'a> ExpansionContext<'a> {
             expected,
         ) {
             Ok(value) => Ok((value, None)),
+            Err(error @ Diagnostic::LimitExceeded { .. }) => Err(error),
             Err(error)
                 if contains_runtime_environment(expression, &|name| {
                     bindings.contains_key(name) || document_defines(self.document, name)
@@ -2234,15 +2241,20 @@ impl<'a> ExpansionContext<'a> {
             {
                 let runtime_expression =
                     lower_runtime_expression_with_resolver(expression, |candidate| {
-                        evaluate_with_context_expected(
+                        match evaluate_with_context_expected(
                             candidate,
                             self.document.definitions.as_ref(),
                             bindings,
                             self.schema,
                             &self.context,
                             None,
-                        )
-                        .ok()
+                        ) {
+                            Ok(value) => Ok(Some(value)),
+                            Err(error @ Diagnostic::LimitExceeded { .. }) => {
+                                Err(error.into_diagnostic())
+                            }
+                            Err(_) => Ok(None),
+                        }
                     })
                     .map_err(|diagnostic| Diagnostic::CanonicalDiagnostic(Box::new(diagnostic)))?;
                 let actual = source_type(runtime_expression.result_type());

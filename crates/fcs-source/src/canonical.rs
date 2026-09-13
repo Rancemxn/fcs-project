@@ -33,7 +33,7 @@ use crate::ast::{
 };
 use crate::custom::CustomValueLimits;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLabel, DiagnosticStage};
-use crate::elaborator::{CompileTimeLimits, elaborate};
+use crate::elaborator::{CompileTimeContext, CompileTimeLimits, elaborate_with_context};
 use crate::schema::phase2_schema;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,9 +103,16 @@ impl Document {
         &self,
         limits: CompileTimeLimits,
     ) -> Result<CanonicalChart, Vec<Diagnostic>> {
-        let expanded = elaborate(self, phase2_schema(), limits)?;
-        let metadata = self.canonical_metadata()?;
-        let lines = self.canonical_line_graph_with_expanded(&expanded)?;
+        self.canonical_chart_with_context(&CompileTimeContext::new(limits))
+    }
+
+    fn canonical_chart_with_context(
+        &self,
+        context: &CompileTimeContext,
+    ) -> Result<CanonicalChart, Vec<Diagnostic>> {
+        let expanded = elaborate_with_context(self, phase2_schema(), context.clone())?;
+        let metadata = lower_document(context, self, CustomValueLimits::default())?;
+        let lines = self.canonical_line_graph_with_expanded(context, &expanded)?;
         let profile_diagnostics = profile_requirement_diagnostics(self, &metadata, &lines);
         if !profile_diagnostics.is_empty() {
             return Err(profile_diagnostics);
@@ -123,7 +130,7 @@ impl Document {
         let scroll = self.canonical_scroll_set_for_graph(&time_map, &lines)?;
         let source_version = CanonicalSourceVersion::new(self.source_version.to_string())
             .map_err(|error| vec![chart_diagnostic(error, self.format.span)])?;
-        let required_extensions = lower_required_extensions(self)?;
+        let required_extensions = lower_required_extensions(context, self)?;
 
         let chart = CanonicalChart::new(
             source_version,
@@ -149,8 +156,9 @@ impl Document {
         source: &str,
         limits: CompileTimeLimits,
     ) -> Result<CanonicalChart, Vec<Diagnostic>> {
-        let chart = self.canonical_chart(limits)?;
-        self.lower_source_render(source, chart, None)
+        let context = CompileTimeContext::new(limits);
+        let chart = self.canonical_chart_with_context(&context)?;
+        self.lower_source_render(source, chart, None, &context)
     }
 
     fn lower_source_render(
@@ -158,6 +166,7 @@ impl Document {
         source: &str,
         mut chart: CanonicalChart,
         resource_bundle: Option<&CanonicalResourceBundle>,
+        context: &CompileTimeContext,
     ) -> Result<CanonicalChart, Vec<Diagnostic>> {
         let Some(crate::ast::TopLevelBlock::Render(block)) =
             self.top_level(TopLevelBlockKind::Render)
@@ -166,6 +175,7 @@ impl Document {
         };
         let scene = crate::parser::parse_render_scene(source, block).into_result()?;
         let (mut render, render_descriptors) = lower_render_scene(
+            context,
             &scene,
             self,
             chart.metadata().resources(),
@@ -194,8 +204,10 @@ impl Document {
         workspace_root: impl AsRef<std::path::Path>,
         resource_limits: crate::resource::ResourceLimits,
     ) -> Result<CanonicalCompilation, Vec<Diagnostic>> {
-        let chart = self.canonical_chart(limits)?;
-        let resources = self.canonical_resource_bundle(workspace_root, resource_limits)?;
+        let context = CompileTimeContext::new(limits);
+        let chart = self.canonical_chart_with_context(&context)?;
+        let resources =
+            self.canonical_resource_bundle_with_context(&context, workspace_root, resource_limits)?;
         Ok(CanonicalCompilation::new(
             chart,
             resources,
@@ -210,9 +222,11 @@ impl Document {
         workspace_root: impl AsRef<std::path::Path>,
         resource_limits: crate::resource::ResourceLimits,
     ) -> Result<CanonicalCompilation, Vec<Diagnostic>> {
-        let chart = self.canonical_chart(limits)?;
-        let resources = self.canonical_resource_bundle(workspace_root, resource_limits)?;
-        let chart = self.lower_source_render(source, chart, Some(&resources))?;
+        let context = CompileTimeContext::new(limits);
+        let chart = self.canonical_chart_with_context(&context)?;
+        let resources =
+            self.canonical_resource_bundle_with_context(&context, workspace_root, resource_limits)?;
+        let chart = self.lower_source_render(source, chart, Some(&resources), &context)?;
         Ok(CanonicalCompilation::new(
             chart,
             resources,
@@ -235,7 +249,11 @@ impl Document {
         &self,
         limits: CustomValueLimits,
     ) -> Result<CanonicalMetadata, Vec<Diagnostic>> {
-        lower_document(self, limits)
+        lower_document(
+            &CompileTimeContext::new(CompileTimeLimits::default()),
+            self,
+            limits,
+        )
     }
 
     /// Validates the canonical requirements added by the declared profile and
@@ -249,9 +267,10 @@ impl Document {
         &self,
         limits: CompileTimeLimits,
     ) -> Result<(), Vec<Diagnostic>> {
-        let expanded = elaborate(self, phase2_schema(), limits)?;
-        let metadata = self.canonical_metadata()?;
-        let lines = self.canonical_line_graph_with_expanded(&expanded)?;
+        let context = CompileTimeContext::new(limits);
+        let expanded = elaborate_with_context(self, phase2_schema(), context.clone())?;
+        let metadata = lower_document(&context, self, CustomValueLimits::default())?;
+        let lines = self.canonical_line_graph_with_expanded(&context, &expanded)?;
         let diagnostics = profile_requirement_diagnostics(self, &metadata, &lines);
         if !diagnostics.is_empty() {
             return Err(diagnostics);
@@ -365,14 +384,17 @@ fn render_body_field<'a>(items: &'a [RenderBodyItem], path: &str) -> Option<&'a 
     })
 }
 
-fn render_value(field: &SchemaField) -> Result<TypedValue, Diagnostic> {
+fn render_value(
+    context: &CompileTimeContext,
+    field: &SchemaField,
+) -> Result<TypedValue, Diagnostic> {
     let SchemaValue::Expression(expression) = &field.value else {
         return Err(render_error(
             "Render field must be a compile-time expression",
             field.span,
         ));
     };
-    crate::elaborator::evaluate_metadata_expression(expression, None)
+    crate::elaborator::evaluate_metadata_expression_with_context(context, expression, None)
 }
 
 fn render_font_references(field: &SchemaField) -> Result<Vec<String>, Diagnostic> {
@@ -438,6 +460,7 @@ struct RenderStrokeSpec {
 }
 
 fn render_gradient_stops(
+    context: &CompileTimeContext,
     stops: &SourceExpression,
     field_span: SourceSpan,
     gradient_name: &str,
@@ -480,17 +503,22 @@ fn render_gradient_stops(
             ));
         };
         let offset = render_float(
-            crate::elaborator::evaluate_metadata_expression(offset, None)?,
+            crate::elaborator::evaluate_metadata_expression_with_context(context, offset, None)?,
             offset.span(),
         )?;
-        let color = crate::elaborator::evaluate_metadata_expression(color, None)?;
+        let color =
+            crate::elaborator::evaluate_metadata_expression_with_context(context, color, None)?;
         parsed_stops.push((offset, color));
     }
     Ok(parsed_stops)
 }
 
-fn render_gradient_spread(value: &SourceExpression) -> Result<CanonicalGradientSpread, Diagnostic> {
-    let spread = crate::elaborator::evaluate_metadata_expression(value, None)?;
+fn render_gradient_spread(
+    context: &CompileTimeContext,
+    value: &SourceExpression,
+) -> Result<CanonicalGradientSpread, Diagnostic> {
+    let spread =
+        crate::elaborator::evaluate_metadata_expression_with_context(context, value, None)?;
     let span = value.span();
     match render_string(spread, span)?.as_str() {
         "pad" => Ok(CanonicalGradientSpread::Pad),
@@ -503,7 +531,10 @@ fn render_gradient_spread(value: &SourceExpression) -> Result<CanonicalGradientS
     }
 }
 
-fn render_paint_expression(field: &SchemaField) -> Result<RenderPaintExpression, Diagnostic> {
+fn render_paint_expression(
+    context: &CompileTimeContext,
+    field: &SchemaField,
+) -> Result<RenderPaintExpression, Diagnostic> {
     let SchemaValue::Expression(expression) = &field.value else {
         return Err(render_error(
             "Render paint must be a compile-time expression",
@@ -522,8 +553,10 @@ fn render_paint_expression(field: &SchemaField) -> Result<RenderPaintExpression,
                 field.span,
             ));
         };
-        return crate::elaborator::evaluate_metadata_expression(argument, None)
-            .map(RenderPaintExpression::Solid);
+        return crate::elaborator::evaluate_metadata_expression_with_context(
+            context, argument, None,
+        )
+        .map(RenderPaintExpression::Solid);
     }
     if let SourceExpression::Call {
         callee, arguments, ..
@@ -537,10 +570,11 @@ fn render_paint_expression(field: &SchemaField) -> Result<RenderPaintExpression,
                 field.span,
             ));
         };
-        let start = crate::elaborator::evaluate_metadata_expression(start, None)?;
-        let end = crate::elaborator::evaluate_metadata_expression(end, None)?;
-        let parsed_stops = render_gradient_stops(stops, field.span, "linearGradient")?;
-        let spread = render_gradient_spread(spread)?;
+        let start =
+            crate::elaborator::evaluate_metadata_expression_with_context(context, start, None)?;
+        let end = crate::elaborator::evaluate_metadata_expression_with_context(context, end, None)?;
+        let parsed_stops = render_gradient_stops(context, stops, field.span, "linearGradient")?;
+        let spread = render_gradient_spread(context, spread)?;
         return Ok(RenderPaintExpression::LinearGradient {
             start,
             end,
@@ -568,12 +602,24 @@ fn render_paint_expression(field: &SchemaField) -> Result<RenderPaintExpression,
                 field.span,
             ));
         };
-        let start_center = crate::elaborator::evaluate_metadata_expression(start_center, None)?;
-        let start_radius = crate::elaborator::evaluate_metadata_expression(start_radius, None)?;
-        let end_center = crate::elaborator::evaluate_metadata_expression(end_center, None)?;
-        let end_radius = crate::elaborator::evaluate_metadata_expression(end_radius, None)?;
-        let parsed_stops = render_gradient_stops(stops, field.span, "radialGradient")?;
-        let spread = render_gradient_spread(spread)?;
+        let start_center = crate::elaborator::evaluate_metadata_expression_with_context(
+            context,
+            start_center,
+            None,
+        )?;
+        let start_radius = crate::elaborator::evaluate_metadata_expression_with_context(
+            context,
+            start_radius,
+            None,
+        )?;
+        let end_center = crate::elaborator::evaluate_metadata_expression_with_context(
+            context, end_center, None,
+        )?;
+        let end_radius = crate::elaborator::evaluate_metadata_expression_with_context(
+            context, end_radius, None,
+        )?;
+        let parsed_stops = render_gradient_stops(context, stops, field.span, "radialGradient")?;
+        let spread = render_gradient_spread(context, spread)?;
         return Ok(RenderPaintExpression::RadialGradient {
             start_center,
             start_radius,
@@ -590,25 +636,27 @@ fn render_paint_expression(field: &SchemaField) -> Result<RenderPaintExpression,
 }
 
 fn render_value_or<T>(
+    context: &CompileTimeContext,
     fields: &[SchemaField],
     path: &str,
     default: T,
     convert: impl FnOnce(TypedValue) -> Result<T, Diagnostic>,
 ) -> Result<T, Diagnostic> {
     match render_field(fields, path) {
-        Some(field) => convert(render_value(field)?),
+        Some(field) => convert(render_value(context, field)?),
         None => Ok(default),
     }
 }
 
 fn render_body_value_or<T>(
+    context: &CompileTimeContext,
     items: &[RenderBodyItem],
     path: &str,
     default: T,
     convert: impl FnOnce(TypedValue) -> Result<T, Diagnostic>,
 ) -> Result<T, Diagnostic> {
     match render_body_field(items, path) {
-        Some(field) => convert(render_value(field)?),
+        Some(field) => convert(render_value(context, field)?),
         None => Ok(default),
     }
 }
@@ -739,7 +787,7 @@ fn render_stroke_join(
     }
 }
 
-fn render_dash(field: &SchemaField) -> Result<Vec<f64>, Diagnostic> {
+fn render_dash(context: &CompileTimeContext, field: &SchemaField) -> Result<Vec<f64>, Diagnostic> {
     if matches!(
         &field.value,
         SchemaValue::Expression(SourceExpression::Array { elements, .. }) if elements.is_empty()
@@ -747,7 +795,7 @@ fn render_dash(field: &SchemaField) -> Result<Vec<f64>, Diagnostic> {
         return Ok(Vec::new());
     }
 
-    let value = render_value(field)?;
+    let value = render_value(context, field)?;
     let TypedValue::Array { values, .. } = value else {
         return Err(render_error(
             "Render dash must be an array of lengths",
@@ -860,6 +908,7 @@ fn render_bool(value: TypedValue, span: SourceSpan) -> Result<bool, Diagnostic> 
 }
 
 fn render_active_interval(
+    context: &CompileTimeContext,
     items: &[RenderBodyItem],
     time_map: &ChartTimeMap,
 ) -> Result<CanonicalActiveInterval, Diagnostic> {
@@ -872,8 +921,8 @@ fn render_active_interval(
             field.span,
         ));
     };
-    let start = crate::elaborator::evaluate_metadata_expression(start, None)?;
-    let end = crate::elaborator::evaluate_metadata_expression(end, None)?;
+    let start = crate::elaborator::evaluate_metadata_expression_with_context(context, start, None)?;
+    let end = crate::elaborator::evaluate_metadata_expression_with_context(context, end, None)?;
     let (start, end) = match (start, end) {
         (TypedValue::Beat(start), TypedValue::Beat(end)) => (
             time_map
@@ -1136,6 +1185,7 @@ fn forbidden_text_scalar(scalar: char) -> bool {
 }
 
 struct RenderLowerer<'a> {
+    context: &'a CompileTimeContext,
     document: &'a Document,
     resources: &'a BTreeMap<String, CanonicalResource>,
     resource_bundle: Option<&'a CanonicalResourceBundle>,
@@ -1154,6 +1204,7 @@ struct RenderLowerer<'a> {
 
 impl<'a> RenderLowerer<'a> {
     fn new(
+        context: &'a CompileTimeContext,
         document: &'a Document,
         resources: &'a BTreeMap<String, CanonicalResource>,
         resource_bundle: Option<&'a CanonicalResourceBundle>,
@@ -1161,6 +1212,7 @@ impl<'a> RenderLowerer<'a> {
         span: SourceSpan,
     ) -> Self {
         Self {
+            context,
             document,
             resources,
             resource_bundle,
@@ -1199,7 +1251,8 @@ impl<'a> RenderLowerer<'a> {
                 field.span,
             ));
         };
-        let evaluation = crate::elaborator::evaluate_metadata_expression(
+        let evaluation = crate::elaborator::evaluate_metadata_expression_with_context(
+            self.context,
             expression,
             self.document.definitions.as_ref(),
         );
@@ -1215,11 +1268,20 @@ impl<'a> RenderLowerer<'a> {
                 self.descriptor(TypedValue::Float(opacity))
             }
             Err(error) => {
+                if error.budget().is_some() {
+                    return Err(error);
+                }
                 let definitions = self.document.definitions.as_ref();
                 let dag = crate::expression::lower_runtime_expression_with_resolver(
                     expression,
-                    |candidate| {
-                        crate::elaborator::evaluate_metadata_expression(candidate, definitions).ok()
+                    |candidate| match crate::elaborator::evaluate_metadata_expression_with_context(
+                        self.context,
+                        candidate,
+                        definitions,
+                    ) {
+                        Ok(value) => Ok(Some(value)),
+                        Err(error) if error.budget().is_some() => Err(error),
+                        Err(_) => Ok(None),
                     },
                 )?;
                 if dag.required_environment().is_empty() {
@@ -1322,7 +1384,12 @@ impl<'a> RenderLowerer<'a> {
             }
         }
         for (target, track) in declared {
-            let expanded = crate::elaborator::expand_render_track(self.document, node_path, track)?;
+            let expanded = crate::elaborator::expand_render_track(
+                self.context,
+                self.document,
+                node_path,
+                track,
+            )?;
             // The carrier Track is a probe vehicle only: CanonicalTrack
             // requires a Line-namespace owner, and the composed descriptor
             // never references the carrier.
@@ -1405,7 +1472,8 @@ impl<'a> RenderLowerer<'a> {
                                 field.span,
                             ));
                         };
-                        match crate::elaborator::evaluate_metadata_expression(
+                        match crate::elaborator::evaluate_metadata_expression_with_context(
+                            self.context,
                             expression,
                             self.document.definitions.as_ref(),
                         ) {
@@ -1420,16 +1488,22 @@ impl<'a> RenderLowerer<'a> {
                                 opacity
                             }
                             Err(error) => {
+                                if error.budget().is_some() {
+                                    return Err(error);
+                                }
                                 let definitions = self.document.definitions.as_ref();
                                 let dag =
                                     crate::expression::lower_runtime_expression_with_resolver(
                                         expression,
                                         |candidate| {
-                                            crate::elaborator::evaluate_metadata_expression(
+                                            match crate::elaborator::evaluate_metadata_expression_with_context(self.context,
                                                 candidate,
                                                 definitions,
-                                            )
-                                            .ok()
+                                            ) {
+                                                Ok(value) => Ok(Some(value)),
+                                                Err(error) if error.budget().is_some() => Err(error),
+                                                Err(_) => Ok(None),
+                                            }
                                         },
                                     )?;
                                 if dag.required_environment().is_empty() {
@@ -1449,6 +1523,7 @@ impl<'a> RenderLowerer<'a> {
             }
             RenderTrackTarget::Scale => {
                 let value = render_body_value_or(
+                    self.context,
                     &node.items,
                     "scale",
                     TypedValue::vec2(TypedValue::Float(1.0), TypedValue::Float(1.0))
@@ -1703,7 +1778,7 @@ impl<'a> RenderLowerer<'a> {
             format!("{node_path}/{field_name}"),
             field.span,
         )?;
-        let data = match render_paint_expression(field)? {
+        let data = match render_paint_expression(self.context, field)? {
             RenderPaintExpression::Solid(TypedValue::Color(color)) => {
                 CanonicalRenderPaintData::Solid {
                     color: self.descriptor(TypedValue::Color(color))?,
@@ -1873,7 +1948,7 @@ impl<'a> RenderLowerer<'a> {
         let paint = self.add_paint(node_path, node, "stroke")?;
         let width_field = render_body_field(&node.items, "width")
             .ok_or_else(|| render_error("Render stroke requires width", node.span))?;
-        let width = render_length(render_value(width_field)?, width_field.span)?;
+        let width = render_length(render_value(self.context, width_field)?, width_field.span)?;
         if width < 0.0 {
             return Err(render_error(
                 "Render stroke width must be non-negative",
@@ -1890,14 +1965,17 @@ impl<'a> RenderLowerer<'a> {
             .ok_or_else(|| render_error("Render stroke requires dash", node.span))?;
         let dash_offset_field = render_body_field(&node.items, "dashOffset")
             .ok_or_else(|| render_error("Render stroke requires dashOffset", node.span))?;
-        let miter_limit = render_float(render_value(miter_field)?, miter_field.span)?;
+        let miter_limit = render_float(render_value(self.context, miter_field)?, miter_field.span)?;
         if miter_limit < 1.0 {
             return Err(render_error(
                 "Render stroke miterLimit must be at least 1",
                 miter_field.span,
             ));
         }
-        let dash_offset = render_length(render_value(dash_offset_field)?, dash_offset_field.span)?;
+        let dash_offset = render_length(
+            render_value(self.context, dash_offset_field)?,
+            dash_offset_field.span,
+        )?;
         Ok(RenderStrokeSpec {
             id: self.stable_id(
                 EntityKind::RenderStroke,
@@ -1906,11 +1984,11 @@ impl<'a> RenderLowerer<'a> {
             )?,
             paint,
             width: self.descriptor(TypedValue::Length(width))?,
-            cap: render_stroke_cap(render_value(cap_field)?, cap_field.span)?,
-            join: render_stroke_join(render_value(join_field)?, join_field.span)?,
+            cap: render_stroke_cap(render_value(self.context, cap_field)?, cap_field.span)?,
+            join: render_stroke_join(render_value(self.context, join_field)?, join_field.span)?,
             miter_limit,
             dash_offset: self.descriptor(TypedValue::Length(dash_offset))?,
-            dash: render_dash(dash_field)?,
+            dash: render_dash(self.context, dash_field)?,
         })
     }
 
@@ -1955,10 +2033,13 @@ impl<'a> RenderLowerer<'a> {
     ) -> Result<Vec<usize>, Diagnostic> {
         let content_field = render_body_field(&node.items, "content")
             .ok_or_else(|| render_error("Text requires content", node.span))?;
-        let content = render_string(render_value(content_field)?, content_field.span)?;
+        let content = render_string(
+            render_value(self.context, content_field)?,
+            content_field.span,
+        )?;
         let font_field = render_body_field(&node.items, "font")
             .ok_or_else(|| render_error("Text requires font", node.span))?;
-        let primary_font = match render_value(font_field)? {
+        let primary_font = match render_value(self.context, font_field)? {
             TypedValue::Line(name) => name,
             other => {
                 return Err(render_error(
@@ -1971,9 +2052,10 @@ impl<'a> RenderLowerer<'a> {
             Some(field) => render_font_references(field)?,
             None => Vec::new(),
         };
-        let face_index = render_body_value_or(&node.items, "faceIndex", 0, |value| {
-            render_int(value, node.span)
-        })?;
+        let face_index =
+            render_body_value_or(self.context, &node.items, "faceIndex", 0, |value| {
+                render_int(value, node.span)
+            })?;
         if face_index != 0 {
             return Err(render_error(
                 "Text faceIndex is fixed to 0 in simple-ltr-1",
@@ -1987,7 +2069,7 @@ impl<'a> RenderLowerer<'a> {
             ("direction", "ltr"),
         ] {
             if let Some(field) = render_body_field(&node.items, name) {
-                let value = render_string(render_value(field)?, field.span)?;
+                let value = render_string(render_value(self.context, field)?, field.span)?;
                 if value != expected {
                     return Err(render_error(
                         format!("Text {name} is fixed to {expected} in simple-ltr-1"),
@@ -2001,7 +2083,7 @@ impl<'a> RenderLowerer<'a> {
         }
         let size_field = render_body_field(&node.items, "size")
             .ok_or_else(|| render_error("Text requires size", node.span))?;
-        let size = render_length(render_value(size_field)?, size_field.span)?;
+        let size = render_length(render_value(self.context, size_field)?, size_field.span)?;
         if size <= 0.0 {
             return Err(render_error(
                 "Text size must be greater than zero",
@@ -2144,17 +2226,22 @@ impl<'a> RenderLowerer<'a> {
                 .expect("homogeneous float vector")
         };
         let position = self.descriptor(render_body_value_or(
+            self.context,
             &node.items,
             "position",
             zero_length_vec(),
             Ok::<_, Diagnostic>,
         )?)?;
-        let origin_value =
-            render_body_value_or(&node.items, "origin", zero_length_vec(), |value| {
-                Ok::<_, Diagnostic>(value)
-            })?;
+        let origin_value = render_body_value_or(
+            self.context,
+            &node.items,
+            "origin",
+            zero_length_vec(),
+            Ok::<_, Diagnostic>,
+        )?;
         let origin = self.descriptor(origin_value)?;
         let rotation = self.descriptor(TypedValue::Angle(render_body_value_or(
+            self.context,
             &node.items,
             "rotation",
             0.0,
@@ -2164,6 +2251,7 @@ impl<'a> RenderLowerer<'a> {
         let scale = match node_tracks.get(&RenderTrackTarget::Scale) {
             Some(&index) => index,
             None => self.descriptor(render_body_value_or(
+                self.context,
                 &node.items,
                 "scale",
                 one_float_vec(),
@@ -2178,28 +2266,33 @@ impl<'a> RenderLowerer<'a> {
             },
         };
         let visibility = self.descriptor(TypedValue::Bool(render_body_value_or(
+            self.context,
             &node.items,
             "visibility",
             true,
             |value| render_bool(value, node.span),
         )?))?;
-        let z_order = render_body_value_or(&node.items, "zOrder", 0, |value| {
+        let z_order = render_body_value_or(self.context, &node.items, "zOrder", 0, |value| {
             render_int(value, node.span)
         })?;
-        let isolate = render_body_value_or(&node.items, "isolate", false, |value| {
+        let isolate = render_body_value_or(self.context, &node.items, "isolate", false, |value| {
             render_bool(value, node.span)
         })?;
-        let follow_hidden_attachment =
-            render_body_value_or(&node.items, "followHiddenAttachment", false, |value| {
-                render_bool(value, node.span)
-            })?;
+        let follow_hidden_attachment = render_body_value_or(
+            self.context,
+            &node.items,
+            "followHiddenAttachment",
+            false,
+            |value| render_bool(value, node.span),
+        )?;
         let composite = render_body_value_or(
+            self.context,
             &node.items,
             "composite",
             CanonicalRenderComposite::SourceOver,
             |value| render_composite(value, node.span),
         )?;
-        let active = render_active_interval(&node.items, self.time_map)?;
+        let active = render_active_interval(self.context, &node.items, self.time_map)?;
         let stroke = match node.kind {
             CanonicalRenderNodeKind::Line => Some(self.render_stroke(node_path, node)?),
             // Render section 14.2 lets a fillable geometry carry a fill paint, a stroke, or
@@ -2228,7 +2321,8 @@ impl<'a> RenderLowerer<'a> {
             CanonicalRenderNodeKind::Rect => {
                 let size_field = render_body_field(&node.items, "size")
                     .ok_or_else(|| render_error("Rect requires size", node.span))?;
-                let size = render_vec2_length(render_value(size_field)?, size_field.span)?;
+                let size =
+                    render_vec2_length(render_value(self.context, size_field)?, size_field.span)?;
                 if size.iter().any(|value| *value < 0.0) {
                     return Err(render_error(
                         "Rect size must be non-negative",
@@ -2252,7 +2346,8 @@ impl<'a> RenderLowerer<'a> {
             CanonicalRenderNodeKind::RoundedRect => {
                 let size_field = render_body_field(&node.items, "size")
                     .ok_or_else(|| render_error("RoundedRect requires size", node.span))?;
-                let size = render_vec2_length(render_value(size_field)?, size_field.span)?;
+                let size =
+                    render_vec2_length(render_value(self.context, size_field)?, size_field.span)?;
                 if size.iter().any(|value| *value < 0.0) {
                     return Err(render_error(
                         "RoundedRect size must be non-negative",
@@ -2261,7 +2356,8 @@ impl<'a> RenderLowerer<'a> {
                 }
                 let radius_field = render_body_field(&node.items, "radius")
                     .ok_or_else(|| render_error("RoundedRect requires radius", node.span))?;
-                let radius = render_length(render_value(radius_field)?, radius_field.span)?;
+                let radius =
+                    render_length(render_value(self.context, radius_field)?, radius_field.span)?;
                 if radius < 0.0 {
                     return Err(render_error(
                         "RoundedRect radius must be non-negative",
@@ -2284,6 +2380,7 @@ impl<'a> RenderLowerer<'a> {
             }
             CanonicalRenderNodeKind::Circle => {
                 let center = self.descriptor(render_body_value_or(
+                    self.context,
                     &node.items,
                     "center",
                     zero_length_vec(),
@@ -2291,7 +2388,8 @@ impl<'a> RenderLowerer<'a> {
                 )?)?;
                 let radius_field = render_body_field(&node.items, "radius")
                     .ok_or_else(|| render_error("Circle requires radius", node.span))?;
-                let radius = render_length(render_value(radius_field)?, radius_field.span)?;
+                let radius =
+                    render_length(render_value(self.context, radius_field)?, radius_field.span)?;
                 if radius < 0.0 {
                     return Err(render_error(
                         "Circle radius must be non-negative",
@@ -2314,6 +2412,7 @@ impl<'a> RenderLowerer<'a> {
             }
             CanonicalRenderNodeKind::Ellipse => {
                 let center = self.descriptor(render_body_value_or(
+                    self.context,
                     &node.items,
                     "center",
                     zero_length_vec(),
@@ -2323,8 +2422,14 @@ impl<'a> RenderLowerer<'a> {
                     .ok_or_else(|| render_error("Ellipse requires radiusX", node.span))?;
                 let radius_y_field = render_body_field(&node.items, "radiusY")
                     .ok_or_else(|| render_error("Ellipse requires radiusY", node.span))?;
-                let radius_x = render_length(render_value(radius_x_field)?, radius_x_field.span)?;
-                let radius_y = render_length(render_value(radius_y_field)?, radius_y_field.span)?;
+                let radius_x = render_length(
+                    render_value(self.context, radius_x_field)?,
+                    radius_x_field.span,
+                )?;
+                let radius_y = render_length(
+                    render_value(self.context, radius_y_field)?,
+                    radius_y_field.span,
+                )?;
                 if radius_x < 0.0 || radius_y < 0.0 {
                     return Err(render_error(
                         "Ellipse radii must be non-negative",
@@ -2349,8 +2454,10 @@ impl<'a> RenderLowerer<'a> {
                     .ok_or_else(|| render_error("Line requires start", node.span))?;
                 let end_field = render_body_field(&node.items, "end")
                     .ok_or_else(|| render_error("Line requires end", node.span))?;
-                let start = render_vec2_length(render_value(start_field)?, start_field.span)?;
-                let end = render_vec2_length(render_value(end_field)?, end_field.span)?;
+                let start =
+                    render_vec2_length(render_value(self.context, start_field)?, start_field.span)?;
+                let end =
+                    render_vec2_length(render_value(self.context, end_field)?, end_field.span)?;
                 (
                     Some(CanonicalRenderGeometryData::Line {
                         start: self.descriptor(
@@ -2374,7 +2481,7 @@ impl<'a> RenderLowerer<'a> {
             CanonicalRenderNodeKind::Polyline => {
                 let points_field = render_body_field(&node.items, "points")
                     .ok_or_else(|| render_error("Polyline requires points", node.span))?;
-                let points = render_value(points_field)?;
+                let points = render_value(self.context, points_field)?;
                 let TypedValue::Array { values, .. } = points else {
                     return Err(render_error(
                         "Polyline points must be an array of vec2<length>",
@@ -2405,7 +2512,7 @@ impl<'a> RenderLowerer<'a> {
             CanonicalRenderNodeKind::Polygon => {
                 let points_field = render_body_field(&node.items, "points")
                     .ok_or_else(|| render_error("Polygon requires points", node.span))?;
-                let points = render_value(points_field)?;
+                let points = render_value(self.context, points_field)?;
                 let TypedValue::Array { values, .. } = points else {
                     return Err(render_error(
                         "Polygon points must be an array of vec2<length>",
@@ -2452,7 +2559,7 @@ impl<'a> RenderLowerer<'a> {
             CanonicalRenderNodeKind::Image => {
                 let resource_field = render_body_field(&node.items, "resource")
                     .ok_or_else(|| render_error("Image requires resource", node.span))?;
-                let resource_name = match render_value(resource_field)? {
+                let resource_name = match render_value(self.context, resource_field)? {
                     TypedValue::Line(name) => name,
                     other => {
                         return Err(render_error(
@@ -2478,7 +2585,9 @@ impl<'a> RenderLowerer<'a> {
                 }
                 let resource_id = self.resource_id(&resource_name, resource_field.span)?;
                 let sampling = match render_body_field(&node.items, "sampling") {
-                    Some(field) => render_image_sampling(render_value(field)?, field.span)?,
+                    Some(field) => {
+                        render_image_sampling(render_value(self.context, field)?, field.span)?
+                    }
                     None => match resource.metadata().get("sampling") {
                         Some(CanonicalValue::String(value)) => render_image_sampling(
                             TypedValue::String(value.clone()),
@@ -2495,13 +2604,13 @@ impl<'a> RenderLowerer<'a> {
                 let destination_origin_field = render_body_field(&node.items, "destination.origin")
                     .ok_or_else(|| render_error("Image requires destination.origin", node.span))?;
                 let destination_origin = render_vec2_length(
-                    render_value(destination_origin_field)?,
+                    render_value(self.context, destination_origin_field)?,
                     destination_origin_field.span,
                 )?;
                 let destination_size_field = render_body_field(&node.items, "destination.size")
                     .ok_or_else(|| render_error("Image requires destination.size", node.span))?;
                 let destination_size = render_vec2_length(
-                    render_value(destination_size_field)?,
+                    render_value(self.context, destination_size_field)?,
                     destination_size_field.span,
                 )?;
                 if destination_size.iter().any(|value| *value < 0.0) {
@@ -2520,10 +2629,14 @@ impl<'a> RenderLowerer<'a> {
                 }
                 let source = match (source_origin_field, source_size_field) {
                     (Some(origin_field), Some(size_field)) => {
-                        let source_origin =
-                            render_vec2_float(render_value(origin_field)?, origin_field.span)?;
-                        let source_size =
-                            render_vec2_float(render_value(size_field)?, size_field.span)?;
+                        let source_origin = render_vec2_float(
+                            render_value(self.context, origin_field)?,
+                            origin_field.span,
+                        )?;
+                        let source_size = render_vec2_float(
+                            render_value(self.context, size_field)?,
+                            size_field.span,
+                        )?;
                         if source_origin.iter().any(|value| *value < 0.0)
                             || source_size.iter().any(|value| *value < 0.0)
                         {
@@ -2676,6 +2789,7 @@ impl<'a> RenderLowerer<'a> {
 }
 
 fn lower_render_scene(
+    context: &CompileTimeContext,
     scene: &crate::ast::RenderScene,
     document: &Document,
     resources: &BTreeMap<String, CanonicalResource>,
@@ -2686,11 +2800,12 @@ fn lower_render_scene(
     let result = (|| {
         let viewport_width = render_field(&scene.viewport.fields, "width")
             .ok_or_else(|| render_error("Render viewport requires width", scene.viewport.span))
-            .and_then(|field| render_length(render_value(field)?, field.span))?;
+            .and_then(|field| render_length(render_value(context, field)?, field.span))?;
         let viewport_height = render_field(&scene.viewport.fields, "height")
             .ok_or_else(|| render_error("Render viewport requires height", scene.viewport.span))
-            .and_then(|field| render_length(render_value(field)?, field.span))?;
+            .and_then(|field| render_length(render_value(context, field)?, field.span))?;
         let color_space = match render_value_or(
+            context,
             &scene.viewport.fields,
             "colorSpace",
             "linear-srgb".to_owned(),
@@ -2707,7 +2822,14 @@ fn lower_render_scene(
                 ));
             }
         };
-        let mut lowerer = RenderLowerer::new(document, resources, resource_bundle, time_map, span);
+        let mut lowerer = RenderLowerer::new(
+            context,
+            document,
+            resources,
+            resource_bundle,
+            time_map,
+            span,
+        );
         let mut layers = Vec::new();
         for (layer_index, layer) in scene.layers.iter().enumerate() {
             if let Some(tracks) = layer.items.iter().find_map(|item| match item {
@@ -2723,30 +2845,33 @@ fn lower_render_scene(
             }
             let pass = render_body_field(&layer.items, "pass")
                 .ok_or_else(|| render_error("Render layer requires pass", layer.span))
-                .and_then(|field| render_string(render_value(field)?, field.span))
+                .and_then(|field| render_string(render_value(context, field)?, field.span))
                 .and_then(|value| {
                     CanonicalRenderPass::from_spelling(&value).ok_or_else(|| {
                         render_error(format!("unsupported Render pass {value}"), layer.span)
                     })
                 })?;
-            let z_order = render_body_value_or(&layer.items, "zOrder", 0, |value| {
+            let z_order = render_body_value_or(context, &layer.items, "zOrder", 0, |value| {
                 render_int(value, layer.span)
             })?;
-            let attachment =
-                match render_body_value_or(&layer.items, "space", "world".to_owned(), |value| {
-                    render_string(value, layer.span)
-                })?
-                .as_str()
-                {
-                    "world" => CanonicalRenderAttachment::World,
-                    "screen" => CanonicalRenderAttachment::Screen,
-                    other => {
-                        return Err(render_error(
-                            format!("unsupported Render space {other}"),
-                            layer.span,
-                        ));
-                    }
-                };
+            let attachment = match render_body_value_or(
+                context,
+                &layer.items,
+                "space",
+                "world".to_owned(),
+                |value| render_string(value, layer.span),
+            )?
+            .as_str()
+            {
+                "world" => CanonicalRenderAttachment::World,
+                "screen" => CanonicalRenderAttachment::Screen,
+                other => {
+                    return Err(render_error(
+                        format!("unsupported Render space {other}"),
+                        layer.span,
+                    ));
+                }
+            };
             let layer_id = lowerer.stable_id(
                 EntityKind::RenderLayer,
                 format!("layer/{}", layer.name),
@@ -3001,6 +3126,7 @@ fn chart_diagnostic(error: CanonicalChartError, span: SourceSpan) -> Diagnostic 
 }
 
 fn lower_required_extensions(
+    context: &CompileTimeContext,
     document: &Document,
 ) -> Result<Vec<CanonicalRequiredExtension>, Vec<Diagnostic>> {
     let contributors = contributor_names(document.contributors.as_ref());
@@ -3014,6 +3140,7 @@ fn lower_required_extensions(
         .filter(|declaration| declaration.requirement == ExtensionRequirement::Required)
     {
         let Some(payload) = lower_ordered_object(
+            context,
             &declaration.payload,
             document.definitions.as_ref(),
             &contributors,
@@ -3047,6 +3174,7 @@ fn lower_required_extensions(
 }
 
 fn lower_ordered_object(
+    context: &CompileTimeContext,
     object: &OrderedObject,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     contributors: &BTreeSet<String>,
@@ -3059,13 +3187,18 @@ fn lower_ordered_object(
             .entries
             .iter()
             .filter_map(|entry| {
-                lower_expression(&entry.value, definitions, &mut Vec::new(), diagnostics).map(
-                    |value| RawObjectEntry {
-                        key: entry.key.clone(),
-                        key_span: entry.key_span,
-                        value,
-                    },
+                lower_expression(
+                    context,
+                    &entry.value,
+                    definitions,
+                    &mut Vec::new(),
+                    diagnostics,
                 )
+                .map(|value| RawObjectEntry {
+                    key: entry.key.clone(),
+                    key_span: entry.key_span,
+                    value,
+                })
             })
             .collect(),
     );
@@ -3087,19 +3220,23 @@ fn lower_ordered_object(
 }
 
 fn lower_document(
+    context: &CompileTimeContext,
     document: &Document,
     limits: CustomValueLimits,
 ) -> Result<CanonicalMetadata, Vec<Diagnostic>> {
-    lower_document_with_sources_and_limits(document, limits).map(|lowered| lowered.metadata)
+    lower_document_with_sources_and_limits(context, document, limits)
+        .map(|lowered| lowered.metadata)
 }
 
 pub(crate) fn lower_document_with_sources(
+    context: &CompileTimeContext,
     document: &Document,
 ) -> Result<LoweredDocument, Vec<Diagnostic>> {
-    lower_document_with_sources_and_limits(document, CustomValueLimits::default())
+    lower_document_with_sources_and_limits(context, document, CustomValueLimits::default())
 }
 
 fn lower_document_with_sources_and_limits(
+    context: &CompileTimeContext,
     document: &Document,
     limits: CustomValueLimits,
 ) -> Result<LoweredDocument, Vec<Diagnostic>> {
@@ -3112,18 +3249,21 @@ fn lower_document_with_sources_and_limits(
     let mut diagnostics = Vec::new();
 
     let contributors = lower_contributors(
+        context,
         document.contributors.as_ref(),
         document.definitions.as_ref(),
         limits,
         &mut diagnostics,
     );
     let resources = lower_resources(
+        context,
         document.resources.as_ref(),
         document.definitions.as_ref(),
         limits,
         &mut diagnostics,
     );
     let meta = lower_meta(
+        context,
         document.meta.as_ref(),
         document.definitions.as_ref(),
         &contributor_names,
@@ -3132,6 +3272,7 @@ fn lower_document_with_sources_and_limits(
         &mut diagnostics,
     );
     let credits = lower_credits(
+        context,
         document.credits.as_ref(),
         document.definitions.as_ref(),
         &contributor_names,
@@ -3140,6 +3281,7 @@ fn lower_document_with_sources_and_limits(
         &mut diagnostics,
     );
     let artwork = lower_artwork(
+        context,
         document.artwork.as_ref(),
         document.definitions.as_ref(),
         &resource_kinds,
@@ -3147,6 +3289,7 @@ fn lower_document_with_sources_and_limits(
         &mut diagnostics,
     );
     let sync = lower_sync(
+        context,
         document.sync.as_ref(),
         document.definitions.as_ref(),
         &resource_kinds,
@@ -3198,6 +3341,7 @@ fn resource_kinds(block: Option<&crate::ast::ResourcesBlock>) -> BTreeMap<String
 }
 
 fn lower_meta(
+    context: &CompileTimeContext,
     block: Option<&MetaBlock>,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     contributors: &BTreeSet<String>,
@@ -3228,6 +3372,7 @@ fn lower_meta(
     expected.insert("revision", Expected::Int);
     expected.insert("custom", Expected::Object);
     let mut values = lower_fields(
+        context,
         &block.fields,
         &expected,
         definitions,
@@ -3259,6 +3404,7 @@ fn lower_meta(
 }
 
 fn lower_contributors(
+    context: &CompileTimeContext,
     block: Option<&crate::ast::ContributorsBlock>,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     limits: CustomValueLimits,
@@ -3290,6 +3436,7 @@ fn lower_contributors(
         expected.insert("aliases", Expected::Array(Box::new(Expected::String)));
         expected.insert("identifiers", Expected::StringObject);
         let fields = lower_fields(
+            context,
             &person.fields,
             &expected,
             definitions,
@@ -3340,6 +3487,7 @@ fn lower_contributors(
 }
 
 fn lower_credits(
+    context: &CompileTimeContext,
     block: Option<&crate::ast::CreditsBlock>,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     contributors: &BTreeSet<String>,
@@ -3360,6 +3508,7 @@ fn lower_credits(
             Expected::Array(Box::new(Expected::Reference(ReferenceKind::Contributor))),
         );
         let fields = lower_fields(
+            context,
             &entry.fields,
             &expected,
             definitions,
@@ -3434,6 +3583,7 @@ fn lower_credits(
 }
 
 fn lower_resources(
+    context: &CompileTimeContext,
     block: Option<&crate::ast::ResourcesBlock>,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     limits: CustomValueLimits,
@@ -3480,6 +3630,7 @@ fn lower_resources(
         expected.insert("shapingProfile", Expected::String);
         expected.insert("faceCount", Expected::Int);
         let mut fields = lower_fields(
+            context,
             &declaration.fields,
             &expected,
             definitions,
@@ -3774,6 +3925,7 @@ const fn resource_kind_name(kind: ResourceKind) -> &'static str {
 }
 
 fn lower_artwork(
+    context: &CompileTimeContext,
     block: Option<&crate::ast::ArtworkBlock>,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     resources: &BTreeMap<String, ResourceKind>,
@@ -3784,6 +3936,7 @@ fn lower_artwork(
     let mut expected = BTreeMap::new();
     expected.insert("primary", Expected::Reference(ReferenceKind::Resource));
     let fields = lower_fields(
+        context,
         &block.fields,
         &expected,
         definitions,
@@ -3814,6 +3967,7 @@ fn lower_artwork(
 }
 
 fn lower_sync(
+    context: &CompileTimeContext,
     block: Option<&SyncBlock>,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     resources: &BTreeMap<String, ResourceKind>,
@@ -3843,7 +3997,8 @@ fn lower_sync(
         }
         match name.as_str() {
             "primaryAudio" => {
-                let Some(raw) = lower_schema_value(&field.value, definitions, diagnostics) else {
+                let Some(raw) = lower_schema_value(context, &field.value, definitions, diagnostics)
+                else {
                     continue;
                 };
                 let Some(value) = resolve_raw(
@@ -3872,7 +4027,8 @@ fn lower_sync(
                 }
             }
             "audioOffset" => {
-                let Some(raw) = lower_schema_value(&field.value, definitions, diagnostics) else {
+                let Some(raw) = lower_schema_value(context, &field.value, definitions, diagnostics)
+                else {
                     continue;
                 };
                 let Some(value) = resolve_raw(
@@ -3902,12 +4058,12 @@ fn lower_sync(
             "preview" => match &field.value {
                 SchemaValue::Interval { start, end, span } => {
                     let Some(start) =
-                        lower_expression(start, definitions, &mut Vec::new(), diagnostics)
+                        lower_expression(context, start, definitions, &mut Vec::new(), diagnostics)
                     else {
                         continue;
                     };
                     let Some(end) =
-                        lower_expression(end, definitions, &mut Vec::new(), diagnostics)
+                        lower_expression(context, end, definitions, &mut Vec::new(), diagnostics)
                     else {
                         continue;
                     };
@@ -3977,6 +4133,7 @@ fn lower_sync(
 
 #[allow(clippy::too_many_arguments)]
 fn lower_fields(
+    context: &CompileTimeContext,
     fields: &[SchemaField],
     expected: &BTreeMap<&str, Expected>,
     definitions: Option<&crate::ast::DefinitionsBlock>,
@@ -4012,7 +4169,7 @@ fn lower_fields(
             ));
             continue;
         };
-        let Some(raw) = lower_schema_value(&field.value, definitions, diagnostics) else {
+        let Some(raw) = lower_schema_value(context, &field.value, definitions, diagnostics) else {
             continue;
         };
         if let Some(value) = resolve_raw(
@@ -4033,14 +4190,19 @@ fn lower_fields(
 }
 
 fn lower_schema_value(
+    context: &CompileTimeContext,
     value: &SchemaValue,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<RawValue> {
     match value {
-        SchemaValue::Expression(expression) => {
-            lower_expression(expression, definitions, &mut Vec::new(), diagnostics)
-        }
+        SchemaValue::Expression(expression) => lower_expression(
+            context,
+            expression,
+            definitions,
+            &mut Vec::new(),
+            diagnostics,
+        ),
         SchemaValue::Interval { .. } => {
             diagnostics.push(canonical_diagnostic(
                 DiagnosticCode::TYPE_MISMATCH,
@@ -4061,6 +4223,7 @@ fn lower_schema_value(
 }
 
 fn lower_expression(
+    context: &CompileTimeContext,
     expression: &SourceExpression,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     const_stack: &mut Vec<String>,
@@ -4076,7 +4239,7 @@ fn lower_expression(
             elements
                 .iter()
                 .filter_map(|element| {
-                    lower_expression(element, definitions, const_stack, diagnostics)
+                    lower_expression(context, element, definitions, const_stack, diagnostics)
                 })
                 .collect(),
         )),
@@ -4084,13 +4247,12 @@ fn lower_expression(
             entries
                 .iter()
                 .filter_map(|entry| {
-                    lower_expression(&entry.value, definitions, const_stack, diagnostics).map(
-                        |value| RawObjectEntry {
+                    lower_expression(context, &entry.value, definitions, const_stack, diagnostics)
+                        .map(|value| RawObjectEntry {
                             key: entry.key.clone(),
                             key_span: entry.key_span,
                             value,
-                        },
-                    )
+                        })
                 })
                 .collect(),
         )),
@@ -4100,7 +4262,8 @@ fn lower_expression(
             span,
         } => {
             for arm in arms {
-                let condition = match crate::elaborator::evaluate_metadata_expression(
+                let condition = match crate::elaborator::evaluate_metadata_expression_with_context(
+                    context,
                     &arm.condition,
                     definitions,
                 ) {
@@ -4119,17 +4282,25 @@ fn lower_expression(
                     }
                 };
                 if condition {
-                    return lower_expression(&arm.value, definitions, const_stack, diagnostics);
+                    return lower_expression(
+                        context,
+                        &arm.value,
+                        definitions,
+                        const_stack,
+                        diagnostics,
+                    );
                 }
             }
-            lower_expression(else_value, definitions, const_stack, diagnostics).or_else(|| {
-                diagnostics.push(canonical_diagnostic(
-                    DiagnosticCode::TYPE_INVALID_OPERATION,
-                    "metadata choose expression has no selected value",
-                    *span,
-                ));
-                None
-            })
+            lower_expression(context, else_value, definitions, const_stack, diagnostics).or_else(
+                || {
+                    diagnostics.push(canonical_diagnostic(
+                        DiagnosticCode::TYPE_INVALID_OPERATION,
+                        "metadata choose expression has no selected value",
+                        *span,
+                    ));
+                    None
+                },
+            )
         }
         SourceExpression::Name { name, span } => {
             if let Some(constant) = find_constant(definitions, name) {
@@ -4142,24 +4313,34 @@ fn lower_expression(
                     return None;
                 }
                 const_stack.push(name.clone());
-                let result =
-                    lower_expression(&constant.initializer, definitions, const_stack, diagnostics);
+                let result = lower_expression(
+                    context,
+                    &constant.initializer,
+                    definitions,
+                    const_stack,
+                    diagnostics,
+                );
                 const_stack.pop();
                 result
             } else {
-                evaluated_expression(expression, definitions, diagnostics)
+                evaluated_expression(context, expression, definitions, diagnostics)
             }
         }
-        _ => evaluated_expression(expression, definitions, diagnostics),
+        _ => evaluated_expression(context, expression, definitions, diagnostics),
     }
 }
 
 fn evaluated_expression(
+    context: &CompileTimeContext,
     expression: &SourceExpression,
     definitions: Option<&crate::ast::DefinitionsBlock>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<RawValue> {
-    match crate::elaborator::evaluate_metadata_expression(expression, definitions) {
+    match crate::elaborator::evaluate_metadata_expression_with_context(
+        context,
+        expression,
+        definitions,
+    ) {
         Ok(value) => raw_from_typed(value, expression.span(), diagnostics),
         Err(diagnostic) => {
             diagnostics.push(diagnostic);

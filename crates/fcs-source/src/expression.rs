@@ -18,12 +18,12 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticStage};
 pub fn lower_runtime_expression(
     expression: &SourceExpression,
 ) -> Result<CanonicalExpressionDag, Diagnostic> {
-    lower_runtime_expression_with_resolver(expression, |_| None)
+    lower_runtime_expression_with_resolver(expression, |_| Ok(None))
 }
 
 pub(crate) fn lower_runtime_expression_with_resolver(
     expression: &SourceExpression,
-    mut resolve: impl FnMut(&SourceExpression) -> Option<TypedValue>,
+    mut resolve: impl FnMut(&SourceExpression) -> Result<Option<TypedValue>, Diagnostic>,
 ) -> Result<CanonicalExpressionDag, Diagnostic> {
     let mut lowerer = Lowerer {
         builder: CanonicalExpressionBuilder::new(),
@@ -230,7 +230,7 @@ struct Lowerer<'a, R> {
 
 impl<R> Lowerer<'_, R>
 where
-    R: FnMut(&SourceExpression) -> Option<TypedValue>,
+    R: FnMut(&SourceExpression) -> Result<Option<TypedValue>, Diagnostic>,
 {
     fn lower(&mut self, expression: &SourceExpression) -> Result<LoweredNode, Diagnostic> {
         match expression {
@@ -333,7 +333,7 @@ where
         name: &str,
         span: SourceSpan,
     ) -> Result<LoweredNode, Diagnostic> {
-        match (self.resolve)(expression) {
+        match (self.resolve)(expression)? {
             Some(value) => self.lower_typed_value(&value, span),
             None => self.lower_environment(name, span),
         }
